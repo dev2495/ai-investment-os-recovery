@@ -1,0 +1,152 @@
+{
+  "generated_at": "2026-07-06T21:45:19.368774+00:00",
+  "live_execution_allowed": false,
+  "review_count": 10,
+  "reviewed": [
+    {
+      "candidate_key": "candidate_3",
+      "decision": "reject_or_retest",
+      "id": 17,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 3,
+      "strategy_name": "low_vol",
+      "updated_at": "2026-07-06T21:45:18.581624+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_3"
+    },
+    {
+      "candidate_key": "candidate_5",
+      "decision": "reject_or_retest",
+      "id": 18,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 5,
+      "strategy_name": "blend",
+      "updated_at": "2026-07-06T21:45:18.730176+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_5"
+    },
+    {
+      "candidate_key": "candidate_8",
+      "decision": "reject_or_retest",
+      "id": 19,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 8,
+      "strategy_name": "mom_none",
+      "updated_at": "2026-07-06T21:45:18.805617+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_8"
+    },
+    {
+      "candidate_key": "candidate_9",
+      "decision": "reject_or_retest",
+      "id": 20,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 9,
+      "strategy_name": "mom_dma",
+      "updated_at": "2026-07-06T21:45:18.897554+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_9"
+    },
+    {
+      "candidate_key": "candidate_7",
+      "decision": "reject_or_retest",
+      "id": 21,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval",
+        "Resolve optimizer warnings and rerun validation",
+        "Improve walk-forward consistency above zero",
+        "Reject or redesign negative test-Sharpe configuration"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 7,
+      "strategy_name": "trend_following",
+      "updated_at": "2026-07-06T21:45:18.970897+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_7"
+    },
+    {
+      "candidate_key": "candidate_1",
+      "decision": "approve_for_committee_review",
+      "id": 22,
+      "required_fixes": [],
+      "review_status": "completed",
+      "strategy_id": 1,
+      "strategy_name": "xsec_momentum",
+      "updated_at": "2026-07-06T21:45:19.047851+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_1"
+    },
+    {
+      "candidate_key": "candidate_10",
+      "decision": "reject_or_retest",
+      "id": 23,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval",
+        "Resolve retirement review action: needs_more_data"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 10,
+      "strategy_name": "mom_markov",
+      "updated_at": "2026-07-06T21:45:19.128029+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_10"
+    },
+    {
+      "candidate_key": "candidate_11",
+      "decision": "reject_or_retest",
+      "id": 24,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval",
+        "Resolve retirement review action: needs_more_data"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 11,
+      "strategy_name": "markov_binary",
+      "updated_at": "2026-07-06T21:45:19.204701+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_11"
+    },
+    {
+      "candidate_key": "candidate_12",
+      "decision": "reject_or_retest",
+      "id": 25,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval",
+        "Resolve retirement review action: needs_more_data"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 12,
+      "strategy_name": "markov_weighted",
+      "updated_at": "2026-07-06T21:45:19.275784+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_12"
+    },
+    {
+      "candidate_key": "candidate_13",
+      "decision": "reject_or_retest",
+      "id": 26,
+      "required_fixes": [
+        "Repair strategy DSL until parser passes",
+        "Pass data-quality gate before model approval",
+        "Resolve retirement review action: needs_more_data"
+      ],
+      "review_status": "needs_review",
+      "strategy_id": 13,
+      "strategy_name": "hmm",
+      "updated_at": "2026-07-06T21:45:19.353335+00:00",
+      "validation_key": "modelval_api_smoke_20260707_candidate_13"
+    }
+  ],
+  "seed_data_allowed": false
+}

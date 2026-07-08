@@ -1,0 +1,369 @@
+{
+  "candidates": [
+    {
+      "candidate": {
+        "catalyst": null,
+        "created_at": "2026-07-06T22:14:06.703541+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_research_ideas_20",
+        "evidence": [
+          {
+            "id": 20,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.watchlist",
+            "source_ref": "algo_watchlist:2"
+          }
+        ],
+        "generated_idea_id": 22,
+        "id": 11,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": 6,
+        "optimizer_run_key": "discovery_api_smoke_20260707_opt_1_research_sourced_strategy_tatasteel_watchlist",
+        "optimizer_status": "failed",
+        "priority_score": 0.877,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 2,
+        "source_kind": "research.ideas",
+        "source_ref": "20",
+        "status": "idea_created",
+        "symbols": [
+          "TATASTEEL"
+        ],
+        "template": "breakout",
+        "thesis": "bull regime; momentum=0.89, breakout=1.00, vol_spike=0.91. Risk: ATR(14)=4.4, ann vol=27.55%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: TATASTEEL watchlist",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 22,
+        "idea_key": "discovery_discovery_api_smoke_20260707_research_ideas_20",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: TATASTEEL watchlist"
+      },
+      "optimizer": {
+        "error": "{\n  \"artifact_path\": \"artifacts/user_defined_optimizer/discovery_api_smoke_20260707_opt_1_research_sourced_strategy_tatasteel_watchlist.json\",\n  \"candidate_id\": null,\n  \"failure_reason\": \"ERROR:  duplicate key value violates unique constraint \\\"strategy_candidates_name_key\\\"\\nDETAIL:  Key (name)=(Research-sourced strategy: TATASTEEL watchlist) already exists.\\nCONTEXT:  SQL statement \\\"INSERT INTO strategy.strategy_candidates (\\n        name,\\n        source_kind,\\n        source_ref,\\n        hypothesis,\\n        universe,\\n        timeframe,\\n        entry_rules,\\n        exit_rules,\\n        risk_rules,\\n        status,\\n        owner_agent,\\n        intake_id,\\n        generated_idea_id,\\n        candidate_key,\\n        structured_spec,\\n        validation_status,\\n        activation_gate\\n    )\\n    VALUES (\\n        v_strategy_name,\\n        'strategy_intake',\\n        v_intake_key,\\n        trim(p_intake_text),\\n        nullif(trim(coalesce(p_universe, '')), ''),\\n        coales",
+        "run_key": "discovery_api_smoke_20260707_opt_1_research_sourced_strategy_tatasteel_watchlist",
+        "status": "failed"
+      }
+    },
+    {
+      "candidate": {
+        "catalyst": "ideas_v2",
+        "created_at": "2026-07-06T22:14:06.853228+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_research_ideas_11",
+        "evidence": [
+          {
+            "id": 11,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:11"
+          }
+        ],
+        "generated_idea_id": 24,
+        "id": 12,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.877,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 2,
+        "source_kind": "research.ideas",
+        "source_ref": "11",
+        "status": "idea_created",
+        "symbols": [
+          "TATASTEEL"
+        ],
+        "template": "breakout",
+        "thesis": "Strong momentum (0.89); near 52w high (breakout 1.00); volume spike 0.91; regime is bull; atr(14) 4.6, ann vol 28%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: TATASTEEL long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 24,
+        "idea_key": "discovery_discovery_api_smoke_20260707_research_ideas_11",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: TATASTEEL long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "generator/swing",
+        "created_at": "2026-07-06T22:14:07.009472+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_research_ideas_1",
+        "evidence": [
+          {
+            "id": 1,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:1"
+          }
+        ],
+        "generated_idea_id": 25,
+        "id": 13,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.877,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 2,
+        "source_kind": "research.ideas",
+        "source_ref": "1",
+        "status": "idea_created",
+        "symbols": [
+          "TATASTEEL"
+        ],
+        "template": "breakout",
+        "thesis": "bull regime; momentum=0.89, breakout=1.00, vol_spike=0.91. Risk: ATR(14)=4.4, ann vol=27.55%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: TATASTEEL long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 25,
+        "idea_key": "discovery_discovery_api_smoke_20260707_research_ideas_1",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: TATASTEEL long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "generator/swing",
+        "created_at": "2026-07-06T22:14:07.150385+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_research_ideas_2",
+        "evidence": [
+          {
+            "id": 2,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:2"
+          }
+        ],
+        "generated_idea_id": 26,
+        "id": 14,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.843,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 2,
+        "source_kind": "research.ideas",
+        "source_ref": "2",
+        "status": "idea_created",
+        "symbols": [
+          "HINDALCO"
+        ],
+        "template": "breakout",
+        "thesis": "bull regime; momentum=0.94, breakout=1.00, vol_spike=0.52. Risk: ATR(14)=25.0, ann vol=30.84%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: HINDALCO long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 26,
+        "idea_key": "discovery_discovery_api_smoke_20260707_research_ideas_2",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: HINDALCO long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "ideas_v2",
+        "created_at": "2026-07-06T22:14:07.299844+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_research_ideas_12",
+        "evidence": [
+          {
+            "id": 12,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:12"
+          }
+        ],
+        "generated_idea_id": 27,
+        "id": 15,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.843,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 2,
+        "source_kind": "research.ideas",
+        "source_ref": "12",
+        "status": "idea_created",
+        "symbols": [
+          "HINDALCO"
+        ],
+        "template": "breakout",
+        "thesis": "Strong momentum (0.94); near 52w high (breakout 1.00); regime is bull; atr(14) 26.2, ann vol 31%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: HINDALCO long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 27,
+        "idea_key": "discovery_discovery_api_smoke_20260707_research_ideas_12",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: HINDALCO long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "FinceptTerminal reference repo component is installed with reuse mode reuse_and_integrate",
+        "created_at": "2026-07-06T22:14:07.439499+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_core_source_components_15",
+        "evidence": [
+          {
+            "id": 15,
+            "source": "core.source_components",
+            "source_path": "fincept-qt/src/mcp",
+            "source_system": "FinceptTerminal reference repo"
+          }
+        ],
+        "generated_idea_id": 28,
+        "id": 16,
+        "next_required_action": "Convert component/reference pattern into a symbol-specific strategy before optimization.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.7,
+        "research_gate": "component_or_research_reference",
+        "risk_score": 0.55,
+        "route_to_optimizer": false,
+        "run_id": 2,
+        "source_kind": "core.source_components",
+        "source_ref": "15",
+        "status": "reference_only",
+        "symbols": [],
+        "template": "momentum",
+        "thesis": "Built MCP service/client/manager, TerminalMcpBridge, agent tools, agent config panels, teams, workflows, planner, and agentic tasks.",
+        "timeframe": "research",
+        "title": "Component pattern: FinceptTerminal reference repo - mcp and agent workflow stack",
+        "universe": "component_reference"
+      },
+      "generated_idea": {
+        "id": 28,
+        "idea_key": "discovery_discovery_api_smoke_20260707_core_source_components_15",
+        "status": "research_queue",
+        "title": "Component pattern: FinceptTerminal reference repo - mcp and agent workflow stack"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "FinceptTerminal reference repo component is installed with reuse mode reuse_and_integrate",
+        "created_at": "2026-07-06T22:14:07.595111+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_core_source_components_9",
+        "evidence": [
+          {
+            "id": 9,
+            "source": "core.source_components",
+            "source_path": "fincept-qt/src/screens/portfolio",
+            "source_system": "FinceptTerminal reference repo"
+          }
+        ],
+        "generated_idea_id": 29,
+        "id": 17,
+        "next_required_action": "Convert component/reference pattern into a symbol-specific strategy before optimization.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.7,
+        "research_gate": "component_or_research_reference",
+        "risk_score": 0.55,
+        "route_to_optimizer": false,
+        "run_id": 2,
+        "source_kind": "core.source_components",
+        "source_ref": "9",
+        "status": "reference_only",
+        "symbols": [],
+        "template": "momentum",
+        "thesis": "Built portfolio monitor, equity research, risk, optimization, transactions, heatmap, reports, and insights surfaces.",
+        "timeframe": "research",
+        "title": "Component pattern: FinceptTerminal reference repo - portfolio and equity research workbench",
+        "universe": "component_reference"
+      },
+      "generated_idea": {
+        "id": 29,
+        "idea_key": "discovery_discovery_api_smoke_20260707_core_source_components_9",
+        "status": "research_queue",
+        "title": "Component pattern: FinceptTerminal reference repo - portfolio and equity research workbench"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "algo trading terminal component is mapped with reuse mode extract_transform_import",
+        "created_at": "2026-07-06T22:14:07.753776+00:00",
+        "discovery_key": "discovery_api_smoke_20260707_core_source_components_7",
+        "evidence": [
+          {
+            "id": 7,
+            "source": "core.source_components",
+            "source_path": "/Volumes/Devarsh SSD/algo based trading software 2/data/storage/prices.db",
+            "source_system": "algo trading terminal"
+          }
+        ],
+        "generated_idea_id": 30,
+        "id": 18,
+        "next_required_action": "Convert component/reference pattern into a symbol-specific strategy before optimization.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.7,
+        "research_gate": "component_or_research_reference",
+        "risk_score": 0.55,
+        "route_to_optimizer": false,
+        "run_id": 2,
+        "source_kind": "core.source_components",
+        "source_ref": "7",
+        "status": "reference_only",
+        "symbols": [],
+        "template": "momentum",
+        "thesis": "Historical and possibly intraday OHLCV/price data already collected by the old algo system.",
+        "timeframe": "research",
+        "title": "Component pattern: algo trading terminal - historical price data",
+        "universe": "component_reference"
+      },
+      "generated_idea": {
+        "id": 30,
+        "idea_key": "discovery_discovery_api_smoke_20260707_core_source_components_7",
+        "status": "research_queue",
+        "title": "Component pattern: algo trading terminal - historical price data"
+      },
+      "optimizer": null
+    }
+  ],
+  "generated_at": "2026-07-06T22:14:07.770931+00:00",
+  "run_key": "discovery_api_smoke_20260707",
+  "summary": {
+    "discovered_count": 8,
+    "generated_idea_count": 8,
+    "live_execution_allowed": false,
+    "optimizer_routed_count": 0,
+    "seed_data_allowed": false,
+    "source_scope": [
+      "research",
+      "journals",
+      "signals",
+      "components"
+    ]
+  }
+}

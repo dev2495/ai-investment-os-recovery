@@ -1,0 +1,608 @@
+{
+  "candidates": [
+    {
+      "candidate": {
+        "catalyst": null,
+        "created_at": "2026-07-06T22:27:49.06527+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_research_ideas_20",
+        "evidence": [
+          {
+            "id": 20,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.watchlist",
+            "source_ref": "algo_watchlist:2"
+          }
+        ],
+        "generated_idea_id": 47,
+        "id": 33,
+        "next_required_action": "Review optimizer/backtest evidence, run model validation sweep, then committee review.",
+        "optimizer_run_id": 9,
+        "optimizer_run_key": "discovery_scheduler_smoke_20260707_discovery_opt_1_research_sourced_strategy_tatasteel_watchlist",
+        "optimizer_status": "completed",
+        "priority_score": 0.877,
+        "research_gate": "optimizer_completed_model_validation_required",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 5,
+        "source_kind": "research.ideas",
+        "source_ref": "20",
+        "status": "optimizer_routed",
+        "symbols": [
+          "TATASTEEL"
+        ],
+        "template": "breakout",
+        "thesis": "bull regime; momentum=0.89, breakout=1.00, vol_spike=0.91. Risk: ATR(14)=4.4, ann vol=27.55%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: TATASTEEL watchlist",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 47,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_research_ideas_20",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: TATASTEEL watchlist"
+      },
+      "optimizer": {
+        "artifact_path": "artifacts/user_defined_optimizer/discovery_scheduler_smoke_20260707_discovery_opt_1_research_sourced_strategy_tatasteel_watchlist.json",
+        "candidate_id": 28,
+        "generated_at": "2026-07-06T22:27:48.893529+00:00",
+        "live_execution_allowed": false,
+        "run_key": "discovery_scheduler_smoke_20260707_discovery_opt_1_research_sourced_strategy_tatasteel_watchlist",
+        "seed_data_allowed": false,
+        "stage_results": {
+          "backtest": {
+            "artifact_path": "_ai_os_runtime/artifacts/backtests/20260706T222748Z-strategy-candidate-20260706222747034-research-sourced-strategy-tatasteel-watc.json",
+            "database": {
+              "backtest_run_id": 28,
+              "inbox_id": 171,
+              "updated_tasks": 1,
+              "validation_review_id": 41
+            },
+            "diagnostics": {
+              "live_execution_allowed": false,
+              "warnings": [
+                "Dataset is thin; result is a pipeline proof, not a tradable conclusion.",
+                "Symbol coverage is narrow; run broader universe data before committee review."
+              ]
+            },
+            "metrics": {
+              "average_bar_return": -8.986123814462796e-05,
+              "bar_volatility": 0.00044641333810758484,
+              "bars_tested": 102,
+              "max_drawdown": -0.009755454473652336,
+              "sharpe_estimate": -27.673630513766277,
+              "symbols_tested": 1,
+              "total_return": -0.00904531315903212,
+              "trades_count": 6,
+              "win_rate_by_bar": 0.0297029702970297
+            },
+            "note_path": "_ai_os_runtime/artifacts/backtests/20260706T222748Z-strategy-candidate-20260706222747034-research-sourced-strategy-tatasteel-watc.md",
+            "status": "completed"
+          },
+          "data_quality": {
+            "gate": {
+              "candidate_id": 28,
+              "created_at": "2026-07-06T22:27:47.676839+00:00",
+              "created_by": "Backtest Engineer",
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "gate_key": "dq_20260706222747616769_28",
+              "gate_payload": {
+                "candidate_id": 28,
+                "candidate_key": "strategy-candidate-20260706222747034-research-sourced-strategy-tatasteel-watc",
+                "coverage": [
+                  {
+                    "first_ts": "2026-05-14T03:50:00+00:00",
+                    "last_ts": "2026-05-15T12:00:00+00:00",
+                    "rows_seen": 102,
+                    "symbol": "NSE:TATASTEEL"
+                  }
+                ],
+                "min_rows_per_symbol": 50,
+                "min_total_rows": 50,
+                "parser_version": "strategy_dsl_parser_v1",
+                "seed_data_allowed": false,
+                "source_table": "trading.ohlcv"
+              },
+              "id": 23,
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "matched_symbols": [
+                "NSE:TATASTEEL"
+              ],
+              "max_symbol_rows": 102,
+              "min_rows_per_symbol": 50,
+              "min_symbol_rows": 102,
+              "min_total_rows": 50,
+              "missing_symbols": [],
+              "reasons": [],
+              "requested_symbols": [
+                "TATASTEEL"
+              ],
+              "severity": "info",
+              "status": "passed",
+              "timeframe": "5m",
+              "total_rows": 102
+            }
+          },
+          "intake": {
+            "activation_gate": "paper_first_backtest_required",
+            "candidate_id": 28,
+            "candidate_key": "strategy-candidate-20260706222747034-research-sourced-strategy-tatasteel-watc",
+            "idea_id": 48,
+            "idea_key": "strategy-idea-20260706222747034-research-sourced-strategy-tatasteel-watc",
+            "inbox_id": 170,
+            "intake_id": 15,
+            "intake_key": "strategy-intake-20260706222747034-research-sourced-strategy-tatasteel-watc",
+            "live_execution_allowed": false,
+            "task_id": 104
+          },
+          "optimization": {
+            "artifact_path": "_ai_os_runtime/artifacts/optimizations/20260706T222748Z-strategy-candidate-20260706222747034-research-sourced-strategy-tatasteel-watc.json",
+            "best_params": {
+              "threshold": 0.001,
+              "window": 6
+            },
+            "database": {
+              "inbox_id": 172,
+              "optimization_run_id": 12,
+              "validation_review_id": 42
+            },
+            "diagnostics": {
+              "live_execution_allowed": false,
+              "warnings": [
+                "Out-of-sample split is too small for production confidence.",
+                "Best parameter set has negative walk-forward/test Sharpe; reject until broader data proves otherwise.",
+                "Best parameter set is not consistent across walk-forward windows.",
+                "Trade count is low; Monte Carlo and walk-forward results are weak evidence.",
+                "OHLCV sample is thin; this run is a robustness pipeline proof."
+              ]
+            },
+            "metrics": {
+              "bars_seen": 102,
+              "best_max_drawdown": -0.01181621531645638,
+              "best_score": -32.88912922647238,
+              "best_test_sharpe": -22.622822845837096,
+              "best_test_total_return": -0.00307041235096428,
+              "best_total_return": -0.00990293896638228,
+              "best_walk_forward_consistency": 0.0,
+              "best_walk_forward_test_return": -0.00153520617548214,
+              "best_walk_forward_test_sharpe": -32.8614955153137,
+              "grid_size": 9,
+              "monte_carlo": {
+                "p05_total_return": -0.009902938966382613,
+                "p50_total_return": -0.009902938966382502,
+                "p95_total_return": -0.00990293896638228,
+                "runs": 200,
+                "worst_drawdown_p05": -0.012310307208798443
+              },
+              "symbols_tested": 1,
+              "trades_count": 8,
+              "walk_forward": {
+                "folds": [
+                  {
+                    "fold": 1,
+                    "test_end": 65,
+                    "test_metrics": {
+                      "average_bar_return": 0.0,
+                      "bar_volatility": 0.0,
+                      "bars": 20,
+                      "max_drawdown": 0.0,
+                      "sharpe_estimate": null,
+                      "total_return": 0.0,
+                      "win_rate_by_bar": 0.0
+                    },
+                    "test_start": 45,
+                    "train_end": 45,
+                    "train_metrics": {
+                      "average_bar_return": -0.0001525277088896961,
+                      "bar_volatility": 0.0007566950046611042,
+                      "bars": 45,
+                      "max_drawdown": -0.008772738891335896,
+                      "sharpe_estimate": -27.71142008046943,
+                      "total_return": -0.006853569901090539,
+                      "win_rate_by_bar": 0.06666666666666667
+                    },
+                    "train_start": 0
+                  },
+                  {
+                    "fold": 2,
+                    "test_end": 85,
+                    "test_metrics": {
+                      "average_bar_return": -0.00015353829803564363,
+                      "bar_volatility": 0.0006423330969478945,
+                      "bars": 20,
+                      "max_drawdown": -0.00307041235096428,
+                      "sharpe_estimate": -32.8614955153137,
+                      "total_return": -0.00307041235096428,
+                      "win_rate_by_bar": 0.05
+                    },
+                    "test_start": 65,
+                    "train_end": 65,
+                    "train_metrics": {
+                      "average_bar_return": -0.00012843599246330984,
+                      "bar_volatility": 0.0004887803150001521,
+                      "bars": 45,
+                      "max_drawdown": -0.005768668632623597,
+                      "sharpe_estimate": -36.12467437971875,
+                      "total_return": -0.005768668632623597,
+                      "win_rate_by_bar": 0.044444444444444446
+                    },
+                    "train_start": 20
+                  }
+                ],
+                "method": "rolling chronological train/test windows",
+                "summary": {
+                  "average_test_return": -0.00153520617548214,
+                  "average_test_sharpe": -32.8614955153137,
+                  "fold_count": 2,
+                  "positive_test_folds": 0,
+                  "test_consistency": 0.0,
+                  "worst_test_drawdown": -0.00307041235096428
+                }
+              }
+            },
+            "note_path": "_ai_os_runtime/artifacts/optimizations/20260706T222748Z-strategy-candidate-20260706222747034-research-sourced-strategy-tatasteel-watc.md",
+            "status": "completed"
+          },
+          "parse": {
+            "parse": {
+              "candidate_id": 28,
+              "id": 14,
+              "normalized_rules": {
+                "arbitrary_code_allowed": false,
+                "engine_template": "breakout",
+                "entry": {
+                  "expression": "close > sma(close, 12) * 1.002",
+                  "tokens": [
+                    "close",
+                    "sma"
+                  ]
+                },
+                "exit": {
+                  "expression": "close < sma(close, 12) or holding_days >= 10",
+                  "tokens": [
+                    "close",
+                    "holding_days",
+                    "or",
+                    "sma"
+                  ]
+                },
+                "paper_first": true,
+                "risk": {
+                  "expression": "stop_loss_pct <= 2 and target_pct >= 3"
+                }
+              },
+              "parse_errors": [],
+              "parse_status": "passed",
+              "parser_version": "strategy_dsl_parser_v1",
+              "symbols": [
+                "TATASTEEL"
+              ],
+              "template": "breakout",
+              "timeframe": "5m",
+              "updated_at": "2026-07-06T22:27:47.310135+00:00"
+            }
+          }
+        },
+        "status": "completed",
+        "workflow_run_id": 9
+      }
+    },
+    {
+      "candidate": {
+        "catalyst": "ideas_v2",
+        "created_at": "2026-07-06T22:27:49.200053+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_research_ideas_11",
+        "evidence": [
+          {
+            "id": 11,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:11"
+          }
+        ],
+        "generated_idea_id": 49,
+        "id": 34,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.877,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 5,
+        "source_kind": "research.ideas",
+        "source_ref": "11",
+        "status": "idea_created",
+        "symbols": [
+          "TATASTEEL"
+        ],
+        "template": "breakout",
+        "thesis": "Strong momentum (0.89); near 52w high (breakout 1.00); volume spike 0.91; regime is bull; atr(14) 4.6, ann vol 28%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: TATASTEEL long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 49,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_research_ideas_11",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: TATASTEEL long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "generator/swing",
+        "created_at": "2026-07-06T22:27:49.355598+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_research_ideas_1",
+        "evidence": [
+          {
+            "id": 1,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:1"
+          }
+        ],
+        "generated_idea_id": 50,
+        "id": 35,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.877,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 5,
+        "source_kind": "research.ideas",
+        "source_ref": "1",
+        "status": "idea_created",
+        "symbols": [
+          "TATASTEEL"
+        ],
+        "template": "breakout",
+        "thesis": "bull regime; momentum=0.89, breakout=1.00, vol_spike=0.91. Risk: ATR(14)=4.4, ann vol=27.55%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: TATASTEEL long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 50,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_research_ideas_1",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: TATASTEEL long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "generator/swing",
+        "created_at": "2026-07-06T22:27:49.498184+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_research_ideas_2",
+        "evidence": [
+          {
+            "id": 2,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:2"
+          }
+        ],
+        "generated_idea_id": 51,
+        "id": 36,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.843,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 5,
+        "source_kind": "research.ideas",
+        "source_ref": "2",
+        "status": "idea_created",
+        "symbols": [
+          "HINDALCO"
+        ],
+        "template": "breakout",
+        "thesis": "bull regime; momentum=0.94, breakout=1.00, vol_spike=0.52. Risk: ATR(14)=25.0, ann vol=30.84%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: HINDALCO long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 51,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_research_ideas_2",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: HINDALCO long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "ideas_v2",
+        "created_at": "2026-07-06T22:27:49.62919+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_research_ideas_12",
+        "evidence": [
+          {
+            "id": 12,
+            "source": "research.ideas",
+            "source_kind": "algo_app_db.ideas",
+            "source_ref": "algo_ideas:12"
+          }
+        ],
+        "generated_idea_id": 52,
+        "id": 37,
+        "next_required_action": "Run or repair optimizer workflow before promotion.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.843,
+        "research_gate": "optimizer_route_available",
+        "risk_score": 0.6,
+        "route_to_optimizer": true,
+        "run_id": 5,
+        "source_kind": "research.ideas",
+        "source_ref": "12",
+        "status": "idea_created",
+        "symbols": [
+          "HINDALCO"
+        ],
+        "template": "breakout",
+        "thesis": "Strong momentum (0.94); near 52w high (breakout 1.00); regime is bull; atr(14) 26.2, ann vol 31%.",
+        "timeframe": "5m",
+        "title": "Research-sourced strategy: HINDALCO long idea",
+        "universe": "NSE"
+      },
+      "generated_idea": {
+        "id": 52,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_research_ideas_12",
+        "status": "research_queue",
+        "title": "Research-sourced strategy: HINDALCO long idea"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "FinceptTerminal reference repo component is installed with reuse mode reuse_and_integrate",
+        "created_at": "2026-07-06T22:27:49.767934+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_core_source_components_15",
+        "evidence": [
+          {
+            "id": 15,
+            "source": "core.source_components",
+            "source_path": "fincept-qt/src/mcp",
+            "source_system": "FinceptTerminal reference repo"
+          }
+        ],
+        "generated_idea_id": 53,
+        "id": 38,
+        "next_required_action": "Convert component/reference pattern into a symbol-specific strategy before optimization.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.7,
+        "research_gate": "component_or_research_reference",
+        "risk_score": 0.55,
+        "route_to_optimizer": false,
+        "run_id": 5,
+        "source_kind": "core.source_components",
+        "source_ref": "15",
+        "status": "reference_only",
+        "symbols": [],
+        "template": "momentum",
+        "thesis": "Built MCP service/client/manager, TerminalMcpBridge, agent tools, agent config panels, teams, workflows, planner, and agentic tasks.",
+        "timeframe": "research",
+        "title": "Component pattern: FinceptTerminal reference repo - mcp and agent workflow stack",
+        "universe": "component_reference"
+      },
+      "generated_idea": {
+        "id": 53,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_core_source_components_15",
+        "status": "research_queue",
+        "title": "Component pattern: FinceptTerminal reference repo - mcp and agent workflow stack"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "FinceptTerminal reference repo component is installed with reuse mode reuse_and_integrate",
+        "created_at": "2026-07-06T22:27:49.912073+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_core_source_components_9",
+        "evidence": [
+          {
+            "id": 9,
+            "source": "core.source_components",
+            "source_path": "fincept-qt/src/screens/portfolio",
+            "source_system": "FinceptTerminal reference repo"
+          }
+        ],
+        "generated_idea_id": 54,
+        "id": 39,
+        "next_required_action": "Convert component/reference pattern into a symbol-specific strategy before optimization.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.7,
+        "research_gate": "component_or_research_reference",
+        "risk_score": 0.55,
+        "route_to_optimizer": false,
+        "run_id": 5,
+        "source_kind": "core.source_components",
+        "source_ref": "9",
+        "status": "reference_only",
+        "symbols": [],
+        "template": "momentum",
+        "thesis": "Built portfolio monitor, equity research, risk, optimization, transactions, heatmap, reports, and insights surfaces.",
+        "timeframe": "research",
+        "title": "Component pattern: FinceptTerminal reference repo - portfolio and equity research workbench",
+        "universe": "component_reference"
+      },
+      "generated_idea": {
+        "id": 54,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_core_source_components_9",
+        "status": "research_queue",
+        "title": "Component pattern: FinceptTerminal reference repo - portfolio and equity research workbench"
+      },
+      "optimizer": null
+    },
+    {
+      "candidate": {
+        "catalyst": "algo trading terminal component is mapped with reuse mode extract_transform_import",
+        "created_at": "2026-07-06T22:27:50.065731+00:00",
+        "discovery_key": "discovery_scheduler_smoke_20260707_discovery_core_source_components_7",
+        "evidence": [
+          {
+            "id": 7,
+            "source": "core.source_components",
+            "source_path": "/Volumes/Devarsh SSD/algo based trading software 2/data/storage/prices.db",
+            "source_system": "algo trading terminal"
+          }
+        ],
+        "generated_idea_id": 55,
+        "id": 40,
+        "next_required_action": "Convert component/reference pattern into a symbol-specific strategy before optimization.",
+        "optimizer_run_id": null,
+        "optimizer_run_key": null,
+        "optimizer_status": null,
+        "priority_score": 0.7,
+        "research_gate": "component_or_research_reference",
+        "risk_score": 0.55,
+        "route_to_optimizer": false,
+        "run_id": 5,
+        "source_kind": "core.source_components",
+        "source_ref": "7",
+        "status": "reference_only",
+        "symbols": [],
+        "template": "momentum",
+        "thesis": "Historical and possibly intraday OHLCV/price data already collected by the old algo system.",
+        "timeframe": "research",
+        "title": "Component pattern: algo trading terminal - historical price data",
+        "universe": "component_reference"
+      },
+      "generated_idea": {
+        "id": 55,
+        "idea_key": "discovery_discovery_scheduler_smoke_20260707_discovery_core_source_components_7",
+        "status": "research_queue",
+        "title": "Component pattern: algo trading terminal - historical price data"
+      },
+      "optimizer": null
+    }
+  ],
+  "generated_at": "2026-07-06T22:27:50.083790+00:00",
+  "run_key": "discovery_scheduler_smoke_20260707_discovery",
+  "summary": {
+    "discovered_count": 8,
+    "generated_idea_count": 8,
+    "live_execution_allowed": false,
+    "optimizer_routed_count": 1,
+    "seed_data_allowed": false,
+    "source_scope": [
+      "research",
+      "journals",
+      "signals",
+      "components"
+    ]
+  }
+}

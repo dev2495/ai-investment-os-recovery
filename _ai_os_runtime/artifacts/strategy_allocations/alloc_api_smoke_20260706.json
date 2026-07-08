@@ -1,0 +1,38 @@
+{
+  "allocation_key": "alloc_api_smoke_20260706",
+  "allocation_run_id": 3,
+  "allocations": [
+    {
+      "candidate_key": "candidate_1",
+      "expected_return": 6.895923291762961e-07,
+      "expected_volatility": 0.0009625946407707568,
+      "risk_contribution": 1.0,
+      "strategy_id": 1,
+      "strategy_name": "xsec_momentum",
+      "target_notional": 350000.0,
+      "target_weight": 0.35
+    }
+  ],
+  "analytics_run_id": 2,
+  "analytics_run_key": "qa_api_smoke_20260706",
+  "capital_base": 1000000.0,
+  "cash_weight": 0.65,
+  "expected_return": 2.413573152117026e-07,
+  "expected_terminal_value": 1000058.5641011067,
+  "expected_volatility": 0.00033690812426976486,
+  "live_execution_allowed": false,
+  "max_drawdown_p95": 0.01043723953037945,
+  "optimizer_run_id": 2,
+  "portfolio_return_bars": 102,
+  "probability_of_ruin": 0.0,
+  "quality_flags": [
+    "some_strategies_missing_passed_dsl",
+    "thin_portfolio_return_history",
+    "thin_return_history"
+  ],
+  "seed_data_allowed": false,
+  "status": "completed",
+  "terminal_p05": 991543.8024623347,
+  "terminal_p50": 999797.911194346,
+  "terminal_p95": 1008993.465939867
+}

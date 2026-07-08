@@ -1,0 +1,308 @@
+{
+  "best_params": {
+    "lookback": 36
+  },
+  "candidate": {
+    "activation_gate": "paper_first_backtest_required",
+    "candidate_key": "strategy-candidate-20260706220151631-user-momentum-smoke",
+    "id": 20,
+    "name": "User Momentum Smoke"
+  },
+  "diagnostics": {
+    "cost_bps": 3.0,
+    "data_source": "trading.ohlcv",
+    "engine": "local_strategy_optimizer_v1",
+    "heatmap_rows": [
+      {
+        "max_drawdown": -0.1039331501549241,
+        "rank": 1,
+        "score": -17.82816219300647,
+        "test_return": -0.014024067268660567,
+        "test_sharpe": -3.6814845462829537,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.013529485634737215,
+        "walk_forward_test_sharpe": -17.612443958635637,
+        "x_param": "lookback",
+        "x_value": 36,
+        "y_param": "single_axis",
+        "y_value": "all"
+      },
+      {
+        "max_drawdown": -0.13542670553854919,
+        "rank": 2,
+        "score": -18.967043543619724,
+        "test_return": -0.01327243909446607,
+        "test_sharpe": -2.483141478519562,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.01662656274426925,
+        "walk_forward_test_sharpe": -18.696087762327743,
+        "x_param": "lookback",
+        "x_value": 12,
+        "y_param": "single_axis",
+        "y_value": "all"
+      },
+      {
+        "max_drawdown": -0.10673338946397104,
+        "rank": 3,
+        "score": -19.172994727019496,
+        "test_return": -0.030145518870721477,
+        "test_sharpe": -9.15318933810044,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.015579028080146329,
+        "walk_forward_test_sharpe": -18.925018921065703,
+        "x_param": "lookback",
+        "x_value": 24,
+        "y_param": "single_axis",
+        "y_value": "all"
+      },
+      {
+        "max_drawdown": -0.18873714970852784,
+        "rank": 4,
+        "score": -19.61942641630236,
+        "test_return": -0.07590198361920175,
+        "test_sharpe": -20.930960204822213,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.029072290398602447,
+        "walk_forward_test_sharpe": -19.154547982802303,
+        "x_param": "lookback",
+        "x_value": 6,
+        "y_param": "single_axis",
+        "y_value": "all"
+      },
+      {
+        "max_drawdown": -0.12443442150754058,
+        "rank": 5,
+        "score": -24.290869362516407,
+        "test_return": -0.05264216102144492,
+        "test_sharpe": -17.14163533593461,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.02206585069841534,
+        "walk_forward_test_sharpe": -23.953051980251306,
+        "x_param": "lookback",
+        "x_value": 18,
+        "y_param": "single_axis",
+        "y_value": "all"
+      }
+    ],
+    "live_execution_allowed": false,
+    "monte_carlo_method": "deterministic bootstrap of best parameter return stream",
+    "paper_first": true,
+    "ranked_results": [
+      {
+        "max_drawdown": -0.1039331501549241,
+        "params": {
+          "lookback": 36
+        },
+        "rank": 1,
+        "score": -17.82816219300647,
+        "symbols_tested": 14,
+        "test_sharpe": -3.6814845462829537,
+        "test_total_return": -0.014024067268660567,
+        "total_return": -0.07366187580338823,
+        "trades_count": 57,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.013529485634737215,
+        "walk_forward_test_sharpe": -17.612443958635637
+      },
+      {
+        "max_drawdown": -0.13542670553854919,
+        "params": {
+          "lookback": 12
+        },
+        "rank": 2,
+        "score": -18.967043543619724,
+        "symbols_tested": 14,
+        "test_sharpe": -2.483141478519562,
+        "test_total_return": -0.01327243909446607,
+        "total_return": -0.11050508522616387,
+        "trades_count": 202,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.01662656274426925,
+        "walk_forward_test_sharpe": -18.696087762327743
+      },
+      {
+        "max_drawdown": -0.10673338946397104,
+        "params": {
+          "lookback": 24
+        },
+        "rank": 3,
+        "score": -19.172994727019496,
+        "symbols_tested": 14,
+        "test_sharpe": -9.15318933810044,
+        "test_total_return": -0.030145518870721477,
+        "total_return": -0.08119977298457004,
+        "trades_count": 120,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.015579028080146329,
+        "walk_forward_test_sharpe": -18.925018921065703
+      },
+      {
+        "max_drawdown": -0.18873714970852784,
+        "params": {
+          "lookback": 6
+        },
+        "rank": 4,
+        "score": -19.61942641630236,
+        "symbols_tested": 14,
+        "test_sharpe": -20.930960204822213,
+        "test_total_return": -0.07590198361920175,
+        "total_return": -0.18623830053391366,
+        "trades_count": 256,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.029072290398602447,
+        "walk_forward_test_sharpe": -19.154547982802303
+      },
+      {
+        "max_drawdown": -0.12443442150754058,
+        "params": {
+          "lookback": 18
+        },
+        "rank": 5,
+        "score": -24.290869362516407,
+        "symbols_tested": 14,
+        "test_sharpe": -17.14163533593461,
+        "test_total_return": -0.05264216102144492,
+        "total_return": -0.107863288389071,
+        "trades_count": 158,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.02206585069841534,
+        "walk_forward_test_sharpe": -23.953051980251306
+      }
+    ],
+    "slippage_bps": 2.0,
+    "walk_forward_method": "rolling chronological train/test windows",
+    "warnings": [
+      "Best parameter set has negative walk-forward/test Sharpe; reject until broader data proves otherwise.",
+      "Best parameter set is not consistent across walk-forward windows."
+    ]
+  },
+  "metrics": {
+    "bars_seen": 1431,
+    "best_max_drawdown": -0.1039331501549241,
+    "best_score": -17.82816219300647,
+    "best_test_sharpe": -3.6814845462829537,
+    "best_test_total_return": -0.014024067268660567,
+    "best_total_return": -0.07366187580338823,
+    "best_walk_forward_consistency": 0.0,
+    "best_walk_forward_test_return": -0.013529485634737215,
+    "best_walk_forward_test_sharpe": -17.612443958635637,
+    "grid_size": 5,
+    "monte_carlo": {
+      "p05_total_return": -0.07366187580339079,
+      "p50_total_return": -0.07366187580338979,
+      "p95_total_return": -0.07366187580338901,
+      "runs": 200,
+      "worst_drawdown_p05": -0.0927744339387998
+    },
+    "symbols_tested": 14,
+    "trades_count": 57,
+    "walk_forward": {
+      "folds": [
+        {
+          "fold": 1,
+          "test_end": 849,
+          "test_metrics": {
+            "average_bar_return": -5.4265172727767754e-05,
+            "bar_volatility": 0.00039272511478629485,
+            "bars": 212,
+            "max_drawdown": -0.011454776413617473,
+            "sharpe_estimate": -18.99605491949509,
+            "total_return": -0.011454776413617473,
+            "win_rate_by_bar": 0.08962264150943396
+          },
+          "test_start": 637,
+          "train_end": 637,
+          "train_metrics": {
+            "average_bar_return": -7.832102276576717e-05,
+            "bar_volatility": 0.0015055646806629273,
+            "bars": 637,
+            "max_drawdown": -0.06583442242983717,
+            "sharpe_estimate": -7.151708988798521,
+            "total_return": -0.049359685398037145,
+            "win_rate_by_bar": 0.054945054945054944
+          },
+          "train_start": 0
+        },
+        {
+          "fold": 2,
+          "test_end": 1061,
+          "test_metrics": {
+            "average_bar_return": -5.236694906562479e-05,
+            "bar_volatility": 0.0004522511205274949,
+            "bars": 212,
+            "max_drawdown": -0.012307654681158575,
+            "sharpe_estimate": -15.91873389239285,
+            "total_return": -0.011062141004842263,
+            "win_rate_by_bar": 0.06132075471698113
+          },
+          "test_start": 849,
+          "train_end": 849,
+          "train_metrics": {
+            "average_bar_return": -8.967629612429956e-05,
+            "bar_volatility": 0.0011603687796174717,
+            "bars": 637,
+            "max_drawdown": -0.05637303234459323,
+            "sharpe_estimate": -10.624598547929343,
+            "total_return": -0.05593573193878354,
+            "win_rate_by_bar": 0.05180533751962323
+          },
+          "train_start": 212
+        },
+        {
+          "fold": 3,
+          "test_end": 1273,
+          "test_metrics": {
+            "average_bar_return": -8.580227066395047e-05,
+            "bar_volatility": 0.0006581578273442932,
+            "bars": 212,
+            "max_drawdown": -0.020105844505864834,
+            "sharpe_estimate": -17.922543064018974,
+            "total_return": -0.01807153948575191,
+            "win_rate_by_bar": 0.08490566037735849
+          },
+          "test_start": 1061,
+          "train_end": 1061,
+          "train_metrics": {
+            "average_bar_return": -5.773974823970623e-05,
+            "bar_volatility": 0.0005606339599372571,
+            "bars": 637,
+            "max_drawdown": -0.041979252378132936,
+            "sharpe_estimate": -14.158798029953045,
+            "total_return": -0.03620962047619736,
+            "win_rate_by_bar": 0.059654631083202514
+          },
+          "train_start": 424
+        }
+      ],
+      "method": "rolling chronological train/test windows",
+      "summary": {
+        "average_test_return": -0.013529485634737215,
+        "average_test_sharpe": -17.612443958635637,
+        "fold_count": 3,
+        "positive_test_folds": 0,
+        "test_consistency": 0.0,
+        "worst_test_drawdown": -0.020105844505864834
+      }
+    }
+  },
+  "parameter_space": [
+    {
+      "lookback": 6
+    },
+    {
+      "lookback": 12
+    },
+    {
+      "lookback": 18
+    },
+    {
+      "lookback": 24
+    },
+    {
+      "lookback": 36
+    }
+  ],
+  "status": "completed",
+  "template": "momentum",
+  "timeframe": "5m"
+}

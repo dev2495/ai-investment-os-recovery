@@ -1,0 +1,28 @@
+{
+  "account_code": "tushit_3081282_statement",
+  "holdings_imported": 27,
+  "transactions_imported": 745,
+  "report_as_of": "2026-07-01 00:00:00+05:30",
+  "missing_first_buy_date_symbols": [
+    "EQUITASBNK",
+    "FAIRCHEMOR",
+    "ICICIBANK",
+    "IIFL-RE",
+    "IEX",
+    "ITCHOTELS",
+    "JIOFIN",
+    "KAMAHOLD",
+    "LAURUSLABS",
+    "NHPC",
+    "PDSL",
+    "PPLPHARMA",
+    "SAMHI",
+    "SGMART",
+    "SJS",
+    "SRESTHA",
+    "USHAMART",
+    "ZAGGLE"
+  ],
+  "market_value": "10766939.34",
+  "unrealized_pnl": "1926213.93"
+}

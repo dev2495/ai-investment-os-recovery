@@ -1,0 +1,74 @@
+{
+  "created": [
+    {
+      "average_pnl": 2300.0,
+      "idea_id": 5,
+      "idea_key": "journal_api_smoke_20260707_short_straddle_unknown_journal",
+      "idea_status": "research_queue",
+      "pattern_id": 2,
+      "pattern_key": "journal_api_smoke_20260707_short_straddle_unknown_journal_pattern",
+      "pattern_status": "research_queue",
+      "title": "Journal-mined short straddle pattern (NIFTY, unknown)",
+      "trade_count": 1,
+      "win_rate": 1.0
+    }
+  ],
+  "eligible_pattern_count": 1,
+  "generated_at": "2026-07-06T21:56:39.879065+00:00",
+  "live_execution_allowed": false,
+  "pattern_count": 1,
+  "patterns": [
+    {
+      "average_pnl": 2300.0,
+      "entry_notes": [
+        "NIFTY straddle - rough open\n\nSpot gapped up 0.5%. Theta caught on PE."
+      ],
+      "execution_mode": "journal",
+      "loss_count": 0,
+      "setup_type": "short_straddle",
+      "source_rows": [
+        {
+          "event_ts": "2026-05-13 14:45:48+00",
+          "evidence": {
+            "execution_quality": null,
+            "extracted_features": {
+              "__source_table": "app.journal",
+              "account_code": "personal",
+              "body": "Spot gapped up 0.5%. Theta caught on PE.",
+              "id": 1,
+              "pnl": 2300.0,
+              "rating": 3,
+              "strategy": "short_straddle",
+              "symbol": "NIFTY",
+              "tags": "weekly,opex",
+              "title": "NIFTY straddle - rough open",
+              "trade_id": null,
+              "ts": "2026-05-13 14:45:48"
+            },
+            "id": 1,
+            "market_condition": null,
+            "note_path": null,
+            "table": "trading.trade_journals"
+          },
+          "pnl": 2300,
+          "source_id": "1",
+          "source_kind": "journal",
+          "symbol": "NIFTY"
+        }
+      ],
+      "symbol": "NIFTY",
+      "symbols": [
+        "NIFTY"
+      ],
+      "timeframe": "unknown",
+      "total_pnl": 2300.0,
+      "trade_count": 1,
+      "win_count": 1,
+      "win_rate": 1.0
+    }
+  ],
+  "run_key": "journal_api_smoke_20260707",
+  "seed_data_allowed": false,
+  "source_row_count": 1,
+  "status": "completed"
+}

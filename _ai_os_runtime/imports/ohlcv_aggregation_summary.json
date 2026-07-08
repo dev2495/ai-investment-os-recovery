@@ -1,0 +1,32 @@
+{
+  "status": "ok",
+  "tick_profile": {
+    "tick_rows": 197595,
+    "tick_min_ts": "2026-05-14T03:52:30.638355+00:00",
+    "tick_max_ts": "2026-05-15T12:05:04.368837+00:00",
+    "symbol_count": 14
+  },
+  "ohlcv_aggregation": [
+    {
+      "timeframe": "1d",
+      "interval": "1 day",
+      "rows_upserted": 28
+    },
+    {
+      "timeframe": "1h",
+      "interval": "1 hour",
+      "rows_upserted": 168
+    },
+    {
+      "timeframe": "15m",
+      "interval": "15 minutes",
+      "rows_upserted": 504
+    },
+    {
+      "timeframe": "5m",
+      "interval": "5 minutes",
+      "rows_upserted": 1431
+    }
+  ],
+  "rows_upserted_total": 2131
+}

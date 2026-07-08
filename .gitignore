@@ -1,0 +1,40 @@
+.DS_Store
+.Spotlight-V100/
+.TemporaryItems/
+.Trashes/
+.fseventsd/
+.playwright-cli/
+.playwright-mcp/
+
+# Local runtime and secrets
+_ai_os_runtime/.env
+_ai_os_runtime/logs/
+_ai_os_runtime/run/
+_ai_os_runtime/docker_data/
+_ai_os_runtime/browser_profiles/
+_ai_os_runtime/obsidian_writeback/tmp/
+
+# Raw imports can contain client statements and broker exports.
+_ai_os_runtime/imports/quarantine/
+_ai_os_runtime/imports/raw/
+_ai_os_runtime/imports/**/*.xls
+_ai_os_runtime/imports/**/*.xlsx
+_ai_os_runtime/imports/**/*.csv
+_ai_os_runtime/imports/**/*.pdf
+
+# Build/dependency caches
+_ai_os_runtime/ai-office-ui/node_modules/
+_ai_os_runtime/ai-office-ui/dist/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Vendored component internals that are reproducible or too large for GitHub.
+_ai_os_runtime/external_components/**/.git/
+_ai_os_runtime/external_components/**/node_modules/
+_ai_os_runtime/external_components/FinceptTerminal/.qt/
+_ai_os_runtime/external_components/FinceptTerminal/.aqt-venv/
+_ai_os_runtime/external_components/FinceptTerminal/.aqt-cache/
+_ai_os_runtime/external_components/FinceptTerminal/.aqt-tmp/
+_ai_os_runtime/external_components/FinceptTerminal/fincept-qt/build/

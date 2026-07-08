@@ -1,0 +1,33 @@
+version: 1
+default_embedding:
+  provider: ollama
+  model: mxbai-embed-large
+  vector_size: 1024
+  distance: Cosine
+  notes: "Collection names include the embedding model family so future model changes can create parallel collections."
+
+collections:
+  - name: obsidian_notes_mxbai_embed_large
+    source: knowledge.obsidian_notes
+    purpose: Vault notes, maps of content, research notes, decisions, and workflows.
+
+  - name: corporate_filings_mxbai_embed_large
+    source: research.corporate_filings
+    purpose: NSE/BSE/global filings, announcements, and extracted filing text.
+
+  - name: trade_journals_mxbai_embed_large
+    source: trading.trade_journals
+    purpose: Old trade journals, setups, mistakes, screenshots, and extracted trade lessons.
+
+  - name: news_social_mxbai_embed_large
+    source: market.news_items, market.social_items
+    purpose: Curated news, global market context, and social/X research feed items.
+
+  - name: research_reports_mxbai_embed_large
+    source: research.ideas, portfolio.holding_theses
+    purpose: Investment memos, theses, valuation notes, idea writeups, and risk reviews.
+
+  - name: strategy_artifacts_mxbai_embed_large
+    source: strategy.strategy_candidates, strategy.backtest_runs
+    purpose: Strategy hypotheses, rules, backtest diagnostics, intraday signal lessons, and model validation output.
+

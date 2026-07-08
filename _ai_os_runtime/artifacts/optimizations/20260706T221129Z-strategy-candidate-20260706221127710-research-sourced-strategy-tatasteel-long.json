@@ -1,0 +1,437 @@
+{
+  "best_params": {
+    "threshold": 0.001,
+    "window": 6
+  },
+  "candidate": {
+    "activation_gate": "paper_first_backtest_required",
+    "candidate_key": "strategy-candidate-20260706221127710-research-sourced-strategy-tatasteel-long",
+    "id": 24,
+    "name": "Research-sourced strategy: TATASTEEL long idea"
+  },
+  "diagnostics": {
+    "cost_bps": 3.0,
+    "data_source": "trading.ohlcv",
+    "engine": "local_strategy_optimizer_v1",
+    "heatmap_rows": [
+      {
+        "max_drawdown": -0.01181621531645638,
+        "rank": 1,
+        "score": -32.88912922647238,
+        "test_return": -0.00307041235096428,
+        "test_sharpe": -22.622822845837096,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.00153520617548214,
+        "walk_forward_test_sharpe": -32.8614955153137,
+        "x_param": "window",
+        "x_value": 6,
+        "y_param": "threshold",
+        "y_value": 0.001
+      },
+      {
+        "max_drawdown": -0.01042780673405419,
+        "rank": 2,
+        "score": -32.88912922647238,
+        "test_return": -0.00307041235096428,
+        "test_sharpe": -22.622822845837096,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.00153520617548214,
+        "walk_forward_test_sharpe": -32.8614955153137,
+        "x_param": "window",
+        "x_value": 6,
+        "y_param": "threshold",
+        "y_value": 0.002
+      },
+      {
+        "max_drawdown": -0.004323733389525519,
+        "rank": 3,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 6,
+        "y_param": "threshold",
+        "y_value": 0.004
+      },
+      {
+        "max_drawdown": -0.009489713978409808,
+        "rank": 4,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 12,
+        "y_param": "threshold",
+        "y_value": 0.001
+      },
+      {
+        "max_drawdown": -0.009755454473652336,
+        "rank": 5,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 12,
+        "y_param": "threshold",
+        "y_value": 0.002
+      },
+      {
+        "max_drawdown": -0.004323733389525519,
+        "rank": 6,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 12,
+        "y_param": "threshold",
+        "y_value": 0.004
+      },
+      {
+        "max_drawdown": -0.007702434801725611,
+        "rank": 7,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 24,
+        "y_param": "threshold",
+        "y_value": 0.001
+      },
+      {
+        "max_drawdown": -0.008552572190969499,
+        "rank": 8,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 24,
+        "y_param": "threshold",
+        "y_value": 0.002
+      },
+      {
+        "max_drawdown": -0.002886870701281019,
+        "rank": 9,
+        "score": -99.0,
+        "test_return": 0.0,
+        "test_sharpe": null,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null,
+        "x_param": "window",
+        "x_value": 24,
+        "y_param": "threshold",
+        "y_value": 0.004
+      }
+    ],
+    "live_execution_allowed": false,
+    "monte_carlo_method": "deterministic bootstrap of best parameter return stream",
+    "paper_first": true,
+    "ranked_results": [
+      {
+        "max_drawdown": -0.01181621531645638,
+        "params": {
+          "threshold": 0.001,
+          "window": 6
+        },
+        "rank": 1,
+        "score": -32.88912922647238,
+        "symbols_tested": 1,
+        "test_sharpe": -22.622822845837096,
+        "test_total_return": -0.00307041235096428,
+        "total_return": -0.00990293896638228,
+        "trades_count": 8,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.00153520617548214,
+        "walk_forward_test_sharpe": -32.8614955153137
+      },
+      {
+        "max_drawdown": -0.01042780673405419,
+        "params": {
+          "threshold": 0.002,
+          "window": 6
+        },
+        "rank": 2,
+        "score": -32.88912922647238,
+        "symbols_tested": 1,
+        "test_sharpe": -22.622822845837096,
+        "test_total_return": -0.00307041235096428,
+        "total_return": -0.01042780673405419,
+        "trades_count": 6,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": -0.00153520617548214,
+        "walk_forward_test_sharpe": -32.8614955153137
+      },
+      {
+        "max_drawdown": -0.004323733389525519,
+        "params": {
+          "threshold": 0.004,
+          "window": 6
+        },
+        "rank": 3,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.004323733389525519,
+        "trades_count": 2,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      },
+      {
+        "max_drawdown": -0.009489713978409808,
+        "params": {
+          "threshold": 0.001,
+          "window": 12
+        },
+        "rank": 4,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.009489713978409808,
+        "trades_count": 6,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      },
+      {
+        "max_drawdown": -0.009755454473652336,
+        "params": {
+          "threshold": 0.002,
+          "window": 12
+        },
+        "rank": 5,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.00904531315903212,
+        "trades_count": 6,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      },
+      {
+        "max_drawdown": -0.004323733389525519,
+        "params": {
+          "threshold": 0.004,
+          "window": 12
+        },
+        "rank": 6,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.004323733389525519,
+        "trades_count": 2,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      },
+      {
+        "max_drawdown": -0.007702434801725611,
+        "params": {
+          "threshold": 0.001,
+          "window": 24
+        },
+        "rank": 7,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.007702434801725611,
+        "trades_count": 6,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      },
+      {
+        "max_drawdown": -0.008552572190969499,
+        "params": {
+          "threshold": 0.002,
+          "window": 24
+        },
+        "rank": 8,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.008552572190969499,
+        "trades_count": 6,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      },
+      {
+        "max_drawdown": -0.002886870701281019,
+        "params": {
+          "threshold": 0.004,
+          "window": 24
+        },
+        "rank": 9,
+        "score": -99.0,
+        "symbols_tested": 1,
+        "test_sharpe": null,
+        "test_total_return": 0.0,
+        "total_return": -0.002886870701281019,
+        "trades_count": 2,
+        "walk_forward_consistency": 0.0,
+        "walk_forward_test_return": 0.0,
+        "walk_forward_test_sharpe": null
+      }
+    ],
+    "slippage_bps": 2.0,
+    "walk_forward_method": "rolling chronological train/test windows",
+    "warnings": [
+      "Out-of-sample split is too small for production confidence.",
+      "Best parameter set has negative walk-forward/test Sharpe; reject until broader data proves otherwise.",
+      "Best parameter set is not consistent across walk-forward windows.",
+      "Trade count is low; Monte Carlo and walk-forward results are weak evidence.",
+      "OHLCV sample is thin; this run is a robustness pipeline proof."
+    ]
+  },
+  "metrics": {
+    "bars_seen": 102,
+    "best_max_drawdown": -0.01181621531645638,
+    "best_score": -32.88912922647238,
+    "best_test_sharpe": -22.622822845837096,
+    "best_test_total_return": -0.00307041235096428,
+    "best_total_return": -0.00990293896638228,
+    "best_walk_forward_consistency": 0.0,
+    "best_walk_forward_test_return": -0.00153520617548214,
+    "best_walk_forward_test_sharpe": -32.8614955153137,
+    "grid_size": 9,
+    "monte_carlo": {
+      "p05_total_return": -0.009902938966382613,
+      "p50_total_return": -0.009902938966382502,
+      "p95_total_return": -0.00990293896638228,
+      "runs": 200,
+      "worst_drawdown_p05": -0.012310307208798443
+    },
+    "symbols_tested": 1,
+    "trades_count": 8,
+    "walk_forward": {
+      "folds": [
+        {
+          "fold": 1,
+          "test_end": 65,
+          "test_metrics": {
+            "average_bar_return": 0.0,
+            "bar_volatility": 0.0,
+            "bars": 20,
+            "max_drawdown": 0.0,
+            "sharpe_estimate": null,
+            "total_return": 0.0,
+            "win_rate_by_bar": 0.0
+          },
+          "test_start": 45,
+          "train_end": 45,
+          "train_metrics": {
+            "average_bar_return": -0.0001525277088896961,
+            "bar_volatility": 0.0007566950046611042,
+            "bars": 45,
+            "max_drawdown": -0.008772738891335896,
+            "sharpe_estimate": -27.71142008046943,
+            "total_return": -0.006853569901090539,
+            "win_rate_by_bar": 0.06666666666666667
+          },
+          "train_start": 0
+        },
+        {
+          "fold": 2,
+          "test_end": 85,
+          "test_metrics": {
+            "average_bar_return": -0.00015353829803564363,
+            "bar_volatility": 0.0006423330969478945,
+            "bars": 20,
+            "max_drawdown": -0.00307041235096428,
+            "sharpe_estimate": -32.8614955153137,
+            "total_return": -0.00307041235096428,
+            "win_rate_by_bar": 0.05
+          },
+          "test_start": 65,
+          "train_end": 65,
+          "train_metrics": {
+            "average_bar_return": -0.00012843599246330984,
+            "bar_volatility": 0.0004887803150001521,
+            "bars": 45,
+            "max_drawdown": -0.005768668632623597,
+            "sharpe_estimate": -36.12467437971875,
+            "total_return": -0.005768668632623597,
+            "win_rate_by_bar": 0.044444444444444446
+          },
+          "train_start": 20
+        }
+      ],
+      "method": "rolling chronological train/test windows",
+      "summary": {
+        "average_test_return": -0.00153520617548214,
+        "average_test_sharpe": -32.8614955153137,
+        "fold_count": 2,
+        "positive_test_folds": 0,
+        "test_consistency": 0.0,
+        "worst_test_drawdown": -0.00307041235096428
+      }
+    }
+  },
+  "parameter_space": [
+    {
+      "threshold": 0.001,
+      "window": 6
+    },
+    {
+      "threshold": 0.002,
+      "window": 6
+    },
+    {
+      "threshold": 0.004,
+      "window": 6
+    },
+    {
+      "threshold": 0.001,
+      "window": 12
+    },
+    {
+      "threshold": 0.002,
+      "window": 12
+    },
+    {
+      "threshold": 0.004,
+      "window": 12
+    },
+    {
+      "threshold": 0.001,
+      "window": 24
+    },
+    {
+      "threshold": 0.002,
+      "window": 24
+    },
+    {
+      "threshold": 0.004,
+      "window": 24
+    }
+  ],
+  "status": "completed",
+  "template": "breakout",
+  "timeframe": "5m"
+}

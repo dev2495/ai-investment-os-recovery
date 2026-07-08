@@ -1,0 +1,7298 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import hashlib
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
+VAULT_ROOT = RUNTIME_ROOT.parent
+POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
+POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
+API_HOST = os.environ.get("AI_OS_API_HOST", "127.0.0.1")
+API_PORT = int(os.environ.get("AI_OS_API_PORT", "8765"))
+PSQL_BIN = os.environ.get("AI_OS_PSQL_BIN", "/opt/homebrew/opt/postgresql@15/bin/psql")
+DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/usr/local/bin/docker")
+QDRANT_BASE_URL = os.environ.get("AI_OS_QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
+OLLAMA_BASE_URL = os.environ.get("AI_OS_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "mxbai-embed-large")
+CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "always_on_daily_driver")
+DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
+PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
+
+QDRANT_COLLECTIONS = [
+    "obsidian_notes_mxbai_embed_large",
+    "research_reports_mxbai_embed_large",
+    "strategy_artifacts_mxbai_embed_large",
+    "trade_journals_mxbai_embed_large",
+    "corporate_filings_mxbai_embed_large",
+    "news_social_mxbai_embed_large",
+]
+
+
+def slug_for_text(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "-", value.strip()).strip("-").lower()
+    return cleaned[:80] or "agent-message"
+
+
+def sql_literal(value: object) -> str:
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("\x00", "").replace("'", "''") + "'"
+
+
+def sql_jsonb(value: object) -> str:
+    payload = {} if value is None else value
+    return f"{sql_literal(json.dumps(payload, sort_keys=True, default=str))}::jsonb"
+
+
+def sql_text_array(values: object) -> str:
+    if values is None:
+        return "ARRAY[]::text[]"
+    if isinstance(values, str):
+        items = [item.strip() for item in values.split(",") if item.strip()]
+    elif isinstance(values, list):
+        items = [str(item).strip() for item in values if str(item).strip()]
+    else:
+        items = []
+    if not items:
+        return "ARRAY[]::text[]"
+    return "ARRAY[" + ",".join(sql_literal(item) for item in items) + "]::text[]"
+
+
+def sql_numeric(value: object, *, required: bool = False, field_name: str = "value") -> str:
+    if value is None or str(value).strip() == "":
+        if required:
+            raise ValueError(f"{field_name} is required")
+        return "NULL"
+    try:
+        return str(Decimal(str(value).replace(",", "").strip()))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must be numeric") from exc
+
+
+def first_present(*values: object) -> object:
+    for value in values:
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def psql_command_candidates() -> list[list[str]]:
+    return [
+        [
+            PSQL_BIN,
+            "-h",
+            "127.0.0.1",
+            "-p",
+            POSTGRES_PORT,
+            "-q",
+            "-t",
+            "-A",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            "ai_os",
+            "-d",
+            "ai_os",
+        ],
+        [
+            DOCKER_BIN,
+            "exec",
+            "-i",
+            "ai_os_postgres",
+            "psql",
+            "-q",
+            "-t",
+            "-A",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            "ai_os",
+            "-d",
+            "ai_os",
+        ],
+    ]
+
+
+def run_psql_text(sql: str) -> str:
+    errors: list[tuple[str, str]] = []
+    env = os.environ.copy()
+    env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
+    for command in psql_command_candidates():
+        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        if completed.returncode == 0:
+            return completed.stdout.strip()
+        errors.append((command[0], (completed.stderr or completed.stdout).strip()))
+    joined_errors = " | ".join(f"{source}: {error}" for source, error in errors)
+    raise RuntimeError(joined_errors)
+
+
+def run_psql_json(query: str) -> list[dict]:
+    sql = f"SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text FROM ({query}) result_rows;"
+    output = run_psql_text(sql)
+    return json.loads(output or "[]")
+
+
+def run_psql_json_object(queries: dict[str, str]) -> dict[str, list[dict]]:
+    ctes: list[str] = []
+    rows: list[str] = []
+    for index, (name, query) in enumerate(queries.items()):
+        alias = f"q_{index}"
+        ctes.append(
+            f"""
+            {alias} AS (
+                SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
+                FROM ({query}) result_rows
+            )
+            """
+        )
+        rows.append(f"SELECT {sql_literal(name)} AS key, (SELECT payload::jsonb FROM {alias}) AS value")
+    sql = f"""
+    WITH {','.join(ctes)},
+    payload_rows AS (
+        {' UNION ALL '.join(rows)}
+    )
+    SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb)::text
+    FROM payload_rows;
+    """
+    output = run_psql_text(sql)
+    payload = json.loads(output or "{}")
+    return {key: (value if isinstance(value, list) else []) for key, value in payload.items()}
+
+
+def run_psql_json_statement(sql: str) -> list[dict]:
+    output = run_psql_text(sql)
+    return json.loads(output or "[]")
+
+
+def safe_query(name: str, query: str, issues: list[dict]) -> list[dict]:
+    try:
+        return run_psql_json(query)
+    except Exception as exc:  # noqa: BLE001
+        issues.append({"section": name, "error": f"{type(exc).__name__}: {exc}"})
+        return []
+
+
+def probe_tradingview_cdp() -> dict:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=1.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return {
+            "available": True,
+            "port": 9222,
+            "browser": payload.get("Browser"),
+            "user_agent": payload.get("User-Agent"),
+        }
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "port": 9222,
+            "error": str(exc),
+            "next_action": "Relaunch TradingView Desktop with --remote-debugging-port=9222 before desktop MCP control.",
+        }
+
+
+def http_json(method: str, url: str, payload: object | None = None, timeout: float = 10) -> dict:
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def ollama_tags() -> list[dict]:
+    try:
+        payload = http_json("GET", f"{OLLAMA_BASE_URL}/api/tags", timeout=5.0)
+        models = payload.get("models")
+        return models if isinstance(models, list) else []
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return []
+
+
+def ollama_model_available(model_name: str) -> bool:
+    normalized = model_name.split(":", 1)[0]
+    for model in ollama_tags():
+        name = str(model.get("name") or "")
+        model_base = name.split(":", 1)[0]
+        if name == model_name or model_base == normalized:
+            return True
+    return False
+
+
+def ollama_embed(text: str) -> list[float] | None:
+    try:
+        payload = http_json(
+            "POST",
+            f"{OLLAMA_BASE_URL}/api/embed",
+            {"model": EMBEDDING_MODEL, "input": text[:4000], "truncate": True, "keep_alive": "10m"},
+            timeout=30,
+        )
+        embeddings = payload.get("embeddings")
+        vector = embeddings[0] if isinstance(embeddings, list) and embeddings else payload.get("embedding")
+        if isinstance(vector, list) and vector:
+            return [float(item) for item in vector]
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
+        return None
+    return None
+
+
+def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+    if not ollama_model_available(model_name):
+        return None, "model_unavailable"
+    try:
+        payload = http_json(
+            "POST",
+            f"{OLLAMA_BASE_URL}/api/chat",
+            {
+                "model": model_name,
+                "stream": False,
+                "think": False,
+                "keep_alive": "10m",
+                "options": {
+                    "num_ctx": 4096,
+                    "num_predict": 220,
+                    "temperature": 0.2,
+                    "top_p": 0.85,
+                },
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Charlie Munger, the main orchestrator for a private AI portfolio office. "
+                            "Be direct, evidence-first, risk-aware, and concise. Never invent market facts. "
+                            "When data is missing, say what evidence is missing and route the next action. "
+                            "Do not include hidden reasoning or chain-of-thought."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            },
+            timeout=180,
+        )
+        message = payload.get("message") if isinstance(payload, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        return str(content).strip() if content else None, "called"
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return None, f"call_failed:{type(exc).__name__}"
+
+
+def qdrant_search(message: str, limit_per_collection: int = 3) -> tuple[list[dict], str]:
+    vector = ollama_embed(message)
+    if vector is None:
+        return [], "embedding_model_unavailable"
+    hits: list[dict] = []
+    for collection in QDRANT_COLLECTIONS:
+        try:
+            payload = http_json(
+                "POST",
+                f"{QDRANT_BASE_URL}/collections/{collection}/points/search",
+                {"vector": vector, "limit": limit_per_collection, "with_payload": True},
+                timeout=12,
+            )
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            continue
+        for item in payload.get("result", []):
+            point_payload = item.get("payload") or {}
+            hits.append(
+                {
+                    "collection": collection,
+                    "score": item.get("score"),
+                    "title": point_payload.get("title"),
+                    "source_table": point_payload.get("source_table"),
+                    "source_id": point_payload.get("source_id"),
+                    "preview": point_payload.get("text_preview"),
+                }
+            )
+    hits.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
+    return hits[:8], "ok"
+
+
+def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
+    try:
+        run_psql_text(
+            f"""
+            WITH audit AS (
+                INSERT INTO agent.mcp_audit_log (
+                    tool_name, action_type, permission_level, actor, status,
+                    target_table, target_id, request_payload, result_payload
+                )
+                VALUES (
+                    {sql_literal(tool_name)}, {sql_literal(action_type)}, 'api_write',
+                    {sql_literal(actor)}, 'success', {sql_literal(target_table)}, NULL,
+                    {sql_jsonb(request)}, {sql_jsonb(result)}
+                )
+                RETURNING id
+            )
+            SELECT id FROM audit
+            """
+        )
+    except Exception:
+        pass
+
+
+def build_snapshot() -> dict:
+    issues: list[dict] = []
+    queries = {
+        "metrics": "SELECT metric, value FROM core.v_control_plane_snapshot ORDER BY metric",
+        "modules": """
+            SELECT module_key, module_name, category, status, priority, owner_agent,
+                   ui_workspace, description, warehouse_objects, mcp_tools, fincept_component,
+                   next_action, updated_at
+            FROM core.v_control_plane_overview
+            ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, module_name
+        """,
+        "blueprint_v9_summary": """
+            SELECT metric, value, interpretation
+            FROM core.v_os_blueprint_v9_summary
+            ORDER BY metric
+        """,
+        "blueprint_v9_domains": """
+            SELECT domain_key, section_number, domain_name, domain_type, owner_agent,
+                   owner_department, priority, status, objective, primary_workspace,
+                   requirement_count, done_count, partial_count, planned_count,
+                   blocked_count, mapped_count, progress_score, next_action
+            FROM core.v_os_blueprint_v9_domains
+            ORDER BY section_number
+        """,
+        "blueprint_v9_requirements": """
+            SELECT requirement_key, requirement_name, requirement_type, priority,
+                   current_status, owner_agent, owner_department, domain_key,
+                   domain_name, section_number, domain_type, primary_workspace,
+                   mapped_object_type, mapped_object_key, mapped_object_status,
+                   mapped_object_found, evidence_note_path, acceptance_criteria,
+                   next_action, metadata, updated_at
+            FROM core.v_os_blueprint_v9_requirements
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                CASE current_status WHEN 'planned' THEN 1 WHEN 'partial' THEN 2 WHEN 'blocked' THEN 3 WHEN 'done' THEN 4 ELSE 5 END,
+                section_number,
+                requirement_key
+            LIMIT 120
+        """,
+        "data_sources": """
+            SELECT source_key, source_name, source_type, provider, connection_mode, status,
+                   freshness_target_minutes, last_seen_at, owner_agent, sensitivity,
+                   source_location, source_system_status, notes, metadata, updated_at
+            FROM core.v_data_source_registry
+            ORDER BY source_key
+        """,
+        "strategies": """
+            SELECT strategy_key, strategy_name, strategy_family, timeframe, universe, status,
+                   live_mode, data_dependencies, owner_agent, risk_level, paper_first,
+                   approval_required, fincept_component, notes, updated_at
+            FROM strategy.v_strategy_registry
+            ORDER BY CASE risk_level WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, strategy_name
+        """,
+        "strategy_intakes": """
+            SELECT id, intake_key, created_by, strategy_name, strategy_family,
+                   asset_class, symbols, universe, timeframe, intent_tags,
+                   status, owner_agent, assigned_agents, source_kind, source_ref,
+                   generated_ideas, strategy_candidates, created_at, updated_at
+            FROM strategy.v_strategy_intake_queue
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "generated_strategy_ideas": """
+            SELECT id, idea_key, title, idea_type, symbols, universe, timeframe,
+                   thesis, edge_hypothesis, status, priority_score, risk_score,
+                   owner_agent, created_at, intake_key, intake_strategy_name
+            FROM strategy.v_generated_ideas
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "strategy_arsenal_queue": """
+            SELECT candidate_id, candidate_key, strategy_name, candidate_status,
+                   validation_status, activation_gate, owner_agent, universe,
+                   timeframe, intake_id, intake_key, created_by, strategy_family,
+                   asset_class, symbols, idea_id, idea_key, edge_hypothesis,
+                   backtest_runs, optimization_runs, validation_reviews,
+                   open_tasks, latest_task_at, created_at, updated_at
+            FROM strategy.v_strategy_arsenal_queue
+            LIMIT 50
+        """,
+        "strategy_arsenal_summary": """
+            SELECT metric, value, interpretation
+            FROM strategy.v_strategy_arsenal_summary
+            ORDER BY metric
+        """,
+        "strategy_backtest_runs": """
+            SELECT br.id, br.strategy_id, coalesce(sc.candidate_key, 'candidate_' || sc.id::TEXT) AS candidate_key,
+                   sc.name AS strategy_name, br.run_status, br.data_start, br.data_end,
+                   br.universe, br.timeframe, br.metrics, br.diagnostics,
+                   br.artifact_path, br.started_at, br.finished_at
+            FROM strategy.backtest_runs br
+            LEFT JOIN strategy.strategy_candidates sc ON sc.id = br.strategy_id
+            ORDER BY br.finished_at DESC NULLS LAST, br.started_at DESC
+            LIMIT 50
+        """,
+        "strategy_rule_specs": """
+            SELECT id, candidate_id, candidate_key, strategy_name, spec_source,
+                   parser_version, parse_status, parse_errors, symbols,
+                   timeframe, template, normalized_rules, created_by,
+                   created_at, updated_at
+            FROM strategy.v_strategy_rule_specs
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 50
+        """,
+        "strategy_data_quality_gates": """
+            SELECT id, gate_key, candidate_id, candidate_key, strategy_name,
+                   timeframe, requested_symbols, matched_symbols, missing_symbols,
+                   min_rows_per_symbol, min_total_rows, total_rows, min_symbol_rows,
+                   max_symbol_rows, first_ts, last_ts, status, severity, reasons,
+                   created_by, created_at
+            FROM strategy.v_backtest_data_quality_gates
+            ORDER BY created_at DESC, id DESC
+            LIMIT 50
+        """,
+        "strategy_dsl_readiness": """
+            SELECT candidate_id, candidate_key, strategy_name, candidate_status,
+                   candidate_timeframe, universe, parse_status, parse_errors,
+                   template, symbols, gate_key, data_quality_status,
+                   data_quality_severity, data_quality_reasons, total_rows,
+                   min_symbol_rows, max_symbol_rows, first_ts, last_ts, updated_at
+            FROM strategy.v_strategy_dsl_readiness_summary
+            ORDER BY updated_at DESC, candidate_id DESC
+            LIMIT 50
+        """,
+        "strategy_optimization_runs": """
+            SELECT opt.id, opt.strategy_id, coalesce(sc.candidate_key, 'candidate_' || sc.id::TEXT) AS candidate_key,
+                   sc.name AS strategy_name, opt.backtest_run_id, opt.run_name,
+                   opt.optimizer_type, opt.status, opt.objective, opt.parameter_space,
+                   opt.constraints, opt.metrics, opt.diagnostics, opt.artifact_path,
+                   opt.owner_agent, opt.started_at, opt.finished_at, opt.created_at
+            FROM strategy.optimization_runs opt
+            LEFT JOIN strategy.strategy_candidates sc ON sc.id = opt.strategy_id
+            ORDER BY opt.finished_at DESC NULLS LAST, opt.started_at DESC
+            LIMIT 50
+        """,
+        "user_defined_optimizer_runs": """
+            SELECT id, run_key, strategy_name, intake_id, intake_key,
+                   candidate_id, candidate_key, candidate_name, backtest_run_id,
+                   optimization_run_id, status, current_stage, requested_template,
+                   requested_timeframe, requested_symbols, stage_results,
+                   failure_reason, artifact_path, created_by, started_at,
+                   finished_at, created_at, broker_order_allowed,
+                   autonomous_live_execution_allowed
+            FROM strategy.v_user_defined_optimizer_runs
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "strategy_discovery_runs": """
+            SELECT id, run_key, status, source_scope, discovered_count,
+                   generated_idea_count, optimizer_routed_count, summary,
+                   artifact_path, created_by, started_at, finished_at, created_at
+            FROM strategy.v_strategy_discovery_runs
+            ORDER BY created_at DESC
+            LIMIT 30
+        """,
+        "strategy_discovery_candidates": """
+            SELECT id, run_key, discovery_key, source_kind, source_ref, title,
+                   symbols, universe, timeframe, template, thesis, catalyst,
+                   priority_score, risk_score, route_to_optimizer,
+                   generated_idea_id, idea_key, generated_idea_status,
+                   optimizer_run_id, optimizer_run_key, optimizer_status,
+                   optimizer_candidate_id, backtest_run_id, optimization_run_id,
+                   research_gate, next_required_action, status, created_at,
+                   broker_order_allowed, autonomous_live_execution_allowed
+            FROM strategy.v_strategy_discovery_candidates
+            ORDER BY created_at DESC, priority_score DESC NULLS LAST
+            LIMIT 100
+        """,
+        "strategy_discovery_triage_queue": """
+            SELECT id, run_key, discovery_key, source_kind, source_ref, title,
+                   symbols, universe, timeframe, template, thesis, catalyst,
+                   priority_score, risk_score, route_to_optimizer,
+                   generated_idea_id, idea_key, generated_idea_status,
+                   optimizer_run_id, optimizer_run_key, optimizer_status,
+                   optimizer_candidate_id, backtest_run_id, optimization_run_id,
+                   research_gate, next_required_action, discovery_status,
+                   triage_decision, triage_status, routed_to_agent,
+                   inbox_item_id, approval_id, committee_review_id,
+                   decision_notes, decided_by, triaged_at,
+                   recommended_triage_action, broker_order_allowed,
+                   autonomous_live_execution_allowed, created_at
+            FROM strategy.v_strategy_discovery_triage_queue
+            ORDER BY
+                CASE WHEN triage_decision = 'unreviewed' THEN 0 ELSE 1 END,
+                priority_score DESC NULLS LAST,
+                created_at DESC
+            LIMIT 100
+        """,
+        "strategy_discovery_triage_decisions": """
+            SELECT id, discovery_candidate_id, discovery_key, title, source_kind,
+                   symbols, generated_idea_id, optimizer_run_id, decision,
+                   decision_status, routed_to_agent, inbox_item_id, inbox_status,
+                   approval_id, approval_status, committee_review_id,
+                   committee_review_status, committee_recommended_decision,
+                   decision_notes, decided_by, created_at,
+                   broker_order_allowed, autonomous_live_execution_allowed
+            FROM strategy.v_strategy_discovery_triage_decisions
+            ORDER BY created_at DESC, id DESC
+            LIMIT 80
+        """,
+        "strategy_idea_dossiers": """
+            SELECT id, dossier_key, title, canonical_title, source_kind, source_ref,
+                   symbols, universe, timeframe, template, status,
+                   latest_triage_decision, recommended_next_action,
+                   discovery_count, generated_idea_count, optimizer_run_count,
+                   triage_decision_count, committee_review_count,
+                   inbox_item_count, priority_score, risk_score, first_seen_at,
+                   last_seen_at, latest_triaged_at, summary, evidence_timeline,
+                   note_path, qdrant_index_status, broker_order_allowed,
+                   autonomous_live_execution_allowed, updated_at
+            FROM strategy.v_idea_dossiers
+            ORDER BY updated_at DESC, priority_score DESC NULLS LAST
+            LIMIT 80
+        """,
+        "strategy_idea_dossier_build_runs": """
+            SELECT id, run_key, status, dossiers_seen, dossiers_upserted,
+                   links_upserted, notes_written, qdrant_index_requested,
+                   summary, error_message, started_at, finished_at,
+                   duration_ms, created_by, created_at
+            FROM strategy.v_idea_dossier_build_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 30
+        """,
+        "strategy_idea_dossier_search_runs": """
+            SELECT id, run_key, query_text, status, search_mode,
+                   embedding_model, qdrant_available, fallback_used,
+                   match_count, results, error_message, started_at,
+                   finished_at, duration_ms, created_by, created_at
+            FROM strategy.v_idea_dossier_search_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 30
+        """,
+        "strategy_idea_dossier_actions": """
+            SELECT id, dossier_id, dossier_key, dossier_title, symbols,
+                   dossier_status, action_key, action_type, status,
+                   target_agent, target_table, target_id, output_payload,
+                   error_message, created_by, created_at,
+                   broker_order_allowed, autonomous_live_execution_allowed
+            FROM strategy.v_idea_dossier_actions
+            ORDER BY created_at DESC, id DESC
+            LIMIT 50
+        """,
+        "strategy_discovery_scheduler_runs": """
+            SELECT id, job_key, run_key, status, scheduler_interval_seconds,
+                   adapter_summary, discovery_run_key, discovery_status,
+                   discovered_count, generated_idea_count, optimizer_routed_count,
+                   error_message, started_at, finished_at, duration_ms,
+                   next_run_after, minutes_since_finished, created_by, created_at
+            FROM strategy.v_strategy_discovery_scheduler_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 30
+        """,
+        "news_ingestion_runs": """
+            SELECT id, run_key, status, feed_keys, feeds_checked, items_seen,
+                   items_upserted, research_ideas_created, inbox_items_created,
+                   sample_payload, error_message, started_at, finished_at,
+                   duration_ms, created_by, created_at
+            FROM market.v_news_ingestion_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 30
+        """,
+        "latest_news_items": """
+            SELECT id, source_name, source_url, title, publisher, published_at,
+                   captured_at, symbols, topics, geography, sentiment,
+                   relevance_score, raw_payload
+            FROM market.v_latest_news_items
+            ORDER BY coalesce(published_at, captured_at) DESC, id DESC
+            LIMIT 80
+        """,
+        "strategy_quant_analytics_runs": """
+            SELECT id, run_key, run_name, strategy_ids, timeframe, status,
+                   metrics, diagnostics, quality_flags, artifact_path,
+                   created_by, started_at, finished_at, regime_rows,
+                   factor_rows, capacity_rows, correlation_rows, optimizer_rows
+            FROM strategy.v_quant_analytics_runs
+            ORDER BY finished_at DESC NULLS LAST, started_at DESC
+            LIMIT 20
+        """,
+        "strategy_regime_performance": """
+            SELECT id, analytics_run_id, run_key, strategy_id, candidate_key,
+                   strategy_name, regime_type, regime_label, bars,
+                   total_return, average_return, volatility, win_rate,
+                   max_drawdown, diagnostics, created_at
+            FROM strategy.v_regime_performance_splits
+            ORDER BY created_at DESC, strategy_name, regime_label
+            LIMIT 80
+        """,
+        "strategy_factor_attribution": """
+            SELECT id, analytics_run_id, run_key, strategy_id, candidate_key,
+                   strategy_name, factor_name, exposure, contribution,
+                   method, diagnostics, created_at
+            FROM strategy.v_factor_attribution
+            ORDER BY created_at DESC, strategy_name, factor_name
+            LIMIT 80
+        """,
+        "strategy_capacity_liquidity": """
+            SELECT id, analytics_run_id, run_key, strategy_id, candidate_key,
+                   strategy_name, symbol, timeframe, bars, average_volume,
+                   average_traded_value, participation_rate, capacity_notional,
+                   liquidity_status, diagnostics, created_at
+            FROM strategy.v_capacity_liquidity_checks
+            ORDER BY created_at DESC, strategy_name, symbol
+            LIMIT 80
+        """,
+        "strategy_correlation_matrix": """
+            SELECT id, analytics_run_id, run_key, strategy_id_a, candidate_key_a,
+                   strategy_name_a, strategy_id_b, candidate_key_b,
+                   strategy_name_b, correlation, overlap_bars, diagnostics,
+                   created_at
+            FROM strategy.v_strategy_correlation_matrix
+            ORDER BY created_at DESC, strategy_name_a, strategy_name_b
+            LIMIT 120
+        """,
+        "strategy_portfolio_optimizer_runs": """
+            SELECT id, analytics_run_id, run_key, optimizer_method,
+                   candidate_count, weights, expected_return,
+                   expected_volatility, sharpe_proxy, constraints,
+                   diagnostics, status, created_by, created_at
+            FROM strategy.v_strategy_portfolio_optimizer_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "strategy_portfolio_allocation_runs": """
+            SELECT id, allocation_key, analytics_run_id, analytics_run_key,
+                   optimizer_run_id, capital_base, timeframe, status,
+                   allocation_method, expected_return, expected_volatility,
+                   expected_max_drawdown, allocation_payload, constraints,
+                   diagnostics, quality_flags, artifact_path, created_by,
+                   created_at, allocation_rows, ruin_metric_rows
+            FROM strategy.v_strategy_portfolio_allocation_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "strategy_portfolio_allocations": """
+            SELECT id, allocation_run_id, allocation_key, analytics_run_id,
+                   analytics_run_key, strategy_id, candidate_key, strategy_name,
+                   target_weight, target_notional, expected_return,
+                   expected_volatility, risk_contribution, allocation_status,
+                   diagnostics, created_at
+            FROM strategy.v_strategy_portfolio_allocations
+            ORDER BY created_at DESC, target_weight DESC
+            LIMIT 80
+        """,
+        "strategy_probability_of_ruin": """
+            SELECT id, allocation_run_id, allocation_key, analytics_run_id,
+                   analytics_run_key, strategy_id, candidate_key, strategy_name,
+                   metric_scope, horizon_bars, simulation_count, starting_capital,
+                   ruin_threshold_pct, ruin_probability, expected_terminal_value,
+                   terminal_p05, terminal_p50, terminal_p95, max_drawdown_p95,
+                   method, diagnostics, quality_flags, created_by, created_at
+            FROM strategy.v_probability_of_ruin_metrics
+            ORDER BY created_at DESC, metric_scope, strategy_name
+            LIMIT 80
+        """,
+        "strategy_retirement_queue": """
+            SELECT id, review_key, strategy_id, candidate_key, strategy_name,
+                   analytics_run_id, analytics_run_key, allocation_run_id,
+                   allocation_key, optimizer_run_id, review_status,
+                   recommended_action, severity, trigger_source,
+                   trigger_reasons, assigned_agents, evidence, decision_notes,
+                   human_decision, decided_by, decided_at, created_by,
+                   created_at, updated_at, open_assignments,
+                   completed_assignments, total_assignments
+            FROM strategy.v_strategy_retirement_queue
+            ORDER BY created_at DESC, severity DESC, review_key
+            LIMIT 80
+        """,
+        "quant_specialist_assignments": """
+            SELECT id, assignment_key, review_id, review_key, strategy_id,
+                   candidate_key, strategy_name, analytics_run_id,
+                   analytics_run_key, allocation_run_id, allocation_key,
+                   specialist_agent, specialist_title, character_name,
+                   office_location, assignment_type, status, priority,
+                   input_payload, output_payload, findings,
+                   recommended_action, evidence, due_at, completed_at,
+                   created_by, created_at, updated_at
+            FROM strategy.v_quant_specialist_assignments
+            ORDER BY created_at DESC, priority DESC, specialist_agent
+            LIMIT 120
+        """,
+        "quant_lab_dashboard_v2": """
+            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
+                   timeframe, validation_status, activation_gate, parse_status,
+                   data_quality_status, data_quality_reasons, allocation_key,
+                   target_weight, target_notional, expected_return,
+                   expected_volatility, risk_contribution, allocation_status,
+                   ruin_probability, max_drawdown_p95, ruin_quality_flags,
+                   review_key, review_status, recommended_action, severity,
+                   trigger_reasons, assigned_agents, open_assignments,
+                   total_assignments, updated_at
+            FROM strategy.v_quant_lab_dashboard_v2
+            ORDER BY updated_at DESC, strategy_id DESC
+            LIMIT 80
+        """,
+        "model_validation_dashboard": """
+            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
+                   validation_status, activation_gate, timeframe, parse_status,
+                   data_quality_status, data_quality_reasons,
+                   latest_backtest_run_id, latest_backtest_status,
+                   latest_optimization_run_id, latest_optimization_status,
+                   validation_review_id, validation_key, reviewer_agent,
+                   review_status, decision, leakage_risk, overfit_risk,
+                   required_fixes, issues, validation_gate_status,
+                   validation_gate_reason, retirement_review_key,
+                   retirement_recommended_action, retirement_severity,
+                   retirement_trigger_reasons, live_execution_allowed, updated_at
+            FROM strategy.v_model_validation_dashboard
+            ORDER BY updated_at DESC, strategy_id DESC
+            LIMIT 80
+        """,
+        "strategy_promotion_board": """
+            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
+                   validation_status, activation_gate, parse_status,
+                   data_quality_status, latest_backtest_run_id,
+                   latest_optimization_run_id, validation_review_id,
+                   validation_gate_status, validation_gate_reason,
+                   validation_decision, required_fixes,
+                   retirement_recommended_action, retirement_trigger_reasons,
+                   committee_review_id, committee_review_key,
+                   committee_review_status, committee_recommended_decision,
+                   committee_proposed_mode, committee_decision_status,
+                   paper_monitor_allowed, committee_live_execution_allowed,
+                   paper_monitor_session_id, paper_monitor_session_key,
+                   paper_monitor_status, paper_heartbeat_status,
+                   paper_last_heartbeat_at, limited_live_request_id,
+                   limited_live_request_key, limited_live_request_status,
+                   limited_live_approval_status, max_notional,
+                   max_daily_loss, limited_live_execution_allowed,
+                   promotion_stage, next_required_action,
+                   broker_order_allowed, autonomous_live_execution_allowed,
+                   updated_at
+            FROM strategy.v_strategy_promotion_board
+            ORDER BY updated_at DESC, strategy_id DESC
+            LIMIT 80
+        """,
+        "trade_journal_mining_runs": """
+            SELECT id, run_key, source_scope, min_trades, status,
+                   generated_idea_count, candidate_pattern_count, summary,
+                   artifact_path, created_by, started_at, finished_at, created_at
+            FROM strategy.v_trade_journal_mining_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "trade_journal_strategy_patterns": """
+            SELECT id, run_key, pattern_key, pattern_type, symbol, setup_type,
+                   timeframe, execution_mode, trade_count, win_count, loss_count,
+                   total_pnl, average_pnl, win_rate, idea_id, idea_key,
+                   idea_title, idea_status, candidate_key, thesis,
+                   edge_hypothesis, status, created_at
+            FROM strategy.v_trade_journal_strategy_patterns
+            ORDER BY created_at DESC, trade_count DESC, average_pnl DESC NULLS LAST
+            LIMIT 80
+        """,
+        "trade_journal_idea_dashboard": """
+            SELECT id, run_key, pattern_key, symbol, setup_type, timeframe,
+                   execution_mode, trade_count, win_rate, average_pnl,
+                   status, idea_key, idea_title, idea_status, research_gate,
+                   next_required_action, broker_order_allowed,
+                   autonomous_live_execution_allowed, created_at
+            FROM strategy.v_trade_journal_idea_generator_dashboard
+            LIMIT 80
+        """,
+        "strategy_committee_queue": """
+            SELECT id, review_key, strategy_id, strategy_name, backtest_run_id,
+                   optimization_run_id, validation_review_id, approval_id,
+                   review_status, recommended_decision, proposed_mode, risk_level,
+                   committee_members, required_evidence, kill_switch_rules,
+                   risk_summary, decision_notes, final_decision, decision_status,
+                   paper_monitor_allowed, live_execution_allowed, decision_payload,
+                   memo_note_path, memo_status, memo_generated_at, approval_status,
+                   decided_by, decided_at, latest_decision_id, latest_decision,
+                   latest_decision_at, created_by, created_at, updated_at
+            FROM strategy.v_strategy_committee_queue
+            LIMIT 50
+        """,
+        "strategy_paper_monitors": """
+            SELECT id, session_key, strategy_id, strategy_name, candidate_key,
+                   instance_id, instance_name, committee_review_id,
+                   committee_decision_id, status, monitor_mode, owner_agent,
+                   started_by, stopped_by, started_at, stopped_at,
+                   last_heartbeat_at, heartbeat_status, is_stale,
+                   live_execution_allowed, max_stale_minutes, kill_switch_rules,
+                   metrics, latest_event_id, latest_event_type,
+                   latest_event_status, latest_event_at, total_events,
+                   heartbeat_events, notes, created_at, updated_at
+            FROM strategy.v_paper_monitor_sessions
+            LIMIT 50
+        """,
+        "strategy_paper_monitor_events": """
+            SELECT id, session_id, session_key, strategy_id, strategy_name,
+                   event_type, event_status, symbol, timeframe, signal_count,
+                   metrics, payload, created_by, created_at
+            FROM strategy.v_paper_monitor_events
+            LIMIT 50
+        """,
+        "strategy_drift_checks": """
+            SELECT id, paper_monitor_session_id, session_key, strategy_id,
+                   strategy_name, instance_id, instance_name,
+                   baseline_backtest_run_id, baseline_optimization_run_id,
+                   check_status, drift_level, drift_score, baseline_metrics,
+                   paper_metrics, thresholds, findings, risk_event_id,
+                   risk_event_status, inbox_item_id, live_execution_allowed,
+                   checked_by, checked_at
+            FROM strategy.v_drift_monitor_checks
+            LIMIT 50
+        """,
+        "strategy_kill_switch_events": """
+            SELECT id, event_key, paper_monitor_session_id, session_key,
+                   drift_check_id, strategy_id, strategy_name, instance_id,
+                   instance_name, trigger_source, trigger_reason,
+                   enforcement_status, action_taken, enforced_by,
+                   risk_event_id, risk_event_status, inbox_item_id,
+                   evidence, live_execution_allowed, enforced_at
+            FROM strategy.v_kill_switch_events
+            LIMIT 50
+        """,
+        "execution_control": """
+            SELECT state_key, global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_by,
+                   updated_at, evidence, open_limited_live_requests,
+                   blocked_gate_checks, latest_global_kill_switch_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+        "global_kill_switch_events": """
+            SELECT id, event_key, action, trigger_source, trigger_reason,
+                   enforced_by, risk_event_id, risk_event_status,
+                   inbox_item_id, affected_instances, evidence,
+                   global_execution_locked, live_broker_writes_allowed,
+                   created_at
+            FROM trading.v_global_kill_switch_events
+            LIMIT 50
+        """,
+        "limited_live_requests": """
+            SELECT id, request_key, strategy_id, strategy_name, instance_id,
+                   instance_name, book_key, symbol, requested_mode,
+                   request_status, approval_id, approval_status, max_notional,
+                   max_orders_per_day, max_daily_loss, expires_at,
+                   requested_by, rationale, risk_summary, gate_requirements,
+                   live_execution_allowed, created_at, updated_at
+            FROM trading.v_limited_live_requests
+            LIMIT 50
+        """,
+        "execution_gate_checks": """
+            SELECT id, check_key, limited_live_request_id, request_key,
+                   strategy_id, strategy_name, instance_id, instance_name,
+                   actor, gate_status, block_reasons, order_intent,
+                   policy_snapshot, approval_id, approval_status,
+                   global_execution_locked, live_broker_writes_allowed,
+                   live_execution_allowed, checked_at
+            FROM trading.v_execution_gate_checks
+            LIMIT 50
+        """,
+        "order_intents": """
+            SELECT id, order_intent_key, limited_live_request_id,
+                   limited_live_request_key, strategy_id, strategy_name,
+                   instance_id, instance_name, client_code, account_code,
+                   book_key, book_name, symbol, exchange, instrument_type,
+                   side, order_type, quantity, limit_price, notional,
+                   estimated_loss, status, approval_id, approval_status,
+                   latest_execution_gate_check_id, latest_order_risk_check_id,
+                   gate_status, broker_order_allowed, live_execution_allowed,
+                   created_by, rationale, risk_summary, evidence,
+                   created_at, updated_at
+            FROM trading.v_order_intents
+            LIMIT 50
+        """,
+        "order_risk_checks": """
+            SELECT id, order_intent_id, order_intent_key, symbol, side,
+                   book_key, client_code, account_code, check_key,
+                   check_status, block_reasons, warnings,
+                   calculated_notional, current_daily_pnl, max_daily_loss,
+                   account_equity, current_gross_exposure,
+                   estimated_gross_exposure_after, max_leverage,
+                   estimated_leverage_after, execution_gate_check_id,
+                   policy_snapshot, approval_status, broker_order_allowed,
+                   live_execution_allowed, checked_by, checked_at
+            FROM trading.v_order_risk_checks
+            LIMIT 50
+        """,
+        "workflows": """
+            SELECT workflow_key, workflow_name, workflow_type, owner_agent, trigger_type, status,
+                   permission_level, input_sources, output_targets, approval_required,
+                   schedule_hint, next_run_at, notes, updated_at
+            FROM agent.v_workflow_registry
+            ORDER BY workflow_name
+        """,
+        "agents": """
+            SELECT agent_name, department, department_name, display_title, role_scope,
+                   persona, operating_style, mental_models, default_model_route,
+                   default_tools, permission_level, output_targets, guardrails,
+                   escalation_rules, daily_cadence, cost_policy, human_interface,
+                   skill_count, primary_skills, latest_worker_finished_at,
+                   latest_worker_status
+            FROM agent.v_active_agents
+            ORDER BY CASE agent_name WHEN 'Charlie Munger' THEN 1 WHEN 'Jarvis' THEN 2 ELSE 3 END, department, agent_name
+        """,
+        "agent_departments": """
+            SELECT department_key, department_name, mission, lead_agent, status,
+                   priority, core_workflows, required_next_builds, guardrails,
+                   active_agents, active_skills, updated_at
+            FROM agent.v_agent_departments
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                department_name
+        """,
+        "agent_skills": """
+            SELECT skill_key, skill_name, skill_family, skill_type,
+                   owner_department, owner_department_name, status,
+                   execution_mode, permission_level, trigger_phrases,
+                   input_sources, output_targets, required_tools,
+                   risk_notes, assigned_agents, primary_agents, updated_at
+            FROM agent.v_agent_skill_matrix
+            ORDER BY
+                CASE status WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END,
+                skill_family,
+                skill_key
+            LIMIT 100
+        """,
+        "agent_office_overview": """
+            SELECT active_agents, active_departments, active_skills,
+                   fincept_skills, openalgo_skills, vibe_trading_skills,
+                   active_mailboxes, unread_agent_messages, model_assignments
+            FROM agent.v_agent_office_overview
+        """,
+        "live_office_rooms": """
+            SELECT room_key, room_name, room_rank, agent_count,
+                   active_agent_count, open_task_count, blocked_task_count,
+                   unread_message_count, open_inbox_count, open_risk_event_count,
+                   room_workload_score, latest_activity_at, room_state, agents
+            FROM agent.v_live_office_rooms
+            ORDER BY room_rank, room_name
+        """,
+        "live_office_agent_activity": """
+            SELECT agent_name, display_title, reports_to_agent, department_key,
+                   department_name, role_rank, hierarchy_level, character_name,
+                   avatar_role, visual_traits, voice_style, office_location,
+                   animation_state, color_token, icon_hint, mailbox_address,
+                   mailbox_key, unread_message_count, mailbox_latest_message_at,
+                   open_task_count, queued_task_count, in_progress_task_count,
+                   blocked_task_count, open_inbox_count, urgent_inbox_count,
+                   open_risk_event_count, critical_risk_event_count,
+                   high_risk_event_count, current_task_id, current_task_title,
+                   current_task_status, current_task_priority, current_work_title,
+                   current_work_detail, latest_message_id, latest_message_from_agent,
+                   latest_message_subject, latest_message_priority,
+                   latest_message_status, latest_message_at,
+                   latest_worker_run_id, latest_worker_skill_key,
+                   latest_worker_skill_name, latest_worker_status,
+                   latest_worker_summary, latest_worker_output_note_path,
+                   latest_worker_finished_at, open_tasks, workload_score,
+                   live_state, latest_activity_at
+            FROM agent.v_live_office_agent_activity
+            ORDER BY role_rank, agent_name
+        """,
+        "agent_org_chart": """
+            SELECT agent_name, display_title, reports_to_agent, reports_to_title,
+                   department_key, department_name, role_rank, hierarchy_level,
+                   authority_scope, decision_rights, must_consult, can_delegate_to,
+                   approval_required_for, character_name, avatar_role,
+                   visual_traits, voice_style, office_location, animation_state,
+                   color_token, icon_hint, mailbox_address, mailbox_key, updated_at
+            FROM agent.v_agent_org_chart
+            ORDER BY role_rank, agent_name
+        """,
+        "agent_mailboxes": """
+            SELECT mailbox_key, agent_name, display_title, display_name,
+                   channel_type, address, purpose, status, unread_count,
+                   latest_message_at, notification_policy, updated_at
+            FROM agent.v_agent_mailboxes
+            ORDER BY unread_count DESC, latest_message_at DESC NULLS LAST, agent_name
+        """,
+        "agent_messages": """
+            SELECT id, thread_key, from_agent, from_title, to_agent, to_title,
+                   subject, body, priority, status, related_task_id,
+                   related_skill_key, metadata, created_at, read_at,
+                   processing_status, processed_at, generated_task_id,
+                   generated_inbox_id, error_message
+            FROM agent.v_agent_message_threads
+            LIMIT 50
+        """,
+        "research_factory_queue_summary": """
+            SELECT queue_key, queue_name, owner_agent, total_rows, open_rows,
+                   blocked_or_error_rows, latest_activity_at, next_action
+            FROM research.v_research_factory_queue_summary
+            ORDER BY
+                CASE WHEN blocked_or_error_rows > 0 THEN 1 WHEN open_rows > 0 THEN 2 ELSE 3 END,
+                latest_activity_at DESC NULLS LAST,
+                queue_name
+        """,
+        "agent_models": """
+            SELECT agent_name, department, display_title, primary_route,
+                   route_provider, route_default_model, model_key,
+                   assigned_provider, assigned_model, model_family,
+                   deployment_target, estimated_disk_gb, model_status,
+                   fallback_route, escalation_route, context_policy,
+                   cost_policy, max_autonomous_cost_tier, escalation_triggers,
+                   notes, updated_at
+            FROM agent.v_agent_model_matrix
+            ORDER BY
+                CASE agent_name WHEN 'Charlie Munger' THEN 1 WHEN 'Jarvis' THEN 2 ELSE 3 END,
+                department, agent_name
+        """,
+        "external_skills": """
+            SELECT skill_key, skill_name, source_family, skill_type,
+                   owner_department, owner_department_name, status,
+                   execution_mode, permission_level, required_tools,
+                   risk_notes, source_repo, local_path, direct_runtime_adapter,
+                   assigned_agents, updated_at
+            FROM agent.v_external_skill_stack
+            ORDER BY source_family, skill_key
+        """,
+        "clients": """
+            SELECT client_code, display_name, risk_profile, sensitivity, active, account_count,
+                   latest_position_count, latest_market_value, latest_position_at,
+                   staged_holding_updates, created_at
+            FROM portfolio.v_client_control_plane
+            ORDER BY display_name
+            LIMIT 50
+        """,
+        "latest_positions": """
+            WITH latest AS (
+                SELECT DISTINCT ON (a.account_code, p.symbol)
+                    c.display_name, c.client_code, a.account_code, p.symbol, p.exchange,
+                    p.instrument_type, p.quantity, p.average_price, p.market_price,
+                    p.market_value, p.unrealized_pnl, p.as_of
+                FROM portfolio.positions p
+                JOIN portfolio.accounts a ON a.id = p.account_id
+                LEFT JOIN portfolio.clients c ON c.id = a.client_id
+                WHERE a.client_id IS NOT NULL
+                ORDER BY a.account_code, p.symbol, p.as_of DESC
+            )
+            SELECT *
+            FROM latest
+            ORDER BY market_value DESC NULLS LAST
+            LIMIT 100
+        """,
+        "investment_books": """
+            SELECT book_key, book_name, book_type, mandate, default_horizon,
+                   owner_agent, status, priority, objective, allowed_instruments,
+                   max_gross_exposure_pct, max_net_exposure_pct, max_single_name_pct,
+                   max_leverage, review_cadence, approval_required, position_count,
+                   gross_exposure, net_exposure, client_count, active_purpose_count,
+                   updated_at
+            FROM books.v_investment_books
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                book_key
+        """,
+        "book_positions": """
+            SELECT id, source_position_id, source_trade_id, client_code, client_name,
+                   account_code, broker, symbol, exchange, instrument_type,
+                   book_key, book_name, book_type, purpose_key, purpose_name,
+                   purpose_family, owner_agent, strategy_key, direction, quantity,
+                   average_price, market_price, market_value, notional_exposure,
+                   gross_exposure, net_exposure, time_horizon, thesis, exit_criteria,
+                   review_frequency, status, evidence, as_of, updated_at
+            FROM books.v_book_positions
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, symbol
+            LIMIT 100
+        """,
+        "position_objects_v9": """
+            SELECT book_position_id, source_position_id, source_trade_id,
+                   client_code, client_name, account_code, broker, symbol, exchange,
+                   instrument_type, book_key, book_name, book_type, purpose_key,
+                   purpose_name, purpose_family, owner_agent, strategy_key, direction,
+                   quantity, market_value, gross_exposure, net_exposure, time_horizon,
+                   entry_date, entry_rationale, source_kind, source_ref,
+                   source_freshness_at, approval_state, approval_id, risk_budget_pct,
+                   capital_budget_pct, stop_price, target_price, time_exit_at,
+                   linked_research_note_path, linked_committee_review_key,
+                   linked_trade_journal_ref, hedge_group_key, hedge_intent,
+                   linked_hedged_position_id, offset_intent, review_state,
+                   thesis_count, has_active_thesis, next_review_due_at,
+                   exit_count, has_active_exit, v9_gap_types, v9_gap_count,
+                   v9_completeness_score, v9_decision_readiness, as_of, updated_at
+            FROM books.v_position_objects_v9
+            ORDER BY v9_gap_count DESC, gross_exposure DESC NULLS LAST, client_name, symbol
+            LIMIT 100
+        """,
+        "position_object_gap_summary": """
+            SELECT gap_type, position_count, client_count, symbol_count,
+                   avg_completeness_score, severity, owner_agent
+            FROM books.v_position_object_gap_summary
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                position_count DESC,
+                gap_type
+        """,
+        "position_remediation_summary": """
+            SELECT metric, value, interpretation
+            FROM books.v_position_object_remediation_summary
+            ORDER BY metric
+        """,
+        "position_remediation_queue": """
+            SELECT id, remediation_key, book_position_id, client_code, client_name,
+                   account_code, symbol, exchange, instrument_type, book_key,
+                   book_name, purpose_key, purpose_name, gap_type, severity,
+                   priority, owner_agent, skill_key, status, recommended_action,
+                   task_id, task_status, inbox_id, inbox_status, v9_gap_count,
+                   v9_gap_types, v9_completeness_score, v9_decision_readiness,
+                   evidence, created_by, created_at, updated_at, resolved_at
+            FROM books.v_position_object_remediation_queue
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                CASE status WHEN 'queued' THEN 1 WHEN 'task_created' THEN 2 WHEN 'in_progress' THEN 3 WHEN 'resolved' THEN 4 ELSE 5 END,
+                updated_at DESC
+            LIMIT 100
+        """,
+        "long_term_theses": """
+            SELECT id, symbol, exchange, company_name, thesis_title, thesis_version,
+                   thesis_status, decision_status, primary_owner_agent, purpose_key,
+                   thesis_summary, moat_score, management_score, governance_score,
+                   capital_allocation_score, financial_quality_score,
+                   valuation_status, base_case_fair_value, expected_cagr_pct,
+                   thesis_note_path, next_review_due_at, review_frequency,
+                   position_count, client_count, clients, long_term_gross_exposure,
+                   long_term_net_exposure, checklist_count, checklist_complete_count,
+                   valuation_model_count, valuation_complete_count, thesis_killers,
+                   exit_criteria, updated_by, created_at, updated_at
+            FROM portfolio.v_long_term_thesis_control
+            ORDER BY long_term_gross_exposure DESC NULLS LAST, symbol
+            LIMIT 100
+        """,
+        "long_term_thesis_checklists": """
+            SELECT id, holding_thesis_id, symbol, exchange, company_name,
+                   checklist_key, checklist_name, status, score, findings,
+                   evidence, owner_agent, updated_at, long_term_gross_exposure,
+                   client_count, clients
+            FROM portfolio.v_long_term_thesis_checklists
+            ORDER BY
+                CASE status WHEN 'not_started' THEN 1 WHEN 'source_required' THEN 2 WHEN 'in_progress' THEN 3 ELSE 4 END,
+                long_term_gross_exposure DESC NULLS LAST,
+                symbol,
+                checklist_key
+            LIMIT 120
+        """,
+        "long_term_valuation_models": """
+            SELECT id, holding_thesis_id, symbol, exchange, company_name,
+                   model_key, model_name, model_type, status, fair_value_low,
+                   fair_value_base, fair_value_high, expected_cagr_pct,
+                   assumptions, outputs, note_path, owner_agent, updated_at,
+                   long_term_gross_exposure, client_count, clients
+            FROM portfolio.v_long_term_valuation_models
+            ORDER BY
+                CASE status WHEN 'not_started' THEN 1 WHEN 'source_required' THEN 2 WHEN 'in_progress' THEN 3 ELSE 4 END,
+                long_term_gross_exposure DESC NULLS LAST,
+                symbol,
+                model_key
+            LIMIT 120
+        """,
+        "long_term_monte_carlo_runs": """
+            SELECT id, run_key, holding_thesis_id, valuation_model_id,
+                   symbol, exchange, company_name, run_status,
+                   horizon_years, simulation_count, seed, start_price,
+                   starting_multiple, starting_metric, assumptions,
+                   input_snapshot, outputs, percentile_summary,
+                   probability_summary, warnings, evidence, note_path,
+                   created_by, created_at, long_term_gross_exposure,
+                   client_count, clients
+            FROM portfolio.v_long_term_monte_carlo_runs
+            ORDER BY created_at DESC
+            LIMIT 80
+        """,
+        "long_term_research_updates": """
+            SELECT id, holding_thesis_id, symbol, exchange, company_name,
+                   update_kind, checklist_key, model_key, status, score,
+                   fair_value_low, fair_value_base, fair_value_high,
+                   expected_cagr_pct, findings, assumptions, outputs,
+                   evidence, source_summary, note_path, created_by, created_at
+            FROM portfolio.v_long_term_research_updates
+            ORDER BY created_at DESC
+            LIMIT 80
+        """,
+        "long_term_committee_queue": """
+            SELECT id, review_key, holding_thesis_id, symbol, exchange,
+                   company_name, thesis_title, thesis_status,
+                   thesis_decision_status, long_term_gross_exposure,
+                   client_count, clients, checklist_count,
+                   checklist_complete_count, valuation_model_count,
+                   valuation_complete_count, review_status,
+                   recommended_decision, decision_status, memo_status,
+                   memo_note_path, committee_members, evidence_summary,
+                   source_gaps, required_followups, proposed_action,
+                   approval_id, approval_status, approval_owner_agent,
+                   approval_risk_level, task_id, task_status,
+                   task_owner_agent, final_decision, decision_notes,
+                   live_execution_allowed, capital_action_allowed,
+                   decided_by, decided_at, created_by, created_at, updated_at
+            FROM portfolio.v_long_term_committee_queue
+            ORDER BY created_at DESC
+            LIMIT 80
+        """,
+        "long_term_specialist_assignments": """
+            SELECT id, assignment_key, holding_thesis_id, symbol, exchange,
+                   company_name, long_term_gross_exposure, client_count,
+                   clients, committee_review_id, committee_review_status,
+                   committee_decision_status, module_key, module_name,
+                   assignment_type, agent_name, display_title, department,
+                   skill_key, skill_name, status, source_status,
+                   required_sources, evidence, output_requirements,
+                   task_id, task_status, task_output_note_path,
+                   inbox_id, inbox_status, message_id, message_status,
+                   note_path, created_by, created_at, updated_at
+            FROM portfolio.v_long_term_specialist_assignments
+            ORDER BY
+                CASE status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'blocked' THEN 3 WHEN 'needs_review' THEN 4 ELSE 5 END,
+                updated_at DESC
+            LIMIT 120
+        """,
+        "long_term_specialist_outputs": """
+            SELECT id, output_key, assignment_id, assignment_key,
+                   holding_thesis_id, symbol, exchange, company_name,
+                   long_term_gross_exposure, client_count, clients,
+                   committee_review_id, committee_review_status,
+                   committee_decision_status, module_key, module_name,
+                   assignment_type, agent_name, display_title, department,
+                   skill_key, skill_name, output_status, source_status,
+                   findings, source_gaps, evidence, recommendations,
+                   metrics, confidence, note_path, assignment_status,
+                   task_id, task_status, task_output_note_path,
+                   inbox_id, inbox_status, message_id, message_status,
+                   generated_by, created_at, updated_at
+            FROM portfolio.v_long_term_specialist_outputs
+            ORDER BY updated_at DESC
+            LIMIT 120
+        """,
+        "long_term_source_requests": """
+            SELECT id, request_key, holding_thesis_id, thesis_exchange,
+                   symbol, exchange, company_name, long_term_gross_exposure,
+                   client_count, clients, specialist_output_id,
+                   specialist_output_status, specialist_source_status,
+                   assignment_id, assignment_key, committee_review_id,
+                   source_name, source_category, priority, status,
+                   satisfaction_status, matched_source_count,
+                   last_checked_at, satisfied_at, satisfied_by,
+                   satisfaction_evidence,
+                   owner_agent, required_for_module, required_by_agent,
+                   request_reason, collection_plan, evidence,
+                   task_id, task_status, task_output_note_path,
+                   inbox_id, inbox_status, note_path, created_by,
+                   created_at, updated_at
+            FROM portfolio.v_long_term_source_requests
+            ORDER BY
+                CASE status WHEN 'queued' THEN 1 WHEN 'collecting' THEN 2 WHEN 'needs_review' THEN 3 WHEN 'satisfied' THEN 4 ELSE 5 END,
+                updated_at DESC
+            LIMIT 120
+        """,
+        "long_term_source_documents": """
+            SELECT id, document_key, source_request_id, request_key,
+                   holding_thesis_id, specialist_output_id, assignment_id,
+                   symbol, exchange, company_name, document_type,
+                   document_title, source_url, local_path, source_name,
+                   provenance_status, http_status, raw_artifact_id,
+                   artifact_type, mime_type, obsidian_note_id, note_path,
+                   created_by, created_at, updated_at
+            FROM portfolio.v_long_term_source_documents
+            ORDER BY updated_at DESC
+            LIMIT 120
+        """,
+        "long_term_source_document_extractions": """
+            SELECT id, source_document_id, document_key, source_request_id,
+                   request_key, raw_artifact_id, symbol, exchange, company_name,
+                   document_type, document_title, source_url, local_pdf_path,
+                   local_text_path, parser_name, page_count, extracted_chars,
+                   text_excerpt, key_snippets, extraction_status, error,
+                   extracted_by, extracted_at, updated_at
+            FROM portfolio.v_long_term_source_document_extractions
+            ORDER BY extracted_at DESC
+            LIMIT 120
+        """,
+        "long_term_source_request_checks": """
+            SELECT id, source_request_id, request_key, holding_thesis_id,
+                   specialist_output_id, assignment_id, symbol, exchange,
+                   company_name, source_name, source_category,
+                   required_for_module, required_by_agent, check_status,
+                   matched_source_count, matches, missing_reason,
+                   checked_by, checked_at, request_status,
+                   task_id, task_status, inbox_id, inbox_status
+            FROM portfolio.v_long_term_source_request_checks
+            ORDER BY checked_at DESC
+            LIMIT 120
+        """,
+        "symbol_book_exposure": """
+            SELECT client_code, client_name, symbol, exchange,
+                   long_term_exposure, tactical_exposure, quant_exposure,
+                   active_trading_exposure, hedges_exposure, cash_treasury_exposure,
+                   gross_long, gross_short, gross_exposure, net_exposure,
+                   book_count, active_books, purposes, offset_ratio, overall_bias,
+                   latest_as_of
+            FROM books.v_symbol_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, symbol
+            LIMIT 100
+        """,
+        "client_book_exposure": """
+            SELECT client_code, client_name, book_key, book_name, position_count,
+                   symbol_count, gross_long, gross_short, gross_exposure,
+                   net_exposure, book_bias, latest_as_of
+            FROM books.v_client_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, book_key
+            LIMIT 100
+        """,
+        "account_book_exposure": """
+            SELECT client_code, client_name, account_code, broker, book_key,
+                   book_name, position_count, symbol_count, gross_exposure,
+                   net_exposure, latest_as_of
+            FROM books.v_account_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, account_code, book_key
+            LIMIT 100
+        """,
+        "strategy_book_exposure": """
+            SELECT strategy_key, book_key, book_name, position_count, symbol_count,
+                   gross_exposure, net_exposure, latest_as_of
+            FROM books.v_strategy_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, strategy_key, book_key
+            LIMIT 100
+        """,
+        "purpose_book_exposure": """
+            SELECT book_key, book_name, purpose_key, purpose_name, purpose_family,
+                   position_count, symbol_count, gross_exposure, net_exposure,
+                   latest_as_of
+            FROM books.v_purpose_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, book_key, purpose_key
+            LIMIT 100
+        """,
+        "cross_book_conflicts": """
+            SELECT synthetic_id, client_code, client_name, symbol, exchange,
+                   conflict_type, severity, description, long_exposure,
+                   short_exposure, net_exposure, affected_books, offset_ratio,
+                   latest_as_of
+            FROM books.v_cross_book_conflicts
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                latest_as_of DESC NULLS LAST
+            LIMIT 100
+        """,
+        "cross_book_coordination_questions": """
+            SELECT synthetic_id, client_code, client_name, symbol, exchange,
+                   gross_long, gross_short, net_exposure, offset_ratio,
+                   overall_bias, active_books, purposes, offset_intents,
+                   coordination_question, severity, owner_agent, latest_as_of
+            FROM books.v_cross_book_coordination_questions
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                offset_ratio DESC NULLS LAST,
+                gross_long DESC NULLS LAST
+            LIMIT 100
+        """,
+        "book_assignment_gaps": """
+            SELECT book_position_id, client_code, client_name, account_code, symbol,
+                   book_key, book_name, gap_type, gap_description, severity,
+                   owner_agent, as_of
+            FROM books.v_book_assignment_gaps
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                client_name, symbol, gap_type
+            LIMIT 100
+        """,
+        "symbol_intelligence": """
+            SELECT client_code, client_name, symbol, exchange,
+                   long_term_exposure, tactical_exposure, quant_exposure,
+                   active_trading_exposure, hedges_exposure, cash_treasury_exposure,
+                   gross_long, gross_short, gross_exposure, net_exposure,
+                   offset_ratio, overall_bias, active_books, purposes,
+                   conflict_count, gap_count, gap_types, latest_as_of,
+                   symbol_key, book_position_details, conflict_details,
+                   gap_details, holding_thesis_id, company_name, thesis_title,
+                   thesis_status, thesis_decision_status, thesis_summary,
+                   thesis_owner_agent, checklist_count, checklist_complete_count,
+                   valuation_model_count, valuation_complete_count,
+                   valuation_status_map, thesis_note_path, next_review_due_at,
+                   review_frequency, thesis_killers, thesis_exit_criteria,
+                   latest_monte_carlo_run_id, monte_carlo_status,
+                   monte_carlo_simulation_count, monte_carlo_seed,
+                   monte_carlo_start_price, monte_carlo_starting_multiple,
+                   monte_carlo_median_cagr,
+                   monte_carlo_negative_cagr_probability,
+                   monte_carlo_permanent_loss_probability,
+                   monte_carlo_drawdown_probability, monte_carlo_warnings,
+                   monte_carlo_note_path, monte_carlo_created_at,
+                   latest_committee_review_id, latest_committee_status,
+                   recommended_decision, committee_decision_status,
+                   final_decision, memo_status, memo_note_path,
+                   capital_action_allowed, live_execution_allowed,
+                   filing_count, material_filing_count, latest_filing_id,
+                   latest_filing_title, latest_filing_event_type,
+                   latest_event_type, latest_filing_urgency,
+                   latest_filing_opportunity_score, latest_filing_risk_score,
+                   latest_filing_extraction_status, latest_filing_source_url,
+                   latest_filing_at, news_count, latest_news_at,
+                   latest_news_title, latest_news_url, latest_news_sentiment,
+                   latest_signal_id, latest_signal_strategy,
+                   latest_signal_action, latest_signal_price,
+                   latest_signal_confidence, latest_signal_status,
+                   latest_signal_at, symbol_strategy_candidate_count,
+                   symbol_strategy_candidates, broad_strategy_candidate_count,
+                   broad_strategy_candidates, decision_flags,
+                   decision_readiness, recommended_next_action
+            FROM portfolio.v_symbol_intelligence
+            ORDER BY
+                CASE decision_readiness
+                    WHEN 'risk_review_required' THEN 1
+                    WHEN 'committee_review_required' THEN 2
+                    WHEN 'valuation_work_required' THEN 3
+                    WHEN 'research_required' THEN 4
+                    WHEN 'data_gap_review_required' THEN 5
+                    ELSE 6
+                END,
+                gross_exposure DESC NULLS LAST,
+                gap_count DESC,
+                client_name,
+                symbol
+            LIMIT 100
+        """,
+        "symbol_intelligence_v2_summary": """
+            SELECT metric, value, interpretation
+            FROM portfolio.v_symbol_intelligence_v2_summary
+            ORDER BY metric
+        """,
+        "symbol_intelligence_v2": """
+            SELECT client_code, client_name, symbol, exchange,
+                   long_term_exposure, tactical_exposure, quant_exposure,
+                   active_trading_exposure, hedges_exposure, cash_treasury_exposure,
+                   gross_long, gross_short, gross_exposure, net_exposure,
+                   offset_ratio, overall_bias, active_books, purposes,
+                   conflict_count, gap_count, gap_types, latest_as_of,
+                   symbol_key, book_position_details, conflict_details,
+                   gap_details, holding_thesis_id, company_name, thesis_title,
+                   thesis_status, thesis_decision_status, thesis_summary,
+                   thesis_owner_agent, checklist_count, checklist_complete_count,
+                   valuation_model_count, valuation_complete_count,
+                   valuation_status_map, thesis_note_path, next_review_due_at,
+                   review_frequency, latest_monte_carlo_run_id,
+                   monte_carlo_status, monte_carlo_median_cagr,
+                   latest_committee_review_id, latest_committee_status,
+                   recommended_decision, committee_decision_status,
+                   final_decision, memo_status, memo_note_path,
+                   capital_action_allowed, live_execution_allowed,
+                   filing_count, material_filing_count, latest_filing_id,
+                   latest_filing_title, latest_filing_event_type,
+                   latest_event_type, latest_filing_urgency,
+                   latest_filing_source_url, latest_filing_at,
+                   news_count, latest_news_at, latest_news_title,
+                   latest_news_url, latest_signal_id, latest_signal_strategy,
+                   latest_signal_action, symbol_strategy_candidate_count,
+                   symbol_strategy_candidates, broad_strategy_candidate_count,
+                   broad_strategy_candidates, decision_flags,
+                   decision_readiness, recommended_next_action,
+                   remediation_count, critical_remediation_count,
+                   remediation_task_count, remediation_items,
+                   coordination_question_count, max_coordination_severity,
+                   coordination_items, committee_item_count,
+                   pending_committee_item_count, committee_items,
+                   risk_check_count, risk_breach_count, risk_warning_count,
+                   risk_items, strategy_dossier_count,
+                   active_strategy_dossier_count, strategy_dossiers,
+                   v2_decision_flags, v2_decision_state,
+                   v2_recommended_next_action, v2_priority_rank,
+                   v2_decision_packet
+            FROM portfolio.v_symbol_intelligence_v2
+            ORDER BY v2_priority_rank, gross_exposure DESC NULLS LAST,
+                     critical_remediation_count DESC, client_name, symbol
+            LIMIT 100
+        """,
+        "symbol_intelligence_action_summary": """
+            SELECT metric, value, interpretation
+            FROM portfolio.v_symbol_intelligence_action_summary
+            ORDER BY metric
+        """,
+        "symbol_intelligence_actions": """
+            SELECT id, action_key, client_code, client_name, symbol, exchange,
+                   action_type, action_status, owner_agent, target_workspace,
+                   priority, task_id, task_status, inbox_id, inbox_status,
+                   decision_state, recommended_action, evidence, notes,
+                   created_by, created_at, updated_at
+            FROM portfolio.v_symbol_intelligence_actions
+            ORDER BY created_at DESC
+            LIMIT 100
+        """,
+        "portfolio_intelligence_summary": """
+            SELECT metric, value, interpretation
+            FROM books.v_portfolio_intelligence_summary
+            ORDER BY metric
+        """,
+        "portfolio_intelligence_v2": """
+            SELECT section, item_key, item_name, item_value, interpretation, payload
+            FROM books.v_portfolio_intelligence_v2
+            ORDER BY
+                CASE section WHEN 'risk' THEN 1 WHEN 'portfolio_overview' THEN 2 WHEN 'concentration' THEN 3 ELSE 4 END,
+                item_key,
+                item_name
+            LIMIT 120
+        """,
+        "risk_dashboard_summary": """
+            SELECT metric, value, interpretation
+            FROM risk.v_portfolio_risk_dashboard_summary
+            ORDER BY metric
+        """,
+        "risk_limit_checks": """
+            SELECT check_key, limit_id, source_table, book_key, book_name,
+                   client_code, client_name, symbol, exchange, scope_type,
+                   scope_ref, limit_key, limit_name, limit_type,
+                   threshold_value, unit, severity, actual_value,
+                   exposure_value, denominator_value, utilization_pct,
+                   check_status, check_message, recommended_action,
+                   latest_as_of, evidence
+            FROM risk.v_portfolio_risk_limit_checks
+            ORDER BY
+                CASE check_status WHEN 'breach' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                actual_value DESC NULLS LAST,
+                book_key,
+                client_name,
+                symbol
+            LIMIT 150
+        """,
+        "position_purpose_options": """
+            SELECT book_key, book_name, purpose_key, purpose_name, purpose_family,
+                   description, default_horizon, exit_rule_template
+            FROM books.v_position_purpose_options
+            ORDER BY book_key, purpose_family, purpose_key
+        """,
+        "broker_transaction_import_summary": """
+            SELECT metric, value, interpretation
+            FROM books.v_broker_transaction_import_summary
+            ORDER BY metric
+        """,
+        "broker_transaction_import_queue": """
+            SELECT route_id, broker_transaction_id, status, affects_active_exposure,
+                   book_key, book_name, purpose_key, purpose_name, route_reason,
+                   client_code, client_name, trade_date, trade_time, exchange,
+                   symbol, side, quantity, price, amount, instrument_type,
+                   expiry_date, option_type, strike_price, trade_no,
+                   trade_activity_id, created_at, updated_at
+            FROM books.v_broker_transaction_import_queue
+            ORDER BY
+                CASE status WHEN 'staged' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END,
+                trade_date DESC NULLS LAST,
+                trade_time DESC NULLS LAST,
+                route_id DESC
+            LIMIT 100
+        """,
+        "trade_book_links": """
+            SELECT id, trade_activity_id, broker_transaction_id, book_position_id,
+                   book_key, book_name, purpose_key, purpose_name, link_type,
+                   affects_active_exposure, route_reason, client_code, account_code,
+                   strategy_key, symbol, exchange, instrument_type, side,
+                   quantity, price, trade_ts, trade_status, created_by, created_at
+            FROM books.v_trade_book_links
+            LIMIT 100
+        """,
+        "broker_reconciliation_latest": """
+            SELECT id, run_key, run_ts, source_scope, status, total_broker_rows,
+                   staged_routes, promoted_routes, history_links,
+                   active_exposure_links, unmapped_rows, duplicate_trade_refs,
+                   amount_mismatch_rows, notes, evidence, created_by, created_at
+            FROM books.v_broker_reconciliation_latest
+        """,
+        "broker_reconciliation_issues": """
+            SELECT id, run_id, run_key, issue_key, issue_type, severity, status,
+                   broker_transaction_id, trade_activity_id, symbol, description,
+                   owner_agent, evidence, created_at, updated_at
+            FROM books.v_broker_reconciliation_issues
+            LIMIT 100
+        """,
+        "p2cursor_reconciliation_latest": """
+            SELECT id, run_key, run_ts, client_code, client_name, p2_account_code,
+                   comparison_account_code, status, p2_position_count,
+                   comparison_position_count, matched_symbols, p2_only_symbols,
+                   comparison_only_symbols, quantity_mismatch_symbols, stale_days,
+                   notes, evidence, created_by, created_at
+            FROM portfolio.v_p2cursor_reconciliation_latest
+            LIMIT 20
+        """,
+        "p2cursor_reconciliation_issues": """
+            SELECT id, run_id, run_key, issue_key, issue_type, severity, status,
+                   client_code, client_name, symbol, p2_account_code,
+                   comparison_account_code, p2_quantity, comparison_quantity,
+                   p2_average_price, comparison_average_price, p2_as_of,
+                   comparison_as_of, description, owner_agent, evidence,
+                   created_at, updated_at
+            FROM portfolio.v_p2cursor_reconciliation_issues
+            LIMIT 100
+        """,
+        "legacy_source_readiness_summary": """
+            SELECT metric, value, interpretation
+            FROM core.v_legacy_source_readiness_summary
+            ORDER BY metric
+        """,
+        "p2cursor_extraction_readiness": """
+            SELECT source_file_id, original_path, extracted_path, file_type,
+                   size_bytes, import_status, registered_at, profiled_row_count,
+                   staged_row_count, sqlite_table_count, readiness_status,
+                   recommended_action
+            FROM client_data.v_p2cursor_extraction_readiness
+            ORDER BY
+                CASE readiness_status
+                    WHEN 'missing_staging' THEN 1
+                    WHEN 'staging_count_mismatch' THEN 2
+                    WHEN 'staged_needs_mapping' THEN 3
+                    WHEN 'sqlite_profiled_needs_mapping' THEN 4
+                    ELSE 5
+                END,
+                original_path
+            LIMIT 100
+        """,
+        "algo_extraction_readiness": """
+            SELECT source_system, database_path, table_name, source_rows,
+                   imported_rows, target_tables, import_status, profiled_at,
+                   readiness_status, source_value, recommended_action
+            FROM core.v_algo_extraction_readiness
+            ORDER BY
+                CASE readiness_status
+                    WHEN 'profiled_not_promoted' THEN 1
+                    WHEN 'partially_promoted' THEN 2
+                    WHEN 'promoted' THEN 3
+                    ELSE 4
+                END,
+                CASE source_value WHEN 'high_value' THEN 1 ELSE 2 END,
+                source_rows DESC NULLS LAST,
+                table_name
+            LIMIT 100
+        """,
+        "legacy_source_extraction_runs": """
+            SELECT id, run_key, run_ts, status, p2_source_files, p2_csv_files,
+                   p2_staged_rows, p2_files_need_promotion, algo_profiled_tables,
+                   algo_profiled_source_rows, algo_imported_rows,
+                   algo_partial_tables, algo_unpromoted_tables,
+                   high_priority_gaps, notes, evidence, created_by, created_at
+            FROM core.v_legacy_source_extraction_runs
+            LIMIT 20
+        """,
+        "legacy_source_extraction_issues": """
+            SELECT id, run_id, run_key, issue_key, source_family, issue_type,
+                   severity, status, source_ref, source_rows, imported_rows,
+                   owner_agent, recommended_action, evidence, created_at, updated_at
+            FROM core.v_legacy_source_extraction_issues
+            LIMIT 100
+        """,
+        "source_lineage_summary": """
+            SELECT lineage_type, source_system, source_type, sensitivity,
+                   row_count, raw_artifact_rows, source_file_rows,
+                   first_seen_at, latest_seen_at, open_or_staged_rows
+            FROM core.v_source_lineage_summary
+            ORDER BY row_count DESC, source_system, lineage_type
+            LIMIT 100
+        """,
+        "source_artifact_lineage": """
+            SELECT lineage_type, row_ref, row_id, source_system, source_type,
+                   source_location, source_sensitivity, artifact_type, title,
+                   source_url, local_path, content_hash, mime_type, sensitivity,
+                   event_at, import_run_id, source_file_id, raw_artifact_id,
+                   client_code, account_code, symbol, reconciliation_status,
+                   lineage_payload
+            FROM core.v_source_artifact_lineage
+            ORDER BY event_at DESC NULLS LAST, lineage_type, row_ref
+            LIMIT 150
+        """,
+        "import_artifact_coverage": """
+            SELECT import_surface, total_rows, linked_rows, missing_rows,
+                   coverage_pct, description
+            FROM core.v_import_artifact_coverage
+            ORDER BY import_surface
+        """,
+        "import_artifact_gaps": """
+            SELECT import_surface, row_ref, title, source_path, content_hash,
+                   gap_reason
+            FROM core.v_import_artifact_gaps
+            ORDER BY import_surface, row_ref
+            LIMIT 100
+        """,
+        "post_trade_reviews": """
+            SELECT id, trade_activity_id, book_position_id, book_key, book_name,
+                   purpose_key, purpose_name, review_type, review_status,
+                   owner_agent, due_at, execution_mode, source_kind, client_code,
+                   account_code, strategy_key, symbol, exchange, instrument_type,
+                   side, quantity, price, trade_ts, thesis, planned_exit,
+                   actual_exit, execution_quality, rule_violations, lessons,
+                   next_action, task_id, inbox_item_id, created_at, updated_at
+            FROM trading.v_post_trade_review_queue
+            LIMIT 100
+        """,
+        "manual_updates": """
+            SELECT id, client_code, account_code, symbol, exchange, instrument_type,
+                   quantity, average_price, market_price, effective_market_value,
+                   as_of, update_reason, status, created_by, created_at, applied_at
+            FROM portfolio.v_manual_holding_update_queue
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "signals": """
+            SELECT id, ts, strategy, symbol, exchange, action, price, quantity,
+                   confidence, status, payload
+            FROM trading.v_recent_signals
+            ORDER BY ts DESC
+            LIMIT 50
+        """,
+        "alerts": """
+            SELECT id, ts, symbol, exchange, timeframe, severity, status, title, message, payload
+            FROM strategy.v_open_alerts
+            ORDER BY ts DESC
+            LIMIT 50
+        """,
+        "mcp_candidates": """
+            SELECT integration_key, integration_name, category, provider, repo_url, docs_url,
+                   install_mode, status, priority, trust_level, permission_level,
+                   requires_api_key, requires_browser_session, cost_profile, owner_agent,
+                   use_case, selected_for_phase, risk_notes, evidence_refs, config, updated_at
+            FROM core.v_mcp_integration_registry
+            ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, category, integration_key
+        """,
+        "tradingview_tasks": """
+            SELECT id, task_title, task_type, requested_by, owner_agent, status, symbols,
+                   exchange, timeframe, chart_layout, instruction, source_ref,
+                   browser_run_id, extracted_artifact_id, output_note_path,
+                   result_summary, evidence, metadata, created_at, updated_at, completed_at
+            FROM ops.v_tradingview_tasks
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "tradingview_action_templates": """
+            SELECT template_key, template_name, category, action_kind,
+                   default_exchange, default_timeframe, default_chart_layout,
+                   requires_symbol, approval_required, execution_mode, status,
+                   owner_agent, description, risk_notes, default_payload, updated_at
+            FROM ops.v_tradingview_action_templates
+            LIMIT 50
+        """,
+        "tradingview_alert_requests": """
+            SELECT approval_id, tradingview_task_id, approval_status, task_status,
+                   risk_level, approval_title, approval_owner_agent, symbols,
+                   symbol, exchange, timeframe, chart_layout, instruction,
+                   alert_condition, auto_create_alert, rationale,
+                   requested_action, task_evidence, result_summary,
+                   task_created_at, approval_created_at, decided_by, decided_at,
+                   alert_request_state
+            FROM ops.v_tradingview_alert_requests
+            LIMIT 50
+        """,
+        "browser_profiles": """
+            SELECT id, profile_key, profile_name, browser_name, use_case,
+                   profile_path, remote_debugging_host, remote_debugging_port,
+                   target_base_url, status, owner_agent, sensitivity,
+                   permission_level, health_status, last_checked_at,
+                   last_error, notes, config, linked_connectors, updated_at
+            FROM ops.v_browser_profile_control
+            LIMIT 50
+        """,
+        "browser_connector_links": """
+            SELECT id, profile_key, profile_name, browser_name,
+                   profile_health_status, remote_debugging_host,
+                   remote_debugging_port, connector_key, connector_name,
+                   source_key, provider, connector_health_status, link_status,
+                   required_for, owner_agent, evidence, updated_at
+            FROM ops.v_browser_connector_links
+            LIMIT 100
+        """,
+        "browser_session_checks": """
+            SELECT id, profile_key, connector_key, check_type, status,
+                   remote_debugging_host, remote_debugging_port,
+                   browser_label, target_base_url, error_message,
+                   sample_payload, checked_by, checked_at
+            FROM ops.v_browser_session_checks
+            LIMIT 100
+        """,
+        "trade_activity": """
+            SELECT id, activity_type, execution_mode, source_kind, source_ref,
+                   client_code, account_code, strategy_key, symbol, exchange,
+                   instrument_type, side, quantity, price, trade_ts, status,
+                   thesis, setup_type, timeframe, stop_loss, target_price,
+                   realized_pnl, fees, tags, evidence, created_by, created_at, updated_at
+            FROM trading.v_trade_activity_ledger
+            ORDER BY trade_ts DESC, created_at DESC
+            LIMIT 100
+        """,
+        "paper_trade_summary": """
+            SELECT strategy_key, symbol, trade_count, first_trade_ts, last_trade_ts,
+                   realized_pnl, average_price, statuses
+            FROM trading.v_paper_trade_summary
+            ORDER BY last_trade_ts DESC NULLS LAST
+            LIMIT 100
+        """,
+        "research_hub": """
+            SELECT root_label, artifact_family, artifact_count,
+                   latest_captured_at, latest_source_modified_at
+            FROM research.v_research_hub_summary
+            ORDER BY artifact_count DESC, root_label, artifact_family
+        """,
+        "filing_collector_runs": """
+            SELECT id, run_key, source_key, connector_key, exchange, status,
+                   date_from, date_to, target_url, http_status, rows_seen,
+                   rows_upserted, events_upserted, inbox_items_created,
+                   started_at, finished_at, error_message, sample_payload,
+                   created_by
+            FROM research.v_filing_collector_runs
+            LIMIT 50
+        """,
+        "corporate_filing_inbox": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   filing_type, filing_event_type, title, filed_at,
+                   source_url, attachment_url, local_path, extraction_status,
+                   pdf_page_count, pdf_extracted_at, pdf_extraction_run_id,
+                   classification_payload,
+                   collector_run_id, run_key, event_id, event_type,
+                   opportunity_score, risk_score, urgency, event_status,
+                   assigned_agent, event_created_at, filing_created_at
+            FROM research.v_corporate_filing_inbox
+            LIMIT 100
+        """,
+        "special_situation_inbox": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   filing_type, filing_event_type, title, filed_at,
+                   source_url, attachment_url, local_path, extraction_status,
+                   pdf_page_count, pdf_extracted_at, pdf_extraction_run_id,
+                   classification_payload,
+                   collector_run_id, run_key, event_id, event_type,
+                   opportunity_score, risk_score, urgency, event_status,
+                   assigned_agent, event_created_at, filing_created_at
+            FROM research.v_special_situation_inbox
+            LIMIT 100
+        """,
+        "filing_pdf_extraction_runs": """
+            SELECT id, filing_id, source_name, exchange, symbol, company_name,
+                   title, status, source_url, local_pdf_path, parser_name,
+                   bytes_downloaded, page_count, extracted_chars,
+                   event_type_before, event_type_after, classifier_payload,
+                   started_at, finished_at, error_message, created_by
+            FROM research.v_filing_pdf_extraction_runs
+            LIMIT 50
+        """,
+        "special_situation_terms": """
+            SELECT id, filing_id, filing_event_id, extraction_run_id, source_name,
+                   exchange, symbol, company_name, title, source_url,
+                   attachment_url, local_path, event_type, record_date,
+                   ex_date, meeting_date, opening_date, closing_date,
+                   offer_price, issue_price, cash_consideration, swap_ratio,
+                   entitlement_ratio, buyback_size, aggregate_amount,
+                   timeline_text, conditions_text, raw_terms, confidence,
+                   status, created_at, updated_at
+            FROM research.v_special_situation_terms
+            LIMIT 50
+        """,
+        "special_situation_memos": """
+            SELECT id, special_terms_id, filing_id, filing_event_id, event_type,
+                   symbol, company_name, filing_title, source_name, exchange,
+                   source_url, attachment_url, memo_title, memo_status,
+                   note_path, summary, extracted_terms, risk_flags,
+                   required_followups, task_id, task_status, task_owner_agent,
+                   approval_id, approval_status, approval_owner_agent,
+                   approval_risk_level, latest_spread_check_id,
+                   latest_spread_status, latest_market_price, latest_target_price,
+                   latest_gross_spread_pct, latest_quote_ts, latest_decision_id,
+                   latest_decision, latest_decision_at, created_by, created_at, updated_at
+            FROM research.v_special_situation_memos
+            LIMIT 50
+        """,
+        "special_situation_spread_checks": """
+            SELECT id, special_memo_id, special_terms_id, filing_id, symbol,
+                   event_type, company_name, memo_title, note_path, target_price,
+                   target_price_source, market_price, market_price_source,
+                   quote_id, quote_ts, quote_staleness_minutes, gross_spread_abs,
+                   gross_spread_pct, annualized_spread_pct, days_to_close,
+                   scenario_payload, status, data_quality_flags, created_by,
+                   created_at
+            FROM research.v_special_situation_spread_checks
+            LIMIT 50
+        """,
+        "special_situation_decisions": """
+            SELECT id, special_memo_id, special_terms_id, approval_id, symbol,
+                   company_name, event_type, memo_title, note_path, decision,
+                   decision_status, decision_notes, monitor_allowed, trade_allowed,
+                   client_recommendation_allowed, decided_by, evidence, created_at
+            FROM research.v_special_situation_decisions
+            LIMIT 50
+        """,
+        "data_source_checks": """
+            SELECT source_key, check_name, check_type, target_url, status,
+                   http_status, latency_ms, rows_seen, sample_payload,
+                   error_message, checked_at
+            FROM core.v_recent_data_source_checks
+            ORDER BY checked_at DESC
+            LIMIT 50
+        """,
+        "source_freshness": """
+            SELECT id, source_key, source_name, source_type, provider,
+                   connection_mode, owner_agent, sensitivity,
+                   freshness_target_minutes, latest_check_at, latest_ok_at,
+                   latest_quote_at, staleness_minutes, status, severity,
+                   rows_seen, risk_event_id, risk_event_status,
+                   risk_event_title, evidence, created_by, created_at
+            FROM core.v_latest_data_source_freshness
+            ORDER BY
+                CASE status WHEN 'stale' THEN 1 WHEN 'error' THEN 2 WHEN 'missing_check' THEN 3 WHEN 'fresh' THEN 4 ELSE 5 END,
+                created_at DESC
+            LIMIT 50
+        """,
+        "source_freshness_scheduler_runs": """
+            SELECT id, job_key, run_key, status, scheduler_interval_seconds,
+                   checked_count, fresh_count, stale_or_error_count,
+                   error_message, started_at, finished_at, duration_ms,
+                   next_run_after, minutes_since_finished, created_by, created_at
+            FROM core.v_source_freshness_scheduler_runs
+            LIMIT 20
+        """,
+        "risk_events": """
+            SELECT id, ts, scope_type, scope_ref, severity, status, title,
+                   message, evidence, approval_id
+            FROM risk.events
+            WHERE status IN ('new','acknowledged')
+            ORDER BY ts DESC
+            LIMIT 50
+        """,
+        "fincept": """
+            SELECT source_system, component_name, version, git_commit, install_status,
+                   build_status, runtime_mode, requires_sandbox_escape, install_root,
+                   app_bundle_path, binary_path, features_confirmed_by_build,
+                   known_runtime_notes, updated_at
+            FROM core.v_fincept_install_status
+            ORDER BY component_name
+        """,
+        "inbox": """
+            SELECT id, task_id, title, owner_agent, status, priority, recommended_action,
+                   evidence, target_workspace, created_at, updated_at
+            FROM agent.inbox_items
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 50
+        """,
+        "approvals": """
+            SELECT id, task_id, approval_type, title, owner_agent, risk_level,
+                   status, requested_action, rationale, decided_by, decided_at, created_at
+            FROM agent.approvals
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "approval_board_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_approval_board_summary
+            ORDER BY metric
+        """,
+        "approval_board_items": """
+            SELECT approval_id, task_id, approval_type, board_lane, title,
+                   owner_agent, risk_level, approval_status, requested_action,
+                   rationale, decided_by, decided_at, created_at, task_status,
+                   task_owner_agent, symbol, exchange, strategy_name, client_code,
+                   account_code, book_key, linked_record_id, linked_source,
+                   linked_status, gate_status, broker_order_allowed,
+                   live_execution_allowed, open_risk_events, gate_check_count,
+                   blocked_gate_count, recommended_next_action, latest_activity_at,
+                   evidence
+            FROM agent.v_approval_board_items
+            ORDER BY status_rank, risk_rank, latest_activity_at DESC
+            LIMIT 100
+        """,
+        "committee_room_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_committee_room_summary
+            ORDER BY metric
+        """,
+        "committee_room_items": """
+            SELECT committee_item_key, committee_lane, committee_scope,
+                   source_view, source_id, review_key, strategy_id,
+                   holding_thesis_id, special_memo_id, symbol, exchange,
+                   subject_name, title, review_status, decision_status,
+                   recommended_decision, final_decision, proposed_mode,
+                   risk_level, memo_status, memo_note_path, approval_id,
+                   approval_status, decided_by, decided_at,
+                   paper_monitor_allowed, capital_action_allowed,
+                   live_execution_allowed, member_count, evidence_gap_count,
+                   required_followup_count, created_by, created_at, updated_at,
+                   evidence, decision_pending, approval_pending, memo_missing,
+                   room_state, recommended_next_action, latest_activity_at
+            FROM agent.v_committee_room_items
+            ORDER BY priority_rank, risk_rank, latest_activity_at DESC
+            LIMIT 100
+        """,
+        "employee_profile_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_employee_profile_summary
+            ORDER BY metric
+        """,
+        "employee_profiles": """
+            SELECT agent_name, display_title, department, department_name,
+                   role_scope, persona, operating_style, mental_models,
+                   default_model_route, default_tools, permission_level,
+                   output_targets, guardrails, escalation_rules, daily_cadence,
+                   cost_policy, human_interface, reports_to_agent,
+                   reports_to_title, role_rank, hierarchy_level, authority_scope,
+                   decision_rights, must_consult, can_delegate_to,
+                   approval_required_for, character_name, avatar_role,
+                   visual_traits, voice_style, office_location, animation_state,
+                   color_token, icon_hint, mailbox_address, mailbox_key,
+                   primary_route, route_provider, route_default_model, model_key,
+                   assigned_provider, assigned_model, model_family,
+                   deployment_target, estimated_disk_gb, model_status,
+                   fallback_route, escalation_route, context_policy,
+                   model_cost_policy, max_autonomous_cost_tier,
+                   escalation_triggers, model_notes, assigned_skill_count,
+                   active_skill_count, enabled_tool_count, read_only_tool_count,
+                   write_or_browser_tool_count, open_task_count,
+                   blocked_task_count, open_inbox_count, urgent_inbox_count,
+                   unread_received_count, received_message_count,
+                   sent_message_count, worker_run_count,
+                   completed_worker_run_count, output_artifact_count,
+                   approval_count, pending_approval_count, live_state,
+                   current_work_title, current_work_detail, workload_score,
+                   latest_activity_at, skills, tools, open_tasks,
+                   open_inbox_items, recent_messages, recent_outputs,
+                   approvals, evidence
+            FROM agent.v_employee_profiles_v1
+            ORDER BY role_rank, agent_name
+            LIMIT 100
+        """,
+        "output_artifact_summary": """
+            SELECT metric, value, first_seen_at, latest_seen_at,
+                   obsidian_note_rows, local_file_rows, source_url_rows,
+                   interpretation
+            FROM agent.v_output_artifact_summary
+            ORDER BY
+                CASE metric WHEN 'total_artifacts' THEN 0 ELSE 1 END,
+                metric
+        """,
+        "output_artifact_registry": """
+            SELECT artifact_key, artifact_family, artifact_type, title,
+                   summary, owner_agent, owner_title, department, skill_key,
+                   skill_name, task_id, approval_id, widget_id, widget_key,
+                   symbol, company_name, strategy_name, note_path, local_path,
+                   source_url, content_hash, sensitivity, status, evidence,
+                   capital_action_allowed, live_execution_allowed, created_at,
+                   updated_at, latest_activity_at, artifact_location
+            FROM agent.v_output_artifact_registry_v2
+            ORDER BY latest_activity_at DESC NULLS LAST, artifact_family, title
+            LIMIT 150
+        """,
+        "output_artifact_gaps": """
+            SELECT gap_type, source_view, source_id, title, owner_agent,
+                   status, created_at, updated_at, gap_reason
+            FROM agent.v_output_artifact_gaps
+            ORDER BY
+                CASE gap_type
+                    WHEN 'worker_run_missing_note' THEN 1
+                    WHEN 'long_term_committee_missing_memo' THEN 2
+                    WHEN 'strategy_committee_missing_memo' THEN 3
+                    ELSE 4
+                END,
+                updated_at DESC NULLS LAST,
+                created_at DESC NULLS LAST
+            LIMIT 100
+        """,
+        "agent_comment_summary": """
+            SELECT metric, value, first_seen_at, latest_seen_at, interpretation
+            FROM agent.v_agent_comment_summary
+            ORDER BY
+                CASE metric
+                    WHEN 'total_comments' THEN 1
+                    WHEN 'open_comments' THEN 2
+                    WHEN 'high_priority_comments' THEN 3
+                    WHEN 'commented_targets' THEN 4
+                    ELSE 5
+                END
+        """,
+        "agent_comments": """
+            SELECT id, target_kind, target_ref, target_title, target_owner_agent,
+                   target_status, target_location, parent_comment_id,
+                   parent_from_agent, parent_body, from_agent, from_agent_title,
+                   from_agent_department, to_agent, to_agent_title,
+                   to_agent_department, comment_type, severity, status, body,
+                   evidence, metadata, created_by, created_at, updated_at,
+                   resolved_by, resolved_at, needs_attention
+            FROM agent.v_agent_comments
+            ORDER BY
+                CASE WHEN needs_attention THEN 0 ELSE 1 END,
+                updated_at DESC,
+                id DESC
+            LIMIT 100
+        """,
+        "agent_comment_targets": """
+            SELECT target_kind, target_ref, target_title, target_owner_agent,
+                   target_status, target_location, comment_count,
+                   open_comment_count, high_priority_open_count, latest_comment_at
+            FROM agent.v_agent_comment_target_summary
+            ORDER BY high_priority_open_count DESC, open_comment_count DESC,
+                     latest_comment_at DESC NULLS LAST
+            LIMIT 100
+        """,
+        "model_routes": """
+            SELECT route_name, task_class, default_provider, default_model,
+                   escalation_provider, escalation_model, max_cost_tier, notes, enabled
+            FROM agent.model_routes
+            WHERE enabled = true
+            ORDER BY
+                CASE route_name
+                    WHEN 'always_on_daily_driver' THEN 1
+                    WHEN 'local_embedding_retrieval' THEN 2
+                    WHEN 'charlie_munger_orchestration' THEN 3
+                    WHEN 'jarvis_runtime' THEN 4
+                    ELSE 5
+                END,
+                route_name
+        """,
+        "model_endpoints": """
+            SELECT id, endpoint_key, endpoint_name, provider, model_name,
+                   route_name, task_class, endpoint_type, base_url,
+                   deployment_target, status, context_window,
+                   estimated_disk_gb, cost_tier, capabilities,
+                   requires_api_key, has_secret_ref, health_status,
+                   last_checked_at, last_latency_ms, last_error,
+                   owner_agent, notes, config, updated_at
+            FROM agent.v_model_endpoint_control
+            LIMIT 100
+        """,
+        "model_cost_summary": """
+            SELECT metric, value, first_seen_at, latest_seen_at, interpretation
+            FROM agent.v_model_cost_summary
+            ORDER BY
+                CASE metric
+                    WHEN 'total_usage_events' THEN 1
+                    WHEN 'local_usage_events' THEN 2
+                    WHEN 'cloud_usage_events' THEN 3
+                    WHEN 'estimated_cost_today_usd' THEN 4
+                    WHEN 'estimated_cost_month_usd' THEN 5
+                    WHEN 'unapproved_cloud_events' THEN 6
+                    WHEN 'rate_missing_events' THEN 7
+                    WHEN 'agents_with_caps' THEN 8
+                    ELSE 9
+                END
+        """,
+        "model_cost_events": """
+            SELECT id, event_ts, source_kind, source_ref, agent_name, agent_title,
+                   department, route_name, task_class, provider, model_name,
+                   endpoint_key, usage_kind, model_status, prompt_tokens_est,
+                   completion_tokens_est, total_tokens_est, actual_total_tokens,
+                   estimated_cost_usd, actual_cost_usd, cost_currency, cost_tier,
+                   estimate_method, approval_id, task_id, chat_turn_id,
+                   daily_cap_usd, monthly_cap_usd, max_cost_tier,
+                   cloud_requires_approval, autonomous_cloud_allowed,
+                   is_cloud_usage, cost_control_status, evidence, metadata,
+                   created_at, updated_at
+            FROM agent.v_model_cost_ledger_events
+            ORDER BY event_ts DESC, id DESC
+            LIMIT 100
+        """,
+        "model_cost_caps": """
+            SELECT agent_name, display_title, department, primary_route,
+                   primary_model_key, cost_policy, max_autonomous_cost_tier,
+                   daily_cap_usd, monthly_cap_usd, max_cost_tier,
+                   cloud_requires_approval, autonomous_cloud_allowed,
+                   hard_stop_on_breach, alert_threshold_pct, events_today,
+                   events_month, cost_today_usd, cost_month_usd,
+                   daily_remaining_usd, monthly_remaining_usd,
+                   unapproved_cloud_events_today, rate_missing_events_today,
+                   cap_status, notes, evidence, updated_at
+            FROM agent.v_agent_model_cost_cap_status
+            ORDER BY
+                CASE cap_status
+                    WHEN 'daily_cap_breach' THEN 1
+                    WHEN 'approval_required' THEN 2
+                    WHEN 'rate_missing' THEN 3
+                    WHEN 'near_daily_cap' THEN 4
+                    ELSE 5
+                END,
+                events_today DESC,
+                agent_name
+            LIMIT 100
+        """,
+        "model_route_costs": """
+            SELECT route_name, task_class, provider, model_name, cost_tier,
+                   usage_events, usage_events_today, total_tokens_est,
+                   cost_usd, latest_event_ts, approval_required_events,
+                   rate_missing_events
+            FROM agent.v_model_route_cost_summary
+            ORDER BY usage_events_today DESC, usage_events DESC, route_name
+            LIMIT 100
+        """,
+        "source_connectors": """
+            SELECT id, connector_key, connector_name, source_key, source_name,
+                   source_type, connector_type, provider, access_mode, status,
+                   freshness_target_minutes, requires_api_key,
+                   requires_browser_session, has_secret_ref, base_url,
+                   owner_agent, sensitivity, health_status, last_checked_at,
+                   last_latency_ms, last_rows_seen, last_error, notes,
+                   config, updated_at
+            FROM core.v_source_connector_control
+            LIMIT 100
+        """,
+        "provider_readiness_board": """
+            SELECT id, provider_kind, provider_key, provider_name, provider,
+                   subject_name, route_or_source, provider_type, status,
+                   health_status, requires_api_key, has_secret_ref,
+                   requires_browser_session, browser_ready, cost_tier,
+                   owner_agent, last_checked_at, last_error, readiness_status,
+                   next_action, assignable, updated_at
+            FROM core.v_provider_readiness_board
+            ORDER BY id
+            LIMIT 120
+        """,
+        "provider_readiness_summary": """
+            SELECT metric, value, detail
+            FROM core.v_provider_readiness_summary
+            ORDER BY metric
+        """,
+        "provider_readiness_runs": """
+            SELECT id, run_key, status, model_checks_run, source_checks_run,
+                   ready_count, needs_check_count, blocked_count, degraded_count,
+                   summary, error_message, started_at, finished_at, duration_ms,
+                   created_by, created_at
+            FROM core.v_provider_readiness_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 25
+        """,
+        "provider_assignment_gates": """
+            SELECT id, gate_key, provider_kind, provider_key, provider_name,
+                   provider, subject_name, route_or_source, department_key,
+                   department_name, policy_status, policy_rule_id, policy_key,
+                   policy_reason, requested_by,
+                   requesting_agent, requested_use, source_kind, source_ref,
+                   target_workspace, readiness_status, provider_health_status,
+                   assignment_status, assignment_allowed, assignable_snapshot,
+                   block_reasons, next_action, inbox_item_id, inbox_status,
+                   readiness_snapshot, evidence, metadata, created_at, updated_at
+            FROM core.v_provider_assignment_gate_checks
+            ORDER BY created_at DESC, id DESC
+            LIMIT 100
+        """,
+        "department_provider_policy_board": """
+            SELECT id, policy_key, department_key, department_name,
+                   provider_kind, provider_key_pattern, route_or_source_pattern,
+                   provider_pattern, policy_status, priority, reason,
+                   guardrails, status, updated_at
+            FROM core.v_department_provider_policy_board
+            LIMIT 120
+        """,
+        "task_provider_gate_status": """
+            SELECT task_id, title, owner_agent, task_status, provider_gate_count,
+                   passed_provider_gates, approval_required_provider_gates,
+                   blocked_provider_gates, provider_gate_status,
+                   latest_provider_gate_at, provider_gate_evidence
+            FROM agent.v_task_provider_gate_status
+            ORDER BY latest_provider_gate_at DESC NULLS LAST, task_id DESC
+            LIMIT 100
+        """,
+        "connector_health_checks": """
+            SELECT target_kind, target_key, check_name, check_type, status,
+                   latency_ms, rows_seen, error_message, sample_payload,
+                   checked_by, checked_at
+            FROM core.v_connector_health_checks
+            LIMIT 100
+        """,
+        "chat_turns": """
+            SELECT id, session_key, actor, assistant_name, user_message,
+                   assistant_message, route_name, model_provider, model_name,
+                   model_status, retrieval_hits, widget_intents, tool_intents,
+                   metadata, created_at
+            FROM agent.v_recent_chat_turns
+            LIMIT 20
+        """,
+        "widget_intents": """
+            SELECT id, session_key, source_chat_turn_id, widget_key, widget_title,
+                   widget_type, workspace, status, priority, owner_agent,
+                   query_ref, materialized_widget_id, config, evidence, created_at, updated_at
+            FROM ops.v_dashboard_widget_intents
+            LIMIT 50
+        """,
+        "dashboard_widgets": """
+            SELECT id, widget_key, widget_title, widget_type, workspace, status,
+                   priority, owner_agent, query_ref, source_intent_id,
+                   source_chat_turn_id, linked_task_id, task_status,
+                   task_approval_required, inbox_item_id, inbox_status,
+                   config, layout, data_binding, evidence,
+                   last_materialized_at, last_refreshed_at, created_at, updated_at
+            FROM ops.v_dashboard_widgets
+            LIMIT 50
+        """,
+        "agent_jobs": """
+            SELECT task_id, title, objective, owner_agent, status, priority,
+                   approval_required, source_kind, source_ref, output_format,
+                   output_note_path, evidence, widget_id, widget_key, widget_title,
+                   workspace, widget_type, inbox_item_id, inbox_status,
+                   created_at, updated_at
+            FROM agent.v_dashboard_agent_jobs
+            LIMIT 50
+        """,
+        "agent_worker_queue": """
+            SELECT task_id, title, objective, owner_agent, task_status, priority,
+                   source_kind, source_ref, output_note_path, widget_id,
+                   widget_key, widget_title, workspace, widget_type,
+                   suggested_skill_key, suggested_skill_name, suggested_skill_family,
+                   suggested_execution_mode, latest_worker_run_id,
+                   latest_worker_status, latest_worker_finished_at,
+                   latest_output_note_path, inbox_item_id, inbox_status,
+                   created_at, updated_at
+            FROM agent.v_live_agent_worker_queue
+            LIMIT 50
+        """,
+        "agent_worker_runs": """
+            SELECT id, task_id, task_title, widget_id, widget_key, widget_title,
+                   agent_name, display_title, department, skill_key, skill_name,
+                   skill_family, run_mode, status, output_summary,
+                   output_note_path, evidence, started_at, finished_at,
+                   created_at, updated_at
+            FROM agent.v_recent_worker_runs
+            LIMIT 50
+        """,
+        "pipeline_readiness": """
+            SELECT 'configuration' AS record_class, 'control plane modules' AS area,
+                   'core.control_plane_modules' AS relation_name, count(*)::TEXT AS row_count,
+                   'Foundation configuration only; not client or market evidence.' AS interpretation
+            FROM core.control_plane_modules
+            UNION ALL SELECT 'configuration', 'MCP tool registry', 'agent.tool_registry', count(*)::TEXT,
+                   'Tool permission map; useful for routing but not live market evidence.' FROM agent.tool_registry
+            UNION ALL SELECT 'imported_data', 'p2cursor file profiles', 'client_data.source_files', count(*)::TEXT,
+                   'Files discovered from the legacy client system on external SSD.' FROM client_data.source_files
+            UNION ALL SELECT 'imported_data', 'p2cursor CSV rows', 'client_data.p2cursor_csv_rows', count(*)::TEXT,
+                   'Rows imported from quarantined legacy CSV exports.' FROM client_data.p2cursor_csv_rows
+            UNION ALL SELECT 'imported_data', 'attached transaction files', 'client_data.attached_transaction_files', count(*)::TEXT,
+                   'User-attached broker/option files registered with checksums.' FROM client_data.attached_transaction_files
+            UNION ALL SELECT 'imported_data', 'attached broker transactions', 'client_data.attached_broker_transactions', count(*)::TEXT,
+                   'Broker transaction rows parsed from attached Excel reports.' FROM client_data.attached_broker_transactions
+            UNION ALL SELECT 'imported_data', 'attached option log rows', 'client_data.attached_option_log_transactions', count(*)::TEXT,
+                   'Historical option journal rows parsed from attached workbook.' FROM client_data.attached_option_log_transactions
+            UNION ALL SELECT 'imported_data', 'AI research artifacts', 'core.raw_artifacts', count(*)::TEXT,
+                   'Codex/Claude/cowork outputs inventoried from local folders.' FROM core.raw_artifacts
+            UNION ALL SELECT 'imported_data', 'legacy algo unlinked holdings', 'portfolio.positions', count(*)::TEXT,
+                   'Imported old-system holdings not linked to a live client folio; exclude from live portfolio decisions.'
+            FROM portfolio.positions p
+            LEFT JOIN portfolio.accounts a ON a.id = p.account_id
+            WHERE a.client_id IS NULL
+            UNION ALL SELECT 'runtime_generated', 'public source checks', 'core.data_source_checks', count(*)::TEXT,
+                   'HTTP/source checks run by local scripts; evidence for connector reachability.' FROM core.data_source_checks
+            UNION ALL SELECT 'configuration', 'model endpoints', 'agent.model_endpoints', count(*)::TEXT,
+                   'Configured local/cloud model endpoints. Secrets are represented by secret_ref only.' FROM agent.model_endpoints
+            UNION ALL SELECT 'configuration', 'source connectors', 'core.source_connector_profiles', count(*)::TEXT,
+                   'Configured/planned data-source connectors with credential and browser readiness status.' FROM core.source_connector_profiles
+            UNION ALL SELECT 'runtime_generated', 'connector health checks', 'core.connector_health_checks', count(*)::TEXT,
+                   'Model/source connector configuration health checks stored by Jarvis/Data Steward.' FROM core.connector_health_checks
+            UNION ALL SELECT 'configuration', 'browser profiles', 'ops.browser_profiles', count(*)::TEXT,
+                   'Browser profiles for public research, TradingView CDP, and manual social review.' FROM ops.browser_profiles
+            UNION ALL SELECT 'configuration', 'browser connector links', 'ops.browser_profile_connector_links', count(*)::TEXT,
+                   'Links between browser-dependent source connectors and named browser profiles.' FROM ops.browser_profile_connector_links
+            UNION ALL SELECT 'runtime_generated', 'browser session checks', 'ops.browser_session_checks', count(*)::TEXT,
+                   'Recorded CDP/profile readiness checks for browser-dependent connectors.' FROM ops.browser_session_checks
+            UNION ALL SELECT 'runtime_generated', 'filing collector runs', 'research.filing_collector_runs', count(*)::TEXT,
+                   'NSE/BSE collector run history with row counts and errors.' FROM research.filing_collector_runs
+            UNION ALL SELECT 'imported_data', 'corporate filings', 'research.corporate_filings', count(*)::TEXT,
+                   'Exchange filing/announcement rows captured from public sources.' FROM research.corporate_filings
+            UNION ALL SELECT 'runtime_generated', 'filing events', 'research.filing_events', count(*)::TEXT,
+                   'Classified filing events routed to Filings and Special Situations agents.' FROM research.filing_events
+            UNION ALL SELECT 'runtime_generated', 'filing PDF extraction runs', 'research.filing_pdf_extraction_runs', count(*)::TEXT,
+                   'PDF download/extraction/classification run history for captured filings.' FROM research.filing_pdf_extraction_runs
+            UNION ALL SELECT 'runtime_generated', 'special situation terms', 'research.special_situation_terms', count(*)::TEXT,
+                   'Structured dates, prices, ratios, and conditions extracted from event filings.' FROM research.special_situation_terms
+            UNION ALL SELECT 'runtime_generated', 'TradingView tasks', 'ops.tradingview_tasks', count(*)::TEXT,
+                   'Chart/browser tasks queued for TradingView MCP/browser execution.' FROM ops.tradingview_tasks
+            UNION ALL SELECT 'runtime_generated', 'trade activity ledger', 'trading.trade_activity_ledger', count(*)::TEXT,
+                   'Manual and paper trades recorded in the warehouse.' FROM trading.trade_activity_ledger
+            UNION ALL SELECT 'runtime_generated', 'strategy signals', 'trading.signals', count(*)::TEXT,
+                   'Signals captured from strategies or test adapters.' FROM trading.signals
+            UNION ALL SELECT 'user_created', 'manual clients', 'portfolio.clients', count(*)::TEXT,
+                   'Client rows created/imported in the local warehouse.' FROM portfolio.clients
+            UNION ALL SELECT 'user_created', 'linked client accounts', 'portfolio.accounts', count(*)::TEXT,
+                   'Client account rows linked to a real portfolio.clients row.' FROM portfolio.accounts WHERE client_id IS NOT NULL
+            UNION ALL SELECT 'user_created', 'linked portfolio positions', 'portfolio.positions', count(*)::TEXT,
+                   'Applied position rows linked to a real client account. Empty is acceptable until holdings are imported/applied.'
+            FROM portfolio.positions p
+            JOIN portfolio.accounts a ON a.id = p.account_id
+            WHERE a.client_id IS NOT NULL
+            UNION ALL SELECT 'user_created', 'staged holding updates', 'portfolio.manual_holding_updates', count(*)::TEXT,
+                   'Manual holding updates awaiting approval/application.' FROM portfolio.manual_holding_updates
+            ORDER BY record_class, area
+        """,
+    }
+    try:
+        data = run_psql_json_object(queries)
+    except Exception as exc:  # noqa: BLE001
+        issues.append({"section": "snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
+        data = {name: [] for name in queries}
+
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "tradingview_cdp": probe_tradingview_cdp(),
+        **data,
+    }
+    snapshot["data_mode"] = {
+        "seed_data_allowed": False,
+        "display_policy": "Show warehouse-backed rows only; empty states mean the source is not connected or has no records yet.",
+    }
+    snapshot["issues"] = issues
+    return snapshot
+
+
+def create_tradingview_task(payload: dict) -> dict:
+    title = str(payload.get("task_title") or payload.get("title") or "").strip()
+    if not title:
+        raise ValueError("task_title is required")
+    actor = str(payload.get("requested_by") or payload.get("actor") or "Charlie Munger").strip()
+    task_type = str(payload.get("task_type") or "chart_review").strip()
+    owner_agent = str(payload.get("owner_agent") or "Trading Desk Agent").strip()
+    priority = str(payload.get("priority") or "high").strip()
+    instruction = str(payload.get("instruction") or title).strip()
+    source_ref = str(payload.get("source_ref") or "ai_office_api").strip()
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO ops.tradingview_tasks (
+                task_title, task_type, requested_by, owner_agent, status,
+                symbols, exchange, timeframe, chart_layout, instruction,
+                source_ref, evidence, metadata
+            )
+            VALUES (
+                {sql_literal(title)}, {sql_literal(task_type)}, {sql_literal(actor)},
+                {sql_literal(owner_agent)}, 'queued', {sql_text_array(payload.get("symbols"))},
+                {sql_literal(payload.get("exchange"))}, {sql_literal(payload.get("timeframe"))},
+                {sql_literal(payload.get("chart_layout"))}, {sql_literal(instruction)},
+                {sql_literal(source_ref)},
+                {sql_jsonb(payload.get("evidence") or [{"source": "AI Office API"}])},
+                {sql_jsonb(payload.get("metadata") or {"api_route": "/api/tradingview/tasks"})}
+            )
+            RETURNING id, task_title, task_type, requested_by, owner_agent, status,
+                      symbols, exchange, timeframe, chart_layout, instruction,
+                      source_ref, evidence, metadata, created_at, updated_at
+        ), inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            )
+            SELECT NULL, 'TradingView task queued: ' || task_title, owner_agent,
+                   'queued', {sql_literal(priority)},
+                   'Open/automate TradingView, capture evidence, then update task result.',
+                   jsonb_build_array(jsonb_build_object('table', 'ops.tradingview_tasks', 'id', id)),
+                   'trading'
+            FROM inserted
+            RETURNING id
+        ), result_rows AS (
+            SELECT * FROM inserted
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_create_tradingview_task", "create_tradingview_task", actor, "ops.tradingview_tasks", result, payload)
+    return result
+
+
+def execute_tradingview_chart_action(payload: dict) -> dict:
+    actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
+    symbols = payload.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [item.strip() for item in symbols.split(",") if item.strip()]
+    if not isinstance(symbols, list) or not symbols:
+        symbol = str(payload.get("symbol") or "").strip()
+        symbols = [symbol] if symbol else []
+    if not symbols:
+        raise ValueError("symbol or symbols is required")
+
+    task_id = payload.get("task_id")
+    if task_id in (None, ""):
+        task = create_tradingview_task(
+            {
+                "task_title": payload.get("task_title") or f"Open TradingView chart: {', '.join(map(str, symbols[:3]))}",
+                "task_type": payload.get("task_type") or "chart_action",
+                "requested_by": actor,
+                "owner_agent": payload.get("owner_agent") or "Trading Desk Agent",
+                "priority": payload.get("priority") or "high",
+                "symbols": symbols,
+                "exchange": payload.get("exchange"),
+                "timeframe": payload.get("timeframe"),
+                "chart_layout": payload.get("chart_layout"),
+                "instruction": payload.get("instruction") or "Open chart, capture screenshot, and attach evidence.",
+                "source_ref": payload.get("source_ref") or "ai_os_chart_action_api",
+                "evidence": payload.get("evidence") or [{"source": "AI OS chart action API"}],
+                "metadata": {
+                    **(payload.get("metadata") or {}),
+                    "action_kind": payload.get("action") or "open_chart_capture",
+                    "api_route": "/api/tradingview/chart-actions",
+                },
+            }
+        )
+        task_id = task.get("id")
+    try:
+        task_id_int = int(task_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("task_id must be an integer when provided") from exc
+
+    script_payload = {
+        "action": payload.get("action") or "open_chart_capture",
+        "task_id": task_id_int,
+        "symbols": symbols,
+        "exchange": payload.get("exchange") or "NSE",
+        "timeframe": payload.get("timeframe") or "D",
+        "chart_layout": payload.get("chart_layout"),
+        "target_url": payload.get("target_url"),
+        "wait_ms": payload.get("wait_ms") or payload.get("waitMs") or 9000,
+        "capture_screenshot": payload.get("capture_screenshot", True),
+        "quality_check": payload.get("quality_check", True),
+        "max_quality_attempts": payload.get("max_quality_attempts") or payload.get("maxQualityAttempts") or 3,
+    }
+    action_timeout = max(
+        45,
+        int((int(script_payload["wait_ms"]) / 1000) * int(script_payload["max_quality_attempts"]) + 30),
+    )
+    script_path = RUNTIME_ROOT / "scripts" / "execute_tradingview_chart_action.mjs"
+    completed = subprocess.run(
+        ["node", str(script_path), "--payload-json", json.dumps(script_payload, default=str)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=action_timeout,
+    )
+    if completed.returncode != 0:
+        error_payload: object
+        try:
+            error_payload = json.loads((completed.stderr or completed.stdout).strip() or "{}")
+        except json.JSONDecodeError:
+            error_payload = {"stderr": completed.stderr, "stdout": completed.stdout}
+        run_psql_text(
+            f"""
+            UPDATE ops.tradingview_tasks
+            SET status = 'failed',
+                result_summary = {sql_literal('TradingView chart action failed.')},
+                evidence = evidence || jsonb_build_array({sql_jsonb({'source': 'execute_tradingview_chart_action', 'status': 'failed', 'error': error_payload})}),
+                metadata = metadata || {sql_jsonb({'last_chart_action_error': error_payload})},
+                updated_at = now(),
+                completed_at = now()
+            WHERE id = {task_id_int}
+            """
+        )
+        audit_api_write("ai_os_api_execute_tradingview_chart_action", "execute_tradingview_chart_action", actor, "ops.tradingview_tasks", error_payload, payload)
+        raise RuntimeError(f"TradingView chart action failed: {error_payload}")
+
+    try:
+        action_result = json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("TradingView chart action returned invalid JSON") from exc
+
+    screenshot_path_value = action_result.get("screenshot_path")
+    screenshot_path = Path(str(screenshot_path_value)) if screenshot_path_value else None
+    if not screenshot_path or not screenshot_path.exists():
+        raise RuntimeError("TradingView chart action did not produce a screenshot artifact")
+    content_hash = sha256_file(screenshot_path)
+    title = f"TradingView chart screenshot: {', '.join(map(str, symbols[:3]))}"
+    quality_status = str(action_result.get("artifact_quality_status") or "not_checked")
+    task_status = "done" if quality_status in {"passed", "skipped", "not_checked"} else "needs_review"
+    result_summary = (
+        f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
+        f"({script_payload['exchange']}, {script_payload['timeframe']}) and captured screenshot evidence."
+        if task_status == "done"
+        else (
+            f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
+            f"({script_payload['exchange']}, {script_payload['timeframe']}) but screenshot quality failed; artifact requires review."
+        )
+    )
+    evidence_item = {
+        "source": "TradingView CDP",
+        "action": script_payload["action"],
+        "target_url": action_result.get("target_url"),
+        "page_url": action_result.get("page_url"),
+        "screenshot_path": str(screenshot_path),
+        "content_hash": content_hash,
+        "artifact_quality_status": quality_status,
+    }
+    request_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    template_key = request_metadata.get("template_key")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH artifact AS (
+            INSERT INTO core.raw_artifacts (
+                artifact_type, title, source_url, local_path, content_hash,
+                mime_type, sensitivity, metadata
+            )
+            VALUES (
+                'tradingview_chart_screenshot',
+                {sql_literal(title)},
+                {sql_literal(action_result.get("page_url") or action_result.get("target_url"))},
+                {sql_literal(str(screenshot_path))},
+                {sql_literal(content_hash)},
+                'image/png',
+                'private',
+                {sql_jsonb({**action_result, "task_id": task_id_int, "template_key": template_key, "request_metadata": request_metadata})}
+            )
+            ON CONFLICT (source_system_id, source_url, local_path, content_hash)
+            DO UPDATE SET
+                captured_at = now(),
+                metadata = core.raw_artifacts.metadata || EXCLUDED.metadata
+            RETURNING id, title, local_path, content_hash
+        ),
+        browser_run AS (
+            INSERT INTO ops.browser_runs (
+                run_type, target_url, status, actor, started_at, finished_at,
+                screenshot_path, extracted_artifact_id, notes, metadata,
+                source_kind, source_ref, page_title, extracted_text_preview
+            )
+            SELECT
+                'tradingview_chart_action',
+                {sql_literal(action_result.get("target_url"))},
+                {sql_literal(task_status)},
+                {sql_literal(actor)},
+                {sql_literal(action_result.get("started_at"))}::timestamptz,
+                {sql_literal(action_result.get("finished_at"))}::timestamptz,
+                {sql_literal(str(screenshot_path))},
+                artifact.id,
+                {sql_literal(result_summary)},
+                {sql_jsonb({**action_result, "task_id": task_id_int, "artifact_hash": content_hash, "template_key": template_key, "request_metadata": request_metadata})},
+                'ops.tradingview_tasks',
+                {sql_literal(str(task_id_int))},
+                {sql_literal(action_result.get("page_title"))},
+                {sql_literal(action_result.get("extracted_text_preview"))}
+            FROM artifact
+            RETURNING id, status, screenshot_path, extracted_artifact_id
+        ),
+        updated_task AS (
+            UPDATE ops.tradingview_tasks
+            SET status = {sql_literal(task_status)},
+                browser_run_id = (SELECT id FROM browser_run),
+                extracted_artifact_id = (SELECT id FROM artifact),
+                result_summary = {sql_literal(result_summary)},
+                evidence = evidence || jsonb_build_array({sql_jsonb(evidence_item)}),
+                metadata = metadata || {sql_jsonb({"last_chart_action": action_result})},
+                updated_at = now(),
+                completed_at = now()
+            WHERE id = {task_id_int}
+            RETURNING id, task_title, task_type, owner_agent, status, symbols,
+                      browser_run_id, extracted_artifact_id, result_summary,
+                      evidence, metadata, completed_at
+        ),
+        result_rows AS (
+            SELECT
+                updated_task.*,
+                (SELECT row_to_json(artifact) FROM artifact) AS artifact,
+                (SELECT row_to_json(browser_run) FROM browser_run) AS browser_run
+            FROM updated_task
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    result = rows[0] if rows else {"error": "TradingView task not found after chart action", "task_id": task_id_int}
+    audit_api_write("ai_os_api_execute_tradingview_chart_action", "execute_tradingview_chart_action", actor, "ops.tradingview_tasks", result, payload)
+    return result
+
+
+def execute_tradingview_template_action(payload: dict) -> dict:
+    template_key = str(payload.get("template_key") or payload.get("template") or "").strip()
+    if not template_key:
+        raise ValueError("template_key is required")
+    actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
+    template_rows = run_psql_json(
+        f"""
+        SELECT template_key, template_name, category, action_kind,
+               default_exchange, default_timeframe, default_chart_layout,
+               requires_symbol, approval_required, execution_mode, status,
+               owner_agent, description, risk_notes, default_payload
+        FROM ops.v_tradingview_action_templates
+        WHERE template_key = {sql_literal(template_key)}
+        LIMIT 1
+        """
+    )
+    if not template_rows:
+        raise ValueError(f"TradingView template not found: {template_key}")
+    template = template_rows[0]
+    if str(template.get("status")) not in {"active", "partial", "gated"}:
+        raise ValueError(f"TradingView template is not active: {template_key}")
+
+    symbols = payload.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [item.strip() for item in symbols.split(",") if item.strip()]
+    if not isinstance(symbols, list) or not symbols:
+        symbol = str(payload.get("symbol") or "").strip()
+        symbols = [symbol] if symbol else []
+    if template.get("requires_symbol") and not symbols:
+        raise ValueError("symbol or symbols is required for this TradingView template")
+
+    default_payload = template.get("default_payload") if isinstance(template.get("default_payload"), dict) else {}
+    merged_payload = {
+        **default_payload,
+        **payload,
+        "template_key": template_key,
+        "symbols": symbols,
+        "exchange": payload.get("exchange") or template.get("default_exchange") or "NSE",
+        "timeframe": payload.get("timeframe") or template.get("default_timeframe") or "D",
+        "chart_layout": payload.get("chart_layout") or template.get("default_chart_layout"),
+        "action": template.get("action_kind") or payload.get("action") or "open_chart_capture",
+        "actor": actor,
+        "owner_agent": payload.get("owner_agent") or template.get("owner_agent") or "Trading Desk Agent",
+        "instruction": payload.get("instruction") or template.get("description") or f"Run TradingView template {template_key}.",
+        "metadata": {
+            **(payload.get("metadata") or {}),
+            "template_key": template_key,
+            "template_status": template.get("status"),
+            "template_execution_mode": template.get("execution_mode"),
+            "template_risk_notes": template.get("risk_notes"),
+        },
+    }
+
+    if template.get("approval_required") or str(template.get("execution_mode")) == "human_gated_request":
+        title = str(payload.get("task_title") or f"TradingView gated template: {template.get('template_name')}").strip()
+        rows = run_psql_json_statement(
+            f"""
+            WITH task AS (
+                INSERT INTO ops.tradingview_tasks (
+                    task_title, task_type, requested_by, owner_agent, status,
+                    symbols, exchange, timeframe, chart_layout, instruction,
+                    source_ref, evidence, metadata
+                )
+                VALUES (
+                    {sql_literal(title)},
+                    {sql_literal('template_request')},
+                    {sql_literal(actor)},
+                    {sql_literal(merged_payload['owner_agent'])},
+                    'needs_approval',
+                    {sql_text_array(symbols)},
+                    {sql_literal(merged_payload['exchange'])},
+                    {sql_literal(merged_payload['timeframe'])},
+                    {sql_literal(merged_payload.get('chart_layout'))},
+                    {sql_literal(merged_payload['instruction'])},
+                    {sql_literal(payload.get('source_ref') or 'ai_os_tradingview_template')},
+                    jsonb_build_array(jsonb_build_object('source','TradingView template API','template_key',{sql_literal(template_key)})),
+                    {sql_jsonb(merged_payload['metadata'])}
+                )
+                RETURNING id, task_title, task_type, requested_by, owner_agent, status,
+                          symbols, exchange, timeframe, chart_layout, instruction,
+                          source_ref, evidence, metadata, created_at, updated_at
+            ),
+            approval AS (
+                INSERT INTO agent.approvals (
+                    approval_type, title, owner_agent, risk_level, status,
+                    requested_action, rationale
+                )
+                SELECT
+                    'tradingview_template_action',
+                    'Approve TradingView template: ' || {sql_literal(template.get('template_name'))},
+                    'Risk Agent',
+                    CASE WHEN {sql_literal(template_key)} LIKE '%alert%' THEN 'high' ELSE 'medium' END,
+                    'pending',
+                    {sql_jsonb(merged_payload)} || jsonb_build_object('tradingview_task_id', (SELECT id FROM task)),
+                    {sql_literal(template.get('risk_notes') or 'TradingView template requires human approval.')}
+                FROM task
+                RETURNING id, approval_type, title, owner_agent, risk_level, status,
+                          requested_action, rationale, created_at
+            ),
+            inbox AS (
+                INSERT INTO agent.inbox_items (
+                    title, owner_agent, status, priority, recommended_action,
+                    evidence, target_workspace
+                )
+                SELECT
+                    'Approval needed: ' || {sql_literal(template.get('template_name'))},
+                    'Risk Agent',
+                    'queued',
+                    'high',
+                    'Review and approve/reject the TradingView template request. The system has not changed TradingView state.',
+                    jsonb_build_array(
+                        jsonb_build_object('table','ops.tradingview_tasks','id',(SELECT id FROM task)),
+                        jsonb_build_object('table','agent.approvals','id',(SELECT id FROM approval)),
+                        jsonb_build_object('template_key',{sql_literal(template_key)})
+                    ),
+                    'risk'
+                FROM task
+                RETURNING id
+            ),
+            result_rows AS (
+                SELECT
+                    (SELECT row_to_json(task) FROM task) AS task,
+                    (SELECT row_to_json(approval) FROM approval) AS approval,
+                    (SELECT id FROM inbox) AS inbox_item_id,
+                    {sql_literal('approval_required')} AS status,
+                    {sql_literal(template_key)} AS template_key
+            )
+            SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+            FROM result_rows
+            """
+        )
+        result = rows[0] if rows else {"error": "TradingView template approval request was not created"}
+        audit_api_write("ai_os_api_execute_tradingview_template_action", "create_template_approval_request", actor, "agent.approvals", result, payload)
+        return result
+
+    result = execute_tradingview_chart_action(merged_payload)
+    result["template_key"] = template_key
+    result["template_name"] = template.get("template_name")
+    result["template_status"] = template.get("status")
+    audit_api_write("ai_os_api_execute_tradingview_template_action", "execute_tradingview_template_action", actor, "ops.tradingview_tasks", result, payload)
+    return result
+
+
+def create_inbox_item(payload: dict) -> dict:
+    title = str(payload.get("title") or payload.get("task_title") or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
+    owner_agent = str(payload.get("owner_agent") or payload.get("agent") or "Jarvis").strip()
+    status = str(payload.get("status") or "queued").strip()
+    priority = str(payload.get("priority") or "medium").strip()
+    recommended_action = str(payload.get("recommended_action") or payload.get("recommendedAction") or "Review and route next action.").strip()
+    target_workspace = str(payload.get("target_workspace") or payload.get("workspace") or "command").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO agent.inbox_items (
+                title, owner_agent, status, priority, recommended_action,
+                evidence, target_workspace
+            )
+            VALUES (
+                {sql_literal(title)}, {sql_literal(owner_agent)}, {sql_literal(status)},
+                {sql_literal(priority)}, {sql_literal(recommended_action)},
+                {sql_jsonb(payload.get("evidence") or [{"source": "AI Office API"}])},
+                {sql_literal(target_workspace)}
+            )
+            RETURNING id, task_id, title, owner_agent, status, priority,
+                      recommended_action, evidence, target_workspace, created_at, updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_create_inbox_item", "create_inbox_item", actor, "agent.inbox_items", result, payload)
+    return result
+
+
+def validate_comment_target(target_kind: str, target_ref: str) -> None:
+    validators = {
+        "output_artifact": f"SELECT artifact_key AS target_ref FROM agent.v_output_artifact_registry_v2 WHERE artifact_key = {sql_literal(target_ref)} LIMIT 1",
+        "task": f"SELECT id::TEXT AS target_ref FROM agent.tasks WHERE id::TEXT = {sql_literal(target_ref)} LIMIT 1",
+        "approval": f"SELECT id::TEXT AS target_ref FROM agent.approvals WHERE id::TEXT = {sql_literal(target_ref)} LIMIT 1",
+        "agent": f"SELECT agent_name AS target_ref FROM agent.profiles WHERE agent_name = {sql_literal(target_ref)} LIMIT 1",
+        "message_thread": f"SELECT thread_key AS target_ref FROM agent.agent_messages WHERE thread_key = {sql_literal(target_ref)} LIMIT 1",
+        "strategy": f"SELECT strategy_key AS target_ref FROM strategy.v_strategy_registry WHERE strategy_key = {sql_literal(target_ref)} LIMIT 1",
+    }
+    sql = validators.get(target_kind)
+    if not sql:
+        return
+    if not run_psql_json(sql):
+        raise ValueError(f"{target_kind} target not found: {target_ref}")
+
+
+def create_agent_comment(payload: dict) -> dict:
+    target_kind = str(payload.get("target_kind") or payload.get("targetKind") or "").strip()
+    target_ref = str(payload.get("target_ref") or payload.get("targetRef") or "").strip()
+    body = str(payload.get("body") or payload.get("comment") or payload.get("note") or "").strip()
+    if not target_kind:
+        raise ValueError("target_kind is required")
+    if not target_ref:
+        raise ValueError("target_ref is required")
+    if not body:
+        raise ValueError("body is required")
+    if target_kind not in {
+        "output_artifact",
+        "task",
+        "approval",
+        "agent",
+        "message_thread",
+        "symbol",
+        "strategy",
+        "client",
+        "committee_review",
+        "risk_event",
+        "system",
+    }:
+        raise ValueError("target_kind is not supported")
+    validate_comment_target(target_kind, target_ref)
+
+    from_agent = str(payload.get("from_agent") or payload.get("fromAgent") or payload.get("actor") or "Charlie Munger").strip()
+    to_agent = str(payload.get("to_agent") or payload.get("toAgent") or "").strip() or None
+    comment_type = str(payload.get("comment_type") or payload.get("commentType") or "review_note").strip()
+    severity = str(payload.get("severity") or "normal").strip()
+    status = str(payload.get("status") or "open").strip()
+    target_title = str(payload.get("target_title") or payload.get("targetTitle") or "").strip() or None
+    parent_comment_id = payload.get("parent_comment_id") or payload.get("parentCommentId")
+    actor = str(payload.get("created_by") or payload.get("createdBy") or from_agent).strip()
+    if comment_type not in {"review_note", "question", "objection", "risk_flag", "follow_up", "decision_note", "source_gap", "praise", "system_note"}:
+        raise ValueError("comment_type is not supported")
+    if severity not in {"low", "normal", "medium", "high", "critical"}:
+        raise ValueError("severity must be low, normal, medium, high, or critical")
+    if status not in {"open", "acknowledged", "resolved", "dismissed"}:
+        raise ValueError("status must be open, acknowledged, resolved, or dismissed")
+    parent_sql = "NULL"
+    if parent_comment_id not in (None, ""):
+        try:
+            parent_sql = str(int(parent_comment_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("parent_comment_id must be an integer") from exc
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO agent.comments (
+                target_kind, target_ref, target_title, parent_comment_id,
+                from_agent, to_agent, comment_type, severity, status, body,
+                evidence, metadata, created_by
+            )
+            VALUES (
+                {sql_literal(target_kind)}, {sql_literal(target_ref)}, {sql_literal(target_title)},
+                {parent_sql}, {sql_literal(from_agent)}, {sql_literal(to_agent)},
+                {sql_literal(comment_type)}, {sql_literal(severity)}, {sql_literal(status)},
+                {sql_literal(body)}, {sql_jsonb(payload.get("evidence") or [{"source": "AI Office comment API"}])},
+                {sql_jsonb(payload.get("metadata") or {"api_route": "/api/agents/comments"})},
+                {sql_literal(actor)}
+            )
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    if not rows:
+        raise ValueError("comment insert failed")
+    comment_id = rows[0].get("id")
+    result_rows = run_psql_json(
+        f"""
+        SELECT *
+        FROM agent.v_agent_comments
+        WHERE id = {int(comment_id)}
+        LIMIT 1
+        """
+    )
+    result = result_rows[0] if result_rows else rows[0]
+    audit_api_write("ai_os_api_create_agent_comment", "create_agent_comment", actor, "agent.comments", result, payload)
+    return result
+
+
+def resolve_agent_comment(payload: dict) -> dict:
+    try:
+        comment_id = int(payload.get("comment_id") or payload.get("commentId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("comment_id is required and must be an integer") from exc
+    status = str(payload.get("status") or "resolved").strip()
+    if status not in {"acknowledged", "resolved", "dismissed"}:
+        raise ValueError("status must be acknowledged, resolved, or dismissed")
+    actor = str(payload.get("actor") or payload.get("resolved_by") or payload.get("resolvedBy") or "Jarvis").strip()
+    resolution_note = str(payload.get("resolution_note") or payload.get("resolutionNote") or payload.get("note") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH updated AS (
+            UPDATE agent.comments
+            SET status = {sql_literal(status)},
+                resolved_by = CASE WHEN {sql_literal(status)} IN ('resolved','dismissed') THEN {sql_literal(actor)} ELSE resolved_by END,
+                resolved_at = CASE WHEN {sql_literal(status)} IN ('resolved','dismissed') THEN now() ELSE resolved_at END,
+                metadata = metadata || jsonb_build_object(
+                    'last_status_update', {sql_literal(status)},
+                    'last_status_actor', {sql_literal(actor)},
+                    'last_status_at', now(),
+                    'resolution_note', {sql_literal(resolution_note)}
+                ),
+                updated_at = now()
+            WHERE id = {comment_id}
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text
+        FROM updated
+        """
+    )
+    if not rows:
+        raise ValueError(f"comment not found: {comment_id}")
+    result_rows = run_psql_json(
+        f"""
+        SELECT *
+        FROM agent.v_agent_comments
+        WHERE id = {comment_id}
+        LIMIT 1
+        """
+    )
+    result = result_rows[0] if result_rows else rows[0]
+    audit_api_write("ai_os_api_resolve_agent_comment", "resolve_agent_comment", actor, "agent.comments", result, payload)
+    return result
+
+
+def create_agent_message(payload: dict) -> dict:
+    from_agent = str(payload.get("from_agent") or payload.get("fromAgent") or payload.get("sender") or "Charlie Munger").strip()
+    to_agent = str(payload.get("to_agent") or payload.get("toAgent") or payload.get("recipient") or "").strip()
+    subject = str(payload.get("subject") or payload.get("title") or "").strip()
+    body = str(payload.get("body") or payload.get("message") or payload.get("objective") or "").strip()
+    if not to_agent:
+        raise ValueError("to_agent is required")
+    if not subject:
+        raise ValueError("subject is required")
+    if not body:
+        raise ValueError("body is required")
+    priority = str(payload.get("priority") or "medium").strip().lower()
+    if priority not in {"low", "medium", "high", "critical"}:
+        raise ValueError("priority must be low, medium, high, or critical")
+    thread_key = str(payload.get("thread_key") or payload.get("threadKey") or slug_for_text(subject)).strip()
+    related_skill_key = str(payload.get("related_skill_key") or payload.get("skill_key") or payload.get("skillKey") or "").strip()
+    related_skill_sql = sql_literal(related_skill_key) if related_skill_key else "NULL"
+    actor = str(payload.get("actor") or from_agent).strip()
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH validated AS (
+            SELECT
+                (SELECT agent_name FROM agent.profiles WHERE agent_name = {sql_literal(from_agent)} AND status = 'active') AS from_agent,
+                (SELECT agent_name FROM agent.profiles WHERE agent_name = {sql_literal(to_agent)} AND status = 'active') AS to_agent,
+                (SELECT skill_key FROM agent.skills WHERE skill_key = {related_skill_sql}) AS skill_key
+        ), inserted AS (
+            INSERT INTO agent.agent_messages (
+                thread_key, from_agent, to_agent, subject, body, priority,
+                status, related_skill_key, metadata, processing_status
+            )
+            SELECT
+                {sql_literal(thread_key)},
+                coalesce(from_agent, {sql_literal(from_agent)}),
+                to_agent,
+                {sql_literal(subject)},
+                {sql_literal(body)},
+                {sql_literal(priority)},
+                'unread',
+                CASE WHEN {related_skill_sql} IS NULL THEN NULL ELSE skill_key END,
+                {sql_jsonb(payload.get("metadata") or {"api_route": "/api/agents/messages"})},
+                'pending'
+            FROM validated
+            WHERE to_agent IS NOT NULL
+              AND ({related_skill_sql} IS NULL OR skill_key IS NOT NULL)
+            RETURNING id, thread_key, from_agent, to_agent, subject, body, priority,
+                      status, processing_status, related_skill_key, metadata, created_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    if not rows:
+        raise ValueError("active to_agent or related_skill_key not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_create_agent_message", "create_agent_message", actor, "agent.agent_messages", result, payload)
+    return result
+
+
+def triage_agent_message(payload: dict) -> dict:
+    try:
+        message_id = int(payload.get("message_id") or payload.get("messageId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("message_id is required and must be an integer") from exc
+    action = str(payload.get("action") or "acknowledge").strip().lower()
+    if action not in {"mark_read", "acknowledge", "create_task"}:
+        raise ValueError("action must be mark_read, acknowledge, or create_task")
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    target_workspace = str(payload.get("target_workspace") or payload.get("targetWorkspace") or "command").strip()
+    task_title = str(payload.get("task_title") or payload.get("taskTitle") or "").strip()
+    task_objective = str(payload.get("task_objective") or payload.get("taskObjective") or "").strip()
+    recommended_action = str(payload.get("recommended_action") or payload.get("recommendedAction") or "Review message and complete the handoff with evidence.").strip()
+    priority = str(payload.get("priority") or "").strip().lower()
+    if priority and priority not in {"low", "normal", "medium", "high", "critical"}:
+        raise ValueError("priority must be low, normal, medium, high, or critical")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT *
+            FROM agent.agent_messages
+            WHERE id = {message_id}
+            FOR UPDATE
+        ),
+        task_insert AS (
+            INSERT INTO agent.tasks (
+                title, objective, owner_agent, status, priority, approval_required,
+                source_kind, source_ref, output_format, evidence
+            )
+            SELECT
+                coalesce(nullif({sql_literal(task_title)}, ''), 'Message handoff: ' || selected.subject),
+                coalesce(nullif({sql_literal(task_objective)}, ''), selected.body),
+                coalesce(selected.to_agent, {sql_literal(actor)}),
+                'queued',
+                coalesce(nullif({sql_literal(priority)}, ''), CASE selected.priority WHEN 'critical' THEN 'critical' WHEN 'high' THEN 'high' ELSE 'normal' END),
+                false,
+                'agent_message',
+                selected.id::TEXT,
+                'agent_task',
+                jsonb_build_array(jsonb_build_object(
+                    'source_table', 'agent.agent_messages',
+                    'message_id', selected.id,
+                    'thread_key', selected.thread_key,
+                    'from_agent', selected.from_agent,
+                    'to_agent', selected.to_agent,
+                    'subject', selected.subject
+                ))
+            FROM selected
+            WHERE {sql_literal(action)} = 'create_task'
+              AND selected.generated_task_id IS NULL
+            RETURNING id
+        ),
+        task_link AS (
+            SELECT
+                selected.id AS message_id,
+                coalesce(selected.generated_task_id, (SELECT id FROM task_insert LIMIT 1)) AS task_id
+            FROM selected
+        ),
+        inbox_insert AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority, recommended_action, evidence, target_workspace
+            )
+            SELECT
+                task_link.task_id,
+                coalesce(nullif({sql_literal(task_title)}, ''), 'Message handoff: ' || selected.subject),
+                coalesce(selected.to_agent, {sql_literal(actor)}),
+                'queued',
+                coalesce(nullif({sql_literal(priority)}, ''), CASE selected.priority WHEN 'critical' THEN 'critical' WHEN 'high' THEN 'high' ELSE 'normal' END),
+                {sql_literal(recommended_action)},
+                jsonb_build_array(jsonb_build_object(
+                    'source_table', 'agent.agent_messages',
+                    'message_id', selected.id,
+                    'thread_key', selected.thread_key,
+                    'from_agent', selected.from_agent,
+                    'to_agent', selected.to_agent,
+                    'subject', selected.subject
+                )),
+                {sql_literal(target_workspace)}
+            FROM selected
+            JOIN task_link ON task_link.message_id = selected.id
+            WHERE {sql_literal(action)} = 'create_task'
+              AND task_link.task_id IS NOT NULL
+              AND selected.generated_inbox_id IS NULL
+            RETURNING id
+        ),
+        updated AS (
+            UPDATE agent.agent_messages msg
+            SET
+                status = CASE
+                    WHEN {sql_literal(action)} = 'mark_read' THEN 'read'
+                    WHEN {sql_literal(action)} = 'acknowledge' THEN 'acknowledged'
+                    WHEN {sql_literal(action)} = 'create_task' THEN 'routed_to_task'
+                    ELSE msg.status
+                END,
+                read_at = coalesce(msg.read_at, now()),
+                processing_status = CASE
+                    WHEN {sql_literal(action)} = 'mark_read' THEN 'read'
+                    WHEN {sql_literal(action)} = 'acknowledge' THEN 'acknowledged'
+                    WHEN {sql_literal(action)} = 'create_task' THEN 'routed_to_task'
+                    ELSE msg.processing_status
+                END,
+                processed_at = CASE WHEN {sql_literal(action)} = 'create_task' THEN now() ELSE msg.processed_at END,
+                generated_task_id = coalesce(msg.generated_task_id, (SELECT task_id FROM task_link LIMIT 1)),
+                generated_inbox_id = coalesce(msg.generated_inbox_id, (SELECT id FROM inbox_insert LIMIT 1)),
+                metadata = msg.metadata || jsonb_build_object(
+                    'last_triage_action', {sql_literal(action)},
+                    'last_triage_actor', {sql_literal(actor)},
+                    'last_triage_at', now()
+                )
+            WHERE msg.id = {message_id}
+            RETURNING msg.*
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                updated.id, updated.thread_key, updated.from_agent, updated.to_agent,
+                updated.subject, updated.body, updated.priority, updated.status,
+                updated.processing_status, updated.generated_task_id,
+                updated.generated_inbox_id, updated.read_at, updated.processed_at,
+                updated.metadata
+            FROM updated
+        ) result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("message_id not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_triage_agent_message", action, actor, "agent.agent_messages", result, payload)
+    return result
+
+
+def refresh_portfolio_risk_events(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Risk Agent").strip()
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(risk.refresh_portfolio_risk_events({sql_literal(actor)}))::TEXT
+        """
+    )
+    if not rows:
+        raise ValueError("portfolio risk event refresh failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_refresh_portfolio_risk_events", "refresh_portfolio_risk_events", actor, "risk.events", result, payload)
+    return result
+
+
+def register_model_endpoint(payload: dict) -> dict:
+    endpoint_key = str(payload.get("endpoint_key") or payload.get("endpointKey") or "").strip()
+    route_name = str(payload.get("route_name") or payload.get("routeName") or "").strip()
+    model_name = str(payload.get("model_name") or payload.get("modelName") or "").strip()
+    if not endpoint_key and not route_name and not model_name:
+        raise ValueError("endpoint_key, route_name, or model_name is required")
+    actor = str(payload.get("actor") or "AI Engineering").strip() or "AI Engineering"
+    normalized = {
+        **payload,
+        "endpoint_key": endpoint_key or payload.get("endpoint_key") or payload.get("endpointKey"),
+        "route_name": route_name or payload.get("route_name") or payload.get("routeName"),
+        "model_name": model_name or payload.get("model_name") or payload.get("modelName"),
+    }
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(agent.register_model_endpoint({sql_jsonb(normalized)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_register_model_endpoint", "register_model_endpoint", actor, "agent.model_endpoints", result, normalized)
+    return result
+
+
+def check_model_endpoint(payload: dict) -> dict:
+    endpoint_key = str(payload.get("endpoint_key") or payload.get("endpointKey") or "").strip()
+    if not endpoint_key:
+        raise ValueError("endpoint_key is required")
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(agent.run_model_endpoint_health_check({sql_literal(endpoint_key)}, {sql_literal(actor)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_check_model_endpoint", "check_model_endpoint", actor, "core.connector_health_checks", result, payload)
+    return result
+
+
+def log_chat_turn_model_usage(chat_turn_id: object, actor: str = "Charlie Munger") -> None:
+    try:
+        chat_id = int(chat_turn_id)
+    except (TypeError, ValueError):
+        return
+    try:
+        run_psql_text(
+            f"""
+            WITH chat_usage AS (
+                SELECT
+                    chat.id AS chat_turn_id,
+                    chat.created_at AS event_ts,
+                    'chat_turn'::TEXT AS source_kind,
+                    chat.id::TEXT AS source_ref,
+                    chat.assistant_name AS agent_name,
+                    chat.route_name,
+                    lower(coalesce(chat.model_provider, 'unknown')) AS provider,
+                    coalesce(chat.model_name, 'unknown') AS model_name,
+                    'chat'::TEXT AS usage_kind,
+                    chat.model_status,
+                    greatest(1, ceil(length(coalesce(chat.user_message, '')) / 4.0))::BIGINT AS prompt_tokens_est,
+                    greatest(1, ceil(length(coalesce(chat.assistant_message, '')) / 4.0))::BIGINT AS completion_tokens_est,
+                    greatest(2, ceil((length(coalesce(chat.user_message, '')) + length(coalesce(chat.assistant_message, ''))) / 4.0))::BIGINT AS total_tokens_est,
+                    jsonb_build_array(jsonb_build_object('source', 'agent.chat_turns', 'id', chat.id, 'model_status', chat.model_status)) AS evidence,
+                    jsonb_build_object('logged_by', 'api.persist_chat_turn', 'session_key', chat.session_key) AS metadata
+                FROM agent.chat_turns chat
+                WHERE chat.id = {chat_id}
+            ),
+            priced AS (
+                SELECT
+                    chat_usage.*,
+                    rate.id AS rate_id,
+                    coalesce(rate.cost_tier, CASE WHEN chat_usage.provider IN ('ollama','mlx','local','lm_studio') THEN 'local' ELSE 'unknown' END) AS cost_tier,
+                    CASE
+                        WHEN rate.input_usd_per_1m_tokens IS NOT NULL AND rate.output_usd_per_1m_tokens IS NOT NULL THEN
+                            round(((chat_usage.prompt_tokens_est::NUMERIC * rate.input_usd_per_1m_tokens)
+                                + (chat_usage.completion_tokens_est::NUMERIC * rate.output_usd_per_1m_tokens)) / 1000000, 8)
+                        WHEN chat_usage.provider IN ('ollama','mlx','local','lm_studio') THEN 0
+                        ELSE NULL
+                    END AS estimated_cost_usd
+                FROM chat_usage
+                LEFT JOIN LATERAL (
+                    SELECT rate.*
+                    FROM agent.model_cost_rates rate
+                    WHERE lower(rate.provider) = chat_usage.provider
+                      AND rate.model_name = chat_usage.model_name
+                      AND rate.status = 'active'
+                    ORDER BY rate.effective_at DESC
+                    LIMIT 1
+                ) rate ON true
+            )
+            INSERT INTO agent.model_usage_events (
+                event_ts, source_kind, source_ref, agent_name, route_name,
+                provider, model_name, usage_kind, model_status,
+                prompt_tokens_est, completion_tokens_est, total_tokens_est,
+                estimated_cost_usd, cost_tier, estimate_method, rate_id,
+                chat_turn_id, evidence, metadata, created_by
+            )
+            SELECT
+                event_ts, source_kind, source_ref, agent_name, route_name,
+                provider, model_name, usage_kind, model_status,
+                prompt_tokens_est, completion_tokens_est, total_tokens_est,
+                estimated_cost_usd, cost_tier, 'chars_div_4_from_chat_turn',
+                rate_id, chat_turn_id, evidence, metadata, {sql_literal(actor)}
+            FROM priced
+            ON CONFLICT (source_kind, source_ref) WHERE source_ref IS NOT NULL DO UPDATE SET
+                model_status = EXCLUDED.model_status,
+                prompt_tokens_est = EXCLUDED.prompt_tokens_est,
+                completion_tokens_est = EXCLUDED.completion_tokens_est,
+                total_tokens_est = EXCLUDED.total_tokens_est,
+                estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                rate_id = EXCLUDED.rate_id,
+                updated_at = now()
+            """
+        )
+    except Exception:
+        pass
+
+
+def record_model_usage(payload: dict) -> dict:
+    provider = str(payload.get("provider") or payload.get("model_provider") or payload.get("modelProvider") or "").strip().lower()
+    model_name = str(payload.get("model_name") or payload.get("modelName") or "").strip()
+    if not provider:
+        raise ValueError("provider is required")
+    if not model_name:
+        raise ValueError("model_name is required")
+    actor = str(payload.get("actor") or payload.get("created_by") or "AI Engineering").strip() or "AI Engineering"
+    source_kind = str(payload.get("source_kind") or payload.get("sourceKind") or "manual").strip()
+    source_ref = str(payload.get("source_ref") or payload.get("sourceRef") or "").strip() or None
+    agent_name = str(payload.get("agent_name") or payload.get("agentName") or "").strip() or None
+    route_name = str(payload.get("route_name") or payload.get("routeName") or "").strip() or None
+    endpoint_key = str(payload.get("endpoint_key") or payload.get("endpointKey") or "").strip() or None
+    usage_kind = str(payload.get("usage_kind") or payload.get("usageKind") or "tool_call").strip()
+    model_status = str(payload.get("model_status") or payload.get("modelStatus") or "recorded").strip()
+    prompt_tokens = sql_numeric(first_present(payload.get("prompt_tokens_est"), payload.get("promptTokensEst")), field_name="prompt_tokens_est")
+    completion_tokens = sql_numeric(first_present(payload.get("completion_tokens_est"), payload.get("completionTokensEst")), field_name="completion_tokens_est")
+    total_tokens = sql_numeric(first_present(payload.get("total_tokens_est"), payload.get("totalTokensEst")), field_name="total_tokens_est")
+    actual_prompt_tokens = sql_numeric(first_present(payload.get("actual_prompt_tokens"), payload.get("actualPromptTokens")), field_name="actual_prompt_tokens")
+    actual_completion_tokens = sql_numeric(first_present(payload.get("actual_completion_tokens"), payload.get("actualCompletionTokens")), field_name="actual_completion_tokens")
+    actual_total_tokens = sql_numeric(first_present(payload.get("actual_total_tokens"), payload.get("actualTotalTokens")), field_name="actual_total_tokens")
+    estimated_cost = sql_numeric(first_present(payload.get("estimated_cost_usd"), payload.get("estimatedCostUsd")), field_name="estimated_cost_usd")
+    actual_cost = sql_numeric(first_present(payload.get("actual_cost_usd"), payload.get("actualCostUsd")), field_name="actual_cost_usd")
+    cost_tier = str(payload.get("cost_tier") or payload.get("costTier") or ("local" if provider in {"ollama", "mlx", "local", "lm_studio"} else "unknown")).strip()
+    estimate_method = str(payload.get("estimate_method") or payload.get("estimateMethod") or "external_record").strip()
+    approval_id = sql_numeric(payload.get("approval_id") or payload.get("approvalId"), field_name="approval_id")
+    task_id = sql_numeric(payload.get("task_id") or payload.get("taskId"), field_name="task_id")
+    chat_turn_id = sql_numeric(payload.get("chat_turn_id") or payload.get("chatTurnId"), field_name="chat_turn_id")
+    rows = run_psql_json_statement(
+        f"""
+        WITH rate AS (
+            SELECT id
+            FROM agent.model_cost_rates
+            WHERE lower(provider) = {sql_literal(provider)}
+              AND model_name = {sql_literal(model_name)}
+              AND status = 'active'
+            ORDER BY effective_at DESC
+            LIMIT 1
+        ),
+        inserted AS (
+            INSERT INTO agent.model_usage_events (
+                event_ts, source_kind, source_ref, agent_name, route_name,
+                provider, model_name, endpoint_key, usage_kind, model_status,
+                prompt_tokens_est, completion_tokens_est, total_tokens_est,
+                actual_prompt_tokens, actual_completion_tokens, actual_total_tokens,
+                estimated_cost_usd, actual_cost_usd, cost_tier, estimate_method,
+                rate_id, approval_id, task_id, chat_turn_id, evidence, metadata,
+                created_by
+            )
+            VALUES (
+                coalesce({sql_literal(payload.get("event_ts") or payload.get("eventTs"))}::timestamptz, now()),
+                {sql_literal(source_kind)}, {sql_literal(source_ref)}, {sql_literal(agent_name)},
+                {sql_literal(route_name)}, {sql_literal(provider)}, {sql_literal(model_name)},
+                {sql_literal(endpoint_key)}, {sql_literal(usage_kind)}, {sql_literal(model_status)},
+                {prompt_tokens}, {completion_tokens}, {total_tokens},
+                {actual_prompt_tokens}, {actual_completion_tokens}, {actual_total_tokens},
+                {estimated_cost}, {actual_cost}, {sql_literal(cost_tier)}, {sql_literal(estimate_method)},
+                (SELECT id FROM rate), {approval_id}, {task_id}, {chat_turn_id},
+                {sql_jsonb(payload.get("evidence") or [{"source": "AI Office model usage API"}])},
+                {sql_jsonb(payload.get("metadata") or {"api_route": "/api/models/usage"})},
+                {sql_literal(actor)}
+            )
+            ON CONFLICT (source_kind, source_ref) WHERE source_ref IS NOT NULL DO UPDATE SET
+                event_ts = EXCLUDED.event_ts,
+                agent_name = EXCLUDED.agent_name,
+                route_name = EXCLUDED.route_name,
+                provider = EXCLUDED.provider,
+                model_name = EXCLUDED.model_name,
+                endpoint_key = EXCLUDED.endpoint_key,
+                usage_kind = EXCLUDED.usage_kind,
+                model_status = EXCLUDED.model_status,
+                prompt_tokens_est = EXCLUDED.prompt_tokens_est,
+                completion_tokens_est = EXCLUDED.completion_tokens_est,
+                total_tokens_est = EXCLUDED.total_tokens_est,
+                actual_prompt_tokens = EXCLUDED.actual_prompt_tokens,
+                actual_completion_tokens = EXCLUDED.actual_completion_tokens,
+                actual_total_tokens = EXCLUDED.actual_total_tokens,
+                estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                actual_cost_usd = EXCLUDED.actual_cost_usd,
+                cost_tier = EXCLUDED.cost_tier,
+                estimate_method = EXCLUDED.estimate_method,
+                rate_id = EXCLUDED.rate_id,
+                approval_id = EXCLUDED.approval_id,
+                task_id = EXCLUDED.task_id,
+                chat_turn_id = EXCLUDED.chat_turn_id,
+                evidence = EXCLUDED.evidence,
+                metadata = EXCLUDED.metadata,
+                updated_at = now()
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    if not rows:
+        raise ValueError("model usage event was not recorded")
+    usage_id = int(rows[0].get("id"))
+    result_rows = run_psql_json(
+        f"""
+        SELECT *
+        FROM agent.v_model_cost_ledger_events
+        WHERE id = {usage_id}
+        LIMIT 1
+        """
+    )
+    result = result_rows[0] if result_rows else rows[0]
+    audit_api_write("ai_os_api_record_model_usage", "record_model_usage", actor, "agent.model_usage_events", result, payload)
+    return result
+
+
+def register_source_connector(payload: dict) -> dict:
+    connector_key = str(payload.get("connector_key") or payload.get("connectorKey") or "").strip()
+    source_key = str(payload.get("source_key") or payload.get("sourceKey") or "").strip()
+    connector_name = str(payload.get("connector_name") or payload.get("connectorName") or "").strip()
+    if not connector_key and not source_key and not connector_name:
+        raise ValueError("connector_key, source_key, or connector_name is required")
+    actor = str(payload.get("actor") or "Data Steward").strip() or "Data Steward"
+    normalized = {
+        **payload,
+        "connector_key": connector_key or payload.get("connector_key") or payload.get("connectorKey"),
+        "source_key": source_key or payload.get("source_key") or payload.get("sourceKey"),
+        "connector_name": connector_name or payload.get("connector_name") or payload.get("connectorName"),
+    }
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(core.register_source_connector({sql_jsonb(normalized)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_register_source_connector", "register_source_connector", actor, "core.source_connector_profiles", result, normalized)
+    return result
+
+
+def check_source_connector(payload: dict) -> dict:
+    connector_key = str(payload.get("connector_key") or payload.get("connectorKey") or "").strip()
+    if not connector_key:
+        raise ValueError("connector_key is required")
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(core.run_source_connector_health_check({sql_literal(connector_key)}, {sql_literal(actor)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_check_source_connector", "check_source_connector", actor, "core.connector_health_checks", result, payload)
+    return result
+
+
+def run_provider_readiness_sweep(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_provider_readiness_sweep.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "provider_readiness_ui"),
+        "--actor",
+        actor,
+        "--model-limit",
+        str(payload.get("model_limit") or payload.get("modelLimit") or 50),
+        "--source-limit",
+        str(payload.get("source_limit") or payload.get("sourceLimit") or 80),
+    ]
+    if payload.get("models_only") or payload.get("modelsOnly"):
+        command.append("--models-only")
+    if payload.get("sources_only") or payload.get("sourcesOnly"):
+        command.append("--sources-only")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "provider readiness sweep failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("provider readiness sweep returned invalid JSON") from exc
+    audit_api_write("ai_os_api_run_provider_readiness_sweep", "run_provider_readiness_sweep", actor, "core.provider_readiness_runs", result, payload)
+    return result
+
+
+def evaluate_provider_assignment_gate(payload: dict) -> dict:
+    provider_key = str(payload.get("provider_key") or payload.get("providerKey") or "").strip()
+    if not provider_key:
+        raise ValueError("provider_key is required")
+    actor = str(payload.get("actor") or payload.get("requested_by") or payload.get("requestedBy") or "Jarvis").strip() or "Jarvis"
+    normalized = {
+        **payload,
+        "provider_key": provider_key,
+        "provider_kind": payload.get("provider_kind") or payload.get("providerKind"),
+        "requested_by": actor,
+    }
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(core.evaluate_provider_assignment_gate({sql_jsonb(normalized)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_evaluate_provider_assignment_gate", "evaluate_provider_assignment_gate", actor, "core.provider_assignment_gate_checks", result, normalized)
+    return result
+
+
+def evaluate_task_provider_gates(payload: dict) -> dict:
+    try:
+        task_id = int(payload.get("task_id") or payload.get("taskId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("task_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    context = str(payload.get("context") or "api").strip() or "api"
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(core.evaluate_task_provider_assignment_gates({task_id}, {sql_literal(actor)}, {sql_literal(context)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_evaluate_task_provider_gates", "evaluate_task_provider_gates", actor, "core.provider_assignment_gate_checks", result, payload)
+    return result
+
+
+def register_browser_profile(payload: dict) -> dict:
+    profile_key = str(payload.get("profile_key") or payload.get("profileKey") or "").strip()
+    profile_name = str(payload.get("profile_name") or payload.get("profileName") or "").strip()
+    if not profile_key and not profile_name:
+        raise ValueError("profile_key or profile_name is required")
+    actor = str(payload.get("actor") or "Automation Engineer").strip() or "Automation Engineer"
+    normalized = {
+        **payload,
+        "profile_key": profile_key or payload.get("profile_key") or payload.get("profileKey"),
+        "profile_name": profile_name or payload.get("profile_name") or payload.get("profileName"),
+    }
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(ops.register_browser_profile({sql_jsonb(normalized)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_register_browser_profile", "register_browser_profile", actor, "ops.browser_profiles", result, normalized)
+    return result
+
+
+def attach_browser_profile(payload: dict) -> dict:
+    profile_key = str(payload.get("profile_key") or payload.get("profileKey") or "").strip()
+    connector_key = str(payload.get("connector_key") or payload.get("connectorKey") or "").strip()
+    if not profile_key:
+        raise ValueError("profile_key is required")
+    if not connector_key:
+        raise ValueError("connector_key is required")
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(ops.attach_browser_profile_to_connector({sql_literal(profile_key)}, {sql_literal(connector_key)}, {sql_literal(actor)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_attach_browser_profile", "attach_browser_profile", actor, "ops.browser_profile_connector_links", result, payload)
+    return result
+
+
+def _resolve_browser_profile_path(profile_path: str) -> Path:
+    candidate = Path(profile_path)
+    if candidate.is_absolute():
+        return candidate
+    return RUNTIME_ROOT.parent / candidate if profile_path.startswith("_ai_os_runtime/") else RUNTIME_ROOT / candidate
+
+
+def check_browser_profile(payload: dict) -> dict:
+    profile_key = str(payload.get("profile_key") or payload.get("profileKey") or "").strip()
+    if not profile_key:
+        raise ValueError("profile_key is required")
+    connector_key = str(payload.get("connector_key") or payload.get("connectorKey") or "").strip()
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+
+    rows = run_psql_json(
+        f"""
+        SELECT profile_key, profile_name, browser_name, use_case, profile_path,
+               remote_debugging_host, remote_debugging_port, target_base_url,
+               status, owner_agent, sensitivity, permission_level, config
+        FROM ops.browser_profiles
+        WHERE profile_key = {sql_literal(profile_key)}
+        LIMIT 1
+        """
+    )
+    if not rows:
+        raise ValueError("browser profile not found")
+    profile = rows[0]
+    port = profile.get("remote_debugging_port")
+    browser_name = str(profile.get("browser_name") or "")
+    profile_status = str(profile.get("status") or "")
+    status = "unknown"
+    error_message = None
+    sample_payload: dict[str, object] = {
+        "profile_name": profile.get("profile_name"),
+        "browser_name": browser_name,
+        "use_case": profile.get("use_case"),
+        "status": profile_status,
+    }
+
+    if profile_status in {"planned", "disabled", "inactive", "retired"}:
+        status = "planned" if profile_status == "planned" else "inactive"
+        error_message = f"Browser profile status is {profile_status}."
+    elif port == 9222 or "tradingview" in browser_name.lower():
+        cdp = probe_tradingview_cdp()
+        sample_payload["cdp"] = cdp
+        if cdp.get("available"):
+            status = "available"
+            error_message = None
+        else:
+            status = "cdp_unavailable"
+            error_message = str(cdp.get("next_action") or cdp.get("error") or "CDP endpoint unavailable")
+    elif profile.get("profile_path"):
+        resolved_path = _resolve_browser_profile_path(str(profile.get("profile_path")))
+        sample_payload["resolved_profile_path"] = str(resolved_path)
+        if resolved_path.exists():
+            status = "profile_ready"
+            error_message = None
+        else:
+            status = "profile_missing"
+            error_message = f"Profile path does not exist: {resolved_path}"
+    else:
+        status = "profile_ready"
+        error_message = None
+
+    result_payload = {
+        "profile_key": profile_key,
+        "connector_key": connector_key or None,
+        "check_type": "cdp_or_profile",
+        "status": status,
+        "remote_debugging_host": profile.get("remote_debugging_host"),
+        "remote_debugging_port": port,
+        "browser_label": browser_name,
+        "target_base_url": profile.get("target_base_url"),
+        "error_message": error_message,
+        "sample_payload": sample_payload,
+        "checked_by": actor,
+    }
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(ops.record_browser_session_check({sql_jsonb(result_payload)}))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_check_browser_profile", "check_browser_profile", actor, "ops.browser_session_checks", result, result_payload)
+    if connector_key:
+        try:
+            check_source_connector({"connector_key": connector_key, "actor": actor})
+        except Exception:
+            pass
+    return result
+
+
+def run_filing_collector(payload: dict) -> dict:
+    source = str(payload.get("source") or "all").strip().lower()
+    if source not in {"nse", "bse", "all"}:
+        raise ValueError("source must be nse, bse, or all")
+    date_from = str(payload.get("date_from") or payload.get("from_date") or payload.get("dateFrom") or "").strip()
+    date_to = str(payload.get("date_to") or payload.get("to_date") or payload.get("dateTo") or "").strip()
+    if not date_from or not date_to:
+        raise ValueError("date_from and date_to are required in YYYY-MM-DD format")
+    try:
+        limit = int(payload.get("limit") or 25)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    limit = max(1, min(limit, 100))
+    actor = str(payload.get("actor") or "News Analyst").strip() or "News Analyst"
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "collect_nse_bse_filings.py"),
+        "--source",
+        source,
+        "--from-date",
+        date_from,
+        "--to-date",
+        date_to,
+        "--limit",
+        str(limit),
+        "--actor",
+        actor,
+    ]
+    if payload.get("dry_run") or payload.get("dryRun"):
+        command.append("--dry-run")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "filing collector failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("filing collector returned invalid JSON") from exc
+    audit_api_write("ai_os_api_run_filing_collector", "run_filing_collector", actor, "research.filing_collector_runs", result, payload)
+    return result
+
+
+def run_filing_pdf_extractor(payload: dict) -> dict:
+    try:
+        limit = int(payload.get("limit") or 5)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    limit = max(1, min(limit, 25))
+    actor = str(payload.get("actor") or "Filings Analyst").strip() or "Filings Analyst"
+    command = [
+        PDF_PYTHON,
+        str(RUNTIME_ROOT / "scripts" / "extract_filing_pdfs.py"),
+        "--limit",
+        str(limit),
+        "--actor",
+        actor,
+    ]
+    filing_id = payload.get("filing_id") or payload.get("filingId")
+    if filing_id not in (None, ""):
+        try:
+            command.extend(["--filing-id", str(int(filing_id))])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("filing_id must be an integer") from exc
+    if payload.get("force"):
+        command.append("--force")
+    if payload.get("dry_run") or payload.get("dryRun"):
+        command.append("--dry-run")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "filing PDF extraction failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("filing PDF extractor returned invalid JSON") from exc
+    audit_api_write("ai_os_api_extract_filing_pdf_text", "run_filing_pdf_extractor", actor, "research.filing_pdf_extraction_runs", result, payload)
+    return result
+
+
+def resolve_approval(payload: dict) -> dict:
+    try:
+        approval_id = int(payload.get("approval_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approval_id is required and must be an integer") from exc
+    status = str(payload.get("status") or payload.get("decision") or "").strip().lower()
+    if status not in {"approved", "rejected"}:
+        raise ValueError("status must be approved or rejected")
+    decided_by = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH updated AS (
+            UPDATE agent.approvals
+            SET status = {sql_literal(status)},
+                decided_by = {sql_literal(decided_by)},
+                decided_at = now()
+            WHERE id = {approval_id}
+              AND status = 'pending'
+            RETURNING id, task_id, approval_type, title, owner_agent, risk_level,
+                      status, requested_action, rationale, decided_by, decided_at, created_at
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text
+        FROM updated
+        """
+    )
+    if not rows:
+        raise ValueError("pending approval not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_approval", "resolve_approval", decided_by, "agent.approvals", result, payload)
+    return result
+
+
+def resolve_tradingview_alert_request(payload: dict) -> dict:
+    try:
+        approval_id = int(payload.get("approval_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approval_id is required and must be an integer") from exc
+    status = str(payload.get("status") or payload.get("decision") or "").strip().lower()
+    if status not in {"approved", "rejected"}:
+        raise ValueError("status must be approved or rejected")
+    decided_by = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    decision_note = str(payload.get("decision_note") or payload.get("notes") or "").strip()
+    task_status = "approved_pending_manual_alert" if status == "approved" else "rejected"
+    task_summary = (
+        "TradingView alert request approved for manual creation. The system did not create the alert automatically."
+        if status == "approved"
+        else "TradingView alert request rejected. No alert was created."
+    )
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH request_row AS (
+            SELECT *
+            FROM ops.v_tradingview_alert_requests
+            WHERE approval_id = {approval_id}
+            LIMIT 1
+        ),
+        approval_update AS (
+            UPDATE agent.approvals approval
+            SET status = {sql_literal(status)},
+                decided_by = {sql_literal(decided_by)},
+                decided_at = now()
+            WHERE approval.id = {approval_id}
+              AND approval.status = 'pending'
+              AND approval.approval_type = 'tradingview_template_action'
+            RETURNING approval.id, approval.status, approval.decided_by, approval.decided_at,
+                      approval.requested_action
+        ),
+        task_update AS (
+            UPDATE ops.tradingview_tasks task
+            SET status = {sql_literal(task_status)},
+                result_summary = {sql_literal(task_summary)},
+                evidence = task.evidence || jsonb_build_array(jsonb_build_object(
+                    'source', 'TradingView alert request resolver',
+                    'approval_id', {approval_id},
+                    'decision', {sql_literal(status)},
+                    'decided_by', {sql_literal(decided_by)},
+                    'auto_create_alert', false
+                )),
+                metadata = task.metadata || jsonb_build_object(
+                    'alert_request_decision', {sql_literal(status)},
+                    'alert_request_decided_by', {sql_literal(decided_by)},
+                    'alert_request_decision_note', {sql_literal(decision_note)},
+                    'auto_create_alert', false
+                ),
+                updated_at = now(),
+                completed_at = CASE WHEN {sql_literal(status)} = 'rejected' THEN now() ELSE task.completed_at END
+            WHERE task.id = (SELECT tradingview_task_id FROM request_row)
+            RETURNING task.id, task.status, task.result_summary, task.evidence, task.metadata, task.updated_at
+        ),
+        inbox_update AS (
+            UPDATE agent.inbox_items inbox
+            SET status = CASE WHEN {sql_literal(status)} = 'approved' THEN 'done' ELSE 'blocked' END,
+                updated_at = now()
+            WHERE inbox.evidence @> jsonb_build_array(jsonb_build_object('table','agent.approvals','id',{approval_id}))
+            RETURNING inbox.id, inbox.status
+        ),
+        result_rows AS (
+            SELECT
+                (SELECT row_to_json(approval_update) FROM approval_update) AS approval,
+                (SELECT row_to_json(task_update) FROM task_update) AS tradingview_task,
+                (SELECT coalesce(json_agg(row_to_json(inbox_update)), '[]'::json) FROM inbox_update) AS inbox_updates,
+                (SELECT row_to_json(request_row) FROM request_row) AS original_request,
+                {sql_literal(status)} AS decision,
+                false AS auto_create_alert
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows or not rows[0].get("approval"):
+        raise ValueError("pending TradingView alert approval not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_tradingview_alert_request", "resolve_tradingview_alert_request", decided_by, "agent.approvals", result, payload)
+    return result
+
+
+def stage_holding_update(payload: dict) -> dict:
+    client_code = str(payload.get("client_code") or payload.get("clientCode") or "").strip()
+    account_code = str(payload.get("account_code") or payload.get("accountCode") or "").strip()
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    if not client_code:
+        raise ValueError("client_code is required")
+    if not account_code:
+        raise ValueError("account_code is required")
+    if not symbol:
+        raise ValueError("symbol is required")
+
+    actor = str(payload.get("created_by") or payload.get("actor") or "Devarsh").strip()
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    instrument_type = str(payload.get("instrument_type") or payload.get("instrumentType") or "equity").strip().lower()
+    update_reason = str(payload.get("update_reason") or payload.get("reason") or "manual holdings update").strip()
+    quantity = sql_numeric(payload.get("quantity"), required=True, field_name="quantity")
+    average_price = sql_numeric(payload.get("average_price") or payload.get("averagePrice"), field_name="average_price")
+    market_price = sql_numeric(payload.get("market_price") or payload.get("marketPrice"), field_name="market_price")
+    market_value = sql_numeric(payload.get("market_value") or payload.get("marketValue"), field_name="market_value")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH resolved AS (
+            SELECT c.id AS client_id, a.id AS account_id, c.client_code, a.account_code
+            FROM portfolio.clients c
+            JOIN portfolio.accounts a ON a.client_id = c.id
+            WHERE c.client_code = {sql_literal(client_code)}
+              AND a.account_code = {sql_literal(account_code)}
+            LIMIT 1
+        ),
+        inserted AS (
+            INSERT INTO portfolio.manual_holding_updates (
+                client_id, account_id, client_code, account_code, symbol, exchange,
+                instrument_type, quantity, average_price, market_price, market_value,
+                as_of, update_reason, status, source_label, created_by, payload
+            )
+            SELECT
+                client_id, account_id, client_code, account_code, {sql_literal(symbol)},
+                {sql_literal(exchange)}, {sql_literal(instrument_type)}, {quantity},
+                {average_price}, {market_price}, coalesce({market_value}, {quantity} * {market_price}),
+                coalesce({sql_literal(payload.get("as_of"))}::timestamptz, now()),
+                {sql_literal(update_reason)}, 'staged', 'ai_office_api_manual_update',
+                {sql_literal(actor)},
+                {sql_jsonb(payload.get("payload") or {"api_route": "/api/portfolio/holding-updates/stage"})}
+            FROM resolved
+            RETURNING id, client_code, account_code, symbol, exchange, instrument_type,
+                      quantity, average_price, market_price, market_value, as_of,
+                      update_reason, status, source_label, created_by, created_at, applied_at
+        ),
+        inbox AS (
+            INSERT INTO agent.inbox_items (
+                title, owner_agent, status, priority, recommended_action, evidence, target_workspace
+            )
+            SELECT
+                'Holding update staged: ' || symbol || ' for ' || client_code,
+                'Portfolio Manager', 'needs_review', 'high',
+                'Review staged holding update, then apply after verification.',
+                jsonb_build_array(
+                    jsonb_build_object('table', 'portfolio.manual_holding_updates', 'id', id),
+                    jsonb_build_object('client_code', client_code),
+                    jsonb_build_object('symbol', symbol)
+                ),
+                'clients'
+            FROM inserted
+            RETURNING id
+        ), result_rows AS (
+            SELECT inserted.*, (SELECT id FROM inbox LIMIT 1) AS inbox_item_id
+            FROM inserted
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("client/account not found; create or import the client/account first")
+    result = rows[0]
+    audit_api_write("ai_os_api_stage_holding_update", "stage_holding_update", actor, "portfolio.manual_holding_updates", result, payload)
+    return result
+
+
+def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_default: str) -> dict:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    side = str(payload.get("side") or "").strip().lower()
+    if not symbol:
+        raise ValueError("symbol is required")
+    if side not in {"buy", "sell", "long", "short", "watch", "exit"}:
+        raise ValueError("side must be one of buy, sell, long, short, watch, exit")
+    actor = str(payload.get("created_by") or payload.get("actor") or actor_default).strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO trading.trade_activity_ledger (
+                activity_type, execution_mode, source_kind, source_ref,
+                client_code, account_code, strategy_key, symbol, exchange,
+                instrument_type, side, quantity, price, trade_ts, status,
+                thesis, setup_type, timeframe, stop_loss, target_price,
+                realized_pnl, fees, tags, evidence, created_by
+            )
+            VALUES (
+                {sql_literal(payload.get("activity_type") or "trade")},
+                {sql_literal(execution_mode)},
+                {sql_literal(payload.get("source_kind") or source_kind)},
+                {sql_literal(payload.get("source_ref") or "ai_office_api")},
+                {sql_literal(payload.get("client_code"))},
+                {sql_literal(payload.get("account_code"))},
+                {sql_literal(payload.get("strategy_key"))},
+                {sql_literal(symbol)},
+                {sql_literal(payload.get("exchange") or "NSE")},
+                {sql_literal(payload.get("instrument_type") or "equity")},
+                {sql_literal(side)},
+                {sql_numeric(payload.get("quantity"), field_name="quantity")},
+                {sql_numeric(payload.get("price"), field_name="price")},
+                COALESCE({sql_literal(payload.get("trade_ts"))}::timestamptz, now()),
+                {sql_literal(payload.get("status") or "recorded")},
+                {sql_literal(payload.get("thesis"))},
+                {sql_literal(payload.get("setup_type"))},
+                {sql_literal(payload.get("timeframe"))},
+                {sql_numeric(payload.get("stop_loss"), field_name="stop_loss")},
+                {sql_numeric(payload.get("target_price"), field_name="target_price")},
+                {sql_numeric(payload.get("realized_pnl"), field_name="realized_pnl")},
+                {sql_numeric(payload.get("fees"), field_name="fees")},
+                {sql_text_array(payload.get("tags"))},
+                {sql_jsonb(payload.get("evidence") or [{"source": "AI Office API"}])},
+                {sql_literal(actor)}
+            )
+            RETURNING id, activity_type, execution_mode, source_kind, source_ref,
+                      client_code, account_code, strategy_key, symbol, exchange,
+                      instrument_type, side, quantity, price, trade_ts, status,
+                      thesis, setup_type, timeframe, stop_loss, target_price,
+                      realized_pnl, fees, tags, evidence, created_by, created_at, updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    result = rows[0] if rows else {}
+    if result.get("id"):
+        routed_rows = run_psql_json_statement(
+            f"""
+            WITH routed AS (
+                SELECT books.route_trade_activity_to_book(
+                    {int(result["id"])},
+                    {sql_literal(payload.get("book_key") or payload.get("bookKey"))},
+                    {sql_literal(payload.get("purpose_key") or payload.get("purposeKey"))},
+                    {sql_literal(actor)}
+                ) AS book_position_id
+            )
+            SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+            FROM (
+                SELECT bp.id, bp.symbol, bp.book_key, ib.book_name, bp.purpose_key,
+                       pp.purpose_name, bp.direction, bp.gross_exposure,
+                       bp.net_exposure, bp.owner_agent, bp.as_of
+                FROM books.book_positions bp
+                JOIN routed r ON r.book_position_id = bp.id
+                JOIN books.investment_books ib ON ib.book_key = bp.book_key
+                LEFT JOIN books.position_purposes pp ON pp.purpose_key = bp.purpose_key
+            ) output_rows
+            """
+        )
+        result["book_position"] = routed_rows[0] if routed_rows else {}
+        review_rows = run_psql_json_statement(
+            f"""
+            WITH ensured AS (
+                SELECT trading.ensure_post_trade_review({int(result["id"])}, {sql_literal(actor)}) AS review_id
+            )
+            SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+            FROM (
+                SELECT r.id, r.trade_activity_id, r.book_key, ib.book_name,
+                       r.purpose_key, pp.purpose_name, r.review_type,
+                       r.review_status, r.owner_agent, r.due_at,
+                       r.task_id, r.inbox_item_id, r.next_action
+                FROM trading.post_trade_reviews r
+                JOIN ensured e ON e.review_id = r.id
+                LEFT JOIN books.investment_books ib ON ib.book_key = r.book_key
+                LEFT JOIN books.position_purposes pp ON pp.purpose_key = r.purpose_key
+            ) output_rows
+            """
+        )
+        result["post_trade_review"] = review_rows[0] if review_rows else {}
+    audit_api_write(f"ai_os_api_record_{execution_mode}", "record_trade_activity", actor, "trading.trade_activity_ledger", result, payload)
+    return result
+
+
+def update_book_assignment(payload: dict) -> dict:
+    try:
+        book_position_id = int(payload.get("book_position_id") or payload.get("bookPositionId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("book_position_id is required and must be an integer") from exc
+    book_key = str(payload.get("book_key") or payload.get("bookKey") or "").strip()
+    purpose_key = str(payload.get("purpose_key") or payload.get("purposeKey") or "").strip()
+    if not book_key:
+        raise ValueError("book_key is required")
+    if not purpose_key:
+        raise ValueError("purpose_key is required")
+    actor = str(payload.get("actor") or payload.get("changed_by") or "Devarsh").strip()
+    thesis = str(payload.get("thesis") or "").strip()
+    exit_criteria = str(payload.get("exit_criteria") or payload.get("exitCriteria") or "").strip()
+    rationale = str(payload.get("rationale") or "Manual book assignment update from AI Office").strip()
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH updated_id AS (
+            SELECT books.update_book_position_assignment(
+                {book_position_id},
+                {sql_literal(book_key)},
+                {sql_literal(purpose_key)},
+                {sql_literal(thesis) if thesis else "NULL"},
+                {sql_literal(exit_criteria) if exit_criteria else "NULL"},
+                {sql_literal(actor)},
+                {sql_literal(rationale)}
+            ) AS id
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT bp.id, bp.client_code, bp.client_name, bp.account_code,
+                   bp.symbol, bp.exchange, bp.book_key, bp.book_name,
+                   bp.purpose_key, bp.purpose_name, bp.owner_agent,
+                   bp.direction, bp.gross_exposure, bp.net_exposure,
+                   bp.thesis, bp.exit_criteria, bp.updated_at
+            FROM books.v_book_positions bp
+            JOIN updated_id u ON u.id = bp.id
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("book position not found or assignment update failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_update_book_assignment", "update_book_assignment", actor, "books.book_positions", result, payload)
+    return result
+
+
+def sync_position_readiness_remediation(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Portfolio Manager").strip()
+    try:
+        limit = int(payload.get("limit") or 200)
+    except (TypeError, ValueError):
+        limit = 200
+    limit = max(1, min(limit, 500))
+    create_tasks = bool(payload.get("create_tasks", payload.get("createTasks", True)))
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(
+            books.sync_position_object_remediation_queue(
+                {limit},
+                {str(create_tasks).lower()},
+                {sql_literal(actor)}
+            )
+        )::TEXT
+        """
+    )
+    result = rows[0] if rows else {"status": "error", "message": "position readiness remediation sync failed"}
+    audit_api_write(
+        "ai_os_api_sync_position_readiness_remediation",
+        "sync_position_readiness_remediation",
+        actor,
+        "books.position_object_remediation_queue",
+        result,
+        payload,
+    )
+    return result
+
+
+def route_symbol_intelligence_action(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Charlie Munger").strip()
+    client_code = str(payload.get("client_code") or payload.get("clientCode") or "").strip()
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    action_type = str(payload.get("action_type") or payload.get("actionType") or "refresh_thesis").strip()
+    notes = str(payload.get("notes") or "").strip()
+    if not symbol:
+        raise ValueError("symbol is required")
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(
+            portfolio.route_symbol_intelligence_action(
+                {sql_literal(client_code or None)},
+                {sql_literal(symbol)},
+                {sql_literal(exchange)},
+                {sql_literal(action_type)},
+                {sql_literal(actor)},
+                {sql_literal(notes or None)}
+            )
+        )::TEXT
+        """
+    )
+    result = rows[0] if rows else {"status": "error", "message": "symbol intelligence action failed"}
+    audit_api_write(
+        "ai_os_api_route_symbol_intelligence_action",
+        "route_symbol_intelligence_action",
+        actor,
+        "portfolio.symbol_intelligence_actions",
+        result,
+        payload,
+    )
+    return result
+
+
+def create_strategy_intake(payload: dict) -> dict:
+    intake_text = str(payload.get("intake_text") or payload.get("intakeText") or "").strip()
+    if not intake_text:
+        raise ValueError("intake_text is required")
+    actor = str(payload.get("created_by") or payload.get("createdBy") or payload.get("actor") or "Devarsh").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH created AS (
+            SELECT strategy.create_strategy_arsenal_intake(
+                {sql_literal(actor)},
+                {sql_literal(intake_text)},
+                {sql_literal(payload.get("strategy_name") or payload.get("strategyName"))},
+                {sql_literal(payload.get("strategy_family") or payload.get("strategyFamily") or "quant")},
+                {sql_literal(payload.get("asset_class") or payload.get("assetClass") or "equity")},
+                {sql_text_array(payload.get("symbols"))},
+                {sql_literal(payload.get("universe"))},
+                {sql_literal(payload.get("timeframe") or "mixed")},
+                {sql_text_array(payload.get("intent_tags") or payload.get("intentTags"))},
+                {sql_literal(payload.get("constraints_text") or payload.get("constraintsText"))},
+                {sql_literal(payload.get("risk_notes") or payload.get("riskNotes"))},
+                {sql_text_array(payload.get("requested_outputs") or payload.get("requestedOutputs") or ["structured_spec", "candidate", "backtest_queue", "validation_review"])},
+                {sql_literal(payload.get("source_kind") or payload.get("sourceKind") or "ai_office_dashboard")},
+                {sql_literal(payload.get("source_ref") or payload.get("sourceRef") or "strategy_intake_panel")}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'intake_id')::BIGINT AS intake_id,
+                result->>'intake_key' AS intake_key,
+                (result->>'idea_id')::BIGINT AS idea_id,
+                result->>'idea_key' AS idea_key,
+                (result->>'candidate_id')::BIGINT AS candidate_id,
+                result->>'candidate_key' AS candidate_key,
+                (result->>'task_id')::BIGINT AS task_id,
+                (result->>'inbox_id')::BIGINT AS inbox_id,
+                result->>'activation_gate' AS activation_gate,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM created
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("strategy intake creation failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_create_strategy_intake", "create_strategy_intake", actor, "strategy.strategy_intakes", result, payload)
+    return result
+
+
+def run_strategy_dsl_quality_command(payload: dict, *, parse: bool = False, gate: bool = False) -> dict:
+    try:
+        candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("candidate_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or ("Strategy Intake Agent" if parse else "Backtest Engineer")).strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "strategy_dsl_quality.py"),
+        "--candidate-id",
+        str(candidate_id),
+        "--actor",
+        actor,
+    ]
+    if parse:
+        command.append("--parse")
+    if gate:
+        command.append("--gate")
+    if payload.get("dsl_text") or payload.get("dslText"):
+        command.extend(["--dsl-text", str(payload.get("dsl_text") or payload.get("dslText"))])
+    if payload.get("symbols"):
+        symbols = payload.get("symbols")
+        command.extend(["--symbols", ",".join(str(item) for item in symbols) if isinstance(symbols, list) else str(symbols)])
+    if payload.get("timeframe"):
+        command.extend(["--timeframe", str(payload.get("timeframe"))])
+    if payload.get("min_rows_per_symbol") or payload.get("minRowsPerSymbol"):
+        command.extend(["--min-rows-per-symbol", str(payload.get("min_rows_per_symbol") or payload.get("minRowsPerSymbol"))])
+    if payload.get("min_total_rows") or payload.get("minTotalRows"):
+        command.extend(["--min-total-rows", str(payload.get("min_total_rows") or payload.get("minTotalRows"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy DSL/data quality command failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy DSL/data quality command returned invalid JSON") from exc
+    return result
+
+
+def parse_strategy_dsl(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Strategy Intake Agent").strip()
+    result = run_strategy_dsl_quality_command(payload, parse=True, gate=False)
+    audit_api_write("ai_os_api_parse_strategy_dsl", "parse_strategy_dsl", actor, "strategy.strategy_rule_specs", result.get("parse") or result, payload)
+    return result
+
+
+def check_strategy_data_quality(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Backtest Engineer").strip()
+    result = run_strategy_dsl_quality_command(payload, parse=False, gate=True)
+    audit_api_write("ai_os_api_strategy_data_quality_gate", "strategy_data_quality_gate", actor, "strategy.backtest_data_quality_gates", result.get("gate") or result, payload)
+    return result
+
+
+def run_strategy_backtest(payload: dict) -> dict:
+    try:
+        candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("candidate_id is required and must be an integer") from exc
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_backtest.py"),
+        "--candidate-id",
+        str(candidate_id),
+        "--cost-bps",
+        str(payload.get("cost_bps") or payload.get("costBps") or 3),
+        "--slippage-bps",
+        str(payload.get("slippage_bps") or payload.get("slippageBps") or 2),
+        "--max-symbols",
+        str(payload.get("max_symbols") or payload.get("maxSymbols") or 14),
+        "--min-rows-per-symbol",
+        str(payload.get("min_rows_per_symbol") or payload.get("minRowsPerSymbol") or 50),
+        "--min-total-rows",
+        str(payload.get("min_total_rows") or payload.get("minTotalRows") or 500),
+    ]
+    if payload.get("symbols"):
+        symbols = payload.get("symbols")
+        command.extend(["--symbols", ",".join(str(item) for item in symbols) if isinstance(symbols, list) else str(symbols)])
+    if payload.get("timeframe"):
+        command.extend(["--timeframe", str(payload.get("timeframe"))])
+    if payload.get("template"):
+        command.extend(["--template", str(payload.get("template"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy backtest failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy backtest returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Backtest Engineer").strip()
+    audit_api_write("ai_os_api_run_strategy_backtest", "run_strategy_backtest", actor, "strategy.backtest_runs", result.get("database") or result, payload)
+    return result
+
+
+def run_strategy_optimization(payload: dict) -> dict:
+    try:
+        candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("candidate_id is required and must be an integer") from exc
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_optimizer.py"),
+        "--candidate-id",
+        str(candidate_id),
+        "--cost-bps",
+        str(payload.get("cost_bps") or payload.get("costBps") or 3),
+        "--slippage-bps",
+        str(payload.get("slippage_bps") or payload.get("slippageBps") or 2),
+        "--max-symbols",
+        str(payload.get("max_symbols") or payload.get("maxSymbols") or 14),
+    ]
+    if payload.get("symbols"):
+        symbols = payload.get("symbols")
+        command.extend(["--symbols", ",".join(str(item) for item in symbols) if isinstance(symbols, list) else str(symbols)])
+    if payload.get("timeframe"):
+        command.extend(["--timeframe", str(payload.get("timeframe"))])
+    if payload.get("template"):
+        command.extend(["--template", str(payload.get("template"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy optimization failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy optimization returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Optimizer Agent").strip()
+    audit_api_write("ai_os_api_run_strategy_optimization", "run_strategy_optimization", actor, "strategy.optimization_runs", result.get("database") or result, payload)
+    return result
+
+
+def run_user_defined_strategy_optimizer(payload: dict) -> dict:
+    strategy_name = str(payload.get("strategy_name") or payload.get("strategyName") or "").strip()
+    intake_text = str(payload.get("intake_text") or payload.get("intakeText") or "").strip()
+    if not strategy_name:
+        raise ValueError("strategy_name is required")
+    if not intake_text:
+        raise ValueError("intake_text is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_user_defined_strategy_optimizer.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "user_strategy_optimizer_ui"),
+        "--actor",
+        str(payload.get("actor") or "Devarsh"),
+        "--strategy-name",
+        strategy_name,
+        "--intake-text",
+        intake_text,
+        "--asset-class",
+        str(payload.get("asset_class") or payload.get("assetClass") or "equity"),
+        "--universe",
+        str(payload.get("universe") or "NSE"),
+        "--timeframe",
+        str(payload.get("timeframe") or "5m"),
+        "--template",
+        str(payload.get("template") or "momentum"),
+        "--constraints-text",
+        str(payload.get("constraints_text") or payload.get("constraintsText") or "Paper-first research only. No live execution."),
+        "--risk-notes",
+        str(payload.get("risk_notes") or payload.get("riskNotes") or "Requires parser, data-quality, backtest, optimizer, model-validation, and committee approval."),
+        "--cost-bps",
+        str(payload.get("cost_bps") or payload.get("costBps") or 3),
+        "--slippage-bps",
+        str(payload.get("slippage_bps") or payload.get("slippageBps") or 2),
+        "--max-symbols",
+        str(payload.get("max_symbols") or payload.get("maxSymbols") or 14),
+        "--min-rows-per-symbol",
+        str(payload.get("min_rows_per_symbol") or payload.get("minRowsPerSymbol") or 50),
+    ]
+    symbols = payload.get("symbols")
+    if symbols:
+        command.extend(["--symbols", ",".join(str(item) for item in symbols) if isinstance(symbols, list) else str(symbols)])
+    if payload.get("dsl_text") or payload.get("dslText"):
+        command.extend(["--dsl-text", str(payload.get("dsl_text") or payload.get("dslText"))])
+    if payload.get("min_total_rows") or payload.get("minTotalRows"):
+        command.extend(["--min-total-rows", str(payload.get("min_total_rows") or payload.get("minTotalRows"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=360)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "user-defined strategy optimizer failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("user-defined strategy optimizer returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    audit_api_write("ai_os_api_run_user_defined_strategy_optimizer", "run_user_defined_strategy_optimizer", actor, "strategy.user_defined_optimizer_runs", result, payload)
+    return result
+
+
+def run_strategy_discovery(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_discovery.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "strategy_discovery_ui"),
+        "--actor",
+        str(payload.get("actor") or "Strategy Discovery Agent"),
+        "--sources",
+        str(payload.get("sources") or "research,journals,signals,components"),
+        "--per-source-limit",
+        str(payload.get("per_source_limit") or payload.get("perSourceLimit") or 8),
+        "--max-candidates",
+        str(payload.get("max_candidates") or payload.get("maxCandidates") or 16),
+        "--route-top",
+        str(payload.get("route_top") or payload.get("routeTop") or 2),
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=600)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy discovery failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy discovery returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Discovery Agent").strip()
+    audit_api_write("ai_os_api_run_strategy_discovery", "run_strategy_discovery", actor, "strategy.strategy_discovery_runs", result, payload)
+    return result
+
+
+def resolve_strategy_discovery_triage(payload: dict) -> dict:
+    candidate_id = payload.get("discovery_candidate_id") or payload.get("discoveryCandidateId") or payload.get("candidate_id") or payload.get("candidateId")
+    if not candidate_id:
+        raise ValueError("discovery_candidate_id is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "resolve_strategy_discovery_triage.py"),
+        "--discovery-candidate-id",
+        str(candidate_id),
+        "--decision",
+        str(payload.get("decision") or "request_more_evidence"),
+        "--actor",
+        str(payload.get("actor") or "Charlie Munger"),
+        "--notes",
+        str(payload.get("notes") or payload.get("decision_notes") or payload.get("decisionNotes") or ""),
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy discovery triage failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy discovery triage returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Charlie Munger").strip()
+    audit_api_write("ai_os_api_resolve_strategy_discovery_triage", "resolve_strategy_discovery_triage", actor, "strategy.strategy_discovery_triage_decisions", result, payload)
+    return result
+
+
+def build_strategy_idea_dossiers(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "build_strategy_idea_dossiers.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "strategy_dossiers_ui"),
+        "--actor",
+        str(payload.get("actor") or "Strategy Dossier Agent"),
+        "--limit",
+        str(payload.get("limit") or 250),
+        "--max-dossiers",
+        str(payload.get("max_dossiers") or payload.get("maxDossiers") or 100),
+    ]
+    if payload.get("no_notes") or payload.get("noNotes"):
+        command.append("--no-notes")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=300)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy idea dossier build failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy idea dossier build returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Dossier Agent").strip()
+    audit_api_write("ai_os_api_build_strategy_idea_dossiers", "build_strategy_idea_dossiers", actor, "strategy.idea_dossier_build_runs", result, payload)
+    return result
+
+
+def search_strategy_idea_dossiers(payload: dict) -> dict:
+    query = str(payload.get("query") or payload.get("query_text") or payload.get("queryText") or "").strip()
+    if not query:
+        raise ValueError("query is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "search_strategy_idea_dossiers.py"),
+        "--query",
+        query,
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "strategy_dossier_search_ui"),
+        "--actor",
+        str(payload.get("actor") or "Strategy Dossier Search Agent"),
+        "--limit",
+        str(payload.get("limit") or 8),
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy idea dossier search failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy idea dossier search returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Dossier Search Agent").strip()
+    audit_api_write("ai_os_api_search_strategy_idea_dossiers", "search_strategy_idea_dossiers", actor, "strategy.idea_dossier_search_runs", result, payload)
+    return result
+
+
+def run_strategy_dossier_action(payload: dict) -> dict:
+    try:
+        dossier_id = int(payload.get("dossier_id") or payload.get("dossierId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("dossier_id is required and must be an integer") from exc
+    action = str(payload.get("action") or payload.get("action_type") or payload.get("actionType") or "").strip()
+    if not action:
+        raise ValueError("action is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_dossier_action.py"),
+        "--dossier-id",
+        str(dossier_id),
+        "--action",
+        action,
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "strategy_dossier_action_ui"),
+        "--actor",
+        str(payload.get("actor") or "Charlie Munger"),
+        "--notes",
+        str(payload.get("notes") or payload.get("decision_notes") or payload.get("decisionNotes") or ""),
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy dossier action failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy dossier action returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Charlie Munger").strip()
+    audit_api_write("ai_os_api_run_strategy_dossier_action", "run_strategy_dossier_action", actor, "strategy.idea_dossier_actions", result, payload)
+    return result
+
+
+def ingest_market_news(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "ingest_market_news.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "market_news_ui"),
+        "--actor",
+        str(payload.get("actor") or "News Analyst"),
+        "--feed-limit",
+        str(payload.get("feed_limit") or payload.get("feedLimit") or 8),
+        "--per-feed",
+        str(payload.get("per_feed") or payload.get("perFeed") or 8),
+        "--timeout",
+        str(payload.get("timeout") or 12),
+    ]
+    if payload.get("feed_keys") or payload.get("feedKeys"):
+        command.extend(["--feed-keys", str(payload.get("feed_keys") or payload.get("feedKeys"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "market news ingestion failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("market news ingestion returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "News Analyst").strip()
+    audit_api_write("ai_os_api_ingest_market_news", "ingest_market_news", actor, "market.news_ingestion_runs", result, payload)
+    return result
+
+
+def run_strategy_discovery_scheduler(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_discovery_scheduler.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "strategy_discovery_scheduler_ui"),
+        "--actor",
+        str(payload.get("actor") or "Strategy Discovery Agent"),
+        "--interval-seconds",
+        str(payload.get("interval_seconds") or payload.get("intervalSeconds") or 3600),
+        "--sources",
+        str(payload.get("sources") or "research,journals,signals,components"),
+        "--per-source-limit",
+        str(payload.get("per_source_limit") or payload.get("perSourceLimit") or 8),
+        "--max-candidates",
+        str(payload.get("max_candidates") or payload.get("maxCandidates") or 16),
+        "--route-top",
+        str(payload.get("route_top") or payload.get("routeTop") or 1),
+        "--news-feed-limit",
+        str(payload.get("news_feed_limit") or payload.get("newsFeedLimit") or 8),
+        "--news-per-feed",
+        str(payload.get("news_per_feed") or payload.get("newsPerFeed") or 6),
+    ]
+    if payload.get("disable_news") or payload.get("disableNews"):
+        command.append("--disable-news")
+    if payload.get("enable_filings") or payload.get("enableFilings"):
+        command.append("--enable-filings")
+    if payload.get("news_feed_keys") or payload.get("newsFeedKeys"):
+        command.extend(["--news-feed-keys", str(payload.get("news_feed_keys") or payload.get("newsFeedKeys"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=900)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy discovery scheduler failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy discovery scheduler returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Discovery Agent").strip()
+    audit_api_write("ai_os_api_run_strategy_discovery_scheduler", "run_strategy_discovery_scheduler", actor, "strategy.strategy_discovery_scheduler_runs", result, payload)
+    return result
+
+
+def run_strategy_quant_analytics(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_quant_analytics.py"),
+        "--timeframe",
+        str(payload.get("timeframe") or "5m"),
+        "--limit",
+        str(payload.get("limit") or 10),
+        "--max-symbols",
+        str(payload.get("max_symbols") or payload.get("maxSymbols") or 14),
+        "--cost-bps",
+        str(payload.get("cost_bps") or payload.get("costBps") or 3),
+        "--slippage-bps",
+        str(payload.get("slippage_bps") or payload.get("slippageBps") or 2),
+        "--participation-rate",
+        str(payload.get("participation_rate") or payload.get("participationRate") or 0.05),
+        "--actor",
+        str(payload.get("actor") or "Quant Analytics Agent"),
+    ]
+    if payload.get("run_key") or payload.get("runKey"):
+        command.extend(["--run-key", str(payload.get("run_key") or payload.get("runKey"))])
+    if payload.get("strategy_ids") or payload.get("strategyIds"):
+        strategy_ids = payload.get("strategy_ids") or payload.get("strategyIds")
+        command.extend(["--strategy-ids", ",".join(str(item) for item in strategy_ids) if isinstance(strategy_ids, list) else str(strategy_ids)])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy quant analytics failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy quant analytics returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Quant Analytics Agent").strip()
+    audit_api_write("ai_os_api_run_strategy_quant_analytics", "run_strategy_quant_analytics", actor, "strategy.quant_analytics_runs", result, payload)
+    return result
+
+
+def run_strategy_portfolio_allocation(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_portfolio_allocation.py"),
+        "--capital-base",
+        str(payload.get("capital_base") or payload.get("capitalBase") or 1_000_000),
+        "--max-weight",
+        str(payload.get("max_weight") or payload.get("maxWeight") or 0.35),
+        "--ruin-threshold-pct",
+        str(payload.get("ruin_threshold_pct") or payload.get("ruinThresholdPct") or 0.20),
+        "--horizon-bars",
+        str(payload.get("horizon_bars") or payload.get("horizonBars") or 252),
+        "--simulation-count",
+        str(payload.get("simulation_count") or payload.get("simulationCount") or 1000),
+        "--seed",
+        str(payload.get("seed") or 260706),
+        "--actor",
+        str(payload.get("actor") or "Strategy Portfolio Manager"),
+    ]
+    if payload.get("allocation_key") or payload.get("allocationKey"):
+        command.extend(["--allocation-key", str(payload.get("allocation_key") or payload.get("allocationKey"))])
+    if payload.get("analytics_run_key") or payload.get("analyticsRunKey"):
+        command.extend(["--analytics-run-key", str(payload.get("analytics_run_key") or payload.get("analyticsRunKey"))])
+    if payload.get("timeframe"):
+        command.extend(["--timeframe", str(payload.get("timeframe"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy portfolio allocation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy portfolio allocation returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Portfolio Manager").strip()
+    audit_api_write("ai_os_api_run_strategy_portfolio_allocation", "run_strategy_portfolio_allocation", actor, "strategy.strategy_portfolio_allocation_runs", result, payload)
+    return result
+
+
+def run_strategy_retirement_review(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_strategy_retirement_review.py"),
+        "--review-key-prefix",
+        str(payload.get("review_key_prefix") or payload.get("reviewKeyPrefix") or "retire"),
+        "--actor",
+        str(payload.get("actor") or "Strategy Retirement Agent"),
+    ]
+    if payload.get("analytics_run_key") or payload.get("analyticsRunKey"):
+        command.extend(["--analytics-run-key", str(payload.get("analytics_run_key") or payload.get("analyticsRunKey"))])
+    if payload.get("allocation_key") or payload.get("allocationKey"):
+        command.extend(["--allocation-key", str(payload.get("allocation_key") or payload.get("allocationKey"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "strategy retirement review failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("strategy retirement review returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Retirement Agent").strip()
+    audit_api_write("ai_os_api_run_strategy_retirement_review", "run_strategy_retirement_review", actor, "strategy.strategy_retirement_reviews", result, payload)
+    return result
+
+
+def run_model_validation_sweep(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_model_validation_sweep.py"),
+        "--validation-key-prefix",
+        str(payload.get("validation_key_prefix") or payload.get("validationKeyPrefix") or "modelval"),
+        "--actor",
+        str(payload.get("actor") or "Model Validation Agent"),
+        "--limit",
+        str(payload.get("limit") or 25),
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "model validation sweep failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("model validation sweep returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Model Validation Agent").strip()
+    audit_api_write("ai_os_api_run_model_validation_sweep", "run_model_validation_sweep", actor, "strategy.validation_reviews", result, payload)
+    return result
+
+
+def run_trade_journal_strategy_mining(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_trade_journal_strategy_mining.py"),
+        "--run-key",
+        str(payload.get("run_key") or payload.get("runKey") or "journal_mining_ui"),
+        "--actor",
+        str(payload.get("actor") or "Strategy Generator"),
+        "--min-trades",
+        str(payload.get("min_trades") or payload.get("minTrades") or 3),
+        "--max-patterns",
+        str(payload.get("max_patterns") or payload.get("maxPatterns") or 10),
+    ]
+    if payload.get("allow_thin_sample") or payload.get("allowThinSample"):
+        command.append("--allow-thin-sample")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "trade journal strategy mining failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("trade journal strategy mining returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Generator").strip()
+    audit_api_write("ai_os_api_run_trade_journal_strategy_mining", "run_trade_journal_strategy_mining", actor, "strategy.trade_journal_mining_runs", result, payload)
+    return result
+
+
+def open_strategy_committee_review(payload: dict) -> dict:
+    try:
+        optimization_run_id = int(payload.get("optimization_run_id") or payload.get("optimizationRunId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("optimization_run_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Strategy Committee Secretary").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH opened AS (
+            SELECT strategy.open_strategy_committee_review(
+                {optimization_run_id},
+                {sql_literal(actor)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'committee_review_id')::BIGINT AS committee_review_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                (result->>'risk_event_id')::BIGINT AS risk_event_id,
+                result->>'review_status' AS review_status,
+                result->>'recommended_decision' AS recommended_decision,
+                result->>'risk_level' AS risk_level,
+                (result->>'existing')::BOOLEAN AS existing
+            FROM opened
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("strategy committee review creation failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_open_strategy_committee_review", "open_strategy_committee_review", actor, "strategy.committee_reviews", result, payload)
+    return result
+
+
+def generate_strategy_committee_memo(payload: dict) -> dict:
+    try:
+        review_id = int(payload.get("committee_review_id") or payload.get("committeeReviewId") or payload.get("review_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("committee_review_id is required and must be an integer") from exc
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "generate_strategy_committee_memo.py"),
+        "--review-id",
+        str(review_id),
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "committee memo generation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("committee memo generator returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Strategy Committee Secretary").strip()
+    audit_api_write("ai_os_api_generate_strategy_committee_memo", "generate_strategy_committee_memo", actor, "strategy.committee_reviews", result, payload)
+    return result
+
+
+def generate_special_situation_memo(payload: dict) -> dict:
+    try:
+        special_terms_id = int(payload.get("special_terms_id") or payload.get("specialTermsId") or payload.get("terms_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("special_terms_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Special Situations Agent").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "generate_special_situation_memo.py"),
+        "--special-terms-id",
+        str(special_terms_id),
+        "--actor",
+        actor,
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "special situation memo generation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("special situation memo generator returned invalid JSON") from exc
+    audit_api_write("ai_os_api_generate_special_situation_memo", "generate_special_situation_memo", actor, "research.special_situation_memos", result, payload)
+    return result
+
+
+def generate_long_term_thesis_memo(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "generate_long_term_thesis_memo.py"),
+        "--actor",
+        actor,
+    ]
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    if symbol:
+        command.extend(["--symbol", symbol])
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    if exchange:
+        command.extend(["--exchange", exchange])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term thesis memo generation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term thesis memo generator returned invalid JSON") from exc
+    audit_api_write("ai_os_api_generate_long_term_thesis_memo", "generate_long_term_thesis_memo", actor, "portfolio.holding_theses", result, payload)
+    return result
+
+
+def generate_long_term_research_packet(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "manage_long_term_research.py"),
+        "packet",
+        "--actor",
+        actor,
+    ]
+    thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or payload.get("id")
+    if thesis_id not in (None, ""):
+        command.extend(["--holding-thesis-id", str(thesis_id)])
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    if symbol:
+        command.extend(["--symbol", symbol])
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    if exchange:
+        command.extend(["--exchange", exchange])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term research packet generation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term research packet generator returned invalid JSON") from exc
+    audit_api_write("ai_os_api_generate_long_term_research_packet", "generate_long_term_research_packet", actor, "portfolio.holding_thesis_research_updates", result, payload)
+    return result
+
+
+def update_long_term_thesis_checklist(payload: dict) -> dict:
+    try:
+        thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("holding_thesis_id is required and must be an integer") from exc
+    checklist_key = str(payload.get("checklist_key") or payload.get("checklistKey") or "").strip()
+    if not checklist_key:
+        raise ValueError("checklist_key is required")
+    actor = str(payload.get("actor") or "Research Analyst").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "manage_long_term_research.py"),
+        "checklist",
+        "--holding-thesis-id",
+        str(thesis_id),
+        "--checklist-key",
+        checklist_key,
+        "--status",
+        str(payload.get("status") or "in_progress"),
+        "--actor",
+        actor,
+    ]
+    if payload.get("score") not in (None, ""):
+        command.extend(["--score", str(payload.get("score"))])
+    if "findings" in payload:
+        command.extend(["--findings-json", json.dumps(payload.get("findings") or [])])
+    if "evidence" in payload:
+        command.extend(["--evidence-json", json.dumps(payload.get("evidence") or [])])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term checklist update failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term checklist updater returned invalid JSON") from exc
+    audit_api_write("ai_os_api_update_long_term_thesis_checklist", "update_long_term_thesis_checklist", actor, "portfolio.holding_thesis_checklists", result, payload)
+    return result
+
+
+def update_long_term_valuation_model(payload: dict) -> dict:
+    try:
+        thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("holding_thesis_id is required and must be an integer") from exc
+    model_key = str(payload.get("model_key") or payload.get("modelKey") or "").strip()
+    if not model_key:
+        raise ValueError("model_key is required")
+    actor = str(payload.get("actor") or "Valuation Agent").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "manage_long_term_research.py"),
+        "valuation",
+        "--holding-thesis-id",
+        str(thesis_id),
+        "--model-key",
+        model_key,
+        "--status",
+        str(payload.get("status") or "in_progress"),
+        "--actor",
+        actor,
+    ]
+    for payload_key, cli_key in [
+        ("fair_value_low", "--fair-value-low"),
+        ("fairValueLow", "--fair-value-low"),
+        ("fair_value_base", "--fair-value-base"),
+        ("fairValueBase", "--fair-value-base"),
+        ("fair_value_high", "--fair-value-high"),
+        ("fairValueHigh", "--fair-value-high"),
+        ("expected_cagr_pct", "--expected-cagr-pct"),
+        ("expectedCagrPct", "--expected-cagr-pct"),
+        ("note_path", "--note-path"),
+        ("notePath", "--note-path"),
+    ]:
+        if payload.get(payload_key) not in (None, ""):
+            command.extend([cli_key, str(payload.get(payload_key))])
+    if "assumptions" in payload:
+        command.extend(["--assumptions-json", json.dumps(payload.get("assumptions") or {})])
+    if "outputs" in payload:
+        command.extend(["--outputs-json", json.dumps(payload.get("outputs") or {})])
+    if "evidence" in payload:
+        command.extend(["--evidence-json", json.dumps(payload.get("evidence") or [])])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term valuation update failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term valuation updater returned invalid JSON") from exc
+    audit_api_write("ai_os_api_update_long_term_valuation_model", "update_long_term_valuation_model", actor, "portfolio.holding_valuation_models", result, payload)
+    return result
+
+
+def open_long_term_committee_review(payload: dict) -> dict:
+    try:
+        thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("holding_thesis_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH opened AS (
+            SELECT portfolio.open_long_term_committee_review(
+                {thesis_id},
+                {sql_literal(actor)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'long_term_committee_review_id')::BIGINT AS long_term_committee_review_id,
+                (result->>'holding_thesis_id')::BIGINT AS holding_thesis_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                (result->>'task_id')::BIGINT AS task_id,
+                result->>'review_status' AS review_status,
+                result->>'recommended_decision' AS recommended_decision,
+                (result->>'source_gap_count')::INTEGER AS source_gap_count,
+                (result->>'capital_action_allowed')::BOOLEAN AS capital_action_allowed,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM opened
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("long-term committee review creation failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_open_long_term_committee_review", "open_long_term_committee_review", actor, "portfolio.long_term_committee_reviews", result, payload)
+    return result
+
+
+def generate_long_term_committee_memo(payload: dict) -> dict:
+    try:
+        review_id = int(payload.get("long_term_committee_review_id") or payload.get("longTermCommitteeReviewId") or payload.get("committee_review_id") or payload.get("review_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("long_term_committee_review_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "generate_long_term_committee_memo.py"),
+        "--review-id",
+        str(review_id),
+        "--actor",
+        actor,
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term committee memo generation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term committee memo generator returned invalid JSON") from exc
+    audit_api_write("ai_os_api_generate_long_term_committee_memo", "generate_long_term_committee_memo", actor, "portfolio.long_term_committee_reviews", result, payload)
+    return result
+
+
+def resolve_long_term_committee_decision(payload: dict) -> dict:
+    try:
+        review_id = int(payload.get("long_term_committee_review_id") or payload.get("longTermCommitteeReviewId") or payload.get("committee_review_id") or payload.get("review_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("long_term_committee_review_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"reject", "research_more", "monitor", "approve_watchlist", "approve_hold"}:
+        raise ValueError("decision must be reject, research_more, monitor, approve_watchlist, or approve_hold")
+    actor = str(payload.get("actor") or payload.get("decided_by") or payload.get("decidedBy") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("decisionNotes") or payload.get("notes") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH resolved AS (
+            SELECT portfolio.resolve_long_term_committee_decision(
+                {review_id},
+                {sql_literal(decision)},
+                {sql_literal(actor)},
+                {sql_literal(notes)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'long_term_committee_review_id')::BIGINT AS long_term_committee_review_id,
+                (result->>'long_term_committee_decision_id')::BIGINT AS long_term_committee_decision_id,
+                (result->>'holding_thesis_id')::BIGINT AS holding_thesis_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                result->>'decision' AS decision,
+                result->>'review_status' AS review_status,
+                result->>'thesis_status' AS thesis_status,
+                result->>'thesis_decision_status' AS thesis_decision_status,
+                result->>'approval_status' AS approval_status,
+                (result->>'capital_action_allowed')::BOOLEAN AS capital_action_allowed,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM resolved
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("long-term committee decision failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_long_term_committee_decision", "resolve_long_term_committee_decision", actor, "portfolio.long_term_committee_decisions", result, payload)
+    return result
+
+
+def dispatch_long_term_specialists(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "dispatch_long_term_specialists.py"),
+        "--actor",
+        actor,
+    ]
+    thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id")
+    review_id = payload.get("long_term_committee_review_id") or payload.get("longTermCommitteeReviewId") or payload.get("committee_review_id") or payload.get("review_id") or payload.get("id")
+    if review_id not in (None, ""):
+        command.extend(["--long-term-committee-review-id", str(review_id)])
+    elif thesis_id not in (None, ""):
+        command.extend(["--holding-thesis-id", str(thesis_id)])
+    else:
+        raise ValueError("holding_thesis_id or long_term_committee_review_id is required")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term specialist dispatch failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term specialist dispatch returned invalid JSON") from exc
+    audit_api_write("ai_os_api_dispatch_long_term_specialists", "dispatch_long_term_specialists", actor, "portfolio.long_term_specialist_assignments", result, payload)
+    return result
+
+
+def execute_long_term_specialist_assignment(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "execute_long_term_specialist_assignment.py"),
+        "--actor",
+        actor,
+    ]
+    assignment_id = payload.get("assignment_id") or payload.get("assignmentId") or payload.get("id")
+    assignment_key = payload.get("assignment_key") or payload.get("assignmentKey")
+    if assignment_id not in (None, ""):
+        command.extend(["--assignment-id", str(assignment_id)])
+    elif assignment_key not in (None, ""):
+        command.extend(["--assignment-key", str(assignment_key)])
+    else:
+        raise ValueError("assignment_id or assignment_key is required")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term specialist assignment execution failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term specialist assignment execution returned invalid JSON") from exc
+    audit_api_write("ai_os_api_execute_long_term_specialist_assignment", "execute_long_term_specialist_assignment", actor, "portfolio.long_term_specialist_outputs", result, payload)
+    return result
+
+
+def create_long_term_source_requests(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Filings and Transcript Analyst").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "create_long_term_source_requests.py"),
+        "--actor",
+        actor,
+    ]
+    specialist_output_id = payload.get("specialist_output_id") or payload.get("specialistOutputId") or payload.get("output_id")
+    assignment_id = payload.get("assignment_id") or payload.get("assignmentId")
+    holding_thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id")
+    limit = payload.get("limit")
+    if specialist_output_id not in (None, ""):
+        command.extend(["--specialist-output-id", str(specialist_output_id)])
+    if assignment_id not in (None, ""):
+        command.extend(["--assignment-id", str(assignment_id)])
+    if holding_thesis_id not in (None, ""):
+        command.extend(["--holding-thesis-id", str(holding_thesis_id)])
+    if limit not in (None, ""):
+        command.extend(["--limit", str(limit)])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term source request creation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term source request creation returned invalid JSON") from exc
+    audit_api_write("ai_os_api_create_long_term_source_requests", "create_long_term_source_requests", actor, "portfolio.long_term_source_requests", result, payload)
+    return result
+
+
+def check_long_term_source_satisfaction(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Filings and Transcript Analyst").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "check_long_term_source_satisfaction.py"),
+        "--actor",
+        actor,
+    ]
+    source_request_id = payload.get("source_request_id") or payload.get("sourceRequestId") or payload.get("request_id") or payload.get("id")
+    holding_thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id")
+    limit = payload.get("limit")
+    if source_request_id not in (None, ""):
+        command.extend(["--source-request-id", str(source_request_id)])
+    if holding_thesis_id not in (None, ""):
+        command.extend(["--holding-thesis-id", str(holding_thesis_id)])
+    if limit not in (None, ""):
+        command.extend(["--limit", str(limit)])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term source satisfaction check failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term source satisfaction check returned invalid JSON") from exc
+    audit_api_write("ai_os_api_check_long_term_source_satisfaction", "check_long_term_source_satisfaction", actor, "portfolio.long_term_source_request_checks", result, payload)
+    return result
+
+
+def register_long_term_source_document(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Filings and Transcript Analyst").strip()
+    source_request_id = payload.get("source_request_id") or payload.get("sourceRequestId") or payload.get("request_id") or payload.get("id")
+    title = str(payload.get("title") or payload.get("document_title") or payload.get("documentTitle") or "").strip()
+    source_url = str(payload.get("source_url") or payload.get("sourceUrl") or "").strip()
+    if source_request_id in (None, ""):
+        raise ValueError("source_request_id is required")
+    if not title:
+        raise ValueError("title is required")
+    if not source_url:
+        raise ValueError("source_url is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "register_long_term_source_document.py"),
+        "--source-request-id",
+        str(source_request_id),
+        "--title",
+        title,
+        "--source-url",
+        source_url,
+        "--document-type",
+        str(payload.get("document_type") or payload.get("documentType") or "annual_report"),
+        "--source-name",
+        str(payload.get("source_name") or payload.get("sourceName") or "official_company_source"),
+        "--actor",
+        actor,
+    ]
+    local_path = payload.get("local_path") or payload.get("localPath")
+    summary = payload.get("summary")
+    if local_path not in (None, ""):
+        command.extend(["--local-path", str(local_path)])
+    if summary not in (None, ""):
+        command.extend(["--summary", str(summary)])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term source document registration failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term source document registration returned invalid JSON") from exc
+    audit_api_write("ai_os_api_register_long_term_source_document", "register_long_term_source_document", actor, "portfolio.long_term_source_documents", result, payload)
+    return result
+
+
+def extract_long_term_source_document(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Filings and Transcript Analyst").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "extract_long_term_source_document.py"),
+        "--actor",
+        actor,
+    ]
+    source_document_id = payload.get("source_document_id") or payload.get("sourceDocumentId") or payload.get("document_id") or payload.get("id")
+    symbol = payload.get("symbol")
+    if source_document_id not in (None, ""):
+        command.extend(["--source-document-id", str(source_document_id)])
+    elif symbol not in (None, ""):
+        command.extend(["--symbol", str(symbol)])
+    else:
+        raise ValueError("source_document_id or symbol is required")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term source document extraction failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term source document extraction returned invalid JSON") from exc
+    audit_api_write("ai_os_api_extract_long_term_source_document", "extract_long_term_source_document", actor, "portfolio.long_term_source_document_extractions", result, payload)
+    return result
+
+
+def run_long_term_monte_carlo(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Quant Risk Analyst").strip()
+    thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or payload.get("id")
+    if thesis_id in (None, ""):
+        raise ValueError("holding_thesis_id is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_long_term_monte_carlo.py"),
+        "--holding-thesis-id",
+        str(thesis_id),
+        "--actor",
+        actor,
+    ]
+    option_map = {
+        "horizon_years": "--horizon-years",
+        "simulations": "--simulations",
+        "seed": "--seed",
+        "start_price": "--start-price",
+        "starting_multiple": "--starting-multiple",
+        "revenue_growth_low": "--revenue-growth-low",
+        "revenue_growth_base": "--revenue-growth-base",
+        "revenue_growth_high": "--revenue-growth-high",
+        "margin_low": "--margin-low",
+        "margin_base": "--margin-base",
+        "margin_high": "--margin-high",
+        "terminal_multiple_low": "--terminal-multiple-low",
+        "terminal_multiple_base": "--terminal-multiple-base",
+        "terminal_multiple_high": "--terminal-multiple-high",
+        "dilution_low": "--dilution-low",
+        "dilution_base": "--dilution-base",
+        "dilution_high": "--dilution-high",
+        "annual_volatility": "--annual-volatility",
+        "source_quality_haircut": "--source-quality-haircut",
+    }
+    for key, flag in option_map.items():
+        camel_key = "".join([key.split("_")[0], *[part.capitalize() for part in key.split("_")[1:]]])
+        value = payload.get(key)
+        if value in (None, ""):
+            value = payload.get(camel_key)
+        if value not in (None, ""):
+            command.extend([flag, str(value)])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=240)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "long-term Monte Carlo run failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("long-term Monte Carlo runner returned invalid JSON") from exc
+    audit_api_write("ai_os_api_run_long_term_monte_carlo", "run_long_term_monte_carlo", actor, "portfolio.long_term_monte_carlo_runs", result, payload)
+    return result
+
+
+def calculate_special_situation_spread(payload: dict) -> dict:
+    try:
+        special_memo_id = int(payload.get("special_memo_id") or payload.get("specialMemoId") or payload.get("memo_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("special_memo_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Event Arbitrage Analyst").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "calculate_special_situation_spread.py"),
+        "--special-memo-id",
+        str(special_memo_id),
+        "--actor",
+        actor,
+    ]
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "special situation spread calculation failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("special situation spread calculator returned invalid JSON") from exc
+    audit_api_write("ai_os_api_calculate_special_situation_spread", "calculate_special_situation_spread", actor, "research.special_situation_spread_checks", result, payload)
+    return result
+
+
+def refresh_event_quotes(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Data Steward").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "refresh_event_quotes.py"),
+    ]
+    symbols = payload.get("symbols")
+    if isinstance(symbols, str) and symbols.strip():
+        command.extend(["--symbols", symbols])
+    elif isinstance(symbols, list) and symbols:
+        command.append("--symbols")
+        command.extend(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip())
+    if payload.get("limit"):
+        try:
+            command.extend(["--limit", str(int(payload.get("limit")))])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit must be an integer") from exc
+    if payload.get("dry_run") or payload.get("dryRun"):
+        command.append("--dry-run")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "event quote refresh failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("event quote refresh returned invalid JSON") from exc
+    audit_api_write("ai_os_api_refresh_event_quotes", "refresh_event_quotes", actor, "market.price_quotes", result, payload)
+    return result
+
+
+def check_source_freshness(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Data Steward").strip()
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "check_source_freshness.py"),
+        "--actor",
+        actor,
+    ]
+    source_key = str(payload.get("source_key") or payload.get("sourceKey") or "").strip()
+    if source_key:
+        command.extend(["--source-key", source_key])
+    if payload.get("limit"):
+        try:
+            command.extend(["--limit", str(int(payload.get("limit")))])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit must be an integer") from exc
+    if payload.get("target_minutes") or payload.get("targetMinutes"):
+        try:
+            command.extend(["--target-minutes", str(int(payload.get("target_minutes") or payload.get("targetMinutes")))])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("target_minutes must be an integer") from exc
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "source freshness check failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("source freshness check returned invalid JSON") from exc
+    audit_api_write("ai_os_api_check_source_freshness", "check_source_freshness", actor, "core.data_source_freshness_checks", result, payload)
+    return result
+
+
+def resolve_special_situation_decision(payload: dict) -> dict:
+    try:
+        special_memo_id = int(payload.get("special_memo_id") or payload.get("specialMemoId") or payload.get("memo_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("special_memo_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"reject", "monitor", "research_more", "committee_review"}:
+        raise ValueError("decision must be reject, monitor, research_more, or committee_review")
+    actor = str(payload.get("actor") or payload.get("decided_by") or payload.get("decidedBy") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("decisionNotes") or payload.get("notes") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH resolved AS (
+            SELECT research.resolve_special_situation_decision(
+                {special_memo_id},
+                {sql_literal(decision)},
+                {sql_literal(actor)},
+                {sql_literal(notes)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'special_memo_id')::BIGINT AS special_memo_id,
+                (result->>'special_terms_id')::BIGINT AS special_terms_id,
+                (result->>'special_situation_decision_id')::BIGINT AS special_situation_decision_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                result->>'decision' AS decision,
+                result->>'memo_status' AS memo_status,
+                result->>'approval_status' AS approval_status,
+                (result->>'monitor_allowed')::BOOLEAN AS monitor_allowed,
+                (result->>'trade_allowed')::BOOLEAN AS trade_allowed,
+                (result->>'client_recommendation_allowed')::BOOLEAN AS client_recommendation_allowed
+            FROM resolved
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("special situation decision failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_special_situation_decision", "resolve_special_situation_decision", actor, "research.special_situation_decisions", result, payload)
+    return result
+
+
+def resolve_strategy_committee_decision(payload: dict) -> dict:
+    try:
+        review_id = int(payload.get("committee_review_id") or payload.get("committeeReviewId") or payload.get("review_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("committee_review_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"reject", "retest", "research_more", "approve_paper_monitor"}:
+        raise ValueError("decision must be reject, retest, research_more, or approve_paper_monitor")
+    actor = str(payload.get("actor") or payload.get("decided_by") or payload.get("decidedBy") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("decisionNotes") or payload.get("notes") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH resolved AS (
+            SELECT strategy.resolve_strategy_committee_decision(
+                {review_id},
+                {sql_literal(decision)},
+                {sql_literal(actor)},
+                {sql_literal(notes)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'committee_review_id')::BIGINT AS committee_review_id,
+                (result->>'committee_decision_id')::BIGINT AS committee_decision_id,
+                (result->>'strategy_id')::BIGINT AS strategy_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                result->>'decision' AS decision,
+                result->>'review_status' AS review_status,
+                result->>'approval_status' AS approval_status,
+                result->>'strategy_status' AS strategy_status,
+                result->>'activation_gate' AS activation_gate,
+                (result->>'paper_monitor_allowed')::BOOLEAN AS paper_monitor_allowed,
+                NULLIF(result->>'paper_monitor_instance_id', '')::BIGINT AS paper_monitor_instance_id,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM resolved
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("strategy committee decision failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_strategy_committee_decision", "resolve_strategy_committee_decision", actor, "strategy.committee_decisions", result, payload)
+    return result
+
+
+def start_strategy_paper_monitor(payload: dict) -> dict:
+    try:
+        review_id = int(payload.get("committee_review_id") or payload.get("committeeReviewId") or payload.get("review_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("committee_review_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Trading Desk Agent").strip()
+    notes = str(payload.get("notes") or payload.get("decision_notes") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH started AS (
+            SELECT strategy.start_paper_monitor(
+                {review_id},
+                {sql_literal(actor)},
+                {sql_literal(notes)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'paper_monitor_session_id')::BIGINT AS paper_monitor_session_id,
+                (result->>'strategy_id')::BIGINT AS strategy_id,
+                (result->>'instance_id')::BIGINT AS instance_id,
+                (result->>'committee_review_id')::BIGINT AS committee_review_id,
+                result->>'status' AS status,
+                result->>'heartbeat_status' AS heartbeat_status,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM started
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("paper monitor start failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_start_strategy_paper_monitor", "start_strategy_paper_monitor", actor, "strategy.paper_monitor_sessions", result, payload)
+    return result
+
+
+def record_strategy_paper_monitor_heartbeat(payload: dict) -> dict:
+    try:
+        session_id = int(payload.get("paper_monitor_session_id") or payload.get("paperMonitorSessionId") or payload.get("session_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("paper_monitor_session_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Trading Desk Agent").strip()
+    heartbeat_status = str(payload.get("heartbeat_status") or payload.get("status") or "ok").strip().lower()
+    try:
+        signal_count = int(payload.get("signal_count") or payload.get("signalCount") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("signal_count must be an integer") from exc
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    event_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    rows = run_psql_json_statement(
+        f"""
+        WITH heartbeat AS (
+            SELECT strategy.record_paper_monitor_heartbeat(
+                {session_id},
+                {sql_literal(actor)},
+                {sql_literal(heartbeat_status)},
+                {signal_count},
+                {sql_jsonb(metrics)},
+                {sql_jsonb(event_payload)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'paper_monitor_session_id')::BIGINT AS paper_monitor_session_id,
+                (result->>'paper_monitor_event_id')::BIGINT AS paper_monitor_event_id,
+                (result->>'strategy_id')::BIGINT AS strategy_id,
+                (result->>'instance_id')::BIGINT AS instance_id,
+                result->>'heartbeat_status' AS heartbeat_status,
+                (result->>'signal_count')::INT AS signal_count,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM heartbeat
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("paper monitor heartbeat failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_record_strategy_paper_monitor_heartbeat", "record_strategy_paper_monitor_heartbeat", actor, "strategy.paper_monitor_events", result, payload)
+    return result
+
+
+def stop_strategy_paper_monitor(payload: dict) -> dict:
+    try:
+        session_id = int(payload.get("paper_monitor_session_id") or payload.get("paperMonitorSessionId") or payload.get("session_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("paper_monitor_session_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Trading Desk Agent").strip()
+    reason = str(payload.get("reason") or "manual_stop").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH stopped AS (
+            SELECT strategy.stop_paper_monitor(
+                {session_id},
+                {sql_literal(actor)},
+                {sql_literal(reason)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'paper_monitor_session_id')::BIGINT AS paper_monitor_session_id,
+                (result->>'paper_monitor_event_id')::BIGINT AS paper_monitor_event_id,
+                (result->>'strategy_id')::BIGINT AS strategy_id,
+                (result->>'instance_id')::BIGINT AS instance_id,
+                result->>'status' AS status,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM stopped
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("paper monitor stop failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_stop_strategy_paper_monitor", "stop_strategy_paper_monitor", actor, "strategy.paper_monitor_sessions", result, payload)
+    return result
+
+
+def evaluate_strategy_drift(payload: dict) -> dict:
+    try:
+        session_id = int(payload.get("paper_monitor_session_id") or payload.get("paperMonitorSessionId") or payload.get("session_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("paper_monitor_session_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Model Validation Agent").strip()
+    thresholds = payload.get("thresholds") if isinstance(payload.get("thresholds"), dict) else {}
+    rows = run_psql_json_statement(
+        f"""
+        WITH evaluated AS (
+            SELECT strategy.evaluate_paper_backtest_drift(
+                {session_id},
+                {sql_literal(actor)},
+                {sql_jsonb(thresholds)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'paper_monitor_session_id')::BIGINT AS paper_monitor_session_id,
+                (result->>'strategy_id')::BIGINT AS strategy_id,
+                result->>'drift_level' AS drift_level,
+                result->>'check_status' AS check_status,
+                NULLIF(result->>'drift_score', '')::NUMERIC AS drift_score,
+                result->'findings' AS findings,
+                NULLIF(result->>'risk_event_id', '')::BIGINT AS risk_event_id,
+                NULLIF(result->>'inbox_item_id', '')::BIGINT AS inbox_item_id,
+                result->'baseline_metrics' AS baseline_metrics,
+                result->'paper_metrics' AS paper_metrics,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM evaluated
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("strategy drift evaluation failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_evaluate_strategy_drift", "evaluate_strategy_drift", actor, "strategy.drift_checks", result, payload)
+    return result
+
+
+def enforce_strategy_kill_switch(payload: dict) -> dict:
+    raw_session_id = payload.get("paper_monitor_session_id") or payload.get("paperMonitorSessionId") or payload.get("session_id")
+    raw_drift_check_id = payload.get("drift_check_id") or payload.get("driftCheckId")
+    if raw_session_id in ("", None) and raw_drift_check_id in ("", None):
+        raise ValueError("paper_monitor_session_id or drift_check_id is required")
+    try:
+        session_id = int(raw_session_id) if raw_session_id not in ("", None) else None
+        drift_check_id = int(raw_drift_check_id) if raw_drift_check_id not in ("", None) else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("paper_monitor_session_id and drift_check_id must be integers when provided") from exc
+    actor = str(payload.get("actor") or payload.get("enforced_by") or payload.get("enforcedBy") or "Risk Agent").strip()
+    reason = str(payload.get("trigger_reason") or payload.get("reason") or "manual_kill_switch").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH enforced AS (
+            SELECT strategy.enforce_strategy_kill_switch(
+                {session_id if session_id is not None else 'NULL'},
+                {drift_check_id if drift_check_id is not None else 'NULL'},
+                {sql_literal(actor)},
+                {sql_literal(reason)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'kill_switch_event_id')::BIGINT AS kill_switch_event_id,
+                (result->>'paper_monitor_session_id')::BIGINT AS paper_monitor_session_id,
+                NULLIF(result->>'drift_check_id', '')::BIGINT AS drift_check_id,
+                (result->>'strategy_id')::BIGINT AS strategy_id,
+                (result->>'instance_id')::BIGINT AS instance_id,
+                result->>'enforcement_status' AS enforcement_status,
+                result->>'action_taken' AS action_taken,
+                (result->>'risk_event_id')::BIGINT AS risk_event_id,
+                (result->>'inbox_item_id')::BIGINT AS inbox_item_id,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM enforced
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("strategy kill switch enforcement failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_enforce_strategy_kill_switch", "enforce_strategy_kill_switch", actor, "strategy.kill_switch_events", result, payload)
+    return result
+
+
+def engage_global_kill_switch(payload: dict) -> dict:
+    actor = str(payload.get("actor") or payload.get("enforced_by") or payload.get("enforcedBy") or "Execution Safety Agent").strip()
+    reason = str(payload.get("trigger_reason") or payload.get("reason") or "dashboard_global_kill_switch").strip()
+    source = str(payload.get("trigger_source") or payload.get("source") or "dashboard").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH engaged AS (
+            SELECT trading.engage_global_kill_switch(
+                {sql_literal(actor)},
+                {sql_literal(reason)},
+                {sql_literal(source)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'global_kill_switch_event_id')::BIGINT AS global_kill_switch_event_id,
+                (result->>'risk_event_id')::BIGINT AS risk_event_id,
+                (result->>'inbox_item_id')::BIGINT AS inbox_item_id,
+                (result->>'affected_instances')::INT AS affected_instances,
+                (result->>'global_execution_locked')::BOOLEAN AS global_execution_locked,
+                (result->>'live_broker_writes_allowed')::BOOLEAN AS live_broker_writes_allowed
+            FROM engaged
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("global kill switch failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_engage_global_kill_switch", "engage_global_kill_switch", actor, "trading.global_kill_switch_events", result, payload)
+    return result
+
+
+def request_limited_live_approval(payload: dict) -> dict:
+    raw_strategy_id = payload.get("strategy_id") or payload.get("strategyId")
+    raw_instance_id = payload.get("instance_id") or payload.get("instanceId")
+    strategy_id = int(raw_strategy_id) if raw_strategy_id not in ("", None) else None
+    instance_id = int(raw_instance_id) if raw_instance_id not in ("", None) else None
+    actor = str(payload.get("actor") or payload.get("requested_by") or payload.get("requestedBy") or "Devarsh").strip()
+    rationale = str(payload.get("rationale") or payload.get("reason") or "Dashboard limited-live approval request.").strip()
+    book_key = payload.get("book_key") or payload.get("bookKey")
+    symbol = payload.get("symbol")
+    max_notional = sql_numeric(payload.get("max_notional") or payload.get("maxNotional"), field_name="max_notional")
+    max_daily_loss = sql_numeric(payload.get("max_daily_loss") or payload.get("maxDailyLoss"), field_name="max_daily_loss")
+    try:
+        max_orders = int(payload.get("max_orders_per_day") or payload.get("maxOrdersPerDay") or 1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_orders_per_day must be an integer") from exc
+    expires_at = payload.get("expires_at") or payload.get("expiresAt")
+    rows = run_psql_json_statement(
+        f"""
+        WITH requested AS (
+            SELECT trading.request_limited_live_approval(
+                {strategy_id if strategy_id is not None else 'NULL'},
+                {instance_id if instance_id is not None else 'NULL'},
+                {sql_literal(book_key) if book_key not in ("", None) else 'NULL'},
+                {sql_literal(symbol) if symbol not in ("", None) else 'NULL'},
+                {max_notional},
+                {max_orders},
+                {max_daily_loss},
+                {sql_literal(expires_at) + '::timestamptz' if expires_at not in ("", None) else 'NULL'},
+                {sql_literal(actor)},
+                {sql_literal(rationale)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'limited_live_request_id')::BIGINT AS limited_live_request_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                (result->>'inbox_item_id')::BIGINT AS inbox_item_id,
+                result->>'request_status' AS request_status,
+                (result->>'global_execution_locked')::BOOLEAN AS global_execution_locked,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM requested
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("limited-live approval request failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_request_limited_live_approval", "request_limited_live_approval", actor, "trading.limited_live_requests", result, payload)
+    return result
+
+
+def sync_limited_live_request(payload: dict) -> dict:
+    try:
+        request_id = int(payload.get("limited_live_request_id") or payload.get("limitedLiveRequestId") or payload.get("request_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limited_live_request_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Execution Safety Agent").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH synced AS (
+            SELECT trading.sync_limited_live_request_approval(
+                {request_id},
+                {sql_literal(actor)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'limited_live_request_id')::BIGINT AS limited_live_request_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                result->>'approval_status' AS approval_status,
+                result->>'request_status' AS request_status,
+                (result->>'global_execution_locked')::BOOLEAN AS global_execution_locked,
+                result->>'broker_execution_policy' AS broker_execution_policy,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM synced
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("limited-live sync failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_sync_limited_live_request", "sync_limited_live_request", actor, "trading.limited_live_requests", result, payload)
+    return result
+
+
+def evaluate_execution_gate(payload: dict) -> dict:
+    raw_request_id = payload.get("limited_live_request_id") or payload.get("limitedLiveRequestId") or payload.get("request_id")
+    request_id = int(raw_request_id) if raw_request_id not in ("", None) else None
+    actor = str(payload.get("actor") or "Execution Safety Agent").strip()
+    order_intent = payload.get("order_intent") if isinstance(payload.get("order_intent"), dict) else payload.get("orderIntent")
+    if not isinstance(order_intent, dict):
+        order_intent = {}
+    rows = run_psql_json_statement(
+        f"""
+        WITH checked AS (
+            SELECT trading.evaluate_execution_gate(
+                {request_id if request_id is not None else 'NULL'},
+                {sql_literal(actor)},
+                {sql_jsonb(order_intent)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'execution_gate_check_id')::BIGINT AS execution_gate_check_id,
+                NULLIF(result->>'limited_live_request_id', '')::BIGINT AS limited_live_request_id,
+                result->>'gate_status' AS gate_status,
+                result->'block_reasons' AS block_reasons,
+                (result->>'global_execution_locked')::BOOLEAN AS global_execution_locked,
+                (result->>'live_broker_writes_allowed')::BOOLEAN AS live_broker_writes_allowed,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM checked
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("execution gate evaluation failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_evaluate_execution_gate", "evaluate_execution_gate", actor, "trading.execution_gate_checks", result, payload)
+    return result
+
+
+def create_order_intent(payload: dict) -> dict:
+    try:
+        request_id = int(payload.get("limited_live_request_id") or payload.get("limitedLiveRequestId") or payload.get("request_id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limited_live_request_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or payload.get("created_by") or payload.get("createdBy") or "Devarsh").strip()
+    rationale = str(payload.get("rationale") or payload.get("reason") or "Dashboard order intent request.").strip()
+    order_intent = payload.get("order_intent") if isinstance(payload.get("order_intent"), dict) else payload.get("orderIntent")
+    if not isinstance(order_intent, dict):
+        order_intent = {
+            key: payload.get(key)
+            for key in [
+                "account_code",
+                "book_key",
+                "client_code",
+                "estimated_loss",
+                "exchange",
+                "instrument_type",
+                "notional",
+                "order_type",
+                "price",
+                "quantity",
+                "side",
+                "symbol",
+            ]
+            if payload.get(key) not in ("", None)
+        }
+    rows = run_psql_json_statement(
+        f"""
+        WITH created AS (
+            SELECT trading.create_order_intent(
+                {request_id},
+                {sql_jsonb(order_intent)},
+                {sql_literal(actor)},
+                {sql_literal(rationale)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'order_intent_id')::BIGINT AS order_intent_id,
+                (result->>'approval_id')::BIGINT AS approval_id,
+                (result->>'limited_live_request_id')::BIGINT AS limited_live_request_id,
+                result->>'status' AS status,
+                (result->>'broker_order_allowed')::BOOLEAN AS broker_order_allowed,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM created
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("order intent create failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_create_order_intent", "create_order_intent", actor, "trading.order_intents", result, payload)
+    return result
+
+
+def evaluate_order_intent_risk(payload: dict) -> dict:
+    try:
+        order_intent_id = int(payload.get("order_intent_id") or payload.get("orderIntentId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("order_intent_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Execution Safety Agent").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH checked AS (
+            SELECT trading.evaluate_order_intent_risk(
+                {order_intent_id},
+                {sql_literal(actor)}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'order_intent_id')::BIGINT AS order_intent_id,
+                (result->>'order_risk_check_id')::BIGINT AS order_risk_check_id,
+                NULLIF(result->>'execution_gate_check_id', '')::BIGINT AS execution_gate_check_id,
+                result->>'check_status' AS check_status,
+                result->'block_reasons' AS block_reasons,
+                result->'warnings' AS warnings,
+                (result->>'broker_order_allowed')::BOOLEAN AS broker_order_allowed,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM checked
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("order intent risk evaluation failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_evaluate_order_intent_risk", "evaluate_order_intent_risk", actor, "trading.order_risk_checks", result, payload)
+    return result
+
+
+def stage_broker_transaction_imports(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    try:
+        limit = int(payload.get("limit") or 250)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    limit = max(1, min(limit, 2000))
+    rows = run_psql_json_statement(
+        f"""
+        WITH staged AS (
+            SELECT books.stage_broker_transaction_imports({limit}, {sql_literal(actor)}) AS staged_count
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT staged_count FROM staged
+        ) output_rows
+        """
+    )
+    result = rows[0] if rows else {"staged_count": 0}
+    audit_api_write("ai_os_api_stage_broker_transaction_imports", "stage_broker_transaction_imports", actor, "books.broker_transaction_import_routes", result, payload)
+    return result
+
+
+def promote_broker_transaction_route(payload: dict) -> dict:
+    try:
+        route_id = int(payload.get("route_id") or payload.get("routeId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("route_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    affects_active = bool(payload.get("affects_active_exposure") or payload.get("affectsActiveExposure"))
+    rows = run_psql_json_statement(
+        f"""
+        WITH promoted AS (
+            SELECT books.promote_broker_transaction_route(
+                {route_id},
+                {str(affects_active).lower()},
+                {sql_literal(actor)}
+            ) AS trade_activity_id
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT t.id AS trade_activity_id, t.symbol, t.side, t.quantity, t.price,
+                   t.trade_ts, tbl.book_key, tbl.purpose_key,
+                   tbl.link_type, tbl.affects_active_exposure, tbl.book_position_id
+            FROM promoted p
+            JOIN trading.trade_activity_ledger t ON t.id = p.trade_activity_id
+            LEFT JOIN books.trade_book_links tbl ON tbl.trade_activity_id = t.id
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("broker transaction route promotion failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_promote_broker_transaction_route", "promote_broker_transaction_route", actor, "books.trade_book_links", result, payload)
+    return result
+
+
+def run_broker_reconciliation(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH run AS (
+            SELECT books.run_broker_reconciliation({sql_literal(actor)}) AS run_id
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT r.id, r.run_key, r.total_broker_rows, r.staged_routes,
+                   r.promoted_routes, r.unmapped_rows, r.duplicate_trade_refs,
+                   r.amount_mismatch_rows, r.created_by, r.created_at,
+                   (SELECT count(*) FROM books.broker_reconciliation_issues i WHERE i.run_id = r.id) AS issue_count
+            FROM books.broker_reconciliation_runs r
+            JOIN run ON run.run_id = r.id
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("broker reconciliation run failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_run_broker_reconciliation", "run_broker_reconciliation", actor, "books.broker_reconciliation_runs", result, payload)
+    return result
+
+
+def run_p2cursor_reconciliation(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    client_code = payload.get("client_code") or payload.get("clientCode")
+    run_id_text = run_psql_text(
+        f"""
+        SELECT portfolio.run_p2cursor_reconciliation(
+            {sql_literal(actor)},
+            {sql_literal(client_code) if client_code not in (None, "") else 'NULL'}
+        )
+        """
+    ).strip()
+    try:
+        run_id = int(run_id_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"p2cursor reconciliation returned invalid run id: {run_id_text}") from exc
+    rows = run_psql_json_statement(
+        f"""
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT r.id, r.run_key, r.client_code, r.client_name,
+                   r.p2_account_code, r.comparison_account_code, r.status,
+                   r.p2_position_count, r.comparison_position_count,
+                   r.matched_symbols, r.p2_only_symbols, r.comparison_only_symbols,
+                   r.quantity_mismatch_symbols, r.stale_days, r.created_by,
+                   r.created_at,
+                   (SELECT count(*) FROM portfolio.p2cursor_reconciliation_issues i WHERE i.run_id = r.id) AS issue_count
+            FROM portfolio.p2cursor_reconciliation_runs r
+            WHERE r.id = {run_id}
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("p2cursor reconciliation run failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_run_p2cursor_reconciliation", "run_p2cursor_reconciliation", actor, "portfolio.p2cursor_reconciliation_runs", result, payload)
+    return result
+
+
+def run_legacy_source_readiness(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    run_id_text = run_psql_text(
+        f"""
+        SELECT core.run_legacy_source_extraction_readiness({sql_literal(actor)})
+        """
+    ).strip()
+    try:
+        run_id = int(run_id_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"legacy source readiness returned invalid run id: {run_id_text}") from exc
+    rows = run_psql_json_statement(
+        f"""
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT r.id, r.run_key, r.run_ts, r.status,
+                   r.p2_source_files, r.p2_csv_files, r.p2_staged_rows,
+                   r.p2_files_need_promotion, r.algo_profiled_tables,
+                   r.algo_profiled_source_rows, r.algo_imported_rows,
+                   r.algo_partial_tables, r.algo_unpromoted_tables,
+                   r.high_priority_gaps, r.notes, r.created_by, r.created_at,
+                   (SELECT count(*) FROM core.legacy_source_extraction_issues i WHERE i.run_id = r.id) AS issue_count
+            FROM core.legacy_source_extraction_runs r
+            WHERE r.id = {run_id}
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("legacy source readiness run failed")
+    result = rows[0]
+    audit_api_write("ai_os_api_run_legacy_source_readiness", "run_legacy_source_readiness", actor, "core.legacy_source_extraction_runs", result, payload)
+    return result
+
+
+def widget_data_binding(intent: dict) -> dict:
+    widget_key = str(intent.get("widget_key") or "")
+    bindings = {
+        "portfolio_latest_positions": {
+            "snapshot_keys": ["latest_positions", "clients"],
+            "primary_relation": "portfolio.positions",
+            "freshness": "snapshot_poll",
+        },
+        "market_signal_monitor": {
+            "snapshot_keys": ["signals", "alerts", "paper_trade_summary"],
+            "primary_relation": "trading.signals",
+            "freshness": "strategy_signal_poll",
+        },
+        "strategy_lab_queue": {
+            "snapshot_keys": ["strategies", "paper_trade_summary"],
+            "primary_relation": "strategy.strategy_registry",
+            "freshness": "manual_or_strategy_poll",
+        },
+        "research_filings_inbox": {
+            "snapshot_keys": ["research_hub", "inbox", "data_sources"],
+            "primary_relation": "research.feed_registry",
+            "freshness": "research_source_poll",
+        },
+        "model_runtime_status": {
+            "snapshot_keys": ["model_routes", "pipeline_readiness"],
+            "primary_relation": "agent.model_routes",
+            "freshness": "runtime_health_poll",
+        },
+        "command_daily_brief": {
+            "snapshot_keys": ["chat_turns", "inbox", "approvals"],
+            "primary_relation": "agent.v_recent_chat_turns",
+            "freshness": "snapshot_poll",
+        },
+    }
+    return bindings.get(
+        widget_key,
+        {
+            "snapshot_keys": ["metrics", "inbox"],
+            "primary_relation": intent.get("query_ref") or "agent.inbox_items",
+            "freshness": "snapshot_poll",
+        },
+    )
+
+
+def widget_layout(intent: dict) -> dict:
+    order = {
+        "portfolio_latest_positions": 10,
+        "market_signal_monitor": 20,
+        "strategy_lab_queue": 30,
+        "research_filings_inbox": 40,
+        "model_runtime_status": 50,
+        "command_daily_brief": 60,
+    }
+    widget_key = str(intent.get("widget_key") or "")
+    widget_type = str(intent.get("widget_type") or "")
+    return {
+        "order": order.get(widget_key, 100),
+        "size": "wide" if widget_type in {"portfolio_table", "research_feed"} else "standard",
+        "min_rows": 4,
+    }
+
+
+def upsert_dashboard_widget(intent: dict) -> dict:
+    rows = run_psql_json_statement(
+        f"""
+        WITH upserted AS (
+            INSERT INTO ops.dashboard_widgets (
+                widget_key, widget_title, widget_type, workspace, status,
+                priority, owner_agent, query_ref, source_intent_id,
+                source_chat_turn_id, config, layout, data_binding, evidence,
+                last_materialized_at, last_refreshed_at
+            )
+            VALUES (
+                {sql_literal(intent.get("widget_key"))},
+                {sql_literal(intent.get("widget_title"))},
+                {sql_literal(intent.get("widget_type"))},
+                {sql_literal(intent.get("workspace") or "command")},
+                'active',
+                {sql_literal(intent.get("priority") or "medium")},
+                {sql_literal(intent.get("owner_agent") or "Jarvis")},
+                {sql_literal(intent.get("query_ref"))},
+                {intent.get("id") or "NULL"},
+                {intent.get("source_chat_turn_id") or "NULL"},
+                {sql_jsonb(intent.get("config") or {})},
+                {sql_jsonb(widget_layout(intent))},
+                {sql_jsonb(widget_data_binding(intent))},
+                {sql_jsonb(intent.get("evidence") or [])},
+                now(),
+                now()
+            )
+            ON CONFLICT (workspace, widget_key) DO UPDATE SET
+                widget_title = EXCLUDED.widget_title,
+                widget_type = EXCLUDED.widget_type,
+                status = 'active',
+                priority = EXCLUDED.priority,
+                owner_agent = EXCLUDED.owner_agent,
+                query_ref = EXCLUDED.query_ref,
+                source_intent_id = EXCLUDED.source_intent_id,
+                source_chat_turn_id = EXCLUDED.source_chat_turn_id,
+                config = EXCLUDED.config,
+                layout = EXCLUDED.layout,
+                data_binding = EXCLUDED.data_binding,
+                evidence = EXCLUDED.evidence,
+                last_materialized_at = now(),
+                last_refreshed_at = now(),
+                updated_at = now()
+            RETURNING id, widget_key, widget_title, widget_type, workspace, status,
+                      priority, owner_agent, query_ref, source_intent_id,
+                      source_chat_turn_id, linked_task_id, config, layout,
+                      data_binding, evidence, last_materialized_at,
+                      last_refreshed_at, created_at, updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(upserted)), '[]'::json)::text
+        FROM upserted
+        """
+    )
+    return rows[0] if rows else {}
+
+
+def ensure_dashboard_widget_task(widget: dict, intent: dict) -> dict:
+    source_ref = f"{widget.get('workspace') or 'command'}:{widget.get('widget_key') or intent.get('widget_key')}"
+    existing = run_psql_json(
+        f"""
+        SELECT id, title, objective, owner_agent, status, priority,
+               approval_required, source_kind, source_ref, output_format,
+               output_note_path, evidence, created_at, updated_at
+        FROM agent.tasks
+        WHERE source_kind = 'ops.dashboard_widgets'
+          AND source_ref = {sql_literal(source_ref)}
+          AND status IN ('queued', 'in_progress', 'blocked', 'needs_review')
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """
+    )
+    if existing:
+        return existing[0]
+
+    title = f"Maintain dashboard widget: {widget.get('widget_title') or intent.get('widget_title')}"
+    objective = (
+        f"Keep `{widget.get('widget_title') or intent.get('widget_title')}` current in the "
+        f"{widget.get('workspace') or intent.get('workspace') or 'command'} workspace using "
+        f"{widget.get('query_ref') or intent.get('query_ref') or 'snapshot data'}. "
+        "Surface stale data, source gaps, or required follow-up as inbox items before any trading or client-facing action."
+    )
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO agent.tasks (
+                title, objective, owner_agent, status, priority,
+                approval_required, source_kind, source_ref, output_format,
+                evidence
+            )
+            VALUES (
+                {sql_literal(title)},
+                {sql_literal(objective)},
+                {sql_literal(widget.get("owner_agent") or intent.get("owner_agent") or "Jarvis")},
+                'queued',
+                {sql_literal(widget.get("priority") or intent.get("priority") or "medium")},
+                false,
+                'ops.dashboard_widgets',
+                {sql_literal(source_ref)},
+                'dashboard_widget_update',
+                {sql_jsonb((intent.get("evidence") or []) + [{"source": "ops.dashboard_widgets", "id": widget.get("id")}])}
+            )
+            RETURNING id, title, objective, owner_agent, status, priority,
+                      approval_required, source_kind, source_ref, output_format,
+                      output_note_path, evidence, created_at, updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    return rows[0] if rows else {}
+
+
+def ensure_dashboard_widget_inbox(task: dict, widget: dict) -> dict:
+    task_id = task.get("id")
+    if not task_id:
+        return {}
+    existing = run_psql_json(
+        f"""
+        SELECT id, task_id, title, owner_agent, status, priority,
+               recommended_action, evidence, target_workspace, created_at, updated_at
+        FROM agent.inbox_items
+        WHERE task_id = {task_id}
+          AND status IN ('new', 'queued', 'needs_review')
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """
+    )
+    if existing:
+        return existing[0]
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            )
+            VALUES (
+                {task_id},
+                {sql_literal("Dashboard widget active: " + str(widget.get("widget_title") or widget.get("widget_key")))},
+                {sql_literal(task.get("owner_agent") or widget.get("owner_agent") or "Jarvis")},
+                'queued',
+                {sql_literal(task.get("priority") or widget.get("priority") or "medium")},
+                'Keep this widget current; if the data source is stale, create the next concrete task before reporting conclusions.',
+                {sql_jsonb([{"table": "ops.dashboard_widgets", "id": widget.get("id")}, {"table": "agent.tasks", "id": task_id}])},
+                {sql_literal(widget.get("workspace") or "command")}
+            )
+            RETURNING id, task_id, title, owner_agent, status, priority,
+                      recommended_action, evidence, target_workspace, created_at, updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    return rows[0] if rows else {}
+
+
+def materialize_widget_intent(intent: dict) -> dict:
+    widget = upsert_dashboard_widget(intent)
+    if not widget.get("id"):
+        return {"intent": intent, "widget": widget, "task": {}, "inbox": {}}
+
+    source_ref = f"{intent.get('workspace') or 'command'}:{intent.get('widget_key')}"
+    title = f"Maintain dashboard widget: {intent.get('widget_title')}"
+    objective = (
+        f"Keep `{intent.get('widget_title')}` current in the "
+        f"{intent.get('workspace') or 'command'} workspace using "
+        f"{intent.get('query_ref') or 'snapshot data'}. "
+        "Surface stale data, source gaps, or required follow-up as inbox items before any trading or client-facing action."
+    )
+    evidence = (intent.get("evidence") or []) + [{"source": "ops.dashboard_widget_intents", "id": intent.get("id")}]
+    output = run_psql_text(
+        f"""
+        WITH existing_task AS (
+            SELECT id, title, objective, owner_agent, status, priority,
+                   approval_required, source_kind, source_ref, output_format,
+                   output_note_path, evidence, created_at, updated_at
+            FROM agent.tasks
+            WHERE source_kind = 'ops.dashboard_widgets'
+              AND source_ref = {sql_literal(source_ref)}
+              AND status IN ('queued', 'in_progress', 'blocked', 'needs_review')
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+        ),
+        inserted_task AS (
+            INSERT INTO agent.tasks (
+                title, objective, owner_agent, status, priority,
+                approval_required, source_kind, source_ref, output_format,
+                evidence
+            )
+            SELECT
+                {sql_literal(title)},
+                {sql_literal(objective)},
+                {sql_literal(intent.get("owner_agent") or "Jarvis")},
+                'queued',
+                {sql_literal(intent.get("priority") or "medium")},
+                false,
+                'ops.dashboard_widgets',
+                {sql_literal(source_ref)},
+                'dashboard_widget_update',
+                {sql_jsonb(evidence)}
+            WHERE NOT EXISTS (SELECT 1 FROM existing_task)
+            RETURNING id, title, objective, owner_agent, status, priority,
+                      approval_required, source_kind, source_ref, output_format,
+                      output_note_path, evidence, created_at, updated_at
+        ),
+        task_row AS (
+            SELECT * FROM inserted_task
+            UNION ALL
+            SELECT * FROM existing_task
+            LIMIT 1
+        ),
+        updated_widget AS (
+            UPDATE ops.dashboard_widgets
+            SET linked_task_id = (SELECT id FROM task_row),
+                updated_at = now()
+            WHERE id = {widget.get("id")}
+            RETURNING id, widget_key, widget_title, widget_type, workspace, status,
+                      priority, owner_agent, query_ref, source_intent_id,
+                      source_chat_turn_id, linked_task_id, config, layout,
+                      data_binding, evidence, last_materialized_at,
+                      last_refreshed_at, created_at, updated_at
+        ),
+        existing_inbox AS (
+            SELECT id, task_id, title, owner_agent, status, priority,
+                   recommended_action, evidence, target_workspace, created_at, updated_at
+            FROM agent.inbox_items
+            WHERE task_id = (SELECT id FROM task_row)
+              AND status IN ('new', 'queued', 'needs_review')
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+        ),
+        inserted_inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            )
+            SELECT
+                (SELECT id FROM task_row),
+                {sql_literal("Dashboard widget active: " + str(intent.get("widget_title") or intent.get("widget_key")))},
+                {sql_literal(intent.get("owner_agent") or "Jarvis")},
+                'queued',
+                {sql_literal(intent.get("priority") or "medium")},
+                'Keep this widget current; if the data source is stale, create the next concrete task before reporting conclusions.',
+                jsonb_build_array(
+                    jsonb_build_object('table', 'ops.dashboard_widgets', 'id', (SELECT id FROM updated_widget)),
+                    jsonb_build_object('table', 'agent.tasks', 'id', (SELECT id FROM task_row))
+                ),
+                {sql_literal(intent.get("workspace") or "command")}
+            WHERE NOT EXISTS (SELECT 1 FROM existing_inbox)
+            RETURNING id, task_id, title, owner_agent, status, priority,
+                      recommended_action, evidence, target_workspace, created_at, updated_at
+        ),
+        inbox_row AS (
+            SELECT * FROM inserted_inbox
+            UNION ALL
+            SELECT * FROM existing_inbox
+            LIMIT 1
+        ),
+        updated_intent AS (
+            UPDATE ops.dashboard_widget_intents
+            SET status = 'active',
+                materialized_widget_id = {widget.get("id")},
+                updated_at = now()
+            WHERE id = {intent.get("id")}
+            RETURNING id, session_key, source_chat_turn_id, widget_key, widget_title,
+                      widget_type, workspace, status, priority, owner_agent,
+                      query_ref, materialized_widget_id, config, evidence,
+                      created_at, updated_at
+        )
+        SELECT json_build_object(
+            'intent', (SELECT row_to_json(updated_intent) FROM updated_intent),
+            'widget', (SELECT row_to_json(updated_widget) FROM updated_widget),
+            'task', (SELECT row_to_json(task_row) FROM task_row),
+            'inbox', (SELECT row_to_json(inbox_row) FROM inbox_row)
+        )::text;
+        """
+    )
+    return json.loads(output or "{}")
+
+
+def materialize_widget_intents(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    try:
+        limit = int(payload.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 100))
+
+    filters = ["1 = 1"]
+    if payload.get("source_chat_turn_id") or payload.get("sourceChatTurnId"):
+        try:
+            source_chat_turn_id = int(payload.get("source_chat_turn_id") or payload.get("sourceChatTurnId"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("source_chat_turn_id must be an integer") from exc
+        filters.append(f"source_chat_turn_id = {source_chat_turn_id}")
+    if payload.get("session_key") or payload.get("sessionKey"):
+        filters.append(f"session_key = {sql_literal(payload.get('session_key') or payload.get('sessionKey'))}")
+    if not bool(payload.get("include_existing") or payload.get("includeExisting")):
+        filters.append("(materialized_widget_id IS NULL OR status IN ('suggested', 'queued'))")
+
+    intents = run_psql_json(
+        f"""
+        SELECT id, session_key, source_chat_turn_id, widget_key, widget_title,
+               widget_type, workspace, status, priority, owner_agent,
+               query_ref, materialized_widget_id, config, evidence, created_at, updated_at
+        FROM ops.v_dashboard_widget_intents
+        WHERE {' AND '.join(filters)}
+        ORDER BY created_at DESC, id DESC
+        LIMIT {limit}
+        """
+    )
+
+    materialized: list[dict] = []
+    for intent in intents:
+        materialized.append(materialize_widget_intent(intent))
+
+    result = {"count": len(materialized), "materialized": materialized}
+    audit_api_write(
+        "ai_os_api_materialize_dashboard_widgets",
+        "materialize_widget_intents",
+        actor,
+        "ops.dashboard_widgets",
+        {
+            "count": len(materialized),
+            "widget_keys": [(item.get("widget") or {}).get("widget_key") for item in materialized],
+            "task_ids": [(item.get("task") or {}).get("id") for item in materialized],
+        },
+        payload,
+    )
+    return result
+
+
+def get_model_route(route_name: str) -> dict:
+    rows = run_psql_json(
+        f"""
+        SELECT route_name, task_class, default_provider, default_model,
+               escalation_provider, escalation_model, max_cost_tier, notes, enabled
+        FROM agent.model_routes
+        WHERE route_name = {sql_literal(route_name)}
+          AND enabled = true
+        LIMIT 1
+        """
+    )
+    if rows:
+        return rows[0]
+    return {
+        "route_name": route_name,
+        "task_class": "chat",
+        "default_provider": "ollama",
+        "default_model": "llama3.2:3b",
+        "escalation_provider": "codex_or_cloud",
+        "escalation_model": "frontier_on_approval",
+        "max_cost_tier": "hybrid",
+        "notes": "Fallback model route from API defaults.",
+        "enabled": True,
+    }
+
+
+def infer_widget_intents(message: str, snapshot_context: dict) -> list[dict]:
+    normalized = message.lower()
+    intents: list[dict] = []
+
+    def add(widget_key: str, title: str, widget_type: str, workspace: str, query_ref: str, priority: str = "medium") -> None:
+        if any(intent["widget_key"] == widget_key for intent in intents):
+            return
+        intents.append(
+            {
+                "widget_key": widget_key,
+                "widget_title": title,
+                "widget_type": widget_type,
+                "workspace": workspace,
+                "status": "suggested",
+                "priority": priority,
+                "owner_agent": "Jarvis",
+                "query_ref": query_ref,
+                "config": {"source": "charlie_chat", "refresh": "snapshot_poll"},
+                "evidence": [{"source": "chat_intent", "message_excerpt": message[:180]}],
+            }
+        )
+
+    wants_dashboard = any(term in normalized for term in ["dashboard", "widget", "show", "view", "monitor", "watch"])
+    if wants_dashboard and any(term in normalized for term in ["portfolio", "client", "holding", "folio", "position"]):
+        add("portfolio_latest_positions", "Latest Client Positions", "portfolio_table", "portfolio", "portfolio.positions", "high")
+    if wants_dashboard and any(term in normalized for term in ["book", "books", "exposure", "bias", "purpose", "multi-book"]):
+        add("portfolio_book_intelligence", "Portfolio Book Intelligence", "portfolio_table", "portfolio", "books.v_symbol_book_exposure", "high")
+    if wants_dashboard and any(term in normalized for term in ["market", "signal", "trading", "ohlcv", "chart", "nifty", "bitcoin", "gold"]):
+        add("market_signal_monitor", "Market Signal Monitor", "signal_list", "trading", "trading.signals/trading.ohlcv", "high")
+    if wants_dashboard and any(term in normalized for term in ["strategy", "backtest", "optimizer", "quant"]):
+        add("strategy_lab_queue", "Strategy Lab Queue", "strategy_queue", "quant", "strategy.strategy_candidates", "medium")
+    if wants_dashboard and any(term in normalized for term in ["news", "filing", "research", "announcement", "nse", "bse"]):
+        add("research_filings_inbox", "Research And Filings Inbox", "research_feed", "research", "research.corporate_filings/market.news_items", "medium")
+    if wants_dashboard and any(term in normalized for term in ["model", "ollama", "local", "driver", "cost", "gpu"]):
+        add("model_runtime_status", "Model Runtime Status", "model_status", "system", "agent.model_routes", "medium")
+    if not intents and wants_dashboard:
+        add("command_daily_brief", "Daily AI Office Brief", "brief", "command", "agent.v_recent_chat_turns", "medium")
+
+    if "widgets" in snapshot_context:
+        existing = {str(row.get("widget_key")) for row in snapshot_context.get("widgets") or []}
+        for intent in intents:
+            intent["already_exists"] = intent["widget_key"] in existing
+    return intents
+
+
+def build_chat_context(message: str) -> dict:
+    queries = {
+        "clients": """
+            SELECT client_code, display_name, account_count, latest_position_count,
+                   latest_market_value, latest_position_at
+            FROM portfolio.v_client_control_plane
+            ORDER BY latest_market_value DESC NULLS LAST, display_name
+            LIMIT 8
+        """,
+        "latest_positions": """
+            WITH latest AS (
+                SELECT DISTINCT ON (a.account_code, p.symbol)
+                    c.display_name, c.client_code, a.account_code, p.symbol, p.exchange,
+                    p.instrument_type, p.quantity, p.market_price, p.market_value,
+                    p.unrealized_pnl, p.as_of
+                FROM portfolio.positions p
+                JOIN portfolio.accounts a ON a.id = p.account_id
+                LEFT JOIN portfolio.clients c ON c.id = a.client_id
+                WHERE a.client_id IS NOT NULL
+                ORDER BY a.account_code, p.symbol, p.as_of DESC
+            )
+            SELECT *
+            FROM latest
+            ORDER BY market_value DESC NULLS LAST
+            LIMIT 12
+        """,
+        "book_summary": """
+            SELECT metric, value, interpretation
+            FROM books.v_portfolio_intelligence_summary
+            ORDER BY metric
+        """,
+        "investment_books": """
+            SELECT book_key, book_name, position_count, gross_exposure, net_exposure,
+                   client_count, owner_agent
+            FROM books.v_investment_books
+            ORDER BY gross_exposure DESC NULLS LAST, book_key
+            LIMIT 8
+        """,
+        "symbol_intelligence": """
+            SELECT client_name, symbol, long_term_exposure, tactical_exposure,
+                   quant_exposure, active_trading_exposure, gross_exposure,
+                   net_exposure, overall_bias, gap_count, conflict_count,
+                   decision_readiness, recommended_next_action,
+                   latest_monte_carlo_run_id, monte_carlo_status,
+                   monte_carlo_median_cagr, latest_committee_status,
+                   recommended_decision
+            FROM portfolio.v_symbol_intelligence
+            ORDER BY
+                CASE decision_readiness
+                    WHEN 'risk_review_required' THEN 1
+                    WHEN 'committee_review_required' THEN 2
+                    WHEN 'valuation_work_required' THEN 3
+                    WHEN 'research_required' THEN 4
+                    WHEN 'data_gap_review_required' THEN 5
+                    ELSE 6
+                END,
+                gross_exposure DESC NULLS LAST,
+                gap_count DESC,
+                client_name,
+                symbol
+            LIMIT 8
+        """,
+        "ohlcv": """
+            SELECT timeframe, count(*) AS rows, min(ts) AS first_ts, max(ts) AS last_ts
+            FROM trading.ohlcv
+            GROUP BY timeframe
+            ORDER BY timeframe
+        """,
+        "vectors": """
+            SELECT collection_name, embedding_model, count(*) AS chunks
+            FROM knowledge.vector_documents
+            GROUP BY collection_name, embedding_model
+            ORDER BY collection_name, embedding_model
+        """,
+        "models": """
+            SELECT route_name, default_provider, default_model, escalation_provider,
+                   escalation_model, max_cost_tier, notes
+            FROM agent.model_routes
+            WHERE enabled = true
+            ORDER BY route_name
+        """,
+        "widgets": """
+            SELECT widget_key, widget_title, widget_type, workspace, status, priority
+            FROM ops.v_dashboard_widget_intents
+            LIMIT 12
+        """,
+    }
+    try:
+        context = run_psql_json_object(queries)
+    except Exception:
+        context = {key: [] for key in queries}
+    context["message_symbols"] = [symbol for symbol in message.upper().split() if symbol.isalnum() and 2 <= len(symbol) <= 12][:12]
+    return context
+
+
+def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[dict], widget_intents: list[dict], route: dict, retrieval_status: str) -> str:
+    clients = context.get("clients") or []
+    positions = context.get("latest_positions") or []
+    book_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("book_summary") or []}
+    books = context.get("investment_books") or []
+    symbol_intelligence = context.get("symbol_intelligence") or []
+    ohlcv = context.get("ohlcv") or []
+    vectors = context.get("vectors") or []
+    model = route.get("default_model", "llama3.2:3b")
+
+    lines = [
+        "I checked the live warehouse and memory layer.",
+    ]
+    if route.get("default_provider") == "ollama" and model:
+        lines.append(f"Daily driver route is configured for `{model}`, but the model call returned `{route.get('last_model_status') or 'unavailable'}`, so I am using deterministic routing for this turn.")
+    if clients:
+        total_value = sum(float(row.get("latest_market_value") or 0) for row in clients)
+        lines.append(f"Portfolio context: {len(clients)} client rows are visible in the snapshot set; visible latest market value totals about INR {total_value:,.0f}.")
+    if positions:
+        top = positions[0]
+        lines.append(f"Largest visible holding row: {top.get('symbol')} in {top.get('display_name') or top.get('client_code')} at INR {float(top.get('market_value') or 0):,.0f}.")
+    if book_summary:
+        lines.append(
+            "Portfolio Intelligence Brain: "
+            f"{book_summary.get('book_positions', '0')} book positions across "
+            f"{book_summary.get('investment_books', '0')} books; gross exposure INR "
+            f"{float(book_summary.get('gross_book_exposure', '0') or 0):,.0f}; "
+            f"{book_summary.get('book_assignment_gaps', '0')} thesis/exit/review gaps."
+        )
+    if books:
+        live_books = [f"{row.get('book_name')}={row.get('position_count')}" for row in books if int(row.get("position_count") or 0) > 0]
+        if live_books:
+            lines.append("Books with live exposure: " + ", ".join(live_books[:4]) + ".")
+    if symbol_intelligence:
+        top_symbol = symbol_intelligence[0]
+        lines.append(
+            "Largest book-aware symbol: "
+            f"{top_symbol.get('symbol')} for {top_symbol.get('client_name')} at INR "
+            f"{float(top_symbol.get('gross_exposure') or 0):,.0f}, bias {top_symbol.get('overall_bias')}."
+        )
+    if ohlcv:
+        lines.append("OHLCV is live for " + ", ".join(f"{row.get('timeframe')}={row.get('rows')}" for row in ohlcv) + ".")
+    if vectors:
+        total_chunks = sum(int(row.get("chunks") or 0) for row in vectors)
+        lines.append(f"Qdrant registry has {total_chunks:,} indexed chunks. Retrieval status: {retrieval_status}.")
+    if retrieval_hits:
+        titles = [str(hit.get("title")) for hit in retrieval_hits[:3] if hit.get("title")]
+        lines.append("Most relevant memory hits: " + "; ".join(titles) + ".")
+    if widget_intents:
+        lines.append("Suggested dashboard widgets: " + ", ".join(intent["widget_title"] for intent in widget_intents) + ".")
+    else:
+        lines.append("No dashboard widget was inferred from the message; I would route this as an agent inbox task if you want action.")
+    lines.append("Next correct move: install the lightweight chat driver, then let this endpoint call it for natural-language synthesis while keeping heavy reasoning gated to Codex/frontier models.")
+    return "\n".join(lines)
+
+
+def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_status: str, retrieval_hits: list[dict], widget_intents: list[dict], tool_intents: list[dict]) -> dict:
+    session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    user_message = str(payload.get("message") or "").strip()
+    model_provider = str(route.get("default_provider") or "ollama")
+    model_name = str(route.get("default_model") or "llama3.2:3b")
+    route_name = str(route.get("route_name") or CHAT_MODEL_ROUTE)
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO agent.chat_turns (
+                session_key, actor, assistant_name, user_message, assistant_message,
+                route_name, model_provider, model_name, model_status,
+                retrieval_hits, widget_intents, tool_intents, metadata
+            )
+            VALUES (
+                {sql_literal(session_key)}, {sql_literal(actor)}, 'Charlie Munger',
+                {sql_literal(user_message)}, {sql_literal(assistant_message)},
+                {sql_literal(route_name)}, {sql_literal(model_provider)}, {sql_literal(model_name)},
+                {sql_literal(model_status)}, {sql_jsonb(retrieval_hits)},
+                {sql_jsonb(widget_intents)}, {sql_jsonb(tool_intents)},
+                {sql_jsonb(payload.get("metadata") or {"api_route": "/api/chat"})}
+            )
+            RETURNING id, session_key, actor, assistant_name, user_message,
+                      assistant_message, route_name, model_provider, model_name,
+                      model_status, retrieval_hits, widget_intents, tool_intents,
+                      metadata, created_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
+        FROM inserted
+        """
+    )
+    chat_turn = rows[0] if rows else {}
+    chat_turn_id = chat_turn.get("id")
+    if chat_turn_id:
+        log_chat_turn_model_usage(chat_turn_id, actor=actor)
+    for intent in widget_intents:
+        run_psql_json_statement(
+            f"""
+            WITH upserted AS (
+                INSERT INTO ops.dashboard_widget_intents (
+                    session_key, source_chat_turn_id, widget_key, widget_title,
+                    widget_type, workspace, status, priority, owner_agent,
+                    query_ref, config, evidence
+                )
+                VALUES (
+                    {sql_literal(session_key)}, {chat_turn_id or "NULL"},
+                    {sql_literal(intent.get("widget_key"))},
+                    {sql_literal(intent.get("widget_title"))},
+                    {sql_literal(intent.get("widget_type"))},
+                    {sql_literal(intent.get("workspace") or "command")},
+                    {sql_literal(intent.get("status") or "suggested")},
+                    {sql_literal(intent.get("priority") or "medium")},
+                    {sql_literal(intent.get("owner_agent") or "Jarvis")},
+                    {sql_literal(intent.get("query_ref"))},
+                    {sql_jsonb(intent.get("config") or {})},
+                    {sql_jsonb(intent.get("evidence") or [])}
+                )
+                RETURNING id
+            )
+            SELECT coalesce(json_agg(row_to_json(upserted)), '[]'::json)::text
+            FROM upserted
+            """
+        )
+    return chat_turn
+
+
+def chat_with_charlie(payload: dict) -> dict:
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        raise ValueError("message is required")
+
+    route = get_model_route(str(payload.get("route_name") or payload.get("routeName") or CHAT_MODEL_ROUTE))
+    context = build_chat_context(message)
+    retrieval_hits, retrieval_status = qdrant_search(message)
+    widget_intents = infer_widget_intents(message, context)
+    tool_intents: list[dict] = []
+
+    prompt = (
+        "User message:\n"
+        f"{message}\n\n"
+        "Bounded live context JSON:\n"
+        f"{json.dumps(context, default=str)[:3000]}\n\n"
+        "Relevant memory hits:\n"
+        f"{json.dumps(retrieval_hits[:4], default=str)[:1500]}\n\n"
+        "Suggested dashboard widget intents:\n"
+        f"{json.dumps(widget_intents, default=str)}\n\n"
+        "Answer in 4-7 concise lines. Include what you checked, what is missing, and the next action."
+    )
+    assistant_message, model_status = ollama_chat(str(route.get("default_model") or "llama3.2:3b"), prompt)
+    if not assistant_message:
+        route = {**route, "last_model_status": model_status}
+        assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+
+    chat_turn = persist_chat_turn(payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
+    materialization = {"count": 0, "materialized": []}
+    if widget_intents and chat_turn.get("id"):
+        materialization = materialize_widget_intents(
+            {
+                "source_chat_turn_id": chat_turn.get("id"),
+                "actor": "Jarvis",
+                "limit": len(widget_intents),
+            }
+        )
+    return {
+        "chat_turn": chat_turn,
+        "message": assistant_message,
+        "route": route,
+        "model_status": model_status,
+        "retrieval_status": retrieval_status,
+        "retrieval_hits": retrieval_hits,
+        "widget_intents": widget_intents,
+        "materialization": materialization,
+        "dashboard_widgets": [item.get("widget") for item in materialization.get("materialized", []) if item.get("widget")],
+        "agent_jobs": [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
+        "tool_intents": tool_intents,
+        "model_runtime": {
+            "ollama_url": OLLAMA_BASE_URL,
+            "embedding_model": EMBEDDING_MODEL,
+            "embedding_available": ollama_model_available(EMBEDDING_MODEL),
+            "chat_model_available": ollama_model_available(str(route.get("default_model") or "")),
+        },
+    }
+
+
+def run_agent_worker(payload: dict) -> dict:
+    try:
+        limit = int(payload.get("limit") or 5)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    limit = max(1, min(limit, 20))
+    worker_script = Path(os.environ.get("AI_OS_WORKER_SCRIPT") or (RUNTIME_ROOT / "scripts" / "run_agent_worker_once.py"))
+    command = [
+        sys.executable,
+        str(worker_script),
+        "--limit",
+        str(limit),
+        "--json",
+    ]
+    if payload.get("include_completed") or payload.get("includeCompleted"):
+        command.append("--include-completed")
+    try:
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, cwd=str(VAULT_ROOT), timeout=90)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("agent worker timed out after 90 seconds") from exc
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "agent worker failed").strip())
+    result = json.loads(completed.stdout or "{}")
+    audit_api_write(
+        "ai_os_api_agent_worker_run_once",
+        "run_agent_worker",
+        str(payload.get("actor") or "Jarvis"),
+        "agent.worker_runs",
+        result,
+        payload,
+    )
+    return result
+
+
+class AiOsApiHandler(BaseHTTPRequestHandler):
+    server_version = "AiOsApi/0.1"
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
+
+    def _send_json(self, payload: object, status: int = 200) -> None:
+        data = json.dumps(payload, indent=2, sort_keys=True, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", os.environ.get("AI_OS_CORS_ORIGIN", "*"))
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        return json.loads(raw or "{}")
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self._send_json({"ok": True})
+
+    def do_GET(self) -> None:  # noqa: N802
+        try:
+            if self.path in {"/", "/api/health"}:
+                self._send_json(
+                    {
+                        "ok": True,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "runtime_root": str(RUNTIME_ROOT),
+                        "tradingview_cdp": probe_tradingview_cdp(),
+                        "db": safe_query(
+                            "db",
+                            "SELECT 'ok' AS status, now() AS checked_at",
+                            [],
+                        ),
+                    }
+                )
+                return
+            if self.path.startswith("/api/snapshot"):
+                self._send_json(build_snapshot())
+                return
+            if self.path.startswith("/api/tradingview/cdp-status"):
+                self._send_json(probe_tradingview_cdp())
+                return
+            self._send_json({"error": "not_found", "path": self.path}, 404)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": type(exc).__name__, "message": str(exc)}, 500)
+
+    def do_POST(self) -> None:  # noqa: N802
+        try:
+            payload = self._read_body()
+            if self.path == "/api/tradingview/tasks":
+                self._send_json(create_tradingview_task(payload), 201)
+                return
+            if self.path == "/api/tradingview/chart-actions":
+                self._send_json(execute_tradingview_chart_action(payload), 201)
+                return
+            if self.path == "/api/tradingview/template-actions":
+                self._send_json(execute_tradingview_template_action(payload), 201)
+                return
+            if self.path == "/api/tradingview/alert-requests/resolve":
+                self._send_json(resolve_tradingview_alert_request(payload), 201)
+                return
+            if self.path == "/api/inbox/items":
+                self._send_json(create_inbox_item(payload), 201)
+                return
+            if self.path == "/api/agents/messages":
+                self._send_json(create_agent_message(payload), 201)
+                return
+            if self.path == "/api/agents/messages/triage":
+                self._send_json(triage_agent_message(payload), 200)
+                return
+            if self.path == "/api/agents/comments":
+                self._send_json(create_agent_comment(payload), 201)
+                return
+            if self.path == "/api/agents/comments/resolve":
+                self._send_json(resolve_agent_comment(payload), 200)
+                return
+            if self.path == "/api/risk/portfolio/refresh-events":
+                self._send_json(refresh_portfolio_risk_events(payload), 201)
+                return
+            if self.path == "/api/models/endpoints/register":
+                self._send_json(register_model_endpoint(payload), 201)
+                return
+            if self.path == "/api/models/endpoints/check":
+                self._send_json(check_model_endpoint(payload), 201)
+                return
+            if self.path == "/api/models/usage":
+                self._send_json(record_model_usage(payload), 201)
+                return
+            if self.path == "/api/data-sources/connectors/register":
+                self._send_json(register_source_connector(payload), 201)
+                return
+            if self.path == "/api/data-sources/connectors/check":
+                self._send_json(check_source_connector(payload), 201)
+                return
+            if self.path == "/api/providers/readiness/run":
+                self._send_json(run_provider_readiness_sweep(payload), 201)
+                return
+            if self.path == "/api/providers/assignment-gate/evaluate":
+                self._send_json(evaluate_provider_assignment_gate(payload), 201)
+                return
+            if self.path == "/api/tasks/provider-gates/evaluate":
+                self._send_json(evaluate_task_provider_gates(payload), 201)
+                return
+            if self.path == "/api/browser/profiles/register":
+                self._send_json(register_browser_profile(payload), 201)
+                return
+            if self.path == "/api/browser/connectors/attach-profile":
+                self._send_json(attach_browser_profile(payload), 201)
+                return
+            if self.path == "/api/browser/profiles/check":
+                self._send_json(check_browser_profile(payload), 201)
+                return
+            if self.path == "/api/research/filings/collect":
+                self._send_json(run_filing_collector(payload), 201)
+                return
+            if self.path == "/api/research/filings/extract-pdfs":
+                self._send_json(run_filing_pdf_extractor(payload), 201)
+                return
+            if self.path == "/api/research/special-situations/memo":
+                self._send_json(generate_special_situation_memo(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/memo":
+                self._send_json(generate_long_term_thesis_memo(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/research-packet":
+                self._send_json(generate_long_term_research_packet(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/checklist":
+                self._send_json(update_long_term_thesis_checklist(payload), 200)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/valuation":
+                self._send_json(update_long_term_valuation_model(payload), 200)
+                return
+            if self.path == "/api/portfolio/long-term-committee/open":
+                self._send_json(open_long_term_committee_review(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-committee/memo":
+                self._send_json(generate_long_term_committee_memo(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-committee/decision":
+                self._send_json(resolve_long_term_committee_decision(payload), 200)
+                return
+            if self.path == "/api/portfolio/long-term-specialists/dispatch":
+                self._send_json(dispatch_long_term_specialists(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-specialists/execute":
+                self._send_json(execute_long_term_specialist_assignment(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-source-requests/create":
+                self._send_json(create_long_term_source_requests(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-source-requests/check":
+                self._send_json(check_long_term_source_satisfaction(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-source-documents/register":
+                self._send_json(register_long_term_source_document(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-source-documents/extract":
+                self._send_json(extract_long_term_source_document(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/monte-carlo":
+                self._send_json(run_long_term_monte_carlo(payload), 201)
+                return
+            if self.path == "/api/research/special-situations/spread":
+                self._send_json(calculate_special_situation_spread(payload), 201)
+                return
+            if self.path == "/api/research/special-situations/refresh-quotes":
+                self._send_json(refresh_event_quotes(payload), 201)
+                return
+            if self.path == "/api/data-sources/freshness/check":
+                self._send_json(check_source_freshness(payload), 201)
+                return
+            if self.path == "/api/research/special-situations/decision":
+                self._send_json(resolve_special_situation_decision(payload), 200)
+                return
+            if self.path == "/api/approvals/resolve":
+                self._send_json(resolve_approval(payload), 200)
+                return
+            if self.path == "/api/portfolio/holding-updates/stage":
+                self._send_json(stage_holding_update(payload), 201)
+                return
+            if self.path == "/api/portfolio/book-assignments":
+                self._send_json(update_book_assignment(payload), 200)
+                return
+            if self.path == "/api/portfolio/position-readiness/remediate":
+                self._send_json(sync_position_readiness_remediation(payload), 201)
+                return
+            if self.path == "/api/symbol-intelligence/actions":
+                self._send_json(route_symbol_intelligence_action(payload), 201)
+                return
+            if self.path == "/api/strategy/intakes":
+                self._send_json(create_strategy_intake(payload), 201)
+                return
+            if self.path == "/api/strategy/dsl/parse":
+                self._send_json(parse_strategy_dsl(payload), 201)
+                return
+            if self.path == "/api/strategy/data-quality/check":
+                self._send_json(check_strategy_data_quality(payload), 201)
+                return
+            if self.path == "/api/strategy/backtests/run":
+                self._send_json(run_strategy_backtest(payload), 201)
+                return
+            if self.path == "/api/strategy/optimizations/run":
+                self._send_json(run_strategy_optimization(payload), 201)
+                return
+            if self.path == "/api/strategy/user-defined-optimizer/run":
+                self._send_json(run_user_defined_strategy_optimizer(payload), 201)
+                return
+            if self.path == "/api/strategy/discovery/run":
+                self._send_json(run_strategy_discovery(payload), 201)
+                return
+            if self.path == "/api/strategy/discovery/triage/resolve":
+                self._send_json(resolve_strategy_discovery_triage(payload), 201)
+                return
+            if self.path == "/api/strategy/idea-dossiers/build":
+                self._send_json(build_strategy_idea_dossiers(payload), 201)
+                return
+            if self.path == "/api/strategy/idea-dossiers/search":
+                self._send_json(search_strategy_idea_dossiers(payload), 201)
+                return
+            if self.path == "/api/strategy/idea-dossiers/action":
+                self._send_json(run_strategy_dossier_action(payload), 201)
+                return
+            if self.path == "/api/strategy/discovery/scheduler/run":
+                self._send_json(run_strategy_discovery_scheduler(payload), 201)
+                return
+            if self.path == "/api/market/news/ingest":
+                self._send_json(ingest_market_news(payload), 201)
+                return
+            if self.path == "/api/strategy/quant-analytics/run":
+                self._send_json(run_strategy_quant_analytics(payload), 201)
+                return
+            if self.path == "/api/strategy/portfolio-allocation/run":
+                self._send_json(run_strategy_portfolio_allocation(payload), 201)
+                return
+            if self.path == "/api/strategy/retirement/run":
+                self._send_json(run_strategy_retirement_review(payload), 201)
+                return
+            if self.path == "/api/strategy/model-validation/sweep":
+                self._send_json(run_model_validation_sweep(payload), 201)
+                return
+            if self.path == "/api/strategy/trade-journal-mining/run":
+                self._send_json(run_trade_journal_strategy_mining(payload), 201)
+                return
+            if self.path == "/api/strategy/committee/open":
+                self._send_json(open_strategy_committee_review(payload), 201)
+                return
+            if self.path == "/api/strategy/committee/memo":
+                self._send_json(generate_strategy_committee_memo(payload), 201)
+                return
+            if self.path == "/api/strategy/committee/decision":
+                self._send_json(resolve_strategy_committee_decision(payload), 200)
+                return
+            if self.path == "/api/strategy/paper-monitor/start":
+                self._send_json(start_strategy_paper_monitor(payload), 201)
+                return
+            if self.path == "/api/strategy/paper-monitor/heartbeat":
+                self._send_json(record_strategy_paper_monitor_heartbeat(payload), 201)
+                return
+            if self.path == "/api/strategy/paper-monitor/stop":
+                self._send_json(stop_strategy_paper_monitor(payload), 200)
+                return
+            if self.path == "/api/strategy/drift/evaluate":
+                self._send_json(evaluate_strategy_drift(payload), 201)
+                return
+            if self.path == "/api/strategy/kill-switch/enforce":
+                self._send_json(enforce_strategy_kill_switch(payload), 201)
+                return
+            if self.path == "/api/execution/global-kill-switch/engage":
+                self._send_json(engage_global_kill_switch(payload), 201)
+                return
+            if self.path == "/api/execution/limited-live/request":
+                self._send_json(request_limited_live_approval(payload), 201)
+                return
+            if self.path == "/api/execution/limited-live/sync":
+                self._send_json(sync_limited_live_request(payload), 200)
+                return
+            if self.path == "/api/execution/gate/evaluate":
+                self._send_json(evaluate_execution_gate(payload), 201)
+                return
+            if self.path == "/api/execution/order-intents/create":
+                self._send_json(create_order_intent(payload), 201)
+                return
+            if self.path == "/api/execution/order-intents/evaluate-risk":
+                self._send_json(evaluate_order_intent_risk(payload), 201)
+                return
+            if self.path == "/api/broker-transactions/stage":
+                self._send_json(stage_broker_transaction_imports(payload), 201)
+                return
+            if self.path == "/api/broker-transactions/promote":
+                self._send_json(promote_broker_transaction_route(payload), 201)
+                return
+            if self.path == "/api/broker-reconciliation/run":
+                self._send_json(run_broker_reconciliation(payload), 201)
+                return
+            if self.path == "/api/p2cursor-reconciliation/run":
+                self._send_json(run_p2cursor_reconciliation(payload), 201)
+                return
+            if self.path == "/api/legacy-source-readiness/run":
+                self._send_json(run_legacy_source_readiness(payload), 201)
+                return
+            if self.path == "/api/trades/manual":
+                self._send_json(record_trade(payload, execution_mode="manual_actual", source_kind="manual_entry", actor_default="Trading Desk Agent"), 201)
+                return
+            if self.path == "/api/trades/paper":
+                self._send_json(record_trade(payload, execution_mode="paper", source_kind="system_alert", actor_default="Quant Agent"), 201)
+                return
+            if self.path == "/api/dashboard/widgets/materialize":
+                self._send_json(materialize_widget_intents(payload), 201)
+                return
+            if self.path == "/api/agents/worker/run":
+                self._send_json(run_agent_worker(payload), 201)
+                return
+            if self.path == "/api/chat":
+                self._send_json(chat_with_charlie(payload), 201)
+                return
+            self._send_json({"error": "not_found", "path": self.path}, 404)
+        except ValueError as exc:
+            self._send_json({"error": "bad_request", "message": str(exc)}, 400)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": type(exc).__name__, "message": str(exc)}, 500)
+
+
+def main() -> int:
+    server = ThreadingHTTPServer((API_HOST, API_PORT), AiOsApiHandler)
+    print(f"AI OS API listening on http://{API_HOST}:{API_PORT}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

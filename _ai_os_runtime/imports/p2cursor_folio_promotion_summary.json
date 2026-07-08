@@ -1,0 +1,32 @@
+{
+  "folios": [
+    {
+      "account_code": "p2cursor_account_2",
+      "as_of": "2025-06-10",
+      "client_code": "3081832",
+      "display_name": "Tushit",
+      "open_positions": 4,
+      "source_file": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "trade_rows": 12
+    },
+    {
+      "account_code": "p2cursor_account_3",
+      "as_of": "2024-11-05",
+      "client_code": "naval",
+      "display_name": "Naval",
+      "open_positions": 14,
+      "source_file": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/naval_equity_folio_trades.csv",
+      "trade_rows": 61
+    }
+  ],
+  "generated_at": "2026-07-02T16:13:14.005868+00:00",
+  "sanjana": {
+    "client_code": "sanjana",
+    "display_name": "Sanjana",
+    "holdings_source_found": false,
+    "research_reports_found": [
+      "/Users/devarshthakkar/Downloads/Sanjana_Long Term_Report.pdf",
+      "/Users/devarshthakkar/Downloads/Sanjana_Long Term_Report_2025-09-17.pdf"
+    ]
+  }
+}

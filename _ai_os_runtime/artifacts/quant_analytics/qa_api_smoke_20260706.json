@@ -1,0 +1,574 @@
+{
+  "capacity_rows": 59,
+  "correlation_rows": 25,
+  "factor_rows": 20,
+  "optimizer": {
+    "candidate_count": 5,
+    "expected_return": 6.895923291762961e-07,
+    "expected_volatility": 0.0009625946407707568,
+    "scores": [
+      {
+        "average_return": 6.895923291762961e-07,
+        "candidate_key": "candidate_1",
+        "score": 0.7442272076694032,
+        "sharpe_proxy": 0.0007163891216183525,
+        "strategy_id": 1,
+        "strategy_name": "xsec_momentum",
+        "volatility": 0.0009625946407707568
+      },
+      {
+        "average_return": -8.086881456464084e-05,
+        "candidate_key": "candidate_13",
+        "score": 0.0,
+        "sharpe_proxy": -0.1830052252892079,
+        "strategy_id": 13,
+        "strategy_name": "hmm",
+        "volatility": 0.0004418934729150042
+      },
+      {
+        "average_return": -8.086881456464084e-05,
+        "candidate_key": "candidate_12",
+        "score": 0.0,
+        "sharpe_proxy": -0.1830052252892079,
+        "strategy_id": 12,
+        "strategy_name": "markov_weighted",
+        "volatility": 0.0004418934729150042
+      },
+      {
+        "average_return": -8.086881456464084e-05,
+        "candidate_key": "candidate_11",
+        "score": 0.0,
+        "sharpe_proxy": -0.1830052252892079,
+        "strategy_id": 11,
+        "strategy_name": "markov_binary",
+        "volatility": 0.0004418934729150042
+      },
+      {
+        "average_return": -8.086881456464084e-05,
+        "candidate_key": "candidate_10",
+        "score": 0.0,
+        "sharpe_proxy": -0.1830052252892079,
+        "strategy_id": 10,
+        "strategy_name": "mom_markov",
+        "volatility": 0.0004418934729150042
+      }
+    ],
+    "sharpe_proxy": 0.0007163891216183525,
+    "status": "draft",
+    "weights": {
+      "1": 1.0
+    }
+  },
+  "quality_flags": [
+    "thin_return_history",
+    "some_strategies_missing_passed_dsl"
+  ],
+  "regime_rows": 20,
+  "run_id": 2,
+  "run_key": "qa_api_smoke_20260706",
+  "seed_data_allowed": false,
+  "skipped": [],
+  "source_table": "trading.ohlcv",
+  "status": "completed",
+  "strategies": [
+    {
+      "candidate_key": "candidate_1",
+      "diagnostics": {
+        "latest_gate_rows": 307,
+        "latest_gate_status": "passed",
+        "parse_status": "passed",
+        "source_table": "trading.ohlcv",
+        "symbol_diagnostics": [
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY 50"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TITAN"
+          }
+        ]
+      },
+      "return_bars": 102,
+      "strategy_id": 1,
+      "strategy_name": "xsec_momentum",
+      "symbols": [
+        "NSE:NIFTY 50",
+        "NSE:TCS",
+        "NSE:TITAN"
+      ],
+      "template": "momentum"
+    },
+    {
+      "candidate_key": "candidate_13",
+      "diagnostics": {
+        "latest_gate_rows": null,
+        "latest_gate_status": null,
+        "parse_status": null,
+        "source_table": "trading.ohlcv",
+        "symbol_diagnostics": [
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ADANIPORTS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:BAJAJ-AUTO"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:COALINDIA"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:HINDALCO"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:INDIA VIX"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:JSWSTEEL"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY 50"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY BANK"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:NTPC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ONGC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:POWERGRID"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TATASTEEL"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TITAN"
+          }
+        ]
+      },
+      "return_bars": 102,
+      "strategy_id": 13,
+      "strategy_name": "hmm",
+      "symbols": [
+        "NSE:ADANIPORTS",
+        "NSE:BAJAJ-AUTO",
+        "NSE:COALINDIA",
+        "NSE:HINDALCO",
+        "NSE:INDIA VIX",
+        "NSE:JSWSTEEL",
+        "NSE:NIFTY 50",
+        "NSE:NIFTY BANK",
+        "NSE:NTPC",
+        "NSE:ONGC",
+        "NSE:POWERGRID",
+        "NSE:TATASTEEL",
+        "NSE:TCS",
+        "NSE:TITAN"
+      ],
+      "template": "momentum"
+    },
+    {
+      "candidate_key": "candidate_12",
+      "diagnostics": {
+        "latest_gate_rows": null,
+        "latest_gate_status": null,
+        "parse_status": null,
+        "source_table": "trading.ohlcv",
+        "symbol_diagnostics": [
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ADANIPORTS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:BAJAJ-AUTO"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:COALINDIA"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:HINDALCO"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:INDIA VIX"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:JSWSTEEL"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY 50"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY BANK"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:NTPC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ONGC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:POWERGRID"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TATASTEEL"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TITAN"
+          }
+        ]
+      },
+      "return_bars": 102,
+      "strategy_id": 12,
+      "strategy_name": "markov_weighted",
+      "symbols": [
+        "NSE:ADANIPORTS",
+        "NSE:BAJAJ-AUTO",
+        "NSE:COALINDIA",
+        "NSE:HINDALCO",
+        "NSE:INDIA VIX",
+        "NSE:JSWSTEEL",
+        "NSE:NIFTY 50",
+        "NSE:NIFTY BANK",
+        "NSE:NTPC",
+        "NSE:ONGC",
+        "NSE:POWERGRID",
+        "NSE:TATASTEEL",
+        "NSE:TCS",
+        "NSE:TITAN"
+      ],
+      "template": "momentum"
+    },
+    {
+      "candidate_key": "candidate_11",
+      "diagnostics": {
+        "latest_gate_rows": null,
+        "latest_gate_status": null,
+        "parse_status": null,
+        "source_table": "trading.ohlcv",
+        "symbol_diagnostics": [
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ADANIPORTS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:BAJAJ-AUTO"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:COALINDIA"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:HINDALCO"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:INDIA VIX"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:JSWSTEEL"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY 50"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY BANK"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:NTPC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ONGC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:POWERGRID"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TATASTEEL"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TITAN"
+          }
+        ]
+      },
+      "return_bars": 102,
+      "strategy_id": 11,
+      "strategy_name": "markov_binary",
+      "symbols": [
+        "NSE:ADANIPORTS",
+        "NSE:BAJAJ-AUTO",
+        "NSE:COALINDIA",
+        "NSE:HINDALCO",
+        "NSE:INDIA VIX",
+        "NSE:JSWSTEEL",
+        "NSE:NIFTY 50",
+        "NSE:NIFTY BANK",
+        "NSE:NTPC",
+        "NSE:ONGC",
+        "NSE:POWERGRID",
+        "NSE:TATASTEEL",
+        "NSE:TCS",
+        "NSE:TITAN"
+      ],
+      "template": "momentum"
+    },
+    {
+      "candidate_key": "candidate_10",
+      "diagnostics": {
+        "latest_gate_rows": null,
+        "latest_gate_status": null,
+        "parse_status": null,
+        "source_table": "trading.ohlcv",
+        "symbol_diagnostics": [
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ADANIPORTS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:BAJAJ-AUTO"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:COALINDIA"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:HINDALCO"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:INDIA VIX"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:JSWSTEEL"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY 50"
+          },
+          {
+            "bars": 103,
+            "return_bars": 102,
+            "status": "used",
+            "symbol": "NSE:NIFTY BANK"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:NTPC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:ONGC"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:POWERGRID"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TATASTEEL"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TCS"
+          },
+          {
+            "bars": 102,
+            "return_bars": 101,
+            "status": "used",
+            "symbol": "NSE:TITAN"
+          }
+        ]
+      },
+      "return_bars": 102,
+      "strategy_id": 10,
+      "strategy_name": "mom_markov",
+      "symbols": [
+        "NSE:ADANIPORTS",
+        "NSE:BAJAJ-AUTO",
+        "NSE:COALINDIA",
+        "NSE:HINDALCO",
+        "NSE:INDIA VIX",
+        "NSE:JSWSTEEL",
+        "NSE:NIFTY 50",
+        "NSE:NIFTY BANK",
+        "NSE:NTPC",
+        "NSE:ONGC",
+        "NSE:POWERGRID",
+        "NSE:TATASTEEL",
+        "NSE:TCS",
+        "NSE:TITAN"
+      ],
+      "template": "momentum"
+    }
+  ],
+  "timeframe": "5m"
+}

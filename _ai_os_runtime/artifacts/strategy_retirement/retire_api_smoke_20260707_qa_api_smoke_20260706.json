@@ -1,0 +1,137 @@
+{
+  "allocation_run": {
+    "allocation_key": "alloc_api_smoke_20260706",
+    "id": 3
+  },
+  "analytics_run": {
+    "id": 2,
+    "run_key": "qa_api_smoke_20260706"
+  },
+  "assignment_count": 19,
+  "generated_at": "2026-07-06T21:36:36.036477+00:00",
+  "live_execution_allowed": false,
+  "review_count": 5,
+  "reviews": [
+    {
+      "assigned_agents": [
+        "Data Scientist",
+        "Feature Engineer",
+        "Regime Analyst"
+      ],
+      "assignment_count": 3,
+      "candidate_key": "candidate_1",
+      "recommended_action": "watch",
+      "review_id": 6,
+      "review_key": "retire_api_smoke_20260707_qa_api_smoke_20260706_candidate_1",
+      "severity": "low",
+      "strategy_id": 1,
+      "strategy_name": "xsec_momentum",
+      "trigger_reasons": [
+        "thin_return_history",
+        "low_win_rate",
+        "regime_underperformance"
+      ]
+    },
+    {
+      "assigned_agents": [
+        "Capacity/Liquidity Analyst",
+        "Data Scientist",
+        "Feature Engineer",
+        "Regime Analyst"
+      ],
+      "assignment_count": 4,
+      "candidate_key": "candidate_10",
+      "recommended_action": "needs_more_data",
+      "review_id": 7,
+      "review_key": "retire_api_smoke_20260707_qa_api_smoke_20260706_candidate_10",
+      "severity": "medium",
+      "strategy_id": 10,
+      "strategy_name": "mom_markov",
+      "trigger_reasons": [
+        "missing_passed_dsl",
+        "data_quality_not_passed",
+        "thin_return_history",
+        "zero_target_weight",
+        "negative_average_return",
+        "low_win_rate",
+        "regime_underperformance"
+      ]
+    },
+    {
+      "assigned_agents": [
+        "Capacity/Liquidity Analyst",
+        "Data Scientist",
+        "Feature Engineer",
+        "Regime Analyst"
+      ],
+      "assignment_count": 4,
+      "candidate_key": "candidate_11",
+      "recommended_action": "needs_more_data",
+      "review_id": 8,
+      "review_key": "retire_api_smoke_20260707_qa_api_smoke_20260706_candidate_11",
+      "severity": "medium",
+      "strategy_id": 11,
+      "strategy_name": "markov_binary",
+      "trigger_reasons": [
+        "missing_passed_dsl",
+        "data_quality_not_passed",
+        "thin_return_history",
+        "zero_target_weight",
+        "negative_average_return",
+        "low_win_rate",
+        "regime_underperformance"
+      ]
+    },
+    {
+      "assigned_agents": [
+        "Capacity/Liquidity Analyst",
+        "Data Scientist",
+        "Feature Engineer",
+        "Regime Analyst"
+      ],
+      "assignment_count": 4,
+      "candidate_key": "candidate_12",
+      "recommended_action": "needs_more_data",
+      "review_id": 9,
+      "review_key": "retire_api_smoke_20260707_qa_api_smoke_20260706_candidate_12",
+      "severity": "medium",
+      "strategy_id": 12,
+      "strategy_name": "markov_weighted",
+      "trigger_reasons": [
+        "missing_passed_dsl",
+        "data_quality_not_passed",
+        "thin_return_history",
+        "zero_target_weight",
+        "negative_average_return",
+        "low_win_rate",
+        "regime_underperformance"
+      ]
+    },
+    {
+      "assigned_agents": [
+        "Capacity/Liquidity Analyst",
+        "Data Scientist",
+        "Feature Engineer",
+        "Regime Analyst"
+      ],
+      "assignment_count": 4,
+      "candidate_key": "candidate_13",
+      "recommended_action": "needs_more_data",
+      "review_id": 10,
+      "review_key": "retire_api_smoke_20260707_qa_api_smoke_20260706_candidate_13",
+      "severity": "medium",
+      "strategy_id": 13,
+      "strategy_name": "hmm",
+      "trigger_reasons": [
+        "missing_passed_dsl",
+        "data_quality_not_passed",
+        "thin_return_history",
+        "zero_target_weight",
+        "negative_average_return",
+        "low_win_rate",
+        "regime_underperformance"
+      ]
+    }
+  ],
+  "seed_data_allowed": false
+}

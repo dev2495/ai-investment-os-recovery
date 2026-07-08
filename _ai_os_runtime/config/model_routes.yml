@@ -1,0 +1,80 @@
+version: 1
+purpose: >
+  Jarvis model routing map. The GUI/persona calls Jarvis, Jarvis classifies the task,
+  retrieves context from SQL/Qdrant/Obsidian, then selects the cheapest sufficient model.
+
+providers:
+  ollama:
+    role: cheap_daily_driver
+    base_url: http://127.0.0.1:11434
+    notes: "Use for routing, short summaries, classifications, journal extraction, and routine briefs."
+  lm_studio:
+    role: local_model_test_bench
+    base_url: http://127.0.0.1:1234/v1
+    notes: "Use for testing OpenAI-compatible local models and MLX/GGUF variants."
+  mlx:
+    role: apple_silicon_optimized_runtime
+    base_url: local_python_adapter
+    notes: "Use MLX quantized models when installed; best for Apple Silicon memory efficiency."
+  codex:
+    role: engineering_escalation
+    base_url: codex_desktop
+    notes: "Use for code changes, debugging, architecture changes, repo work, and hard verification."
+  cloud_optional:
+    role: hard_reasoning_escalation
+    base_url: configured_later
+    notes: "Use selectively for long filings, difficult synthesis, or high-stakes review."
+
+routes:
+  jarvis_intake:
+    task_class: routing
+    default_provider: ollama
+    default_model: qwen3:8b
+    fallback_provider: lm_studio
+    escalation_provider: codex
+    max_cost_tier: local
+
+  obsidian_retrieval_summary:
+    task_class: retrieval_summary
+    default_provider: ollama
+    default_model: qwen3:8b
+    fallback_provider: lm_studio
+    max_cost_tier: local
+
+  trade_journal_learning:
+    task_class: pattern_extraction
+    default_provider: ollama
+    default_model: qwen3:8b
+    fallback_provider: mlx
+    escalation_provider: cloud_optional
+    max_cost_tier: local
+
+  filings_analysis:
+    task_class: financial_reasoning
+    default_provider: ollama
+    default_model: qwen3:14b
+    fallback_provider: lm_studio
+    escalation_provider: cloud_optional
+    max_cost_tier: hybrid
+
+  news_curation:
+    task_class: monitoring
+    default_provider: ollama
+    default_model: qwen3:8b
+    fallback_provider: lm_studio
+    max_cost_tier: local
+
+  strategy_generation:
+    task_class: quant_research
+    default_provider: ollama
+    default_model: qwen3:14b
+    fallback_provider: lm_studio
+    escalation_provider: codex
+    max_cost_tier: hybrid
+
+  software_engineering:
+    task_class: coding
+    default_provider: codex
+    default_model: gpt-5-codex
+    max_cost_tier: codex
+

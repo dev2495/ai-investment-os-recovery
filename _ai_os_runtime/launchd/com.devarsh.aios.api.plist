@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/bin/aios-api-service.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/devarshthakkar/Library/Application Support/AIOS/service</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/ai_os_api.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/ai_os_api.launchd.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AI_OS_API_HOST</key>
+    <string>127.0.0.1</string>
+    <key>AI_OS_API_PORT</key>
+    <string>8765</string>
+    <key>AI_OS_RUNTIME_ROOT</key>
+    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
+    <key>AI_OS_VAULT_ROOT</key>
+    <string>/Volumes/Devarsh SSD/Obsidian memory </string>
+    <key>AI_OS_WORKER_SCRIPT</key>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/service/scripts/run_agent_worker_once.py</string>
+    <key>AI_OS_PSQL_BIN</key>
+    <string>/opt/homebrew/opt/postgresql@15/bin/psql</string>
+    <key>AI_OS_DOCKER_BIN</key>
+    <string>/usr/local/bin/docker</string>
+  </dict>
+</dict>
+</plist>

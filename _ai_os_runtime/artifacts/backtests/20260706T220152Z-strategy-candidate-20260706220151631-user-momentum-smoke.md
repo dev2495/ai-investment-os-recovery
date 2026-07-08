@@ -1,0 +1,16 @@
+# Backtest - User Momentum Smoke
+
+- Candidate: `strategy-candidate-20260706220151631-user-momentum-smoke`
+- Template: `momentum`
+- Status: `completed`
+- Timeframe: `5m`
+- Symbols tested: NSE:ADANIPORTS, NSE:BAJAJ-AUTO, NSE:COALINDIA, NSE:HINDALCO, NSE:INDIA VIX, NSE:JSWSTEEL, NSE:NIFTY 50, NSE:NIFTY BANK, NSE:NTPC, NSE:ONGC, NSE:POWERGRID, NSE:TATASTEEL, NSE:TCS, NSE:TITAN
+- Total return: -0.110505
+- Max drawdown: -0.135427
+- Sharpe estimate: -7.417277319305202
+- Trades: 202
+
+## Warnings
+
+
+This artifact is generated from local warehouse data and does not authorize live execution.

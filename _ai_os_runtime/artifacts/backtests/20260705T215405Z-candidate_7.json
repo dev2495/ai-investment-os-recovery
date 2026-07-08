@@ -1,0 +1,205 @@
+{
+  "candidate": {
+    "activation_gate": "paper_first",
+    "candidate_key": "candidate_7",
+    "id": 7,
+    "name": "trend_following"
+  },
+  "diagnostics": {
+    "cost_bps": 3.0,
+    "data_source": "trading.ohlcv",
+    "engine": "local_deterministic_ohlcv_backtester_v1",
+    "live_execution_allowed": false,
+    "method": "Close-to-close long/flat signal simulation with transaction cost on position changes.",
+    "paper_first": true,
+    "slippage_bps": 2.0,
+    "symbol_results": [
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.01432180921518289,
+        "position_bars": 49,
+        "status": "tested",
+        "symbol": "NSE:ADANIPORTS",
+        "total_return": -0.0023813805038510605,
+        "trades": 18
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.014045900363710895,
+        "position_bars": 39,
+        "status": "tested",
+        "symbol": "NSE:BAJAJ-AUTO",
+        "total_return": -0.0018091535569149109,
+        "trades": 14
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.007058759761069622,
+        "position_bars": 37,
+        "status": "tested",
+        "symbol": "NSE:COALINDIA",
+        "total_return": 0.008741252975280167,
+        "trades": 10
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.04343672423430289,
+        "position_bars": 43,
+        "status": "tested",
+        "symbol": "NSE:HINDALCO",
+        "total_return": -0.04016085969854888,
+        "trades": 20
+      },
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.027489340049561717,
+        "position_bars": 34,
+        "status": "tested",
+        "symbol": "NSE:INDIA VIX",
+        "total_return": -0.021016295433521237,
+        "trades": 14
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.020146005938422862,
+        "position_bars": 32,
+        "status": "tested",
+        "symbol": "NSE:JSWSTEEL",
+        "total_return": -0.017391094540744723,
+        "trades": 20
+      },
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.015249515366466349,
+        "position_bars": 33,
+        "status": "tested",
+        "symbol": "NSE:NIFTY 50",
+        "total_return": -0.015249515366466349,
+        "trades": 14
+      },
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.00892058589782363,
+        "position_bars": 21,
+        "status": "tested",
+        "symbol": "NSE:NIFTY BANK",
+        "total_return": -0.00892058589782363,
+        "trades": 10
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.012337037241665127,
+        "position_bars": 28,
+        "status": "tested",
+        "symbol": "NSE:NTPC",
+        "total_return": -0.012337037241665127,
+        "trades": 16
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.014016664997717476,
+        "position_bars": 24,
+        "status": "tested",
+        "symbol": "NSE:ONGC",
+        "total_return": -0.014016664997717476,
+        "trades": 12
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.0077892544865216795,
+        "position_bars": 33,
+        "status": "tested",
+        "symbol": "NSE:POWERGRID",
+        "total_return": 0.002013834084671373,
+        "trades": 18
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.008310145859529827,
+        "position_bars": 25,
+        "status": "tested",
+        "symbol": "NSE:TATASTEEL",
+        "total_return": -0.008310145859529827,
+        "trades": 14
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.007151642435585082,
+        "position_bars": 40,
+        "status": "tested",
+        "symbol": "NSE:TCS",
+        "total_return": 0.0026112142188665644,
+        "trades": 12
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.0063586745941319744,
+        "position_bars": 59,
+        "status": "tested",
+        "symbol": "NSE:TITAN",
+        "total_return": 0.012828229067117558,
+        "trades": 10
+      }
+    ],
+    "warnings": []
+  },
+  "metrics": {
+    "average_bar_return": -8.149658941306076e-05,
+    "bar_volatility": 0.0015105177026106037,
+    "bars_tested": 1431,
+    "max_drawdown": -0.13542670553854919,
+    "sharpe_estimate": -7.417277319305202,
+    "symbols_tested": 14,
+    "total_return": -0.11050508522616387,
+    "trades_count": 202,
+    "win_rate_by_bar": 0.12350035285815103
+  },
+  "status": "completed",
+  "symbols_requested": [],
+  "symbols_tested": [
+    "NSE:ADANIPORTS",
+    "NSE:BAJAJ-AUTO",
+    "NSE:COALINDIA",
+    "NSE:HINDALCO",
+    "NSE:INDIA VIX",
+    "NSE:JSWSTEEL",
+    "NSE:NIFTY 50",
+    "NSE:NIFTY BANK",
+    "NSE:NTPC",
+    "NSE:ONGC",
+    "NSE:POWERGRID",
+    "NSE:TATASTEEL",
+    "NSE:TCS",
+    "NSE:TITAN"
+  ],
+  "template": "momentum",
+  "timeframe": "5m"
+}

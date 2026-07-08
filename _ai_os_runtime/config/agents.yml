@@ -1,0 +1,68 @@
+version: 1
+orchestrator:
+  name: Jarvis
+  memory_policy: retrieve_then_reason
+  default_model_route: jarvis_intake
+  writes_to:
+    - agent.inbox_items
+    - agent.tasks
+    - knowledge.obsidian_notes
+
+departments:
+  executive:
+    - name: Chief of Staff
+      owns: priorities, sprint planning, next actions, daily operating briefs
+    - name: Librarian Agent
+      owns: Obsidian graph, note indexing, duplicate detection, write-back hygiene
+
+  data:
+    - name: Data Steward
+      owns: source registry, imports, lineage, data quality, safe views
+    - name: MCP Toolsmith
+      owns: read-only tools, permissions, tool registry, audit logs
+    - name: Browser Research Runner
+      owns: browser collection jobs, screenshots, public source extraction
+
+  portfolio:
+    - name: Portfolio Manager
+      owns: client folios, positions, allocation drift, thesis status
+    - name: Risk Agent
+      owns: concentration, liquidity, drawdown, approval gates
+    - name: Client Report Writer
+      owns: client-ready reporting drafts, evidence packs
+
+  research:
+    - name: News Analyst
+      owns: global news curation, symbol/topic tagging, relevance scoring
+    - name: Filings Analyst
+      owns: NSE/BSE/SEC filings capture, extraction, summarization
+    - name: Special Situations Agent
+      owns: arbitrage, reverse merger, demerger, buyback, delisting, restructuring ideas
+    - name: Equity Research Agent
+      owns: company thesis, valuation drivers, filings/transcripts, catalyst tracking
+
+  trading:
+    - name: Trade Journal Learning Agent
+      owns: old trade journals, mistakes, setup stats, pattern extraction
+    - name: Trading Desk Agent
+      owns: TradingView signals, live strategy monitoring, trade explanations
+    - name: Execution Safety Agent
+      owns: approval gates, max loss, paper/live separation
+
+  quant:
+    - name: Strategy Research Agent
+      owns: strategy hypotheses, rules, backtest requests, alpha library
+    - name: Regime Agent
+      owns: Markov/HMM/regime states, volatility/trend conditions
+    - name: Model Validation Agent
+      owns: no-lookahead checks, sample size, overfit diagnostics
+
+approval_required:
+  - live_trade
+  - client_communication
+  - client_record_change
+  - destructive_file_operation
+  - broker_credential_change
+  - live_strategy_enablement
+  - external_message_post
+

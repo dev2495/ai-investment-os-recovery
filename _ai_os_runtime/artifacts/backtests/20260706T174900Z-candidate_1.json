@@ -1,0 +1,179 @@
+{
+  "candidate": {
+    "activation_gate": "paper_first",
+    "candidate_key": "candidate_1",
+    "id": 1,
+    "name": "xsec_momentum"
+  },
+  "data_quality_gate": {
+    "candidate_id": 1,
+    "created_at": "2026-07-06T17:48:59.933069+00:00",
+    "created_by": "Backtest Engineer",
+    "first_ts": "2026-05-14T03:50:00+00:00",
+    "gate_key": "dq_20260706174859872039_1",
+    "gate_payload": {
+      "candidate_id": 1,
+      "candidate_key": "candidate_1",
+      "coverage": [
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:05:00+00:00",
+          "rows_seen": 103,
+          "symbol": "NSE:NIFTY 50"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:TCS"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:TITAN"
+        }
+      ],
+      "min_rows_per_symbol": 50,
+      "min_total_rows": 200,
+      "parser_version": "strategy_dsl_parser_v1",
+      "seed_data_allowed": false,
+      "source_table": "trading.ohlcv"
+    },
+    "id": 7,
+    "last_ts": "2026-05-15T12:05:00+00:00",
+    "matched_symbols": [
+      "NSE:NIFTY 50",
+      "NSE:TCS",
+      "NSE:TITAN"
+    ],
+    "max_symbol_rows": 103,
+    "min_rows_per_symbol": 50,
+    "min_symbol_rows": 102,
+    "min_total_rows": 200,
+    "missing_symbols": [],
+    "reasons": [],
+    "requested_symbols": [
+      "NSE:NIFTY 50",
+      "NSE:TCS",
+      "NSE:TITAN"
+    ],
+    "severity": "info",
+    "status": "passed",
+    "timeframe": "5m",
+    "total_rows": 307
+  },
+  "diagnostics": {
+    "cost_bps": 3.0,
+    "data_quality_gate_id": 7,
+    "data_quality_gate_key": "dq_20260706174859872039_1",
+    "data_quality_status": "passed",
+    "data_source": "trading.ohlcv",
+    "engine": "local_deterministic_ohlcv_backtester_v1",
+    "live_execution_allowed": false,
+    "method": "Close-to-close long/flat signal simulation with transaction cost on position changes.",
+    "paper_first": true,
+    "slippage_bps": 2.0,
+    "symbol_results": [
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.015249515366466349,
+        "position_bars": 33,
+        "status": "tested",
+        "symbol": "NSE:NIFTY 50",
+        "total_return": -0.015249515366466349,
+        "trades": 14
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.007151642435585082,
+        "position_bars": 40,
+        "status": "tested",
+        "symbol": "NSE:TCS",
+        "total_return": 0.0026112142188665644,
+        "trades": 12
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.0063586745941319744,
+        "position_bars": 59,
+        "status": "tested",
+        "symbol": "NSE:TITAN",
+        "total_return": 0.012828229067117558,
+        "trades": 10
+      }
+    ],
+    "warnings": [
+      "Dataset is thin; result is a pipeline proof, not a tradable conclusion."
+    ]
+  },
+  "metrics": {
+    "average_bar_return": 6.94129120815613e-07,
+    "bar_volatility": 0.0012149516414973003,
+    "bars_tested": 307,
+    "max_drawdown": -0.018310066873190367,
+    "sharpe_estimate": 0.07854384807342381,
+    "symbols_tested": 3,
+    "total_return": -1.2529670869398934e-05,
+    "trades_count": 36,
+    "win_rate_by_bar": 0.19407894736842105
+  },
+  "parse": {
+    "candidate_id": 1,
+    "id": 1,
+    "normalized_rules": {
+      "arbitrary_code_allowed": false,
+      "engine_template": "momentum",
+      "entry": {
+        "expression": "close > sma(close,12)",
+        "tokens": [
+          "close",
+          "sma"
+        ]
+      },
+      "exit": {
+        "expression": "close < sma(close,12) or holding_days >= 8",
+        "tokens": [
+          "close",
+          "holding_days",
+          "or",
+          "sma"
+        ]
+      },
+      "paper_first": true,
+      "risk": {
+        "expression": "stop_loss_pct < 2 and target_pct >= 3"
+      }
+    },
+    "parse_errors": [],
+    "parse_status": "passed",
+    "parser_version": "strategy_dsl_parser_v1",
+    "symbols": [
+      "NSE:NIFTY 50",
+      "NSE:TCS",
+      "NSE:TITAN"
+    ],
+    "template": "momentum",
+    "timeframe": "5m",
+    "updated_at": "2026-07-06T17:48:49.174696+00:00"
+  },
+  "status": "completed",
+  "symbols_requested": [
+    "NSE:NIFTY 50",
+    "NSE:TCS",
+    "NSE:TITAN"
+  ],
+  "symbols_tested": [
+    "NSE:NIFTY 50",
+    "NSE:TCS",
+    "NSE:TITAN"
+  ],
+  "template": "momentum",
+  "timeframe": "5m"
+}

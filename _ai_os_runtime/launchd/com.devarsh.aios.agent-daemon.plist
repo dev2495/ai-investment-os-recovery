@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.agent-daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/bin/aios-agent-daemon-service.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/devarshthakkar/Library/Application Support/AIOS/service</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/agent_daemon.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/agent_daemon.launchd.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AI_OS_RUNTIME_ROOT</key>
+    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
+    <key>AI_OS_VAULT_ROOT</key>
+    <string>/Volumes/Devarsh SSD/Obsidian memory </string>
+    <key>AI_OS_PSQL_BIN</key>
+    <string>/opt/homebrew/opt/postgresql@15/bin/psql</string>
+    <key>AI_OS_DOCKER_BIN</key>
+    <string>/usr/local/bin/docker</string>
+    <key>AI_OS_AGENT_DAEMON_INTERVAL</key>
+    <string>45</string>
+    <key>AI_OS_ENABLE_SOURCE_FRESHNESS_SCHEDULER</key>
+    <string>1</string>
+    <key>AI_OS_SOURCE_FRESHNESS_INTERVAL_SECONDS</key>
+    <string>900</string>
+    <key>AI_OS_SOURCE_FRESHNESS_LIMIT</key>
+    <string>100</string>
+    <key>AI_OS_SOURCE_FRESHNESS_TIMEOUT_SECONDS</key>
+    <string>180</string>
+    <key>AI_OS_ENABLE_TRADINGVIEW_CDP_CHECKER</key>
+    <string>1</string>
+    <key>AI_OS_TRADINGVIEW_CDP_CHECK_INTERVAL_SECONDS</key>
+    <string>60</string>
+    <key>AI_OS_TRADINGVIEW_CDP_CHECK_TIMEOUT_SECONDS</key>
+    <string>3</string>
+    <key>AI_OS_ENABLE_OHLCV_AGGREGATION</key>
+    <string>1</string>
+    <key>AI_OS_OHLCV_AGGREGATION_INTERVAL_SECONDS</key>
+    <string>300</string>
+    <key>AI_OS_OHLCV_AGGREGATION_TIMEOUT_SECONDS</key>
+    <string>120</string>
+  </dict>
+</dict>
+</plist>

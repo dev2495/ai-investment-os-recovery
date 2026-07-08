@@ -1,0 +1,374 @@
+{
+  "candidate": {
+    "activation_gate": "paper_first_backtest_required",
+    "candidate_key": "strategy-candidate-20260706220547807-api-breakout-smoke",
+    "id": 21,
+    "name": "API Breakout Smoke"
+  },
+  "data_quality_gate": {
+    "candidate_id": 21,
+    "created_at": "2026-07-06T22:05:49.028046+00:00",
+    "created_by": "Backtest Engineer",
+    "first_ts": "2026-05-14T03:50:00+00:00",
+    "gate_key": "dq_20260706220548969243_21",
+    "gate_payload": {
+      "candidate_id": 21,
+      "candidate_key": "strategy-candidate-20260706220547807-api-breakout-smoke",
+      "coverage": [
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:05:00+00:00",
+          "rows_seen": 103,
+          "symbol": "NSE:INDIA VIX"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:05:00+00:00",
+          "rows_seen": 103,
+          "symbol": "NSE:NIFTY 50"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:05:00+00:00",
+          "rows_seen": 103,
+          "symbol": "NSE:NIFTY BANK"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:ADANIPORTS"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:BAJAJ-AUTO"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:COALINDIA"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:HINDALCO"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:JSWSTEEL"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:NTPC"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:ONGC"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:POWERGRID"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:TATASTEEL"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:TCS"
+        },
+        {
+          "first_ts": "2026-05-14T03:50:00+00:00",
+          "last_ts": "2026-05-15T12:00:00+00:00",
+          "rows_seen": 102,
+          "symbol": "NSE:TITAN"
+        }
+      ],
+      "min_rows_per_symbol": 50,
+      "min_total_rows": 500,
+      "parser_version": "strategy_dsl_parser_v1",
+      "seed_data_allowed": false,
+      "source_table": "trading.ohlcv"
+    },
+    "id": 12,
+    "last_ts": "2026-05-15T12:05:00+00:00",
+    "matched_symbols": [
+      "NSE:INDIA VIX",
+      "NSE:NIFTY 50",
+      "NSE:NIFTY BANK",
+      "NSE:ADANIPORTS",
+      "NSE:BAJAJ-AUTO",
+      "NSE:COALINDIA",
+      "NSE:HINDALCO",
+      "NSE:JSWSTEEL",
+      "NSE:NTPC",
+      "NSE:ONGC",
+      "NSE:POWERGRID",
+      "NSE:TATASTEEL",
+      "NSE:TCS",
+      "NSE:TITAN"
+    ],
+    "max_symbol_rows": 103,
+    "min_rows_per_symbol": 50,
+    "min_symbol_rows": 102,
+    "min_total_rows": 500,
+    "missing_symbols": [],
+    "reasons": [],
+    "requested_symbols": [],
+    "severity": "info",
+    "status": "passed",
+    "timeframe": "5m",
+    "total_rows": 1431
+  },
+  "diagnostics": {
+    "cost_bps": 3.0,
+    "data_quality_gate_id": 12,
+    "data_quality_gate_key": "dq_20260706220548969243_21",
+    "data_quality_status": "passed",
+    "data_source": "trading.ohlcv",
+    "engine": "local_deterministic_ohlcv_backtester_v1",
+    "live_execution_allowed": false,
+    "method": "Close-to-close long/flat signal simulation with transaction cost on position changes.",
+    "paper_first": true,
+    "slippage_bps": 2.0,
+    "symbol_results": [
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.03344483521784258,
+        "position_bars": 21,
+        "status": "tested",
+        "symbol": "NSE:ADANIPORTS",
+        "total_return": -0.032312948957506804,
+        "trades": 16
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.006359315270003885,
+        "position_bars": 21,
+        "status": "tested",
+        "symbol": "NSE:BAJAJ-AUTO",
+        "total_return": -0.002989447628426345,
+        "trades": 8
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.01385496739118286,
+        "position_bars": 19,
+        "status": "tested",
+        "symbol": "NSE:COALINDIA",
+        "total_return": -0.013174322227861746,
+        "trades": 8
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.015358961228551404,
+        "position_bars": 12,
+        "status": "tested",
+        "symbol": "NSE:HINDALCO",
+        "total_return": -0.015358961228551404,
+        "trades": 12
+      },
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.011421694723707465,
+        "position_bars": 17,
+        "status": "tested",
+        "symbol": "NSE:INDIA VIX",
+        "total_return": -0.0044766000151518215,
+        "trades": 8
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.01346068977827497,
+        "position_bars": 7,
+        "status": "tested",
+        "symbol": "NSE:JSWSTEEL",
+        "total_return": -0.01346068977827497,
+        "trades": 6
+      },
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.0015947956447465161,
+        "position_bars": 10,
+        "status": "tested",
+        "symbol": "NSE:NIFTY 50",
+        "total_return": -0.0004819179761632597,
+        "trades": 2
+      },
+      {
+        "bars": 103,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:05:00+00",
+        "max_drawdown": -0.0022437577247500506,
+        "position_bars": 10,
+        "status": "tested",
+        "symbol": "NSE:NIFTY BANK",
+        "total_return": -0.0022437577247500506,
+        "trades": 2
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.008028855132495516,
+        "position_bars": 10,
+        "status": "tested",
+        "symbol": "NSE:NTPC",
+        "total_return": -0.00652198583402297,
+        "trades": 4
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.009893000783483874,
+        "position_bars": 12,
+        "status": "tested",
+        "symbol": "NSE:ONGC",
+        "total_return": -0.006131192160613752,
+        "trades": 6
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.01733368285305459,
+        "position_bars": 16,
+        "status": "tested",
+        "symbol": "NSE:POWERGRID",
+        "total_return": -0.016700314278203288,
+        "trades": 8
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.009755454473652336,
+        "position_bars": 9,
+        "status": "tested",
+        "symbol": "NSE:TATASTEEL",
+        "total_return": -0.00904531315903212,
+        "trades": 6
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.008011956575270318,
+        "position_bars": 19,
+        "status": "tested",
+        "symbol": "NSE:TCS",
+        "total_return": -0.006076025820079489,
+        "trades": 6
+      },
+      {
+        "bars": 102,
+        "first_ts": "2026-05-14 03:50:00+00",
+        "last_ts": "2026-05-15 12:00:00+00",
+        "max_drawdown": -0.008022359493754627,
+        "position_bars": 30,
+        "status": "tested",
+        "symbol": "NSE:TITAN",
+        "total_return": -0.005779173699483997,
+        "trades": 12
+      }
+    ],
+    "warnings": []
+  },
+  "metrics": {
+    "average_bar_return": -9.556473874352593e-05,
+    "bar_volatility": 0.0007853341787475316,
+    "bars_tested": 1431,
+    "max_drawdown": -0.12753778947608496,
+    "sharpe_estimate": -16.729157888912134,
+    "symbols_tested": 14,
+    "total_return": -0.1270345102017123,
+    "trades_count": 104,
+    "win_rate_by_bar": 0.05857445306986592
+  },
+  "parse": {
+    "candidate_id": 21,
+    "id": 8,
+    "normalized_rules": {
+      "arbitrary_code_allowed": false,
+      "engine_template": "breakout",
+      "entry": {
+        "expression": "close > sma(close, 12) * 1.002",
+        "tokens": [
+          "close",
+          "sma"
+        ]
+      },
+      "exit": {
+        "expression": "close < sma(close, 12) or holding_days >= 10",
+        "tokens": [
+          "close",
+          "holding_days",
+          "or",
+          "sma"
+        ]
+      },
+      "paper_first": true,
+      "risk": {
+        "expression": "stop_loss_pct <= 2 and target_pct >= 3"
+      }
+    },
+    "parse_errors": [],
+    "parse_status": "passed",
+    "parser_version": "strategy_dsl_parser_v1",
+    "symbols": [],
+    "template": "breakout",
+    "timeframe": "5m",
+    "updated_at": "2026-07-06T22:05:48.078173+00:00"
+  },
+  "status": "completed",
+  "symbols_requested": [],
+  "symbols_tested": [
+    "NSE:ADANIPORTS",
+    "NSE:BAJAJ-AUTO",
+    "NSE:COALINDIA",
+    "NSE:HINDALCO",
+    "NSE:INDIA VIX",
+    "NSE:JSWSTEEL",
+    "NSE:NIFTY 50",
+    "NSE:NIFTY BANK",
+    "NSE:NTPC",
+    "NSE:ONGC",
+    "NSE:POWERGRID",
+    "NSE:TATASTEEL",
+    "NSE:TCS",
+    "NSE:TITAN"
+  ],
+  "template": "breakout",
+  "timeframe": "5m"
+}

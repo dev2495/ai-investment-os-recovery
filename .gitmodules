@@ -1,0 +1,19 @@
+[submodule "_ai_os_runtime/external_components/FinceptTerminal"]
+	path = _ai_os_runtime/external_components/FinceptTerminal
+	url = https://github.com/Fincept-Corporation/FinceptTerminal.git
+	ignore = dirty
+
+[submodule "_ai_os_runtime/external_components/mcp_candidates/cklose2000-pinescript-mcp-server"]
+	path = _ai_os_runtime/external_components/mcp_candidates/cklose2000-pinescript-mcp-server
+	url = https://github.com/cklose2000/pinescript-mcp-server.git
+	ignore = dirty
+
+[submodule "_ai_os_runtime/external_components/mcp_candidates/tradesdontlie-tradingview-mcp"]
+	path = _ai_os_runtime/external_components/mcp_candidates/tradesdontlie-tradingview-mcp
+	url = https://github.com/tradesdontlie/tradingview-mcp.git
+	ignore = dirty
+
+[submodule "_ai_os_runtime/external_components/mcp_candidates/atilaahmettaner-tradingview-mcp"]
+	path = _ai_os_runtime/external_components/mcp_candidates/atilaahmettaner-tradingview-mcp
+	url = https://github.com/atilaahmettaner/tradingview-mcp.git
+	ignore = dirty

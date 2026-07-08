@@ -1,0 +1,633 @@
+{
+  "files": [
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/CARERATING_bulk_upload.csv",
+      "modified_at_zip": "2025-07-30T21:47:46+00:00",
+      "original_path": "ps 2 cursor/CARERATING_bulk_upload.csv",
+      "profile": {
+        "columns": [
+          "Account",
+          "Portfolio",
+          "Symbol",
+          "Qty",
+          "Buy Avg Price",
+          "Asset Type",
+          "Date",
+          "Notes",
+          "Trade Type",
+          "Sell Price",
+          "Is Journal Entry"
+        ],
+        "delimiter": ",",
+        "error": null,
+        "kind": "csv",
+        "row_count": 61
+      },
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/CARERATING_bulk_upload.csv",
+      "sha256": "62a274affa93ae189d9a83db68d3a414e325e284ea4b8377a31aabffdf05fbdd",
+      "size_bytes": 3283,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "modified_at_zip": "2025-07-30T21:47:46+00:00",
+      "original_path": "ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "profile": {
+        "columns": [
+          "Account",
+          "Portfolio",
+          "Symbol",
+          "Qty",
+          "Buy Avg Price",
+          "Asset Type",
+          "Date",
+          "Notes",
+          "Trade Type",
+          "Sell Price",
+          "Is Journal Entry"
+        ],
+        "delimiter": ",",
+        "error": null,
+        "kind": "csv",
+        "row_count": 12
+      },
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "sha256": "bbd4baa0b7f7312ce60c9978fd23b40869d48568141285da91f36ba8437917f6",
+      "size_bytes": 741,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/naval_equity_folio_trades.csv",
+      "modified_at_zip": "2025-07-18T20:01:40+00:00",
+      "original_path": "ps 2 cursor/naval_equity_folio_trades.csv",
+      "profile": {
+        "columns": [
+          "id",
+          "symbol",
+          "trade_type",
+          "qty",
+          "entry_price",
+          "exit_price",
+          "entry_date",
+          "exit_date",
+          "account_id",
+          "portfolio_id"
+        ],
+        "delimiter": ",",
+        "error": null,
+        "kind": "csv",
+        "row_count": 61
+      },
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/naval_equity_folio_trades.csv",
+      "sha256": "e00409dfc088b73331f5a12546d2a67ddd05c3301ff50990b4a7cff55dd9ecaa",
+      "size_bytes": 3025,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+      "modified_at_zip": "2025-07-17T16:18:54+00:00",
+      "original_path": "ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+      "profile": {
+        "columns": [
+          "account_id",
+          "portfolio_id",
+          "symbol",
+          "trade_type",
+          "qty",
+          "entry_price",
+          "entry_date",
+          "exit_price",
+          "exit_date",
+          "asset_type",
+          "notes"
+        ],
+        "delimiter": ",",
+        "error": null,
+        "kind": "csv",
+        "row_count": 5
+      },
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+      "sha256": "4bd643ba210ae93d34024271fafad7a4d2414250b31985ec20ff339783e6c6ce",
+      "size_bytes": 382,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/db.sqlite3",
+      "modified_at_zip": "2025-11-08T14:37:40+00:00",
+      "original_path": "ps 2 cursor/ps 2 cursor/backend/app/db.sqlite3",
+      "profile": {
+        "error": null,
+        "kind": "sqlite",
+        "tables": [
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "name",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "type",
+                "not_null": false,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "cash",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              }
+            ],
+            "error": null,
+            "name": "accounts",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "account_id",
+                "not_null": true,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "portfolio_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "symbol",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "ex_date",
+                "not_null": true,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "record_date",
+                "not_null": false,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "payment_date",
+                "not_null": false,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "amount_per_share",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "quantity",
+                "not_null": true,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "total_amount",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "dividend_type",
+                "not_null": false,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "created_at",
+                "not_null": false,
+                "primary_key": false,
+                "type": "DATETIME"
+              },
+              {
+                "name": "updated_at",
+                "not_null": false,
+                "primary_key": false,
+                "type": "DATETIME"
+              }
+            ],
+            "error": null,
+            "name": "dividends",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "account_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "portfolio_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "symbol",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "qty",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "buy_avg_price",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "asset_type",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "date",
+                "not_null": true,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "notes",
+                "not_null": false,
+                "primary_key": false,
+                "type": "TEXT"
+              },
+              {
+                "name": "realized_pnl",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              }
+            ],
+            "error": null,
+            "name": "holdings",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "account_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "portfolio_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "symbol",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "qty",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "buy_avg_price",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "asset_type",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "date",
+                "not_null": true,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "notes",
+                "not_null": false,
+                "primary_key": false,
+                "type": "TEXT"
+              },
+              {
+                "name": "realized_pnl",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              }
+            ],
+            "error": null,
+            "name": "imported_holdings",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "trade_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "live_price",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "sl",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "target",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "r_multiple",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "status",
+                "not_null": false,
+                "primary_key": false,
+                "type": "VARCHAR"
+              }
+            ],
+            "error": null,
+            "name": "open_trades",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "account_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "name",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              }
+            ],
+            "error": null,
+            "name": "portfolios",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "symbol",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "last_price",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "updated_at",
+                "not_null": false,
+                "primary_key": false,
+                "type": "DATETIME"
+              }
+            ],
+            "error": null,
+            "name": "price_cache",
+            "row_count": 0,
+            "type": "table"
+          },
+          {
+            "columns": [
+              {
+                "name": "id",
+                "not_null": true,
+                "primary_key": true,
+                "type": "INTEGER"
+              },
+              {
+                "name": "account_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "portfolio_id",
+                "not_null": false,
+                "primary_key": false,
+                "type": "INTEGER"
+              },
+              {
+                "name": "symbol",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "trade_type",
+                "not_null": true,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "entry_price",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "exit_price",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "qty",
+                "not_null": true,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "pnl",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "strategy_tag",
+                "not_null": false,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "notes",
+                "not_null": false,
+                "primary_key": false,
+                "type": "TEXT"
+              },
+              {
+                "name": "screenshot_path",
+                "not_null": false,
+                "primary_key": false,
+                "type": "VARCHAR"
+              },
+              {
+                "name": "entry_date",
+                "not_null": true,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "exit_date",
+                "not_null": false,
+                "primary_key": false,
+                "type": "DATE"
+              },
+              {
+                "name": "expected_sl",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "r_multiple",
+                "not_null": false,
+                "primary_key": false,
+                "type": "FLOAT"
+              },
+              {
+                "name": "is_journal_entry",
+                "not_null": true,
+                "primary_key": false,
+                "type": "BOOLEAN"
+              }
+            ],
+            "error": null,
+            "name": "trades",
+            "row_count": 0,
+            "type": "table"
+          }
+        ]
+      },
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/db.sqlite3",
+      "sha256": "b051edc47068e73e31d40062ee82be3641f2b61d7b5d5907e20db64c4e6ec185",
+      "size_bytes": 86016,
+      "suffix": ".sqlite3"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/data/benchmark_sector_weights.json",
+      "modified_at_zip": "2025-09-30T02:06:32+00:00",
+      "original_path": "ps 2 cursor/ps 2 cursor/backend/app/data/benchmark_sector_weights.json",
+      "profile": {
+        "count": 1,
+        "error": null,
+        "keys": [
+          "NIFTY 500"
+        ],
+        "kind": "json",
+        "top_level": "dict"
+      },
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/data/benchmark_sector_weights.json",
+      "sha256": "2c66396c4fe0fd386abd795d76c7de3c2b755d68f1cbbe9c07181e9c652a7903",
+      "size_bytes": 331,
+      "suffix": ".json"
+    }
+  ],
+  "generated_at": "2026-07-01T14:44:17.678340+00:00",
+  "manifest_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/p2cursor_extract_manifest.json",
+  "profile_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/p2cursor_profile.json",
+  "runtime_root": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime",
+  "stats": {
+    "kind_counts": {
+      "csv": 4,
+      "json": 1,
+      "sqlite": 1
+    },
+    "profile_errors": {},
+    "profiled_files": 6
+  }
+}

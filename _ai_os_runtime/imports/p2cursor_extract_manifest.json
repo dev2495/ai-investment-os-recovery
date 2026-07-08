@@ -1,0 +1,127 @@
+{
+  "destination": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected",
+  "files": [
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/CARERATING_bulk_upload.csv",
+      "modified_at_zip": "2025-07-30T21:47:46+00:00",
+      "original_path": "ps 2 cursor/CARERATING_bulk_upload.csv",
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/CARERATING_bulk_upload.csv",
+      "sha256": "62a274affa93ae189d9a83db68d3a414e325e284ea4b8377a31aabffdf05fbdd",
+      "size_bytes": 3283,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "modified_at_zip": "2025-07-30T21:47:46+00:00",
+      "original_path": "ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/tushit_equity_bulk_upload.csv",
+      "sha256": "bbd4baa0b7f7312ce60c9978fd23b40869d48568141285da91f36ba8437917f6",
+      "size_bytes": 741,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/naval_equity_folio_trades.csv",
+      "modified_at_zip": "2025-07-18T20:01:40+00:00",
+      "original_path": "ps 2 cursor/naval_equity_folio_trades.csv",
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/naval_equity_folio_trades.csv",
+      "sha256": "e00409dfc088b73331f5a12546d2a67ddd05c3301ff50990b4a7cff55dd9ecaa",
+      "size_bytes": 3025,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+      "modified_at_zip": "2025-07-17T16:18:54+00:00",
+      "original_path": "ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+      "sha256": "4bd643ba210ae93d34024271fafad7a4d2414250b31985ec20ff339783e6c6ce",
+      "size_bytes": 382,
+      "suffix": ".csv"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/db.sqlite3",
+      "modified_at_zip": "2025-11-08T14:37:40+00:00",
+      "original_path": "ps 2 cursor/ps 2 cursor/backend/app/db.sqlite3",
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/db.sqlite3",
+      "sha256": "b051edc47068e73e31d40062ee82be3641f2b61d7b5d5907e20db64c4e6ec185",
+      "size_bytes": 86016,
+      "suffix": ".sqlite3"
+    },
+    {
+      "extracted_path": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/data/benchmark_sector_weights.json",
+      "modified_at_zip": "2025-09-30T02:06:32+00:00",
+      "original_path": "ps 2 cursor/ps 2 cursor/backend/app/data/benchmark_sector_weights.json",
+      "relative_extracted_path": "imports/quarantine/p2cursor_selected/ps 2 cursor/ps 2 cursor/backend/app/data/benchmark_sector_weights.json",
+      "sha256": "2c66396c4fe0fd386abd795d76c7de3c2b755d68f1cbbe9c07181e9c652a7903",
+      "size_bytes": 331,
+      "suffix": ".json"
+    }
+  ],
+  "generated_at": "2026-07-01T14:42:40.234997+00:00",
+  "policy": {
+    "extracted_suffixes": [
+      ".csv",
+      ".db",
+      ".feather",
+      ".json",
+      ".jsonl",
+      ".parquet",
+      ".sqlite",
+      ".sqlite3",
+      ".xls",
+      ".xlsx"
+    ],
+    "max_file_size_mb": 250,
+    "max_total_size_mb": 2048,
+    "mode": "selective_quarantine_extraction",
+    "sensitive_path_patterns_skipped": [
+      ".env",
+      "access_key",
+      "api_key",
+      "apikey",
+      "credential",
+      "password",
+      "private_key",
+      "secret",
+      "token"
+    ],
+    "skip_segments": [
+      ".cache",
+      ".git",
+      ".next",
+      ".pytest_cache",
+      ".venv",
+      "__macosx",
+      "__pycache__",
+      "build",
+      "cache",
+      "coverage",
+      "dist",
+      "node_modules",
+      "site-packages",
+      "vendor",
+      "venv"
+    ]
+  },
+  "runtime_root": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime",
+  "stats": {
+    "extracted_bytes": 93778,
+    "extracted_files": 6,
+    "skipped_reasons": {
+      "app_config_json": 5,
+      "credential_like_path": 10,
+      "directory": 12775,
+      "empty": 1557,
+      "generated_or_dependency_path": 172420,
+      "json_without_data_keyword": 1,
+      "not_data_suffix": 227,
+      "symlink": 70
+    },
+    "suffix_counts": {
+      ".csv": 4,
+      ".json": 1,
+      ".sqlite3": 1
+    },
+    "total_candidate_bytes_before_limits": 93778
+  },
+  "zip_path": "/Volumes/Devarsh SSD/ps 2 cursor.zip"
+}

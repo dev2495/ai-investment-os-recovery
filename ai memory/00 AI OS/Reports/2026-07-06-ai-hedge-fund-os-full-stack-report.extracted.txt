@@ -1,0 +1,878 @@
+AI Hedge Fund OS Full Stack Report
+Current live foundation, operating flows, agent team, model routing, data spine, MCP/skill stack, GUI surfaces,
+and remaining production gaps for the personal AI investment office.
+Generated 2026-07-06T01:28:48+05:30 from live local API, Postgres read models, Qdrant collection metadata, and service health
+checks.
+20
+Active agents
+role-based hedge team
+52
+Active skills
+agent skill registry
+20
+Mailboxes
+internal agent email
+21
+Worker runs
+recent API-visible runs
+3
+Client accounts
+live portfolio clients
+71
+Position rows
+latest holdings view
+27
+External skills
+Fincept/OpenAlgo/Vibe
+0
+Snapshot issues
+API query failures
+Current state: The operating foundation is live: dashboard, API, Postgres warehouse, Qdrant retrieval collections,
+agent team, mailboxes, message daemon, worker notes, Obsidian writeback, and a first live AI office floor view.
+Boundary: This is not yet a fully autonomous hedge fund or live broker execution system. Trading execution remains
+intentionally blocked behind human approval, risk review, connector proof, and execution safety gates.
+Architecture Flow
+The stable direction is existing systems and external sources into a live warehouse, then MCP/tool adapters, then Jarvis and
+specialist agents, with durable output to dashboards and Obsidian.
+Sources
+P2Cursor, broker
+files, trading
+journals, Fincept,
+OpenAlgo, Vibe,
+news, filings
+Data Spine
+Postgres warehouse,
+Redis queues,
+Qdrant retrieval,
+Obsidian graph
+Tool Layer
+MCP registry,
+browser/TradingView
+controller, importers,
+workers
+AI Office
+Charlie, Jarvis,
+departments,
+mailboxes, daemon,
+specialist agents
+Surfaces
+Dashboard, live
+office floor, chat,
+worker notes, PDF
+reports
+
+Live Operating Surfaces
+Implemented
+AI Office dashboard at local URL with live warehouse
+snapshot.
+Charlie chat operating layer with retrieval and widget
+intent creation.
+Dashboard widgets backed by warehouse queries.
+Agent team roster, departments, skill matrix, model
+routing, hierarchy, mailboxes, messages.
+Live AI office floor panel showing employees and
+work-state animation labels.
+Obsidian output reports and worker run notes.
+Remaining UI Product Work
+Richer animated office scene with rooms, desks,
+hover cards, and live task movement.
+Click-through employee pages with task history,
+inbox, skills, model route, and outputs.
+Bloomberg-style portfolio and market dashboards
+with drill-down research packs.
+Browser/TradingView visual artifact capture panel.
+Agent Communication Flow
+Latest smoke proof: API-created message was processed by the daemon into task 16, inbox 23, and worker run 21.
+ID FROM TO SUBJECT PROCESSING TASK
+11 Charlie Munger Data Steward Daemon production
+smoke test
+task_created 16
+10 Trading Desk Agent Execution Safety
+Agent
+Live execution stays
+gated
+task_created 11
+6 Charlie Munger Jarvis Run the office
+through evidence,
+not vibes
+task_created 12
+7 Portfolio Manager Research Analyst Holdings need
+thesis maintenance
+task_created 13
+8 News Analyst Filings Analyst Exchange
+announcements
+must become filing
+facts
+task_created 14
+9 Strategy Generator Model Validation
+Agent
+No generated
+strategy goes live
+without challenge
+task_created 15
+Message
+Agent or user sends
+internal message to
+an agent mailbox.
+Daemon
+LaunchAgent reads
+pending messages
+and creates tasks
+plus inbox rows.
+Worker
+Agent worker picks
+up queue item and
+writes a bounded
+output note.
+Review
+Inbox/task moves to
+needs review with
+evidence attached.
+Dashboard
+Snapshot exposes
+message, queue, run,
+and output state.
+
+Hedge Team Hierarchy
+Charlie Munger chief_orchestrator · Executive Office
+Jarvis chief_of_staff · Runtime Operations
+Data Steward specialist · Data Engineering
+Librarian Agent specialist · Knowledge and Memory
+Browser Research Runner tool_operator · Data Engineering
+Portfolio Manager department_head · Portfolio Office
+Research Analyst department_head · Research Desk
+News Analyst specialist · News Intelligence
+Filings Analyst specialist · Research Desk
+Special Situations Agent specialist · Research Desk
+Strategy Generator department_head · Quant Lab
+Strategy Intake Agent specialist · Quant Lab
+Strategy Research Agent specialist · Quant Lab
+Backtest Engineer specialist · Quant Lab
+Optimizer Agent specialist · Quant Lab
+Model Validation Agent independent_reviewer · Quant Lab
+Trading Desk Agent department_head · Trading Desk
+Execution Safety Agent hard_gate · Trading Desk
+Trade Journal Learning Agent specialist · Trading Desk
+Risk Agent independent_reviewer · Risk and Compliance
+
+Agent Details
+AGENT REPORTS TO LEVEL DEPARTMENT MAILBOX WORK STATE
+Charlie Munger chief_orchestrator Executive Office charlie.munger@ai-
+office.local
+reviewing_decision_
+memo
+Jarvis Charlie Munger chief_of_staff Runtime Operations jarvis@ai-
+office.local
+dispatching_jobs
+Portfolio Manager Charlie Munger department_head Portfolio Office portfolio.manager@
+ai-office.local
+checking_exposures
+Research Analyst Charlie Munger department_head Research Desk research.analyst@ai
+-office.local
+writing_thesis
+News Analyst Research Analyst specialist News Intelligence news.analyst@ai-
+office.local
+triaging_feed
+Filings Analyst Research Analyst specialist Research Desk filings.analyst@ai-
+office.local
+extracting_terms
+Special Situations
+Agent
+Research Analyst specialist Research Desk special.situations.ag
+ent@ai-office.local
+mapping_deal_path
+Strategy Generator Charlie Munger department_head Quant Lab strategy.generator@
+ai-office.local
+drafting_hypothesis
+Strategy Intake
+Agent
+Strategy Generator specialist Quant Lab strategy.intake.agen
+t@ai-office.local
+structuring_request
+Strategy Research
+Agent
+Strategy Generator specialist Quant Lab strategy.research.ag
+ent@ai-office.local
+searching_patterns
+Backtest Engineer Strategy Generator specialist Quant Lab backtest.engineer@
+ai-office.local
+running_backtest
+Optimizer Agent Strategy Generator specialist Quant Lab optimizer.agent@ai-
+office.local
+testing_sensitivity
+Model Validation
+Agent
+Strategy Generator independent_review
+er
+Quant Lab model.validation.age
+nt@ai-office.local
+challenging_results
+Trading Desk Agent Charlie Munger department_head Trading Desk trading.desk.agent
+@ai-office.local
+watching_alerts
+Execution Safety
+Agent
+Trading Desk Agent hard_gate Trading Desk execution.safety.age
+nt@ai-office.local
+checking_mandate
+Trade Journal
+Learning Agent
+Trading Desk Agent specialist Trading Desk trade.journal.learnin
+g.agent@ai-
+office.local
+tagging_lessons
+Risk Agent Charlie Munger independent_review
+er
+Risk and
+Compliance
+risk.agent@ai-
+office.local
+reviewing_limits
+Data Steward Jarvis specialist Data Engineering data.steward@ai-
+office.local
+reconciling_sources
+Librarian Agent Jarvis specialist Knowledge and
+Memory
+librarian.agent@ai-
+office.local
+indexing_notes
+
+AGENT REPORTS TO LEVEL DEPARTMENT MAILBOX WORK STATE
+Browser Research
+Runner
+Jarvis tool_operator Data Engineering browser.research.ru
+nner@ai-office.local
+capturing_sources
+
+Model Routing
+AGENT PRIMARY ROUTE MODEL PROVIDER COST TIER ESCALATION
+Charlie Munger charlie_munger_orc
+hestration
+qwen3:4b ollama local_plus coding_escalation
+Jarvis jarvis_runtime llama3.2:3b ollama local coding_escalation
+Browser Research
+Runner
+news_curation llama3.2:3b ollama local coding_escalation
+Data Steward jarvis_intake llama3.2:3b ollama local coding_escalation
+Librarian Agent obsidian_retrieval_s
+ummary
+llama3.2:3b ollama local coding_escalation
+News Analyst news_event_triage llama3.2:3b ollama local frontier_investment
+_review
+Portfolio Manager daily_brief llama3.2:3b ollama local_plus frontier_investment
+_review
+Backtest Engineer strategy_backtest llama3.2:3b ollama local coding_escalation
+Model Validation
+Agent
+strategy_generation qwen3:4b ollama local_plus frontier_investment
+_review
+Optimizer Agent strategy_optimizer llama3.2:3b ollama local coding_escalation
+Strategy Generator strategy_generation qwen3:4b ollama local_plus coding_escalation
+Strategy Intake
+Agent
+strategy_intake llama3.2:3b ollama local coding_escalation
+Strategy Research
+Agent
+strategy_generation qwen3:4b ollama local_plus frontier_investment
+_review
+Filings Analyst filing_analysis qwen3:4b ollama local_plus frontier_investment
+_review
+Research Analyst research_company_
+analysis
+qwen3:4b ollama local_plus frontier_investment
+_review
+Special Situations
+Agent
+filing_analysis qwen3:4b ollama local_plus frontier_investment
+_review
+Risk Agent daily_brief qwen3:4b ollama local_plus frontier_investment
+_review
+Execution Safety
+Agent
+daily_brief llama3.2:3b ollama local frontier_investment
+_review
+Trade Journal
+Learning Agent
+trade_journal_learni
+ng
+llama3.2:3b ollama local_plus frontier_investment
+_review
+Trading Desk Agent daily_brief llama3.2:3b ollama local coding_escalation
+
+External Skill Stack
+fincept 10
+openalgo 7
+vibe_trading 10
+
+SKILL SOURCE TYPE STATUS MODE ADAPTER AGENTS
+Fincept Agent
+Chat Sessions
+fincept agent_runtime active reference_patter
+n
+planned Jarvis
+Fincept Alpha
+Arena Research
+fincept quant_research active adapter_planned planned Strategy
+Generator
+Fincept Equity
+Research Tools
+fincept research active adapter_planned planned Research
+Analyst
+Fincept
+Government And
+Macro Data
+fincept macro_data active adapter_planned planned Research
+Analyst
+Fincept
+Historical Data
+Store
+fincept data_store active adapter_planned planned Data Steward
+Fincept MCP
+Bridge
+fincept mcp_bridge active adapter_planned planned Automation
+Engineer
+Fincept News
+And RSS
+Analysis
+fincept news active adapter_planned planned News Analyst
+Fincept Options
+IV/OI Suite
+fincept options_analytic
+s
+active adapter_planned planned Trading Desk
+Agent
+Fincept Report
+Builder
+fincept reporting active adapter_planned planned Portfolio
+Manager
+Fincept Tool RAG
+Catalog
+fincept tool_catalog active adapter_planned planned Jarvis
+OpenAlgo
+Execution
+Guarded
+openalgo execution planned api_adapter_pla
+nned
+blocked_until_ap
+proved
+Execution Safety
+Agent
+OpenAlgo
+Indicator
+Scanner
+openalgo technical_indicat
+ors
+active api_adapter_pla
+nned
+planned Trading Desk
+Agent
+OpenAlgo
+Market Data API
+openalgo market_data active api_adapter_pla
+nned
+planned Data Steward
+OpenAlgo
+Options
+Analytics Suite
+openalgo options_analytic
+s
+active api_adapter_pla
+nned
+planned Trading Desk
+Agent
+OpenAlgo
+VectorBT
+Backtesting
+openalgo backtesting active local_python_pla
+nned
+planned Backtest
+Engineer,
+Optimizer Agent
+OpenAlgo
+WebSocket
+Streaming
+openalgo streaming planned api_adapter_pla
+nned
+planned Trading Desk
+Agent
+OpenAlgo
+WhatsApp Alerts
+openalgo notification planned api_adapter_pla
+nned
+planned Automation
+Engineer
+Vibe IM Channel
+Runtime
+vibe_trading communication planned external_adapter
+_planned
+planned Automation
+Engineer
+
+SKILL SOURCE TYPE STATUS MODE ADAPTER AGENTS
+Vibe Market
+Screening
+vibe_trading screening active external_mcp_pl
+anned
+planned Research
+Analyst
+Vibe-Trading
+MCP Tool
+Catalog
+vibe_trading mcp_tools active external_mcp_pl
+anned
+planned Jarvis
+Vibe Options
+Analysis
+vibe_trading options_analytic
+s
+active external_mcp_pl
+anned
+planned Trading Desk
+Agent
+Vibe Research
+Autopilot
+vibe_trading research_autopil
+ot
+active reference_patter
+n
+planned Strategy
+Generator
+Vibe Run Library
+Reports
+vibe_trading reporting active reference_patter
+n
+planned Librarian Agent
+Vibe Safety
+Runtime
+Patterns
+vibe_trading safety active reference_patter
+n
+planned Risk Agent
+Vibe Shadow
+Account
+Learning
+vibe_trading trade_learning active reference_patter
+n
+planned Trade Journal
+Learning Agent
+Vibe Swarm
+Investment
+Committee
+vibe_trading multi_agent_revi
+ew
+active reference_patter
+n
+planned Charlie Munger
+Vibe Trade
+Journal Analysis
+vibe_trading trade_journal active reference_patter
+n
+planned Trade Journal
+Learning Agent
+Fincept Status
+COMPONENT INSTALL BUILD RUNTIME NOTES
+FinceptTerminal native
+Qt app
+installed build_success local_development_instal
+l
+not packaged with
+macdeployqt yet,
+requires SSD Qt rpath
+and Homebrew OpenSSL
+on this machine, launch
+outside Codex sandbox
+for Qt CPU feature
+access
+Fincept is installed as a local reference/component checkout and skill source. Direct delegated runtime use remains
+planned.
+
+MCP And Connectors
+INTEGRATION CATEGORY STATUS PERMISSION USE CASE
+Microsoft Playwright
+MCP
+browser_control approved_candidate browser_read_capture Control browser pages,
+capture accessibility
+snapshots/screenshots,
+open
+TradingView/NSE/BSE
+pages.
+NSE/BSE Filings Browser
+Adapter
+filings approved_candidate browser_read_capture Capture India corporate
+announcements, filings,
+schemes, demergers,
+reverse mergers, and
+board actions.
+TradingView Data MCP
+Candidate
+tradingview approved_candidate market_data_read Evaluate for real-time
+market data, technical
+analysis, screeners, and
+backtesting workflows.
+Official MCP Filesystem
+Server
+filesystem approved_candidate scoped_filesystem Scoped file reads/writes
+for approved folders
+only.
+FinceptTerminal Sidecar
+MCP/Component Bridge
+finance_terminal installed local_app_bridge Use installed Fincept
+components for
+analytics, charting
+patterns, options, data
+connectors, and MCP
+tool ideas.
+TradingView Desktop
+Automation MCP
+Candidate
+tradingview installed write_with_human_gate Evaluate for desktop
+TradingView chart
+workflow automation and
+chart analysis.
+Official MCP Fetch
+Server
+web_fetch approved_candidate web_read Fetch and convert public
+web pages into LLM-
+friendly text.
+Firecrawl MCP Server web_scraper candidate web_search_extract Search, scrape, crawl,
+and extract web content
+where plain fetch is
+weak.
+Tavily MCP Server web_search candidate web_search_extract Real-time search,
+extract, map, and crawl
+for market/news
+discovery.
+Official MCP Git Server code_repo approved_candidate repo_read Inspect cloned source
+components, diffs,
+commits, and code
+history.
+SEC EDGAR Direct API
+Adapter
+filings approved_candidate public_data_read US filings, company
+facts, and filing history
+for global research.
+PineScript MCP
+Candidate
+strategy_development reference_only none_reference Assist Pine Script
+strategy
+
+INTEGRATION CATEGORY STATUS PERMISSION USE CASE
+drafting/checking before
+TradingView tests.
+Workflow Registry
+WORKFLOW OWNER TRIGGER STATUS PERMISSION
+Agent Worker -
+Dashboard Jobs
+Jarvis manual_or_scheduled active write_with_approval
+Chat To Live Dashboard
+Widgets
+Jarvis chat_or_manual active write_with_approval
+Client Intake and
+Holdings Update
+Portfolio Manager manual active write_db_manual_only
+Daily Portfolio Brief Portfolio Manager scheduled active read_only
+Fincept Component
+Bridge
+Codex manual installed local_component
+News Intelligence Stack News Analyst scheduled mapped read_only
+News and Filings Inbox News Analyst scheduled planned read_only
+Obsidian Graph Link
+Sweep
+Knowledge Librarian manual_or_scheduled active write_db_only
+Strategy Monitor Trading Desk stream_or_schedule mapped read_only
+Trade Journal Learning Trade Journal Coach manual_or_scheduled planned read_only
+Data Spine
+Qdrant Collections Pipeline Readiness
+
+COLLECTION POINTS
+corporate_filings_mxbai_embe
+d_large
+0
+news_social_mxbai_embed_lar
+ge
+0
+obsidian_notes_mxbai_embed_
+large
+197
+research_reports_mxbai_embe
+d_large
+1393
+strategy_artifacts_mxbai_embe
+d_large
+10
+trade_journals_mxbai_embed_l
+arge
+1
+CLASS AREA ROWS INTERPRETAT
+ION
+configuration MCP tool
+registry
+71 Tool
+permission
+map; useful
+for routing
+but not live
+market
+evidence.
+configuration control plane
+modules
+11 Foundation
+configuration
+only; not
+client or
+market
+evidence.
+imported_dat
+a
+AI research
+artifacts
+93 Codex/Claude
+/cowork
+outputs
+inventoried
+from local
+folders.
+imported_dat
+a
+attached
+broker
+transactions
+1696 Broker
+transaction
+rows parsed
+from attached
+Excel reports.
+imported_dat
+a
+attached
+option log
+rows
+531 Historical
+option journal
+rows parsed
+from attached
+workbook.
+imported_dat
+a
+attached
+transaction
+files
+3 User-
+attached
+broker/option
+files
+registered
+with
+checksums.
+imported_dat
+a
+legacy algo
+unlinked
+holdings
+1 Imported old-
+system
+holdings not
+linked to a
+live client
+folio; exclude
+from live
+portfolio
+decisions.
+imported_dat
+a
+p2cursor CSV
+rows
+139 Rows
+imported
+from
+quarantined
+legacy CSV
+exports.
+imported_dat
+a
+p2cursor file
+profiles
+6 Files
+discovered
+from the
+legacy client
+
+CLASS AREA ROWS INTERPRETAT
+ION
+system on
+external SSD.
+runtime_gene
+rated
+TradingView
+tasks
+0 Chart/browse
+r tasks
+queued for
+TradingView
+MCP/browser
+execution.
+runtime_gene
+rated
+public source
+checks
+7 HTTP/source
+checks run by
+local scripts;
+evidence for
+connector
+reachability.
+runtime_gene
+rated
+strategy
+signals
+1 Signals
+captured
+from
+strategies or
+test adapters.
+runtime_gene
+rated
+trade activity
+ledger
+0 Manual and
+paper trades
+recorded in
+the
+warehouse.
+user_created linked client
+accounts
+4 Client
+account rows
+linked to a
+real
+portfolio.clien
+ts row.
+user_created linked
+portfolio
+positions
+71 Applied
+position rows
+linked to a
+real client
+account.
+Empty is
+acceptable
+until holdings
+are
+imported/appl
+ied.
+user_created manual
+clients
+3 Client rows
+created/impor
+ted in the
+local
+warehouse.
+user_created staged
+holding
+updates
+0 Manual
+holding
+updates
+awaiting
+approval/appli
+cation.
+
+Data Sources
+SOURCE TYPE PROVIDER STATUS OWNER
+Algo trading terminal
+archive
+legacy_trading_system local repo imported Data Steward
+Binance spot candidate crypto_exchange_api Binance candidate Trading Desk
+BSE corporate filings exchange_filings BSE planned News Analyst
+CCXT crypto gateway exchange_api_gateway CCXT planned Trading Desk
+Dhan live account broker_api Dhan planned Portfolio Manager
+Dhan MCX commodity
+gateway
+broker_commodity_api Dhan planned Trading Desk
+FinceptTerminal local
+component
+installed_component FinceptTerminal installed Codex
+Global market news
+basket
+news_feed RSS/API basket planned News Analyst
+NSE corporate filings exchange_filings NSE planned News Analyst
+p2cursor client archive legacy_archive local archive imported Data Steward
+Sanjana Long Term
+Report 2025-09-17
+client_pdf_report local_pdf imported Portfolio Manager
+Tick to OHLCV
+aggregation
+derived_market_data AI OS active Data Steward
+TradingView MCP bridge chart_signal_mcp TradingView active Trading Desk
+TradingView scanner
+quotes
+market_quote_api TradingView active Data Steward
+Tushit 3081282 Holdings
+2026-07-01
+broker_statement_holdin
+gs
+local_broker_export imported Portfolio Manager
+Tushit 3081282
+Transactions 2026 H1
+broker_statement_transa
+ctions
+local_broker_export imported Portfolio Manager
+X curated watchlist social_browser X/Twitter planned News Analyst
+Zerodha live account broker_api Zerodha planned Portfolio Manager
+
+Dashboard Widgets
+WIDGET WORKSPACE OWNER STATUS TASK INBOX
+Market Signal
+Monitor
+trading Jarvis active needs_review needs_review
+Latest Client
+Positions
+portfolio Jarvis active needs_review needs_review
+Model Runtime
+Status
+system Jarvis active needs_review needs_review
+Research And
+Filings Inbox
+research Jarvis active needs_review needs_review
+Strategy Lab Queue quant Jarvis active needs_review needs_review
+Production Readiness And Remaining Gaps
+Ready Now
+SSD-backed runtime layout and persistent
+Postgres/Qdrant/Redis Docker data.
+API and UI LaunchAgents.
+Agent message daemon LaunchAgent.
+Internal mailbox to task to worker to note flow.
+Agent hierarchy, characters, models, skills,
+external skill registry.
+Obsidian notes indexed and reports written
+back.
+Not Yet Final Hedge Fund Production
+TradingView CDP is currently False;
+TradingView must be relaunched with remote
+debugging for desktop control.
+Ollama local model server works manually but
+is not started by default as a reliable
+LaunchAgent.
+OpenAlgo, Vibe-Trading, and Fincept direct
+adapters are planned, not fully delegated live
+adapters.
+Live broker execution remains disabled by
+design.
+NSE/BSE/news/social collectors and filing
+parsers need scheduled production
+connectors.
+Full animated office scene and employee
+hover/task movement are next UI layer.
+Recommended Next Build Order
+1. TradingView relaunch/controller fix and screenshot artifact capture.
+2. Read-only OpenAlgo market-data adapter, then options analytics.
+3. Vibe-Trading MCP read-only adapter for research/tools, isolated from broker writes.
+4. Fincept report/tool catalog bridge as component reference, then selected direct calls only if stable.
+
+5. News, filings, and corporate-action collectors with source URLs and scheduler.
+6. Animated AI office scene: employee hover cards, live task lines, mailbox badges, work-room grouping.
+7. Risk/approval policy engine before any broker write path.
+Source Notes
+External repo references used in stack design: FinceptTerminal, OpenAlgo OKF/docs, and Vibe-Trading. Local private data
+remains in the local SSD-backed warehouse and vault.

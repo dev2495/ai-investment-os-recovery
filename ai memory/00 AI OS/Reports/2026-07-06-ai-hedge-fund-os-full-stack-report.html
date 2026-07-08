@@ -1,0 +1,249 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AI Hedge Fund OS Full Stack Report</title>
+  <style>
+    :root { color-scheme: light; --ink:#111827; --muted:#4b5563; --line:#d1d5db; --soft:#f3f4f6; --brand:#1d4ed8; --risk:#991b1b; --ok:#047857; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--ink); background:white; }
+    main { max-width: 1120px; margin: 0 auto; padding: 36px 42px 60px; }
+    h1 { margin:0; font-size: 34px; line-height: 1.05; letter-spacing:0; }
+    h2 { margin: 34px 0 12px; padding-top: 14px; border-top: 2px solid var(--line); font-size: 21px; }
+    h3 { margin: 20px 0 8px; font-size: 15px; }
+    p, li { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+    .subtitle { margin: 10px 0 0; max-width: 850px; color: var(--muted); font-size: 14px; }
+    .stamp { margin-top: 14px; color: var(--muted); font-size: 11px; }
+    .metrics { display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 22px 0; }
+    .metric { min-height: 78px; padding: 12px; border:1px solid var(--line); border-radius:8px; background:var(--soft); }
+    .metric strong { display:block; font-size: 25px; line-height:1; color:var(--brand); }
+    .metric span { display:block; margin-top: 7px; font-size: 12px; font-weight: 800; }
+    .metric small { display:block; margin-top: 4px; color:var(--muted); font-size: 10.5px; line-height: 1.35; }
+    .flow { display:grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 12px 0 18px; }
+    .flow section { position:relative; min-height: 116px; padding: 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .flow section:not(:last-child)::after { content:""; position:absolute; top:50%; right:-8px; width:8px; border-top:2px solid var(--brand); }
+    .flow b { font-size: 13px; }
+    .flow p { margin:7px 0 0; font-size: 11px; }
+    table { width:100%; border-collapse: collapse; margin: 10px 0 18px; table-layout: fixed; }
+    th, td { border:1px solid var(--line); padding: 7px 8px; text-align:left; vertical-align:top; font-size: 10.5px; line-height: 1.35; overflow-wrap:anywhere; }
+    th { background:var(--soft); font-size:10px; text-transform:uppercase; color:#374151; }
+    .cols { display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .callout { padding: 13px 15px; border-left: 4px solid var(--brand); background:#eff6ff; border-radius: 6px; }
+    .warning { border-left-color: var(--risk); background:#fef2f2; }
+    .ok { border-left-color: var(--ok); background:#ecfdf5; }
+    .pill { display:inline-block; padding:3px 7px; border-radius:999px; background:#e5e7eb; font-size:10px; font-weight:800; }
+    .pill-active, .pill-ok, .pill-completed, .pill-installed, .pill-build_success { background:#d1fae5; color:#065f46; }
+    .pill-planned, .pill-pending { background:#fef3c7; color:#92400e; }
+    .pill-false, .pill-error { background:#fee2e2; color:#991b1b; }
+    .tree, .tree ul { list-style:none; margin:0; padding-left: 16px; }
+    .tree li { margin: 7px 0; padding-left: calc(var(--depth) * 4px); }
+    .tree b { display:inline-block; min-width: 190px; color:var(--ink); font-size: 11px; }
+    .tree span { color:var(--muted); font-size: 10.5px; }
+    .bars { margin: 12px 0; }
+    .bars div { display:grid; grid-template-columns: 120px 1fr; align-items:center; gap: 8px; margin: 8px 0; }
+    .bars span { font-size: 11px; font-weight: 800; }
+    .bars b { display:block; min-width: 28px; padding: 5px 8px; border-radius: 6px; background:#dbeafe; color:#1e40af; font-size: 11px; }
+    .page-break { break-before: page; }
+    @page { margin: 14mm 12mm; }
+    @media print {
+      main { padding: 0; max-width: none; }
+      h2 { break-after: avoid; }
+      table, .metric, .flow section, .callout { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>AI Hedge Fund OS Full Stack Report</h1>
+  <p class="subtitle">Current live foundation, operating flows, agent team, model routing, data spine, MCP/skill stack, GUI surfaces, and remaining production gaps for the personal AI investment office.</p>
+  <p class="stamp">Generated 2026-07-06T01:28:48+05:30 from live local API, Postgres read models, Qdrant collection metadata, and service health checks.</p>
+
+  <section class="metrics">
+    
+    <article class="metric">
+      <strong>20</strong>
+      <span>Active agents</span>
+      <small>role-based hedge team</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>52</strong>
+      <span>Active skills</span>
+      <small>agent skill registry</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>20</strong>
+      <span>Mailboxes</span>
+      <small>internal agent email</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>21</strong>
+      <span>Worker runs</span>
+      <small>recent API-visible runs</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>3</strong>
+      <span>Client accounts</span>
+      <small>live portfolio clients</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>71</strong>
+      <span>Position rows</span>
+      <small>latest holdings view</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>27</strong>
+      <span>External skills</span>
+      <small>Fincept/OpenAlgo/Vibe</small>
+    </article>
+    
+    
+    <article class="metric">
+      <strong>0</strong>
+      <span>Snapshot issues</span>
+      <small>API query failures</small>
+    </article>
+    
+  </section>
+
+  <div class="callout ok">
+    <p><b>Current state:</b> The operating foundation is live: dashboard, API, Postgres warehouse, Qdrant retrieval collections, agent team, mailboxes, message daemon, worker notes, Obsidian writeback, and a first live AI office floor view.</p>
+  </div>
+  <div class="callout warning">
+    <p><b>Boundary:</b> This is not yet a fully autonomous hedge fund or live broker execution system. Trading execution remains intentionally blocked behind human approval, risk review, connector proof, and execution safety gates.</p>
+  </div>
+
+  <h2>Architecture Flow</h2>
+  <div class="flow"><section><b>Sources</b><p>P2Cursor, broker files, trading journals, Fincept, OpenAlgo, Vibe, news, filings</p></section><section><b>Data Spine</b><p>Postgres warehouse, Redis queues, Qdrant retrieval, Obsidian graph</p></section><section><b>Tool Layer</b><p>MCP registry, browser/TradingView controller, importers, workers</p></section><section><b>AI Office</b><p>Charlie, Jarvis, departments, mailboxes, daemon, specialist agents</p></section><section><b>Surfaces</b><p>Dashboard, live office floor, chat, worker notes, PDF reports</p></section></div>
+  <p>The stable direction is existing systems and external sources into a live warehouse, then MCP/tool adapters, then Jarvis and specialist agents, with durable output to dashboards and Obsidian.</p>
+
+  <h2>Live Operating Surfaces</h2>
+  <div class="cols">
+    <div>
+      <h3>Implemented</h3>
+      <ul>
+        <li>AI Office dashboard at local URL with live warehouse snapshot.</li>
+        <li>Charlie chat operating layer with retrieval and widget intent creation.</li>
+        <li>Dashboard widgets backed by warehouse queries.</li>
+        <li>Agent team roster, departments, skill matrix, model routing, hierarchy, mailboxes, messages.</li>
+        <li>Live AI office floor panel showing employees and work-state animation labels.</li>
+        <li>Obsidian output reports and worker run notes.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Remaining UI Product Work</h3>
+      <ul>
+        <li>Richer animated office scene with rooms, desks, hover cards, and live task movement.</li>
+        <li>Click-through employee pages with task history, inbox, skills, model route, and outputs.</li>
+        <li>Bloomberg-style portfolio and market dashboards with drill-down research packs.</li>
+        <li>Browser/TradingView visual artifact capture panel.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Agent Communication Flow</h2>
+  <div class="flow">
+    <section><b>Message</b><p>Agent or user sends internal message to an agent mailbox.</p></section>
+    <section><b>Daemon</b><p>LaunchAgent reads pending messages and creates tasks plus inbox rows.</p></section>
+    <section><b>Worker</b><p>Agent worker picks up queue item and writes a bounded output note.</p></section>
+    <section><b>Review</b><p>Inbox/task moves to needs review with evidence attached.</p></section>
+    <section><b>Dashboard</b><p>Snapshot exposes message, queue, run, and output state.</p></section>
+  </div>
+  <p>Latest smoke proof: API-created message was processed by the daemon into task 16, inbox 23, and worker run 21.</p>
+  <table><thead><tr><th>ID</th><th>From</th><th>To</th><th>Subject</th><th>Processing</th><th>Task</th></tr></thead><tbody><tr><td>11</td><td>Charlie Munger</td><td>Data Steward</td><td>Daemon production smoke test</td><td>task_created</td><td>16</td></tr><tr><td>10</td><td>Trading Desk Agent</td><td>Execution Safety Agent</td><td>Live execution stays gated</td><td>task_created</td><td>11</td></tr><tr><td>6</td><td>Charlie Munger</td><td>Jarvis</td><td>Run the office through evidence, not vibes</td><td>task_created</td><td>12</td></tr><tr><td>7</td><td>Portfolio Manager</td><td>Research Analyst</td><td>Holdings need thesis maintenance</td><td>task_created</td><td>13</td></tr><tr><td>8</td><td>News Analyst</td><td>Filings Analyst</td><td>Exchange announcements must become filing facts</td><td>task_created</td><td>14</td></tr><tr><td>9</td><td>Strategy Generator</td><td>Model Validation Agent</td><td>No generated strategy goes live without challenge</td><td>task_created</td><td>15</td></tr></tbody></table>
+
+  <h2>Hedge Team Hierarchy</h2>
+  <ul class="tree"><li style="--depth:0"><b>Charlie Munger</b><span>chief_orchestrator · Executive Office</span><ul><li style="--depth:1"><b>Jarvis</b><span>chief_of_staff · Runtime Operations</span><ul><li style="--depth:2"><b>Data Steward</b><span>specialist · Data Engineering</span></li><li style="--depth:2"><b>Librarian Agent</b><span>specialist · Knowledge and Memory</span></li><li style="--depth:2"><b>Browser Research Runner</b><span>tool_operator · Data Engineering</span></li></ul></li><li style="--depth:1"><b>Portfolio Manager</b><span>department_head · Portfolio Office</span></li><li style="--depth:1"><b>Research Analyst</b><span>department_head · Research Desk</span><ul><li style="--depth:2"><b>News Analyst</b><span>specialist · News Intelligence</span></li><li style="--depth:2"><b>Filings Analyst</b><span>specialist · Research Desk</span></li><li style="--depth:2"><b>Special Situations Agent</b><span>specialist · Research Desk</span></li></ul></li><li style="--depth:1"><b>Strategy Generator</b><span>department_head · Quant Lab</span><ul><li style="--depth:2"><b>Strategy Intake Agent</b><span>specialist · Quant Lab</span></li><li style="--depth:2"><b>Strategy Research Agent</b><span>specialist · Quant Lab</span></li><li style="--depth:2"><b>Backtest Engineer</b><span>specialist · Quant Lab</span></li><li style="--depth:2"><b>Optimizer Agent</b><span>specialist · Quant Lab</span></li><li style="--depth:2"><b>Model Validation Agent</b><span>independent_reviewer · Quant Lab</span></li></ul></li><li style="--depth:1"><b>Trading Desk Agent</b><span>department_head · Trading Desk</span><ul><li style="--depth:2"><b>Execution Safety Agent</b><span>hard_gate · Trading Desk</span></li><li style="--depth:2"><b>Trade Journal Learning Agent</b><span>specialist · Trading Desk</span></li></ul></li><li style="--depth:1"><b>Risk Agent</b><span>independent_reviewer · Risk and Compliance</span></li></ul></li></ul>
+
+  <h2>Agent Details</h2>
+  <table><thead><tr><th>Agent</th><th>Reports To</th><th>Level</th><th>Department</th><th>Mailbox</th><th>Work State</th></tr></thead><tbody><tr><td>Charlie Munger</td><td></td><td>chief_orchestrator</td><td>Executive Office</td><td>charlie.munger@ai-office.local</td><td>reviewing_decision_memo</td></tr><tr><td>Jarvis</td><td>Charlie Munger</td><td>chief_of_staff</td><td>Runtime Operations</td><td>jarvis@ai-office.local</td><td>dispatching_jobs</td></tr><tr><td>Portfolio Manager</td><td>Charlie Munger</td><td>department_head</td><td>Portfolio Office</td><td>portfolio.manager@ai-office.local</td><td>checking_exposures</td></tr><tr><td>Research Analyst</td><td>Charlie Munger</td><td>department_head</td><td>Research Desk</td><td>research.analyst@ai-office.local</td><td>writing_thesis</td></tr><tr><td>News Analyst</td><td>Research Analyst</td><td>specialist</td><td>News Intelligence</td><td>news.analyst@ai-office.local</td><td>triaging_feed</td></tr><tr><td>Filings Analyst</td><td>Research Analyst</td><td>specialist</td><td>Research Desk</td><td>filings.analyst@ai-office.local</td><td>extracting_terms</td></tr><tr><td>Special Situations Agent</td><td>Research Analyst</td><td>specialist</td><td>Research Desk</td><td>special.situations.agent@ai-office.local</td><td>mapping_deal_path</td></tr><tr><td>Strategy Generator</td><td>Charlie Munger</td><td>department_head</td><td>Quant Lab</td><td>strategy.generator@ai-office.local</td><td>drafting_hypothesis</td></tr><tr><td>Strategy Intake Agent</td><td>Strategy Generator</td><td>specialist</td><td>Quant Lab</td><td>strategy.intake.agent@ai-office.local</td><td>structuring_request</td></tr><tr><td>Strategy Research Agent</td><td>Strategy Generator</td><td>specialist</td><td>Quant Lab</td><td>strategy.research.agent@ai-office.local</td><td>searching_patterns</td></tr><tr><td>Backtest Engineer</td><td>Strategy Generator</td><td>specialist</td><td>Quant Lab</td><td>backtest.engineer@ai-office.local</td><td>running_backtest</td></tr><tr><td>Optimizer Agent</td><td>Strategy Generator</td><td>specialist</td><td>Quant Lab</td><td>optimizer.agent@ai-office.local</td><td>testing_sensitivity</td></tr><tr><td>Model Validation Agent</td><td>Strategy Generator</td><td>independent_reviewer</td><td>Quant Lab</td><td>model.validation.agent@ai-office.local</td><td>challenging_results</td></tr><tr><td>Trading Desk Agent</td><td>Charlie Munger</td><td>department_head</td><td>Trading Desk</td><td>trading.desk.agent@ai-office.local</td><td>watching_alerts</td></tr><tr><td>Execution Safety Agent</td><td>Trading Desk Agent</td><td>hard_gate</td><td>Trading Desk</td><td>execution.safety.agent@ai-office.local</td><td>checking_mandate</td></tr><tr><td>Trade Journal Learning Agent</td><td>Trading Desk Agent</td><td>specialist</td><td>Trading Desk</td><td>trade.journal.learning.agent@ai-office.local</td><td>tagging_lessons</td></tr><tr><td>Risk Agent</td><td>Charlie Munger</td><td>independent_reviewer</td><td>Risk and Compliance</td><td>risk.agent@ai-office.local</td><td>reviewing_limits</td></tr><tr><td>Data Steward</td><td>Jarvis</td><td>specialist</td><td>Data Engineering</td><td>data.steward@ai-office.local</td><td>reconciling_sources</td></tr><tr><td>Librarian Agent</td><td>Jarvis</td><td>specialist</td><td>Knowledge and Memory</td><td>librarian.agent@ai-office.local</td><td>indexing_notes</td></tr><tr><td>Browser Research Runner</td><td>Jarvis</td><td>tool_operator</td><td>Data Engineering</td><td>browser.research.runner@ai-office.local</td><td>capturing_sources</td></tr></tbody></table>
+
+  <h2>Model Routing</h2>
+  <table><thead><tr><th>Agent</th><th>Primary Route</th><th>Model</th><th>Provider</th><th>Cost Tier</th><th>Escalation</th></tr></thead><tbody><tr><td>Charlie Munger</td><td>charlie_munger_orchestration</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>coding_escalation</td></tr><tr><td>Jarvis</td><td>jarvis_runtime</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>Browser Research Runner</td><td>news_curation</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>Data Steward</td><td>jarvis_intake</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>Librarian Agent</td><td>obsidian_retrieval_summary</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>News Analyst</td><td>news_event_triage</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>frontier_investment_review</td></tr><tr><td>Portfolio Manager</td><td>daily_brief</td><td>llama3.2:3b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Backtest Engineer</td><td>strategy_backtest</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>Model Validation Agent</td><td>strategy_generation</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Optimizer Agent</td><td>strategy_optimizer</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>Strategy Generator</td><td>strategy_generation</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>coding_escalation</td></tr><tr><td>Strategy Intake Agent</td><td>strategy_intake</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr><tr><td>Strategy Research Agent</td><td>strategy_generation</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Filings Analyst</td><td>filing_analysis</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Research Analyst</td><td>research_company_analysis</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Special Situations Agent</td><td>filing_analysis</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Risk Agent</td><td>daily_brief</td><td>qwen3:4b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Execution Safety Agent</td><td>daily_brief</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>frontier_investment_review</td></tr><tr><td>Trade Journal Learning Agent</td><td>trade_journal_learning</td><td>llama3.2:3b</td><td>ollama</td><td>local_plus</td><td>frontier_investment_review</td></tr><tr><td>Trading Desk Agent</td><td>daily_brief</td><td>llama3.2:3b</td><td>ollama</td><td>local</td><td>coding_escalation</td></tr></tbody></table>
+
+  <h2>External Skill Stack</h2>
+  <div class="bars"><div><span>fincept</span><b style="width:80%">10</b></div><div><span>openalgo</span><b style="width:56%">7</b></div><div><span>vibe_trading</span><b style="width:80%">10</b></div></div>
+  <table><thead><tr><th>Skill</th><th>Source</th><th>Type</th><th>Status</th><th>Mode</th><th>Adapter</th><th>Agents</th></tr></thead><tbody><tr><td>Fincept Agent Chat Sessions</td><td>fincept</td><td>agent_runtime</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Jarvis</td></tr><tr><td>Fincept Alpha Arena Research</td><td>fincept</td><td>quant_research</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Strategy Generator</td></tr><tr><td>Fincept Equity Research Tools</td><td>fincept</td><td>research</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Research Analyst</td></tr><tr><td>Fincept Government And Macro Data</td><td>fincept</td><td>macro_data</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Research Analyst</td></tr><tr><td>Fincept Historical Data Store</td><td>fincept</td><td>data_store</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Data Steward</td></tr><tr><td>Fincept MCP Bridge</td><td>fincept</td><td>mcp_bridge</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Automation Engineer</td></tr><tr><td>Fincept News And RSS Analysis</td><td>fincept</td><td>news</td><td>active</td><td>adapter_planned</td><td>planned</td><td>News Analyst</td></tr><tr><td>Fincept Options IV/OI Suite</td><td>fincept</td><td>options_analytics</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Trading Desk Agent</td></tr><tr><td>Fincept Report Builder</td><td>fincept</td><td>reporting</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Portfolio Manager</td></tr><tr><td>Fincept Tool RAG Catalog</td><td>fincept</td><td>tool_catalog</td><td>active</td><td>adapter_planned</td><td>planned</td><td>Jarvis</td></tr><tr><td>OpenAlgo Execution Guarded</td><td>openalgo</td><td>execution</td><td>planned</td><td>api_adapter_planned</td><td>blocked_until_approved</td><td>Execution Safety Agent</td></tr><tr><td>OpenAlgo Indicator Scanner</td><td>openalgo</td><td>technical_indicators</td><td>active</td><td>api_adapter_planned</td><td>planned</td><td>Trading Desk Agent</td></tr><tr><td>OpenAlgo Market Data API</td><td>openalgo</td><td>market_data</td><td>active</td><td>api_adapter_planned</td><td>planned</td><td>Data Steward</td></tr><tr><td>OpenAlgo Options Analytics Suite</td><td>openalgo</td><td>options_analytics</td><td>active</td><td>api_adapter_planned</td><td>planned</td><td>Trading Desk Agent</td></tr><tr><td>OpenAlgo VectorBT Backtesting</td><td>openalgo</td><td>backtesting</td><td>active</td><td>local_python_planned</td><td>planned</td><td>Backtest Engineer, Optimizer Agent</td></tr><tr><td>OpenAlgo WebSocket Streaming</td><td>openalgo</td><td>streaming</td><td>planned</td><td>api_adapter_planned</td><td>planned</td><td>Trading Desk Agent</td></tr><tr><td>OpenAlgo WhatsApp Alerts</td><td>openalgo</td><td>notification</td><td>planned</td><td>api_adapter_planned</td><td>planned</td><td>Automation Engineer</td></tr><tr><td>Vibe IM Channel Runtime</td><td>vibe_trading</td><td>communication</td><td>planned</td><td>external_adapter_planned</td><td>planned</td><td>Automation Engineer</td></tr><tr><td>Vibe Market Screening</td><td>vibe_trading</td><td>screening</td><td>active</td><td>external_mcp_planned</td><td>planned</td><td>Research Analyst</td></tr><tr><td>Vibe-Trading MCP Tool Catalog</td><td>vibe_trading</td><td>mcp_tools</td><td>active</td><td>external_mcp_planned</td><td>planned</td><td>Jarvis</td></tr><tr><td>Vibe Options Analysis</td><td>vibe_trading</td><td>options_analytics</td><td>active</td><td>external_mcp_planned</td><td>planned</td><td>Trading Desk Agent</td></tr><tr><td>Vibe Research Autopilot</td><td>vibe_trading</td><td>research_autopilot</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Strategy Generator</td></tr><tr><td>Vibe Run Library Reports</td><td>vibe_trading</td><td>reporting</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Librarian Agent</td></tr><tr><td>Vibe Safety Runtime Patterns</td><td>vibe_trading</td><td>safety</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Risk Agent</td></tr><tr><td>Vibe Shadow Account Learning</td><td>vibe_trading</td><td>trade_learning</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Trade Journal Learning Agent</td></tr><tr><td>Vibe Swarm Investment Committee</td><td>vibe_trading</td><td>multi_agent_review</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Charlie Munger</td></tr><tr><td>Vibe Trade Journal Analysis</td><td>vibe_trading</td><td>trade_journal</td><td>active</td><td>reference_pattern</td><td>planned</td><td>Trade Journal Learning Agent</td></tr></tbody></table>
+
+  <h2>Fincept Status</h2>
+  <table><thead><tr><th>Component</th><th>Install</th><th>Build</th><th>Runtime</th><th>Notes</th></tr></thead><tbody><tr><td>FinceptTerminal native Qt app</td><td>installed</td><td>build_success</td><td>local_development_install</td><td>not packaged with macdeployqt yet, requires SSD Qt rpath and Homebrew OpenSSL on this machine, launch outside Codex sandbox for Qt CPU feature access</td></tr></tbody></table>
+  <p>Fincept is installed as a local reference/component checkout and skill source. Direct delegated runtime use remains planned.</p>
+
+  <h2>MCP And Connectors</h2>
+  <table><thead><tr><th>Integration</th><th>Category</th><th>Status</th><th>Permission</th><th>Use Case</th></tr></thead><tbody><tr><td>Microsoft Playwright MCP</td><td>browser_control</td><td>approved_candidate</td><td>browser_read_capture</td><td>Control browser pages, capture accessibility snapshots/screenshots, open TradingView/NSE/BSE pages.</td></tr><tr><td>NSE/BSE Filings Browser Adapter</td><td>filings</td><td>approved_candidate</td><td>browser_read_capture</td><td>Capture India corporate announcements, filings, schemes, demergers, reverse mergers, and board actions.</td></tr><tr><td>TradingView Data MCP Candidate</td><td>tradingview</td><td>approved_candidate</td><td>market_data_read</td><td>Evaluate for real-time market data, technical analysis, screeners, and backtesting workflows.</td></tr><tr><td>Official MCP Filesystem Server</td><td>filesystem</td><td>approved_candidate</td><td>scoped_filesystem</td><td>Scoped file reads/writes for approved folders only.</td></tr><tr><td>FinceptTerminal Sidecar MCP/Component Bridge</td><td>finance_terminal</td><td>installed</td><td>local_app_bridge</td><td>Use installed Fincept components for analytics, charting patterns, options, data connectors, and MCP tool ideas.</td></tr><tr><td>TradingView Desktop Automation MCP Candidate</td><td>tradingview</td><td>installed</td><td>write_with_human_gate</td><td>Evaluate for desktop TradingView chart workflow automation and chart analysis.</td></tr><tr><td>Official MCP Fetch Server</td><td>web_fetch</td><td>approved_candidate</td><td>web_read</td><td>Fetch and convert public web pages into LLM-friendly text.</td></tr><tr><td>Firecrawl MCP Server</td><td>web_scraper</td><td>candidate</td><td>web_search_extract</td><td>Search, scrape, crawl, and extract web content where plain fetch is weak.</td></tr><tr><td>Tavily MCP Server</td><td>web_search</td><td>candidate</td><td>web_search_extract</td><td>Real-time search, extract, map, and crawl for market/news discovery.</td></tr><tr><td>Official MCP Git Server</td><td>code_repo</td><td>approved_candidate</td><td>repo_read</td><td>Inspect cloned source components, diffs, commits, and code history.</td></tr><tr><td>SEC EDGAR Direct API Adapter</td><td>filings</td><td>approved_candidate</td><td>public_data_read</td><td>US filings, company facts, and filing history for global research.</td></tr><tr><td>PineScript MCP Candidate</td><td>strategy_development</td><td>reference_only</td><td>none_reference</td><td>Assist Pine Script strategy drafting/checking before TradingView tests.</td></tr></tbody></table>
+
+  <h2>Workflow Registry</h2>
+  <table><thead><tr><th>Workflow</th><th>Owner</th><th>Trigger</th><th>Status</th><th>Permission</th></tr></thead><tbody><tr><td>Agent Worker - Dashboard Jobs</td><td>Jarvis</td><td>manual_or_scheduled</td><td>active</td><td>write_with_approval</td></tr><tr><td>Chat To Live Dashboard Widgets</td><td>Jarvis</td><td>chat_or_manual</td><td>active</td><td>write_with_approval</td></tr><tr><td>Client Intake and Holdings Update</td><td>Portfolio Manager</td><td>manual</td><td>active</td><td>write_db_manual_only</td></tr><tr><td>Daily Portfolio Brief</td><td>Portfolio Manager</td><td>scheduled</td><td>active</td><td>read_only</td></tr><tr><td>Fincept Component Bridge</td><td>Codex</td><td>manual</td><td>installed</td><td>local_component</td></tr><tr><td>News Intelligence Stack</td><td>News Analyst</td><td>scheduled</td><td>mapped</td><td>read_only</td></tr><tr><td>News and Filings Inbox</td><td>News Analyst</td><td>scheduled</td><td>planned</td><td>read_only</td></tr><tr><td>Obsidian Graph Link Sweep</td><td>Knowledge Librarian</td><td>manual_or_scheduled</td><td>active</td><td>write_db_only</td></tr><tr><td>Strategy Monitor</td><td>Trading Desk</td><td>stream_or_schedule</td><td>mapped</td><td>read_only</td></tr><tr><td>Trade Journal Learning</td><td>Trade Journal Coach</td><td>manual_or_scheduled</td><td>planned</td><td>read_only</td></tr></tbody></table>
+
+  <h2>Data Spine</h2>
+  <div class="cols">
+    <div>
+      <h3>Qdrant Collections</h3>
+      <table><thead><tr><th>Collection</th><th>Points</th></tr></thead><tbody><tr><td>corporate_filings_mxbai_embed_large</td><td>0</td></tr><tr><td>news_social_mxbai_embed_large</td><td>0</td></tr><tr><td>obsidian_notes_mxbai_embed_large</td><td>197</td></tr><tr><td>research_reports_mxbai_embed_large</td><td>1393</td></tr><tr><td>strategy_artifacts_mxbai_embed_large</td><td>10</td></tr><tr><td>trade_journals_mxbai_embed_large</td><td>1</td></tr></tbody></table>
+    </div>
+    <div>
+      <h3>Pipeline Readiness</h3>
+      <table><thead><tr><th>Class</th><th>Area</th><th>Rows</th><th>Interpretation</th></tr></thead><tbody><tr><td>configuration</td><td>MCP tool registry</td><td>71</td><td>Tool permission map; useful for routing but not live market evidence.</td></tr><tr><td>configuration</td><td>control plane modules</td><td>11</td><td>Foundation configuration only; not client or market evidence.</td></tr><tr><td>imported_data</td><td>AI research artifacts</td><td>93</td><td>Codex/Claude/cowork outputs inventoried from local folders.</td></tr><tr><td>imported_data</td><td>attached broker transactions</td><td>1696</td><td>Broker transaction rows parsed from attached Excel reports.</td></tr><tr><td>imported_data</td><td>attached option log rows</td><td>531</td><td>Historical option journal rows parsed from attached workbook.</td></tr><tr><td>imported_data</td><td>attached transaction files</td><td>3</td><td>User-attached broker/option files registered with checksums.</td></tr><tr><td>imported_data</td><td>legacy algo unlinked holdings</td><td>1</td><td>Imported old-system holdings not linked to a live client folio; exclude from live portfolio decisions.</td></tr><tr><td>imported_data</td><td>p2cursor CSV rows</td><td>139</td><td>Rows imported from quarantined legacy CSV exports.</td></tr><tr><td>imported_data</td><td>p2cursor file profiles</td><td>6</td><td>Files discovered from the legacy client system on external SSD.</td></tr><tr><td>runtime_generated</td><td>TradingView tasks</td><td>0</td><td>Chart/browser tasks queued for TradingView MCP/browser execution.</td></tr><tr><td>runtime_generated</td><td>public source checks</td><td>7</td><td>HTTP/source checks run by local scripts; evidence for connector reachability.</td></tr><tr><td>runtime_generated</td><td>strategy signals</td><td>1</td><td>Signals captured from strategies or test adapters.</td></tr><tr><td>runtime_generated</td><td>trade activity ledger</td><td>0</td><td>Manual and paper trades recorded in the warehouse.</td></tr><tr><td>user_created</td><td>linked client accounts</td><td>4</td><td>Client account rows linked to a real portfolio.clients row.</td></tr><tr><td>user_created</td><td>linked portfolio positions</td><td>71</td><td>Applied position rows linked to a real client account. Empty is acceptable until holdings are imported/applied.</td></tr><tr><td>user_created</td><td>manual clients</td><td>3</td><td>Client rows created/imported in the local warehouse.</td></tr><tr><td>user_created</td><td>staged holding updates</td><td>0</td><td>Manual holding updates awaiting approval/application.</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <h2>Data Sources</h2>
+  <table><thead><tr><th>Source</th><th>Type</th><th>Provider</th><th>Status</th><th>Owner</th></tr></thead><tbody><tr><td>Algo trading terminal archive</td><td>legacy_trading_system</td><td>local repo</td><td>imported</td><td>Data Steward</td></tr><tr><td>Binance spot candidate</td><td>crypto_exchange_api</td><td>Binance</td><td>candidate</td><td>Trading Desk</td></tr><tr><td>BSE corporate filings</td><td>exchange_filings</td><td>BSE</td><td>planned</td><td>News Analyst</td></tr><tr><td>CCXT crypto gateway</td><td>exchange_api_gateway</td><td>CCXT</td><td>planned</td><td>Trading Desk</td></tr><tr><td>Dhan live account</td><td>broker_api</td><td>Dhan</td><td>planned</td><td>Portfolio Manager</td></tr><tr><td>Dhan MCX commodity gateway</td><td>broker_commodity_api</td><td>Dhan</td><td>planned</td><td>Trading Desk</td></tr><tr><td>FinceptTerminal local component</td><td>installed_component</td><td>FinceptTerminal</td><td>installed</td><td>Codex</td></tr><tr><td>Global market news basket</td><td>news_feed</td><td>RSS/API basket</td><td>planned</td><td>News Analyst</td></tr><tr><td>NSE corporate filings</td><td>exchange_filings</td><td>NSE</td><td>planned</td><td>News Analyst</td></tr><tr><td>p2cursor client archive</td><td>legacy_archive</td><td>local archive</td><td>imported</td><td>Data Steward</td></tr><tr><td>Sanjana Long Term Report 2025-09-17</td><td>client_pdf_report</td><td>local_pdf</td><td>imported</td><td>Portfolio Manager</td></tr><tr><td>Tick to OHLCV aggregation</td><td>derived_market_data</td><td>AI OS</td><td>active</td><td>Data Steward</td></tr><tr><td>TradingView MCP bridge</td><td>chart_signal_mcp</td><td>TradingView</td><td>active</td><td>Trading Desk</td></tr><tr><td>TradingView scanner quotes</td><td>market_quote_api</td><td>TradingView</td><td>active</td><td>Data Steward</td></tr><tr><td>Tushit 3081282 Holdings 2026-07-01</td><td>broker_statement_holdings</td><td>local_broker_export</td><td>imported</td><td>Portfolio Manager</td></tr><tr><td>Tushit 3081282 Transactions 2026 H1</td><td>broker_statement_transactions</td><td>local_broker_export</td><td>imported</td><td>Portfolio Manager</td></tr><tr><td>X curated watchlist</td><td>social_browser</td><td>X/Twitter</td><td>planned</td><td>News Analyst</td></tr><tr><td>Zerodha live account</td><td>broker_api</td><td>Zerodha</td><td>planned</td><td>Portfolio Manager</td></tr></tbody></table>
+
+  <h2>Dashboard Widgets</h2>
+  <table><thead><tr><th>Widget</th><th>Workspace</th><th>Owner</th><th>Status</th><th>Task</th><th>Inbox</th></tr></thead><tbody><tr><td>Market Signal Monitor</td><td>trading</td><td>Jarvis</td><td>active</td><td>needs_review</td><td>needs_review</td></tr><tr><td>Latest Client Positions</td><td>portfolio</td><td>Jarvis</td><td>active</td><td>needs_review</td><td>needs_review</td></tr><tr><td>Model Runtime Status</td><td>system</td><td>Jarvis</td><td>active</td><td>needs_review</td><td>needs_review</td></tr><tr><td>Research And Filings Inbox</td><td>research</td><td>Jarvis</td><td>active</td><td>needs_review</td><td>needs_review</td></tr><tr><td>Strategy Lab Queue</td><td>quant</td><td>Jarvis</td><td>active</td><td>needs_review</td><td>needs_review</td></tr></tbody></table>
+
+  <h2>Production Readiness And Remaining Gaps</h2>
+  <div class="cols">
+    <div class="callout ok">
+      <h3>Ready Now</h3>
+      <ul>
+        <li>SSD-backed runtime layout and persistent Postgres/Qdrant/Redis Docker data.</li>
+        <li>API and UI LaunchAgents.</li>
+        <li>Agent message daemon LaunchAgent.</li>
+        <li>Internal mailbox to task to worker to note flow.</li>
+        <li>Agent hierarchy, characters, models, skills, external skill registry.</li>
+        <li>Obsidian notes indexed and reports written back.</li>
+      </ul>
+    </div>
+    <div class="callout warning">
+      <h3>Not Yet Final Hedge Fund Production</h3>
+      <ul>
+        <li>TradingView CDP is currently False; TradingView must be relaunched with remote debugging for desktop control.</li>
+        <li>Ollama local model server works manually but is not started by default as a reliable LaunchAgent.</li>
+        <li>OpenAlgo, Vibe-Trading, and Fincept direct adapters are planned, not fully delegated live adapters.</li>
+        <li>Live broker execution remains disabled by design.</li>
+        <li>NSE/BSE/news/social collectors and filing parsers need scheduled production connectors.</li>
+        <li>Full animated office scene and employee hover/task movement are next UI layer.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Recommended Next Build Order</h2>
+  <ol>
+    <li>TradingView relaunch/controller fix and screenshot artifact capture.</li>
+    <li>Read-only OpenAlgo market-data adapter, then options analytics.</li>
+    <li>Vibe-Trading MCP read-only adapter for research/tools, isolated from broker writes.</li>
+    <li>Fincept report/tool catalog bridge as component reference, then selected direct calls only if stable.</li>
+    <li>News, filings, and corporate-action collectors with source URLs and scheduler.</li>
+    <li>Animated AI office scene: employee hover cards, live task lines, mailbox badges, work-room grouping.</li>
+    <li>Risk/approval policy engine before any broker write path.</li>
+  </ol>
+
+  <h2>Source Notes</h2>
+  <p>External repo references used in stack design: FinceptTerminal, OpenAlgo OKF/docs, and Vibe-Trading. Local private data remains in the local SSD-backed warehouse and vault.</p>
+</main>
+</body>
+</html>

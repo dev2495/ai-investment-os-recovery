@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ai-os-local": {
+      "command": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/mcp_server/ai_os_mcp_server.py",
+      "args": [],
+      "env": {}
+    }
+  }
+}

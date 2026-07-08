@@ -1,0 +1,106 @@
+version: 1
+principle: "MCP tools start read-only. Write tools require explicit approval and audit logs."
+
+tools:
+  postgres_read_model:
+    type: sql
+    permission: read_only
+    schemas:
+      - core
+      - client_data
+      - knowledge
+      - portfolio
+      - trading
+      - research
+      - market
+      - strategy
+      - agent
+      - ops
+      - risk
+    preferred_views:
+      - agent.v_orchestration_stack
+      - agent.v_active_agents
+      - agent.v_open_tasks
+      - client_data.v_p2cursor_source_summary
+      - client_data.v_client_3081282_dashboard_summary
+      - client_data.v_client_3081282_symbol_dates
+      - client_data.v_client_3081282_trade_timeline
+      - knowledge.v_obsidian_note_index
+      - portfolio.v_latest_positions
+      - trading.v_recent_signals
+      - strategy.v_open_alerts
+      - market.v_recent_news
+      - research.v_ai_output_inventory
+      - core.v_source_component_inventory
+      - core.v_source_requirements
+      - core.v_source_table_profiles
+      - core.v_algo_import_summary
+
+  qdrant_vector_search:
+    type: vector_db
+    permission: read_only
+    collections:
+      - obsidian_notes
+      - corporate_filings
+      - trade_journals
+      - research_reports
+      - news_social
+
+  obsidian_note_index:
+    type: filesystem
+    permission: read_only
+    root: "/Volumes/Devarsh SSD/Obsidian memory "
+
+  obsidian_writeback:
+    type: filesystem
+    permission: write_with_approval
+    allowed_roots:
+      - "/Volumes/Devarsh SSD/Obsidian memory /ai memory/00 AI OS"
+      - "/Volumes/Devarsh SSD/Obsidian memory /09 Journal"
+
+  browser_research_runner:
+    type: browser
+    permission: read_only
+    allowed_use:
+      - public_news_collection
+      - nse_bse_public_filings
+      - source_verification
+      - screenshots_for_evidence
+    prohibited_without_approval:
+      - login
+      - posting
+      - liking
+      - subscribing
+      - downloading_sensitive_files
+
+  tradingview_signal_reader:
+    type: webhook_reader
+    permission: read_only
+    source: "/Volumes/Devarsh SSD/algo based trading software 2/integrations/tradingview.py"
+
+  client_ledger_reader:
+    type: mcp_tool_group
+    permission: read_only
+    tools:
+      - ai_os_client_3081282_summary
+      - ai_os_client_3081282_symbol_dates
+      - ai_os_client_3081282_trade_timeline
+
+  research_inventory_reader:
+    type: mcp_tool_group
+    permission: read_only
+    tools:
+      - ai_os_research_outputs
+      - ai_os_research_output_detail
+
+  component_review_reader:
+    type: mcp_tool_group
+    permission: read_only
+    tools:
+      - ai_os_fincept_component_review
+      - ai_os_component_inventory
+
+  jarvis_runtime:
+    type: runtime
+    permission: write_with_approval
+    role: "Tool execution and retrieval layer used by Charlie Munger and specialist agents."

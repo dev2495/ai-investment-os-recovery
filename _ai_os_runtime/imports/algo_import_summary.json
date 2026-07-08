@@ -1,0 +1,35 @@
+{
+  "generated_at": "2026-07-01T15:46:27.182785+00:00",
+  "small_table_rows_seen": {
+    "accounts": 2,
+    "app_trades": 3,
+    "backtest_runs": 10,
+    "holdings": 3,
+    "ideas": 18,
+    "journal_entries": 1,
+    "portfolio_snapshots": 22,
+    "regime_runs": 6,
+    "token_map": 3,
+    "tradebook_trades": 1,
+    "tradingview_signals": 1,
+    "watchlist": 11
+  },
+  "source_root": "/Volumes/Devarsh SSD/algo based trading software 2",
+  "streamed_rows_seen": {
+    "daily_bars": 1038186,
+    "ticks": 318066
+  },
+  "warehouse_counts": {
+    "backtest_runs": 16,
+    "ohlcv": 1038186,
+    "portfolio_accounts": 2,
+    "portfolio_positions": 3,
+    "portfolio_snapshots": 22,
+    "portfolio_trades": 4,
+    "research_ideas": 29,
+    "strategy_candidates": 10,
+    "ticks": 197595,
+    "trade_journals": 1,
+    "trading_signals": 1
+  }
+}

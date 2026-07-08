@@ -1,0 +1,16 @@
+{
+  "documents_seen": 290,
+  "documents_skipped_empty": 0,
+  "points_indexed": 2212,
+  "embedding_model": "mxbai-embed-large",
+  "fallback_chunks": 0,
+  "last_embedding_error": null,
+  "collections": {
+    "obsidian_notes_mxbai_embed_large": 532,
+    "corporate_filings_mxbai_embed_large": 234,
+    "trade_journals_mxbai_embed_large": 1,
+    "news_social_mxbai_embed_large": 9,
+    "research_reports_mxbai_embed_large": 1393,
+    "strategy_artifacts_mxbai_embed_large": 43
+  }
+}

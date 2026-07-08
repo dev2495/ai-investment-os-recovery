@@ -1,0 +1,348 @@
+{
+  "candidate_id": 21,
+  "generated_at": "2026-07-06T22:05:49.650096+00:00",
+  "live_execution_allowed": false,
+  "run_key": "useropt_api_smoke_20260707",
+  "seed_data_allowed": false,
+  "stage_results": {
+    "backtest": {
+      "artifact_path": "_ai_os_runtime/artifacts/backtests/20260706T220549Z-strategy-candidate-20260706220547807-api-breakout-smoke.json",
+      "database": {
+        "backtest_run_id": 22,
+        "inbox_id": 153,
+        "updated_tasks": 1,
+        "validation_review_id": 29
+      },
+      "diagnostics": {
+        "live_execution_allowed": false,
+        "warnings": []
+      },
+      "metrics": {
+        "average_bar_return": -9.556473874352593e-05,
+        "bar_volatility": 0.0007853341787475316,
+        "bars_tested": 1431,
+        "max_drawdown": -0.12753778947608496,
+        "sharpe_estimate": -16.729157888912134,
+        "symbols_tested": 14,
+        "total_return": -0.1270345102017123,
+        "trades_count": 104,
+        "win_rate_by_bar": 0.05857445306986592
+      },
+      "note_path": "_ai_os_runtime/artifacts/backtests/20260706T220549Z-strategy-candidate-20260706220547807-api-breakout-smoke.md",
+      "status": "completed"
+    },
+    "data_quality": {
+      "gate": {
+        "candidate_id": 21,
+        "created_at": "2026-07-06T22:05:48.438615+00:00",
+        "created_by": "Backtest Engineer",
+        "first_ts": "2026-05-14T03:50:00+00:00",
+        "gate_key": "dq_20260706220548389672_21",
+        "gate_payload": {
+          "candidate_id": 21,
+          "candidate_key": "strategy-candidate-20260706220547807-api-breakout-smoke",
+          "coverage": [
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:05:00+00:00",
+              "rows_seen": 103,
+              "symbol": "NSE:INDIA VIX"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:05:00+00:00",
+              "rows_seen": 103,
+              "symbol": "NSE:NIFTY 50"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:05:00+00:00",
+              "rows_seen": 103,
+              "symbol": "NSE:NIFTY BANK"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:ADANIPORTS"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:BAJAJ-AUTO"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:COALINDIA"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:HINDALCO"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:JSWSTEEL"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:NTPC"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:ONGC"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:POWERGRID"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:TATASTEEL"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:TCS"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:TITAN"
+            }
+          ],
+          "min_rows_per_symbol": 50,
+          "min_total_rows": 500,
+          "parser_version": "strategy_dsl_parser_v1",
+          "seed_data_allowed": false,
+          "source_table": "trading.ohlcv"
+        },
+        "id": 11,
+        "last_ts": "2026-05-15T12:05:00+00:00",
+        "matched_symbols": [
+          "NSE:INDIA VIX",
+          "NSE:NIFTY 50",
+          "NSE:NIFTY BANK",
+          "NSE:ADANIPORTS",
+          "NSE:BAJAJ-AUTO",
+          "NSE:COALINDIA",
+          "NSE:HINDALCO",
+          "NSE:JSWSTEEL",
+          "NSE:NTPC",
+          "NSE:ONGC",
+          "NSE:POWERGRID",
+          "NSE:TATASTEEL",
+          "NSE:TCS",
+          "NSE:TITAN"
+        ],
+        "max_symbol_rows": 103,
+        "min_rows_per_symbol": 50,
+        "min_symbol_rows": 102,
+        "min_total_rows": 500,
+        "missing_symbols": [],
+        "reasons": [],
+        "requested_symbols": [],
+        "severity": "info",
+        "status": "passed",
+        "timeframe": "5m",
+        "total_rows": 1431
+      }
+    },
+    "intake": {
+      "activation_gate": "paper_first_backtest_required",
+      "candidate_id": 21,
+      "candidate_key": "strategy-candidate-20260706220547807-api-breakout-smoke",
+      "idea_id": 8,
+      "idea_key": "strategy-idea-20260706220547807-api-breakout-smoke",
+      "inbox_id": 152,
+      "intake_id": 8,
+      "intake_key": "strategy-intake-20260706220547807-api-breakout-smoke",
+      "live_execution_allowed": false,
+      "task_id": 98
+    },
+    "optimization": {
+      "artifact_path": "_ai_os_runtime/artifacts/optimizations/20260706T220549Z-strategy-candidate-20260706220547807-api-breakout-smoke.json",
+      "best_params": {
+        "threshold": 0.001,
+        "window": 6
+      },
+      "database": {
+        "inbox_id": 154,
+        "optimization_run_id": 6,
+        "validation_review_id": 30
+      },
+      "diagnostics": {
+        "live_execution_allowed": false,
+        "warnings": [
+          "Best parameter set has negative walk-forward/test Sharpe; reject until broader data proves otherwise.",
+          "Best parameter set is not consistent across walk-forward windows."
+        ]
+      },
+      "metrics": {
+        "bars_seen": 1431,
+        "best_max_drawdown": -0.12133982981554059,
+        "best_score": -13.226254062017428,
+        "best_test_sharpe": -20.19350263482043,
+        "best_test_total_return": -0.05948088237972382,
+        "best_total_return": -0.1163759020853593,
+        "best_walk_forward_consistency": 0.0,
+        "best_walk_forward_test_return": -0.015468396914332846,
+        "best_walk_forward_test_sharpe": -12.982771047341323,
+        "grid_size": 9,
+        "monte_carlo": {
+          "p05_total_return": -0.11637590208536053,
+          "p50_total_return": -0.11637590208535975,
+          "p95_total_return": -0.11637590208535864,
+          "runs": 200,
+          "worst_drawdown_p05": -0.13510800779818544
+        },
+        "symbols_tested": 14,
+        "trades_count": 178,
+        "walk_forward": {
+          "folds": [
+            {
+              "fold": 1,
+              "test_end": 849,
+              "test_metrics": {
+                "average_bar_return": -2.188194477798884e-05,
+                "bar_volatility": 0.0012271099908200194,
+                "bars": 212,
+                "max_drawdown": -0.019441449910637565,
+                "sharpe_estimate": -2.4515080729878513,
+                "total_return": -0.004785637619096339,
+                "win_rate_by_bar": 0.018867924528301886
+              },
+              "test_start": 637,
+              "train_end": 637,
+              "train_metrics": {
+                "average_bar_return": -8.963485526485762e-05,
+                "bar_volatility": 0.0012576648234798665,
+                "bars": 637,
+                "max_drawdown": -0.0696364730076342,
+                "sharpe_estimate": -9.798123510072001,
+                "total_return": -0.05597544976377433,
+                "win_rate_by_bar": 0.07535321821036106
+              },
+              "train_start": 0
+            },
+            {
+              "fold": 2,
+              "test_end": 1061,
+              "test_metrics": {
+                "average_bar_return": -9.842966588199623e-05,
+                "bar_volatility": 0.0007357103179855905,
+                "bars": 212,
+                "max_drawdown": -0.02070811508370285,
+                "sharpe_estimate": -18.39289392196459,
+                "total_return": -0.02070811508370285,
+                "win_rate_by_bar": 0.0330188679245283
+              },
+              "test_start": 849,
+              "train_end": 849,
+              "train_metrics": {
+                "average_bar_return": -7.602077668459147e-05,
+                "bar_volatility": 0.0013246233864876071,
+                "bars": 637,
+                "max_drawdown": -0.0517432904545847,
+                "sharpe_estimate": -7.889887052429761,
+                "total_return": -0.047803544831671374,
+                "win_rate_by_bar": 0.05023547880690738
+              },
+              "train_start": 212
+            },
+            {
+              "fold": 3,
+              "test_end": 1273,
+              "test_metrics": {
+                "average_bar_return": -9.939472215153405e-05,
+                "bar_volatility": 0.0007547824902115488,
+                "bars": 212,
+                "max_drawdown": -0.02219976138319424,
+                "sharpe_estimate": -18.10391114707153,
+                "total_return": -0.020911438040199348,
+                "win_rate_by_bar": 0.07547169811320754
+              },
+              "test_start": 1061,
+              "train_end": 1061,
+              "train_metrics": {
+                "average_bar_return": -6.101005201448096e-05,
+                "bar_volatility": 0.0011497841758599827,
+                "bars": 637,
+                "max_drawdown": -0.040034826986119154,
+                "sharpe_estimate": -7.294843346589913,
+                "total_return": -0.038522276818555246,
+                "win_rate_by_bar": 0.04081632653061224
+              },
+              "train_start": 424
+            }
+          ],
+          "method": "rolling chronological train/test windows",
+          "summary": {
+            "average_test_return": -0.015468396914332846,
+            "average_test_sharpe": -12.982771047341323,
+            "fold_count": 3,
+            "positive_test_folds": 0,
+            "test_consistency": 0.0,
+            "worst_test_drawdown": -0.02219976138319424
+          }
+        }
+      },
+      "note_path": "_ai_os_runtime/artifacts/optimizations/20260706T220549Z-strategy-candidate-20260706220547807-api-breakout-smoke.md",
+      "status": "completed"
+    },
+    "parse": {
+      "parse": {
+        "candidate_id": 21,
+        "id": 8,
+        "normalized_rules": {
+          "arbitrary_code_allowed": false,
+          "engine_template": "breakout",
+          "entry": {
+            "expression": "close > sma(close, 12) * 1.002",
+            "tokens": [
+              "close",
+              "sma"
+            ]
+          },
+          "exit": {
+            "expression": "close < sma(close, 12) or holding_days >= 10",
+            "tokens": [
+              "close",
+              "holding_days",
+              "or",
+              "sma"
+            ]
+          },
+          "paper_first": true,
+          "risk": {
+            "expression": "stop_loss_pct <= 2 and target_pct >= 3"
+          }
+        },
+        "parse_errors": [],
+        "parse_status": "passed",
+        "parser_version": "strategy_dsl_parser_v1",
+        "symbols": [],
+        "template": "breakout",
+        "timeframe": "5m",
+        "updated_at": "2026-07-06T22:05:48.078173+00:00"
+      }
+    }
+  },
+  "status": "completed"
+}

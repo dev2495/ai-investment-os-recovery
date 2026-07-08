@@ -1,0 +1,15 @@
+{
+  "files": {
+    "/Users/devarshthakkar/Desktop/option log.xlsx": 531,
+    "/Users/devarshthakkar/Downloads/3081282_Transactions (1).xls": 951,
+    "/Users/devarshthakkar/Downloads/3081282_Transactions.xls": 745
+  },
+  "generated_at": "2026-07-06T15:56:04.293648+00:00",
+  "warehouse_counts": {
+    "attached_broker_transactions": 1696,
+    "attached_client_positions_by_symbol": 595,
+    "attached_client_trade_ledger": 2227,
+    "attached_option_log_transactions": 531,
+    "attached_transaction_files": 3
+  }
+}

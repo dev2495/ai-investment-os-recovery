@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.ui</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/bin/aios-ui-service.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/devarshthakkar/Library/Application Support/AIOS/ui-dist</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/ai_office_ui.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/ai_office_ui.launchd.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>VITE_AI_OS_API_URL</key>
+    <string>http://127.0.0.1:8765</string>
+    <key>AI_OS_UI_PORT</key>
+    <string>5177</string>
+  </dict>
+</dict>
+</plist>

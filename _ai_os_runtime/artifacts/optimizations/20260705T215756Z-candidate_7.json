@@ -1,0 +1,129 @@
+{
+  "best_params": {
+    "lookback": 12
+  },
+  "candidate": {
+    "activation_gate": "paper_first",
+    "candidate_key": "candidate_7",
+    "id": 7,
+    "name": "trend_following"
+  },
+  "diagnostics": {
+    "cost_bps": 3.0,
+    "data_source": "trading.ohlcv",
+    "engine": "local_strategy_optimizer_v1",
+    "live_execution_allowed": false,
+    "monte_carlo_method": "deterministic bootstrap of best parameter return stream",
+    "paper_first": true,
+    "ranked_results": [
+      {
+        "max_drawdown": -0.13542670553854919,
+        "params": {
+          "lookback": 12
+        },
+        "rank": 1,
+        "score": -2.7455840787187475,
+        "symbols_tested": 14,
+        "test_sharpe": -2.483141478519562,
+        "test_total_return": -0.01327243909446607,
+        "total_return": -0.11050508522616387,
+        "trades_count": 202
+      },
+      {
+        "max_drawdown": -0.1039331501549241,
+        "params": {
+          "lookback": 36
+        },
+        "rank": 2,
+        "score": -3.9452886244031116,
+        "symbols_tested": 14,
+        "test_sharpe": -3.6814845462829537,
+        "test_total_return": -0.014024067268660567,
+        "total_return": -0.07366187580338823,
+        "trades_count": 57
+      },
+      {
+        "max_drawdown": -0.10673338946397104,
+        "params": {
+          "lookback": 24
+        },
+        "rank": 3,
+        "score": -9.62159571727412,
+        "symbols_tested": 14,
+        "test_sharpe": -9.15318933810044,
+        "test_total_return": -0.030145518870721477,
+        "total_return": -0.08119977298457004,
+        "trades_count": 120
+      },
+      {
+        "max_drawdown": -0.12443442150754058,
+        "params": {
+          "lookback": 18
+        },
+        "rank": 4,
+        "score": -17.901499034179956,
+        "symbols_tested": 14,
+        "test_sharpe": -17.14163533593461,
+        "test_total_return": -0.05264216102144492,
+        "total_return": -0.107863288389071,
+        "trades_count": 158
+      },
+      {
+        "max_drawdown": -0.18873714970852784,
+        "params": {
+          "lookback": 6
+        },
+        "rank": 5,
+        "score": -21.994999269041912,
+        "symbols_tested": 14,
+        "test_sharpe": -20.930960204822213,
+        "test_total_return": -0.07590198361920175,
+        "total_return": -0.18623830053391366,
+        "trades_count": 256
+      }
+    ],
+    "slippage_bps": 2.0,
+    "walk_forward_method": "60/40 chronological train/test split",
+    "warnings": [
+      "Best parameter set has negative test Sharpe; reject until broader data proves otherwise."
+    ]
+  },
+  "metrics": {
+    "bars_seen": 1431,
+    "best_max_drawdown": -0.13542670553854919,
+    "best_score": -2.7455840787187475,
+    "best_test_sharpe": -2.483141478519562,
+    "best_test_total_return": -0.01327243909446607,
+    "best_total_return": -0.11050508522616387,
+    "grid_size": 5,
+    "monte_carlo": {
+      "p05_total_return": -0.11050508522616509,
+      "p50_total_return": -0.11050508522616387,
+      "p95_total_return": -0.11050508522616276,
+      "runs": 200,
+      "worst_drawdown_p05": -0.14593994110044917
+    },
+    "symbols_tested": 14,
+    "trades_count": 202
+  },
+  "parameter_space": [
+    {
+      "lookback": 6
+    },
+    {
+      "lookback": 12
+    },
+    {
+      "lookback": 18
+    },
+    {
+      "lookback": 24
+    },
+    {
+      "lookback": 36
+    }
+  ],
+  "status": "completed",
+  "template": "momentum",
+  "timeframe": "5m"
+}

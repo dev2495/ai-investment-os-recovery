@@ -1,0 +1,7 @@
+docker_data/
+imports/quarantine/
+logs/
+obsidian_writeback/tmp/
+ai-office-ui/node_modules/
+ai-office-ui/dist/
+.env

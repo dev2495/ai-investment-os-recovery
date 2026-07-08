@@ -1,0 +1,1631 @@
+{
+  "generated_at": "2026-07-01T14:29:53.032672+00:00",
+  "runtime_root": "/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime",
+  "sources": {
+    "algo_trading_root": {
+      "error": null,
+      "exists": true,
+      "interesting_paths": [
+        "run_terminal.py",
+        "README.md",
+        "examples.py",
+        "_preview_dashboard.py",
+        "assistant/events.py",
+        "assistant/__init__.py",
+        "assistant/context.py",
+        "assistant/agent.py",
+        "quant/live_signal.py",
+        "quant/sector_markov.py",
+        "quant/portfolio_backtest.py",
+        "quant/regime.py",
+        "quant/sector_rotation.py",
+        "quant/markov_strategy.py",
+        "quant/factors.py",
+        "quant/pairs.py",
+        "quant/systematic_runner.py",
+        "quant/__init__.py",
+        "quant/monte_carlo.py",
+        "quant/strategies_systematic.py",
+        "quant/regime_runner.py",
+        "quant/volatility.py",
+        "quant/regime_momentum.py",
+        "quant/compare.py",
+        "quant/kelly.py",
+        "quant/market_structure.py",
+        "fundamentals/tijori.py",
+        "fundamentals/screener.py",
+        "fundamentals/__init__.py",
+        "fundamentals/universe.py",
+        "crypto/coingecko.py",
+        "crypto/__init__.py",
+        "options_tools/straddle.py",
+        "options_tools/strangle.py",
+        "options_tools/surfaces.py",
+        "options_tools/option_chain.py",
+        "options_tools/__init__.py",
+        "options_tools/saved_strategies.py",
+        "options_tools/analytics.py",
+        "options_tools/backtest.py",
+        "options_tools/multi_leg.py",
+        "backtesting/__init__.py",
+        "backtesting/engine.py",
+        ".pytest_cache/README.md",
+        "config/credentials.example.py",
+        "config/credentials.py",
+        "config/settings.py",
+        "market_data/nse_corporate.py",
+        "market_data/__init__.py",
+        "market_data/_session.py",
+        "market_data/quotes.py",
+        "market_data/bse.py",
+        "market_data/nse.py",
+        "live_trading/execution.py",
+        "live_trading/trade_journal.py",
+        "live_trading/signal_engine.py",
+        "live_trading/tick_stream.py",
+        "live_trading/__init__.py",
+        "live_trading/position_tracker.py",
+        "live_trading/risk_manager.py",
+        "live_trading/brokers/manual_broker.py",
+        "live_trading/brokers/__init__.py",
+        "live_trading/brokers/base_broker.py",
+        "live_trading/brokers/zerodha_broker.py",
+        "strategies/base_strategy.py",
+        "strategies/__init__.py",
+        "strategies/options/straddle.py",
+        "strategies/options/option_selling.py",
+        "strategies/options/__init__.py",
+        "strategies/equity/supertrend_strategy.py",
+        "strategies/equity/sideways_strategies.py",
+        "strategies/equity/__init__.py",
+        "strategies/equity/trending_strategies.py",
+        "indicators/technical.py",
+        "indicators/__init__.py",
+        "indicators/options_greeks.py",
+        "indicators/supertrend.py",
+        "portfolios/cash.py",
+        "portfolios/metrics.py",
+        "portfolios/snapshots.py",
+        "portfolios/journal.py",
+        "portfolios/accounts.py",
+        "portfolios/__init__.py",
+        "portfolios/trades.py",
+        "portfolios/mtm.py",
+        "portfolios/analytics.py",
+        "portfolios/holdings.py",
+        "tests/conftest.py",
+        "tests/test_portfolios.py",
+        "tests/test_metrics.py",
+        "tests/test_multi_leg.py",
+        "tests/test_quant.py",
+        "tests/__init__.py",
+        "tests/test_cash_journal.py",
+        "tests/test_agent_heuristic.py",
+        "tests/test_symbols.py",
+        "tests/test_scanners.py",
+        ".claude/launch.json",
+        "agents/personas.py",
+        "agents/__init__.py",
+        "ai_engine/__init__.py",
+        "ai_engine/strategy_generator.py",
+        "utils/db.py",
+        "utils/cache.py",
+        "utils/__init__.py",
+        "utils/symbols.py",
+        "alerts/telegram_bot.py",
+        "alerts/__init__.py",
+        "dashboard/charts.py",
+        "dashboard/design.py",
+        "dashboard/symbols.py",
+        "dashboard/app.py",
+        "dashboard/state.py",
+        "dashboard/tabs/correlation_tab.py",
+        "dashboard/tabs/charts_tab.py",
+        "dashboard/tabs/sentiment_tab.py",
+        "dashboard/tabs/journal_tab.py",
+        "dashboard/tabs/strategies_tab.py",
+        "dashboard/tabs/systematic_tab.py",
+        "dashboard/tabs/markov_tab.py",
+        "dashboard/tabs/rotation_tab.py",
+        "dashboard/tabs/builder_tab.py",
+        "dashboard/tabs/crypto_tab.py",
+        "dashboard/tabs/__init__.py",
+        "dashboard/tabs/ideas_tab.py",
+        "dashboard/tabs/factor_tab.py",
+        "dashboard/tabs/options_bt_tab.py",
+        "dashboard/tabs/calendar_tab.py",
+        "dashboard/tabs/macro_tab.py",
+        "dashboard/tabs/quant_tab.py",
+        "dashboard/tabs/ticks_tab.py",
+        "dashboard/tabs/options_tab.py",
+        "dashboard/tabs/momentum_tab.py",
+        "dashboard/tabs/analytics_tab.py",
+        "dashboard/tabs/portfolios_tab.py",
+        "dashboard/tabs/surfaces_tab.py",
+        "dashboard/tabs/screener_tab.py",
+        "dashboard/tabs/fundamentals_tab.py",
+        "dashboard/tabs/equity_tab.py",
+        "dashboard/tabs/personas_tab.py",
+        "dashboard/frontend/app.js",
+        "dashboard/backend/main.py",
+        "integrations/__init__.py",
+        "integrations/tradingview.py",
+        "macro/yahoo.py",
+        "macro/__init__.py",
+        "macro/yields.py",
+        "macro/world_bank.py",
+        "macro/fred.py",
+        "news/rss.py",
+        "news/__init__.py",
+        "scripts/__init__.py",
+        "scripts/kite_login.py",
+        "econ_calendar/events.py",
+        "econ_calendar/__init__.py",
+        "ideas/store.py",
+        "ideas/__init__.py",
+        "ideas/watchlist.py",
+        "ideas/generator.py",
+        "ideas/scanners.py",
+        "sentiment/__init__.py",
+        "sentiment/vader_news.py",
+        "data/trades.db",
+        "data/price_store.py",
+        "data/__init__.py",
+        "data/fetcher/kite_fetcher.py",
+        "data/fetcher/__init__.py",
+        "data/fetcher/helpers.py",
+        "data/storage/app.db",
+        "data/storage/prices.db"
+      ],
+      "path": "/Volumes/Devarsh SSD/algo based trading software 2",
+      "sensitive_path_flags": [
+        "config/credentials.example.py",
+        "config/credentials.py"
+      ],
+      "sqlite_databases": [
+        {
+          "error": null,
+          "exists": true,
+          "path": "/Volumes/Devarsh SSD/algo based trading software 2/data/trades.db",
+          "size_bytes": 28672,
+          "tables": [
+            {
+              "columns": [
+                {
+                  "name": "name",
+                  "type": ""
+                },
+                {
+                  "name": "seq",
+                  "type": ""
+                }
+              ],
+              "name": "sqlite_sequence",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "instrument_type",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "exchange",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "trade_type",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "quantity",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "entry_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "entry_time",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "exit_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "exit_time",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "status",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "pnl",
+                  "type": "REAL"
+                },
+                {
+                  "name": "pnl_pct",
+                  "type": "REAL"
+                },
+                {
+                  "name": "charges",
+                  "type": "REAL"
+                },
+                {
+                  "name": "net_pnl",
+                  "type": "REAL"
+                },
+                {
+                  "name": "strike_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "expiry_date",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "lot_size",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "broker",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "strategy",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "tags",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "notes",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "entry_order_id",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "exit_order_id",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "created_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "updated_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "stop_loss",
+                  "type": "REAL"
+                },
+                {
+                  "name": "risk_amount",
+                  "type": "REAL"
+                },
+                {
+                  "name": "r_multiple",
+                  "type": "REAL"
+                },
+                {
+                  "name": "charges_breakdown",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "trades",
+              "type": "table"
+            }
+          ]
+        },
+        {
+          "error": null,
+          "exists": true,
+          "path": "/Volumes/Devarsh SSD/algo based trading software 2/data/storage/app.db",
+          "size_bytes": 40783872,
+          "tables": [
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "code",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "name",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "kind",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "benchmark",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "base_capital",
+                  "type": "REAL"
+                },
+                {
+                  "name": "notes",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "created_at",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "accounts",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "kind",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "title",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "body",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "severity",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "agent_events",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "account_id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "kind",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "amount",
+                  "type": "REAL"
+                },
+                {
+                  "name": "notes",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "created_at",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "cashflows",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "account_id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "exchange",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "quantity",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "avg_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "last_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "sector",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "tag",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "opened_at",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "holdings",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "horizon",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "direction",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "entry",
+                  "type": "REAL"
+                },
+                {
+                  "name": "target",
+                  "type": "REAL"
+                },
+                {
+                  "name": "stop",
+                  "type": "REAL"
+                },
+                {
+                  "name": "confidence",
+                  "type": "REAL"
+                },
+                {
+                  "name": "source",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "rationale",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "status",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "created_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "closed_at",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "ideas",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "account_code",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "strategy",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "trade_id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "pnl",
+                  "type": "REAL"
+                },
+                {
+                  "name": "tags",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "title",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "body",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "rating",
+                  "type": "INTEGER"
+                }
+              ],
+              "name": "journal",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "underlying",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "expiry",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "spot",
+                  "type": "REAL"
+                },
+                {
+                  "name": "payload",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "option_chain_snapshots",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "account_id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "d",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "market_value",
+                  "type": "REAL"
+                },
+                {
+                  "name": "cash_balance",
+                  "type": "REAL"
+                },
+                {
+                  "name": "total_equity",
+                  "type": "REAL"
+                },
+                {
+                  "name": "realized_pnl",
+                  "type": "REAL"
+                },
+                {
+                  "name": "unrealized_pnl",
+                  "type": "REAL"
+                }
+              ],
+              "name": "portfolio_snapshots",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "name",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "underlying",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "legs_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "notes",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "created_at",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "saved_strategies",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "name",
+                  "type": ""
+                },
+                {
+                  "name": "seq",
+                  "type": ""
+                }
+              ],
+              "name": "sqlite_sequence",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "underlying",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "expiry",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "atm_strike",
+                  "type": "REAL"
+                },
+                {
+                  "name": "ce_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "pe_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "straddle",
+                  "type": "REAL"
+                },
+                {
+                  "name": "spot",
+                  "type": "REAL"
+                },
+                {
+                  "name": "iv_avg",
+                  "type": "REAL"
+                }
+              ],
+              "name": "straddle_snapshots",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "underlying",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "expiry",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "ce_strike",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "pe_strike",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ce_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "pe_price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "strangle",
+                  "type": "REAL"
+                },
+                {
+                  "name": "spot",
+                  "type": "REAL"
+                }
+              ],
+              "name": "strangle_snapshots",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "token",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "ltp",
+                  "type": "REAL"
+                },
+                {
+                  "name": "volume",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "oi",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "change_pct",
+                  "type": "REAL"
+                }
+              ],
+              "name": "ticks",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "account_id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "exchange",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "side",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "quantity",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "charges",
+                  "type": "REAL"
+                },
+                {
+                  "name": "product",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "strategy",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "notes",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "executed_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "broker_order_id",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "trades",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "ts",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "strategy",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "action",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "price",
+                  "type": "REAL"
+                },
+                {
+                  "name": "size",
+                  "type": "REAL"
+                },
+                {
+                  "name": "tag",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "payload",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "tradingview_signals",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "exchange",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "list_name",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "score",
+                  "type": "REAL"
+                },
+                {
+                  "name": "rationale",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "added_at",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "watchlist",
+              "type": "table"
+            }
+          ]
+        },
+        {
+          "error": null,
+          "exists": true,
+          "path": "/Volumes/Devarsh SSD/algo based trading software 2/data/storage/prices.db",
+          "size_bytes": 146219008,
+          "tables": [
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "strategy",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "universe",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "run_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "metrics_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "equity_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "bench_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "monthly_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "holdings_json",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "backtest_runs",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "date",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "open",
+                  "type": "REAL"
+                },
+                {
+                  "name": "high",
+                  "type": "REAL"
+                },
+                {
+                  "name": "low",
+                  "type": "REAL"
+                },
+                {
+                  "name": "close",
+                  "type": "REAL"
+                },
+                {
+                  "name": "volume",
+                  "type": "INTEGER"
+                }
+              ],
+              "name": "daily_bars",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "as_of",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "run_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "payload_json",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "live_signals",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "INTEGER"
+                },
+                {
+                  "name": "strategy",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "universe",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "run_at",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "metrics_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "equity_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "buyhold_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "live_json",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "transition_json",
+                  "type": "TEXT"
+                }
+              ],
+              "name": "regime_runs",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "name",
+                  "type": ""
+                },
+                {
+                  "name": "seq",
+                  "type": ""
+                }
+              ],
+              "name": "sqlite_sequence",
+              "type": "table"
+            },
+            {
+              "columns": [
+                {
+                  "name": "symbol",
+                  "type": "TEXT"
+                },
+                {
+                  "name": "token",
+                  "type": "INTEGER"
+                }
+              ],
+              "name": "token_map",
+              "type": "table"
+            }
+          ]
+        }
+      ],
+      "suffix_counts": {
+        "(none)": 7,
+        ".css": 1,
+        ".db": 3,
+        ".err": 2,
+        ".html": 1,
+        ".js": 1,
+        ".json": 1,
+        ".log": 3,
+        ".md": 2,
+        ".py": 163,
+        ".tag": 1,
+        ".txt": 1
+      },
+      "top_level_counts": {
+        ".DS_Store": 1,
+        ".claude": 1,
+        ".gitignore": 1,
+        ".pytest_cache": 5,
+        "README.md": 1,
+        "_preview_dashboard.py": 1,
+        "agents": 2,
+        "ai_engine": 2,
+        "alerts": 2,
+        "assistant": 4,
+        "backtesting": 2,
+        "config": 4,
+        "crypto": 2,
+        "dashboard": 36,
+        "data": 8,
+        "econ_calendar": 2,
+        "examples.py": 1,
+        "fundamentals": 4,
+        "ideas": 5,
+        "indicators": 4,
+        "integrations": 2,
+        "live_trading": 11,
+        "logs": 5,
+        "macro": 5,
+        "market_data": 6,
+        "news": 2,
+        "options_tools": 9,
+        "portfolios": 10,
+        "quant": 18,
+        "requirements.txt": 1,
+        "run_terminal.py": 1,
+        "scripts": 2,
+        "sentiment": 2,
+        "strategies": 10,
+        "tests": 10,
+        "utils": 4
+      },
+      "total_files": 186
+    },
+    "p2_cursor_zip": {
+      "error": null,
+      "exists": true,
+      "interesting_paths": [
+        "ps 2 cursor/get_zerodha_access_token.py",
+        "__MACOSX/ps 2 cursor/._get_zerodha_access_token.py",
+        "ps 2 cursor/TESTING_PDF_FEATURE.md",
+        "__MACOSX/ps 2 cursor/._TESTING_PDF_FEATURE.md",
+        "ps 2 cursor/CARERATING_bulk_upload.csv",
+        "__MACOSX/ps 2 cursor/._CARERATING_bulk_upload.csv",
+        "ps 2 cursor/tushit_equity_bulk_upload.csv",
+        "__MACOSX/ps 2 cursor/._tushit_equity_bulk_upload.csv",
+        "ps 2 cursor/naval_equity_folio_trades.csv",
+        "__MACOSX/ps 2 cursor/._naval_equity_folio_trades.csv",
+        "ps 2 cursor/update_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/._update_zerodha_token.py",
+        "ps 2 cursor/package-lock.json",
+        "__MACOSX/ps 2 cursor/._package-lock.json",
+        "ps 2 cursor/package.json",
+        "__MACOSX/ps 2 cursor/._package.json",
+        "ps 2 cursor/ps 2 cursor/IMPLEMENTATION_REPORT.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/._IMPLEMENTATION_REPORT.md",
+        "ps 2 cursor/ps 2 cursor/DEPLOYMENT_README.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/._DEPLOYMENT_README.md",
+        "ps 2 cursor/ps 2 cursor/SYSTEM_REQUIREMENTS.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/._SYSTEM_REQUIREMENTS.md",
+        "ps 2 cursor/node_modules/.package-lock.json",
+        "__MACOSX/ps 2 cursor/node_modules/._.package-lock.json",
+        "ps 2 cursor/ps 2 cursor/frontend/next-env.d.ts",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._next-env.d.ts",
+        "ps 2 cursor/ps 2 cursor/frontend/README.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._README.md",
+        "ps 2 cursor/ps 2 cursor/frontend/package-lock.json",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._package-lock.json",
+        "ps 2 cursor/ps 2 cursor/frontend/package.json",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._package.json",
+        "ps 2 cursor/ps 2 cursor/frontend/tsconfig.json",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._tsconfig.json",
+        "ps 2 cursor/ps 2 cursor/frontend/next.config.ts",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._next.config.ts",
+        "ps 2 cursor/ps 2 cursor/backend/get_zerodha_access_token.py",
+        "ps 2 cursor/ps 2 cursor/backend/IMPLEMENTATION_SUMMARY.md",
+        "ps 2 cursor/ps 2 cursor/backend/IMPLEMENTATION_COMPLETE.md",
+        "ps 2 cursor/ps 2 cursor/backend/PHASE1_SUMMARY.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._PHASE1_SUMMARY.md",
+        "ps 2 cursor/ps 2 cursor/backend/PHASE1_COMPLETE.md",
+        "ps 2 cursor/ps 2 cursor/backend/QUICKSTART.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._QUICKSTART.md",
+        "ps 2 cursor/ps 2 cursor/backend/README.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._README.md",
+        "ps 2 cursor/ps 2 cursor/backend/update_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._update_zerodha_token.py",
+        "ps 2 cursor/ps 2 cursor/backend/refresh_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._refresh_zerodha_token.py",
+        "ps 2 cursor/ps 2 cursor/backend/setup_redis.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._setup_redis.py",
+        "ps 2 cursor/ps 2 cursor/backend/IMPROVEMENTS.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._IMPROVEMENTS.md",
+        "ps 2 cursor/ps 2 cursor/backend/FINAL_SUMMARY.md",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._FINAL_SUMMARY.md",
+        "ps 2 cursor/ps 2 cursor/backend/.eslintrc.json",
+        "ps 2 cursor/ps 2 cursor/backend/QUICK_START.md",
+        "ps 2 cursor/frontend/public/sample_bulk_transactions.csv",
+        "__MACOSX/ps 2 cursor/frontend/public/._sample_bulk_transactions.csv",
+        "ps 2 cursor/node_modules/queue-microtask/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/queue-microtask/._index.js",
+        "ps 2 cursor/node_modules/queue-microtask/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/queue-microtask/._README.md",
+        "ps 2 cursor/node_modules/queue-microtask/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/queue-microtask/._package.json",
+        "ps 2 cursor/node_modules/queue-microtask/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/queue-microtask/._index.d.ts",
+        "ps 2 cursor/node_modules/tinyglobby/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/tinyglobby/._README.md",
+        "ps 2 cursor/node_modules/tinyglobby/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/tinyglobby/._package.json",
+        "ps 2 cursor/node_modules/callsites/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/callsites/._index.js",
+        "ps 2 cursor/node_modules/callsites/readme.md",
+        "__MACOSX/ps 2 cursor/node_modules/callsites/._readme.md",
+        "ps 2 cursor/node_modules/callsites/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/callsites/._package.json",
+        "ps 2 cursor/node_modules/callsites/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/callsites/._index.d.ts",
+        "ps 2 cursor/node_modules/reusify/test.js",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._test.js",
+        "ps 2 cursor/node_modules/reusify/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._README.md",
+        "ps 2 cursor/node_modules/reusify/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._package.json",
+        "ps 2 cursor/node_modules/reusify/reusify.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._reusify.d.ts",
+        "ps 2 cursor/node_modules/reusify/tsconfig.json",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._tsconfig.json",
+        "ps 2 cursor/node_modules/reusify/reusify.js",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._reusify.js",
+        "ps 2 cursor/node_modules/reusify/eslint.config.js",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._eslint.config.js",
+        "ps 2 cursor/node_modules/reusify/SECURITY.md",
+        "__MACOSX/ps 2 cursor/node_modules/reusify/._SECURITY.md",
+        "ps 2 cursor/node_modules/define-data-property/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/define-data-property/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/define-data-property/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/define-data-property/._index.js",
+        "ps 2 cursor/node_modules/define-data-property/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/define-data-property/._README.md",
+        "ps 2 cursor/node_modules/define-data-property/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/define-data-property/._package.json",
+        "ps 2 cursor/node_modules/define-data-property/tsconfig.json",
+        "__MACOSX/ps 2 cursor/node_modules/define-data-property/._tsconfig.json",
+        "ps 2 cursor/node_modules/define-data-property/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/define-data-property/._index.d.ts",
+        "ps 2 cursor/node_modules/is-bigint/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/is-bigint/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/is-bigint/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/is-bigint/._index.js",
+        "ps 2 cursor/node_modules/is-bigint/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/is-bigint/._README.md",
+        "ps 2 cursor/node_modules/is-bigint/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/is-bigint/._package.json",
+        "ps 2 cursor/node_modules/is-bigint/tsconfig.json",
+        "__MACOSX/ps 2 cursor/node_modules/is-bigint/._tsconfig.json",
+        "ps 2 cursor/node_modules/is-bigint/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/is-bigint/._index.d.ts",
+        "ps 2 cursor/node_modules/which-boxed-primitive/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/which-boxed-primitive/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/which-boxed-primitive/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/which-boxed-primitive/._index.js",
+        "ps 2 cursor/node_modules/which-boxed-primitive/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/which-boxed-primitive/._README.md",
+        "ps 2 cursor/node_modules/which-boxed-primitive/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/which-boxed-primitive/._package.json",
+        "ps 2 cursor/node_modules/which-boxed-primitive/tsconfig.json",
+        "__MACOSX/ps 2 cursor/node_modules/which-boxed-primitive/._tsconfig.json",
+        "ps 2 cursor/node_modules/which-boxed-primitive/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/which-boxed-primitive/._index.d.ts",
+        "ps 2 cursor/node_modules/globals/globals.json",
+        "__MACOSX/ps 2 cursor/node_modules/globals/._globals.json",
+        "ps 2 cursor/node_modules/globals/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/globals/._index.js",
+        "ps 2 cursor/node_modules/globals/readme.md",
+        "__MACOSX/ps 2 cursor/node_modules/globals/._readme.md",
+        "ps 2 cursor/node_modules/globals/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/globals/._package.json",
+        "ps 2 cursor/node_modules/globals/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/globals/._index.d.ts",
+        "ps 2 cursor/node_modules/shebang-regex/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/shebang-regex/._index.js",
+        "ps 2 cursor/node_modules/shebang-regex/readme.md",
+        "__MACOSX/ps 2 cursor/node_modules/shebang-regex/._readme.md",
+        "ps 2 cursor/node_modules/shebang-regex/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/shebang-regex/._package.json",
+        "ps 2 cursor/node_modules/shebang-regex/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/shebang-regex/._index.d.ts",
+        "ps 2 cursor/node_modules/functions-have-names/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/functions-have-names/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/functions-have-names/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/functions-have-names/._index.js",
+        "ps 2 cursor/node_modules/functions-have-names/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/functions-have-names/._README.md",
+        "ps 2 cursor/node_modules/functions-have-names/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/functions-have-names/._package.json",
+        "ps 2 cursor/node_modules/is-array-buffer/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/is-array-buffer/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/is-array-buffer/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/is-array-buffer/._index.js",
+        "ps 2 cursor/node_modules/is-array-buffer/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/is-array-buffer/._README.md",
+        "ps 2 cursor/node_modules/is-array-buffer/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/is-array-buffer/._package.json",
+        "ps 2 cursor/node_modules/is-array-buffer/tsconfig.json",
+        "__MACOSX/ps 2 cursor/node_modules/is-array-buffer/._tsconfig.json",
+        "ps 2 cursor/node_modules/is-array-buffer/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/is-array-buffer/._index.d.ts",
+        "ps 2 cursor/node_modules/has-property-descriptors/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/has-property-descriptors/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/has-property-descriptors/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/has-property-descriptors/._index.js",
+        "ps 2 cursor/node_modules/has-property-descriptors/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/has-property-descriptors/._README.md",
+        "ps 2 cursor/node_modules/has-property-descriptors/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/has-property-descriptors/._package.json",
+        "ps 2 cursor/node_modules/string.prototype.trimend/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/string.prototype.trimend/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._index.js",
+        "ps 2 cursor/node_modules/string.prototype.trimend/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._README.md",
+        "ps 2 cursor/node_modules/string.prototype.trimend/polyfill.js",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._polyfill.js",
+        "ps 2 cursor/node_modules/string.prototype.trimend/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._package.json",
+        "ps 2 cursor/node_modules/string.prototype.trimend/auto.js",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._auto.js",
+        "ps 2 cursor/node_modules/string.prototype.trimend/shim.js",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._shim.js",
+        "ps 2 cursor/node_modules/string.prototype.trimend/implementation.js",
+        "__MACOSX/ps 2 cursor/node_modules/string.prototype.trimend/._implementation.js",
+        "ps 2 cursor/node_modules/ts-api-utils/LICENSE.md",
+        "__MACOSX/ps 2 cursor/node_modules/ts-api-utils/._LICENSE.md",
+        "ps 2 cursor/node_modules/ts-api-utils/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/ts-api-utils/._README.md",
+        "ps 2 cursor/node_modules/ts-api-utils/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/ts-api-utils/._package.json",
+        "ps 2 cursor/node_modules/tsconfig-paths/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/tsconfig-paths/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/tsconfig-paths/register.js",
+        "__MACOSX/ps 2 cursor/node_modules/tsconfig-paths/._register.js",
+        "ps 2 cursor/node_modules/tsconfig-paths/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/tsconfig-paths/._README.md",
+        "ps 2 cursor/node_modules/tsconfig-paths/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/tsconfig-paths/._package.json",
+        "ps 2 cursor/node_modules/react-is/build-info.json",
+        "__MACOSX/ps 2 cursor/node_modules/react-is/._build-info.json",
+        "ps 2 cursor/node_modules/react-is/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/react-is/._index.js",
+        "ps 2 cursor/node_modules/react-is/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/react-is/._README.md",
+        "ps 2 cursor/node_modules/react-is/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/react-is/._package.json",
+        "ps 2 cursor/node_modules/is-typed-array/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/is-typed-array/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/is-typed-array/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/is-typed-array/._index.js",
+        "ps 2 cursor/node_modules/is-typed-array/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/is-typed-array/._README.md",
+        "ps 2 cursor/node_modules/is-typed-array/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/is-typed-array/._package.json",
+        "ps 2 cursor/node_modules/is-typed-array/tsconfig.json",
+        "__MACOSX/ps 2 cursor/node_modules/is-typed-array/._tsconfig.json",
+        "ps 2 cursor/node_modules/is-typed-array/index.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/is-typed-array/._index.d.ts",
+        "ps 2 cursor/node_modules/function.prototype.name/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/function.prototype.name/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._index.js",
+        "ps 2 cursor/node_modules/function.prototype.name/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._README.md",
+        "ps 2 cursor/node_modules/function.prototype.name/polyfill.js",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._polyfill.js",
+        "ps 2 cursor/node_modules/function.prototype.name/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._package.json",
+        "ps 2 cursor/node_modules/function.prototype.name/auto.js",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._auto.js",
+        "ps 2 cursor/node_modules/function.prototype.name/shim.js",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._shim.js",
+        "ps 2 cursor/node_modules/function.prototype.name/implementation.js",
+        "__MACOSX/ps 2 cursor/node_modules/function.prototype.name/._implementation.js",
+        "ps 2 cursor/node_modules/flatted/esm.js",
+        "__MACOSX/ps 2 cursor/node_modules/flatted/._esm.js",
+        "ps 2 cursor/node_modules/flatted/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/flatted/._index.js",
+        "ps 2 cursor/node_modules/flatted/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/flatted/._README.md"
+      ],
+      "path": "/Volumes/Devarsh SSD/ps 2 cursor.zip",
+      "sensitive_path_flags": [
+        "ps 2 cursor/get_zerodha_access_token.py",
+        "__MACOSX/ps 2 cursor/._get_zerodha_access_token.py",
+        "ps 2 cursor/update_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/._update_zerodha_token.py",
+        "ps 2 cursor/node_modules/js-tokens/",
+        "__MACOSX/ps 2 cursor/node_modules/._js-tokens",
+        "ps 2 cursor/ps 2 cursor/frontend/.env.local",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/frontend/._.env.local",
+        "ps 2 cursor/ps 2 cursor/backend/get_zerodha_access_token.py",
+        "ps 2 cursor/ps 2 cursor/backend/update_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._update_zerodha_token.py",
+        "ps 2 cursor/ps 2 cursor/backend/.env",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._.env",
+        "ps 2 cursor/ps 2 cursor/backend/refresh_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/._refresh_zerodha_token.py",
+        "ps 2 cursor/ps 2 cursor/backend/.env.example",
+        "ps 2 cursor/node_modules/js-tokens/LICENSE",
+        "__MACOSX/ps 2 cursor/node_modules/js-tokens/._LICENSE",
+        "ps 2 cursor/node_modules/js-tokens/CHANGELOG.md",
+        "__MACOSX/ps 2 cursor/node_modules/js-tokens/._CHANGELOG.md",
+        "ps 2 cursor/node_modules/js-tokens/index.js",
+        "__MACOSX/ps 2 cursor/node_modules/js-tokens/._index.js",
+        "ps 2 cursor/node_modules/js-tokens/README.md",
+        "__MACOSX/ps 2 cursor/node_modules/js-tokens/._README.md",
+        "ps 2 cursor/node_modules/js-tokens/package.json",
+        "__MACOSX/ps 2 cursor/node_modules/js-tokens/._package.json",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/",
+        "ps 2 cursor/node_modules/prop-types/lib/ReactPropTypesSecret.js",
+        "__MACOSX/ps 2 cursor/node_modules/prop-types/lib/._ReactPropTypesSecret.js",
+        "ps 2 cursor/node_modules/espree/lib/token-translator.js",
+        "__MACOSX/ps 2 cursor/node_modules/espree/lib/._token-translator.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/README 2.md",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/LICENSE",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/CHANGELOG.md",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/CHANGELOG 2.md",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/index.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/README.md",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/package 2.json",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/package.json",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/index 2.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/js-tokens/LICENSE 2",
+        "ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/get_zerodha_access_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/._get_zerodha_access_token.py",
+        "ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/update_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/._update_zerodha_token.py",
+        "ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/refresh_zerodha_token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/._refresh_zerodha_token.py",
+        "ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/.env.example",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/dist/portfolio-management-system-v20250731/backend/._.env.example",
+        "ps 2 cursor/ps 2 cursor/backend/app/core/token_manager.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/app/core/._token_manager.py",
+        "ps 2 cursor/node_modules/eslint-plugin-react/lib/util/getTokenBeforeClosingBracket.d.ts.map",
+        "__MACOSX/ps 2 cursor/node_modules/eslint-plugin-react/lib/util/._getTokenBeforeClosingBracket.d.ts.map",
+        "ps 2 cursor/node_modules/eslint-plugin-react/lib/util/getTokenBeforeClosingBracket.d.ts",
+        "__MACOSX/ps 2 cursor/node_modules/eslint-plugin-react/lib/util/._getTokenBeforeClosingBracket.d.ts",
+        "ps 2 cursor/node_modules/eslint-plugin-react/lib/util/getTokenBeforeClosingBracket.js",
+        "__MACOSX/ps 2 cursor/node_modules/eslint-plugin-react/lib/util/._getTokenBeforeClosingBracket.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/postcss/lib/tokenize.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/core-js/internals/dom-token-list-prototype.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/prop-types/lib/ReactPropTypesSecret.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/espree/lib/token-translator.js",
+        "ps 2 cursor/ps 2 cursor/backend/app/core/__pycache__/token_manager.cpython-313.pyc",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/app/core/__pycache__/._token_manager.cpython-313.pyc",
+        "ps 2 cursor/ps 2 cursor/backend/app/api/v1/token.py",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/app/api/v1/._token.py",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist/compiled/jsonwebtoken/",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist 2/compiled/jsonwebtoken/",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/eslint-plugin-react/lib 2/util/getTokenBeforeClosingBracket.d.ts.map",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/eslint-plugin-react/lib 2/util/getTokenBeforeClosingBracket.d.ts",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/eslint-plugin-react/lib 2/util/getTokenBeforeClosingBracket.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/eslint-plugin-react/lib/util/getTokenBeforeClosingBracket.d.ts.map",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/eslint-plugin-react/lib/util/getTokenBeforeClosingBracket.d.ts",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/eslint-plugin-react/lib/util/getTokenBeforeClosingBracket.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/caniuse-lite/data 2/features/passwordrules.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/caniuse-lite/data 2/features/credential-management.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/caniuse-lite/data/features/passwordrules.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/caniuse-lite/data/features/credential-management.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/axios/lib 2/cancel/CancelToken.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/axios/lib/cancel/CancelToken.js",
+        "ps 2 cursor/ps 2 cursor/backend/app/api/v1/__pycache__/token.cpython-313.pyc",
+        "__MACOSX/ps 2 cursor/ps 2 cursor/backend/app/api/v1/__pycache__/._token.cpython-313.pyc",
+        "ps 2 cursor/ps 2 cursor/.venv/lib/python3.13/site-packages/redis/credentials.py",
+        "ps 2 cursor/node_modules/eslint/lib/languages/js/source-code/token-store/",
+        "__MACOSX/ps 2 cursor/node_modules/eslint/lib/languages/js/source-code/._token-store",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist/compiled/jsonwebtoken/LICENSE",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist/compiled/jsonwebtoken/index.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist/compiled/jsonwebtoken/package.json",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/node_modules 2/postcss/lib/tokenize.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/node_modules/postcss/lib/tokenize.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist 2/compiled/jsonwebtoken/LICENSE",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist 2/compiled/jsonwebtoken/index.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/next/dist 2/compiled/jsonwebtoken/package.json",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules 2/date-fns/_lib/protectedTokens.d.cts",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules 2/date-fns/_lib/protectedTokens.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules 2/date-fns/_lib/protectedTokens.d.ts",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules 2/date-fns/_lib/protectedTokens.cjs",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules 2/date-fns/docs/unicodeTokens.md",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules/date-fns/_lib/protectedTokens.d.cts",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules/date-fns/_lib/protectedTokens.js",
+        "ps 2 cursor/ps 2 cursor/frontend/node_modules/react-datepicker/node_modules/date-fns/_lib/protectedTokens.d.ts"
+      ],
+      "size_bytes": 981369948,
+      "suffix_counts": {
+        "(none)": 26330,
+        ".afm": 248,
+        ".arff": 64,
+        ".c": 166,
+        ".cjs": 3213,
+        ".css": 50,
+        ".csv": 170,
+        ".cts": 2930,
+        ".dat": 115,
+        ".dist-info": 628,
+        ".ds_store": 46,
+        ".dylib": 203,
+        ".eslintrc": 112,
+        ".exe": 70,
+        ".f": 117,
+        ".f90": 296,
+        ".github": 95,
+        ".gz": 121,
+        ".h": 232,
+        ".js": 45033,
+        ".json": 2822,
+        ".jst": 100,
+        ".mako": 61,
+        ".map": 10399,
+        ".mat": 439,
+        ".md": 2409,
+        ".mjs": 3605,
+        ".mplstyle": 114,
+        ".mts": 3305,
+        ".npy": 53,
+        ".npz": 102,
+        ".nycrc": 96,
+        ".pack": 70,
+        ".pfb": 72,
+        ".png": 96,
+        ".pxd": 104,
+        ".py": 34946,
+        ".pyc": 25261,
+        ".pyi": 2094,
+        ".pyx": 71,
+        ".sav": 188,
+        ".so": 974,
+        ".svg": 104,
+        ".ts": 16015,
+        ".tsx": 221,
+        ".ttf": 174,
+        ".txt": 784,
+        ".typed": 350,
+        ".wav": 86,
+        ".yml": 397
+      },
+      "top_level_counts": {
+        "__MACOSX": 34670,
+        "ps 2 cursor": 152401
+      },
+      "total_entries": 187071
+    }
+  }
+}

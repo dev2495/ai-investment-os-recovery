@@ -1,0 +1,347 @@
+{
+  "candidate_id": 22,
+  "generated_at": "2026-07-06T22:06:09.334289+00:00",
+  "live_execution_allowed": false,
+  "run_key": "useropt_mcp_smoke_20260707",
+  "seed_data_allowed": false,
+  "stage_results": {
+    "backtest": {
+      "artifact_path": "_ai_os_runtime/artifacts/backtests/20260706T220608Z-strategy-candidate-20260706220607083-mcp-mean-reversion-smoke.json",
+      "database": {
+        "backtest_run_id": 23,
+        "inbox_id": 156,
+        "updated_tasks": 1,
+        "validation_review_id": 31
+      },
+      "diagnostics": {
+        "live_execution_allowed": false,
+        "warnings": []
+      },
+      "metrics": {
+        "average_bar_return": -2.957881988685539e-05,
+        "bar_volatility": 0.0006766439141737629,
+        "bars_tested": 1431,
+        "max_drawdown": -0.05552510709863967,
+        "sharpe_estimate": -6.009683007250308,
+        "symbols_tested": 14,
+        "total_return": -0.04135896241671355,
+        "trades_count": 88,
+        "win_rate_by_bar": 0.06563161609033169
+      },
+      "note_path": "_ai_os_runtime/artifacts/backtests/20260706T220608Z-strategy-candidate-20260706220607083-mcp-mean-reversion-smoke.md",
+      "status": "completed"
+    },
+    "data_quality": {
+      "gate": {
+        "candidate_id": 22,
+        "created_at": "2026-07-06T22:06:07.770165+00:00",
+        "created_by": "Backtest Engineer",
+        "first_ts": "2026-05-14T03:50:00+00:00",
+        "gate_key": "dq_20260706220607713223_22",
+        "gate_payload": {
+          "candidate_id": 22,
+          "candidate_key": "strategy-candidate-20260706220607083-mcp-mean-reversion-smoke",
+          "coverage": [
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:05:00+00:00",
+              "rows_seen": 103,
+              "symbol": "NSE:INDIA VIX"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:05:00+00:00",
+              "rows_seen": 103,
+              "symbol": "NSE:NIFTY 50"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:05:00+00:00",
+              "rows_seen": 103,
+              "symbol": "NSE:NIFTY BANK"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:ADANIPORTS"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:BAJAJ-AUTO"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:COALINDIA"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:HINDALCO"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:JSWSTEEL"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:NTPC"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:ONGC"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:POWERGRID"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:TATASTEEL"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:TCS"
+            },
+            {
+              "first_ts": "2026-05-14T03:50:00+00:00",
+              "last_ts": "2026-05-15T12:00:00+00:00",
+              "rows_seen": 102,
+              "symbol": "NSE:TITAN"
+            }
+          ],
+          "min_rows_per_symbol": 50,
+          "min_total_rows": 500,
+          "parser_version": "strategy_dsl_parser_v1",
+          "seed_data_allowed": false,
+          "source_table": "trading.ohlcv"
+        },
+        "id": 13,
+        "last_ts": "2026-05-15T12:05:00+00:00",
+        "matched_symbols": [
+          "NSE:INDIA VIX",
+          "NSE:NIFTY 50",
+          "NSE:NIFTY BANK",
+          "NSE:ADANIPORTS",
+          "NSE:BAJAJ-AUTO",
+          "NSE:COALINDIA",
+          "NSE:HINDALCO",
+          "NSE:JSWSTEEL",
+          "NSE:NTPC",
+          "NSE:ONGC",
+          "NSE:POWERGRID",
+          "NSE:TATASTEEL",
+          "NSE:TCS",
+          "NSE:TITAN"
+        ],
+        "max_symbol_rows": 103,
+        "min_rows_per_symbol": 50,
+        "min_symbol_rows": 102,
+        "min_total_rows": 500,
+        "missing_symbols": [],
+        "reasons": [],
+        "requested_symbols": [],
+        "severity": "info",
+        "status": "passed",
+        "timeframe": "5m",
+        "total_rows": 1431
+      }
+    },
+    "intake": {
+      "activation_gate": "paper_first_backtest_required",
+      "candidate_id": 22,
+      "candidate_key": "strategy-candidate-20260706220607083-mcp-mean-reversion-smoke",
+      "idea_id": 9,
+      "idea_key": "strategy-idea-20260706220607083-mcp-mean-reversion-smoke",
+      "inbox_id": 155,
+      "intake_id": 9,
+      "intake_key": "strategy-intake-20260706220607083-mcp-mean-reversion-smoke",
+      "live_execution_allowed": false,
+      "task_id": 99
+    },
+    "optimization": {
+      "artifact_path": "_ai_os_runtime/artifacts/optimizations/20260706T220609Z-strategy-candidate-20260706220607083-mcp-mean-reversion-smoke.json",
+      "best_params": {
+        "window": 20,
+        "z_entry": -0.75
+      },
+      "database": {
+        "inbox_id": 157,
+        "optimization_run_id": 7,
+        "validation_review_id": 32
+      },
+      "diagnostics": {
+        "live_execution_allowed": false,
+        "warnings": [
+          "Best parameter set has negative walk-forward/test Sharpe; reject until broader data proves otherwise."
+        ]
+      },
+      "metrics": {
+        "bars_seen": 1431,
+        "best_max_drawdown": -0.0480064799801756,
+        "best_score": -0.3389141438281126,
+        "best_test_sharpe": -0.5952616646209038,
+        "best_test_total_return": -0.0015307871920614557,
+        "best_total_return": -0.026859959297572344,
+        "best_walk_forward_consistency": 0.6666666666666666,
+        "best_walk_forward_test_return": 0.001355775970511656,
+        "best_walk_forward_test_sharpe": -0.9760809559410403,
+        "grid_size": 9,
+        "monte_carlo": {
+          "p05_total_return": -0.02685995929757312,
+          "p50_total_return": -0.026859959297572122,
+          "p95_total_return": -0.02685995929757079,
+          "runs": 200,
+          "worst_drawdown_p05": -0.06386120926301164
+        },
+        "symbols_tested": 14,
+        "trades_count": 104,
+        "walk_forward": {
+          "folds": [
+            {
+              "fold": 1,
+              "test_end": 849,
+              "test_metrics": {
+                "average_bar_return": 2.6510787291851282e-05,
+                "bar_volatility": 0.0009219550088079749,
+                "bars": 212,
+                "max_drawdown": -0.009566593849620664,
+                "sharpe_estimate": 3.9531546009449148,
+                "total_return": 0.005545994938614074,
+                "win_rate_by_bar": 0.1320754716981132
+              },
+              "test_start": 637,
+              "train_end": 637,
+              "train_metrics": {
+                "average_bar_return": -4.8554378219021196e-05,
+                "bar_volatility": 0.0009635280507320071,
+                "bars": 637,
+                "max_drawdown": -0.04297290448930258,
+                "sharpe_estimate": -6.927793539829172,
+                "total_return": -0.030743496783896873,
+                "win_rate_by_bar": 0.07378335949764521
+              },
+              "train_start": 0
+            },
+            {
+              "fold": 2,
+              "test_end": 1061,
+              "test_metrics": {
+                "average_bar_return": -3.7775113425886674e-05,
+                "bar_volatility": 0.00043639386785145583,
+                "bars": 212,
+                "max_drawdown": -0.010764403564713865,
+                "sharpe_estimate": -11.900303561455566,
+                "total_return": -0.007996521607136153,
+                "win_rate_by_bar": 0.08962264150943396
+              },
+              "test_start": 849,
+              "train_end": 849,
+              "train_metrics": {
+                "average_bar_return": -4.731447549580085e-05,
+                "bar_volatility": 0.0010839555877906022,
+                "bars": 637,
+                "max_drawdown": -0.04800647998017549,
+                "sharpe_estimate": -6.000859293559716,
+                "total_return": -0.030053261447171797,
+                "win_rate_by_bar": 0.0989010989010989
+              },
+              "train_start": 212
+            },
+            {
+              "fold": 3,
+              "test_end": 1273,
+              "test_metrics": {
+                "average_bar_return": 3.100499199920906e-05,
+                "bar_volatility": 0.0008492850043451982,
+                "bars": 212,
+                "max_drawdown": -0.00856796092911194,
+                "sharpe_estimate": 5.01890609268753,
+                "total_return": 0.0065178545800570475,
+                "win_rate_by_bar": 0.09905660377358491
+              },
+              "test_start": 1061,
+              "train_end": 1061,
+              "train_metrics": {
+                "average_bar_return": -2.5729704037389894e-05,
+                "bar_volatility": 0.0008189163545047375,
+                "bars": 637,
+                "max_drawdown": -0.022466660421765594,
+                "sharpe_estimate": -4.319427095754795,
+                "total_return": -0.0164660684373239,
+                "win_rate_by_bar": 0.10989010989010989
+              },
+              "train_start": 424
+            }
+          ],
+          "method": "rolling chronological train/test windows",
+          "summary": {
+            "average_test_return": 0.001355775970511656,
+            "average_test_sharpe": -0.9760809559410403,
+            "fold_count": 3,
+            "positive_test_folds": 2,
+            "test_consistency": 0.6666666666666666,
+            "worst_test_drawdown": -0.010764403564713865
+          }
+        }
+      },
+      "note_path": "_ai_os_runtime/artifacts/optimizations/20260706T220609Z-strategy-candidate-20260706220607083-mcp-mean-reversion-smoke.md",
+      "status": "completed"
+    },
+    "parse": {
+      "parse": {
+        "candidate_id": 22,
+        "id": 9,
+        "normalized_rules": {
+          "arbitrary_code_allowed": false,
+          "engine_template": "mean_reversion",
+          "entry": {
+            "expression": "zscore(close, 20) < -1.0",
+            "tokens": [
+              "close",
+              "zscore"
+            ]
+          },
+          "exit": {
+            "expression": "zscore(close, 20) > 0 or holding_days >= 10",
+            "tokens": [
+              "close",
+              "holding_days",
+              "or",
+              "zscore"
+            ]
+          },
+          "paper_first": true,
+          "risk": {
+            "expression": "stop_loss_pct <= 2 and target_pct >= 3"
+          }
+        },
+        "parse_errors": [],
+        "parse_status": "passed",
+        "parser_version": "strategy_dsl_parser_v1",
+        "symbols": [],
+        "template": "mean_reversion",
+        "timeframe": "5m",
+        "updated_at": "2026-07-06T22:06:07.37526+00:00"
+      }
+    }
+  },
+  "status": "completed"
+}
