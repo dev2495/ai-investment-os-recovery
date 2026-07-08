@@ -1203,6 +1203,30 @@ def build_snapshot() -> dict:
             ORDER BY long_term_gross_exposure DESC NULLS LAST, symbol
             LIMIT 100
         """,
+        "long_term_coverage_summary": """
+            SELECT metric, value, interpretation
+            FROM portfolio.v_long_term_coverage_summary
+            ORDER BY metric
+        """,
+        "long_term_coverage_queue": """
+            SELECT id, coverage_key, symbol, exchange, holding_thesis_id,
+                   company_name, thesis_status, decision_status, gap_type,
+                   severity, priority, priority_score, owner_agent, status,
+                   recommended_action, task_id, task_status, inbox_id,
+                   inbox_status, long_term_gross_exposure, long_term_net_exposure,
+                   client_count, clients, checklist_count,
+                   checklist_complete_count, valuation_model_count,
+                   valuation_complete_count, monte_carlo_run_count,
+                   latest_monte_carlo_at, thesis_note_path, next_review_due_at,
+                   evidence, created_by, created_at, updated_at, resolved_at
+            FROM portfolio.v_long_term_coverage_queue
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                CASE status WHEN 'queued' THEN 1 WHEN 'task_created' THEN 2 WHEN 'in_progress' THEN 3 WHEN 'resolved' THEN 4 ELSE 5 END,
+                priority_score DESC,
+                updated_at DESC
+            LIMIT 120
+        """,
         "long_term_thesis_checklists": """
             SELECT id, holding_thesis_id, symbol, exchange, company_name,
                    checklist_key, checklist_name, status, score, findings,
@@ -4169,6 +4193,37 @@ def sync_position_readiness_remediation(payload: dict) -> dict:
         "sync_position_readiness_remediation",
         actor,
         "books.position_object_remediation_queue",
+        result,
+        payload,
+    )
+    return result
+
+
+def sync_long_term_coverage_queue(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    try:
+        limit = int(payload.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 500))
+    create_tasks = bool(payload.get("create_tasks", payload.get("createTasks", True)))
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(
+            portfolio.sync_long_term_coverage_queue(
+                {limit},
+                {str(create_tasks).lower()},
+                {sql_literal(actor)}
+            )
+        )::TEXT
+        """
+    )
+    result = rows[0] if rows else {"status": "error", "message": "long-term coverage sync failed"}
+    audit_api_write(
+        "ai_os_api_sync_long_term_coverage_queue",
+        "sync_long_term_coverage_queue",
+        actor,
+        "portfolio.long_term_coverage_queue",
         result,
         payload,
     )
@@ -7175,6 +7230,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/portfolio/long-term-thesis/valuation":
                 self._send_json(update_long_term_valuation_model(payload), 200)
+                return
+            if self.path == "/api/portfolio/long-term-coverage/sync":
+                self._send_json(sync_long_term_coverage_queue(payload), 201)
                 return
             if self.path == "/api/portfolio/long-term-committee/open":
                 self._send_json(open_long_term_committee_review(payload), 201)

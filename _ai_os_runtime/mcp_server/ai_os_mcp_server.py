@@ -306,6 +306,100 @@ def position_remediation_summary(arguments: dict) -> dict:
     )
 
 
+def sync_long_term_coverage_queue(arguments: dict) -> dict:
+    actor = str(arguments.get("actor") or "Long-Term Portfolio Manager").strip()
+    limit = limit_arg(arguments, default=100, maximum=500)
+    create_tasks = bool(arguments.get("create_tasks", arguments.get("createTasks", True)))
+    result_rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(
+            portfolio.sync_long_term_coverage_queue(
+                {limit},
+                {str(create_tasks).lower()},
+                {sql_literal(actor)}
+            )
+        )::TEXT
+        """
+    )
+    result = result_rows[0] if result_rows else {"error": "long-term coverage sync failed"}
+    audit_mcp_call(
+        tool_name="ai_os_sync_long_term_coverage_queue",
+        action_type="sync_long_term_coverage_queue",
+        permission_level="write_with_approval",
+        actor=actor,
+        target_table="portfolio.long_term_coverage_queue",
+        request_payload=arguments,
+        result_payload=result,
+    )
+    return tool_result(result)
+
+
+def long_term_coverage_queue(arguments: dict) -> dict:
+    status = str(arguments.get("status") or "").strip()
+    owner_agent = str(arguments.get("owner_agent") or arguments.get("ownerAgent") or "").strip()
+    gap_type = str(arguments.get("gap_type") or arguments.get("gapType") or "").strip()
+    symbol = str(arguments.get("symbol") or "").strip().upper()
+    severity = str(arguments.get("severity") or "").strip()
+    clauses = []
+    if status:
+        clauses.append(f"status = {sql_literal(status)}")
+    if owner_agent:
+        clauses.append(f"owner_agent = {sql_literal(owner_agent)}")
+    if gap_type:
+        clauses.append(f"gap_type = {sql_literal(gap_type)}")
+    if symbol:
+        clauses.append(f"upper(symbol) = {sql_literal(symbol)}")
+    if severity:
+        clauses.append(f"severity = {sql_literal(severity)}")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    limit = limit_arg(arguments, default=50, maximum=200)
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                """
+                SELECT metric, value, interpretation
+                FROM portfolio.v_long_term_coverage_summary
+                ORDER BY metric
+                """
+            ),
+            "queue": run_psql_json(
+                f"""
+                SELECT id, coverage_key, symbol, exchange, holding_thesis_id,
+                       company_name, thesis_status, decision_status, gap_type,
+                       severity, priority, priority_score, owner_agent, status,
+                       recommended_action, task_id, task_status, inbox_id,
+                       inbox_status, long_term_gross_exposure, client_count,
+                       checklist_count, checklist_complete_count,
+                       valuation_model_count, valuation_complete_count,
+                       monte_carlo_run_count, latest_monte_carlo_at,
+                       thesis_note_path, next_review_due_at, created_by,
+                       created_at, updated_at
+                FROM portfolio.v_long_term_coverage_queue
+                {where}
+                ORDER BY
+                    CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                    CASE status WHEN 'queued' THEN 1 WHEN 'task_created' THEN 2 WHEN 'in_progress' THEN 3 WHEN 'resolved' THEN 4 ELSE 5 END,
+                    priority_score DESC,
+                    updated_at DESC
+                LIMIT {limit}
+                """
+            ),
+        }
+    )
+
+
+def long_term_coverage_summary(arguments: dict) -> dict:
+    return tool_result(
+        run_psql_json(
+            """
+            SELECT metric, value, interpretation
+            FROM portfolio.v_long_term_coverage_summary
+            ORDER BY metric
+            """
+        )
+    )
+
+
 def p2cursor_source_summary(arguments: dict) -> dict:
     return tool_result(
         run_psql_json(
@@ -4894,6 +4988,38 @@ TOOLS = {
         "description": "Read position-object remediation summary metrics.",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": position_remediation_summary,
+    },
+    "ai_os_sync_long_term_coverage_queue": {
+        "description": "Create or refresh Long-Term coverage queue items and optional agent tasks from live thesis, checklist, valuation, Monte Carlo, exit, and committee gaps.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "actor": {"type": "string", "default": "Long-Term Portfolio Manager"},
+                "limit": {"type": "integer", "default": 100},
+                "create_tasks": {"type": "boolean", "default": True},
+            },
+        },
+        "handler": sync_long_term_coverage_queue,
+    },
+    "ai_os_long_term_coverage_queue": {
+        "description": "Read Long-Term coverage queue items, owner agents, linked tasks, inbox state, and missing evidence by symbol.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "owner_agent": {"type": "string"},
+                "gap_type": {"type": "string"},
+                "severity": {"type": "string"},
+                "symbol": {"type": "string"},
+                "limit": {"type": "integer", "default": 50},
+            },
+        },
+        "handler": long_term_coverage_queue,
+    },
+    "ai_os_long_term_coverage_summary": {
+        "description": "Read Long-Term coverage summary metrics across missing thesis, checklist, valuation, Monte Carlo, exit, and committee readiness work.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": long_term_coverage_summary,
     },
     "ai_os_create_task": {
         "description": "Create an agent task and optional inbox item with evidence. Local warehouse write only.",

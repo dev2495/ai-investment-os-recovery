@@ -121,6 +121,29 @@ tools:
       - model_validation_before_alerts
       - human_approval_before_live
 
+  long_term_office_operator:
+    type: mcp_tool_group
+    permission: write_with_approval
+    tools:
+      - ai_os_long_term_coverage_summary
+      - ai_os_long_term_coverage_queue
+      - ai_os_sync_long_term_coverage_queue
+      - ai_os_generate_long_term_thesis_memo
+      - ai_os_generate_long_term_research_packet
+      - ai_os_update_long_term_thesis_checklist
+      - ai_os_update_long_term_valuation_model
+      - ai_os_run_long_term_monte_carlo
+      - ai_os_open_long_term_committee_review
+      - ai_os_generate_long_term_committee_memo
+      - ai_os_resolve_long_term_committee_decision
+      - ai_os_dispatch_long_term_specialists
+    guardrails:
+      - source_required
+      - separate_thesis_from_trade
+      - no_capital_action_from_research_queue
+      - committee_before_hold_approval
+      - human_approval_before_any_trade
+
   jarvis_runtime:
     type: runtime
     permission: write_with_approval

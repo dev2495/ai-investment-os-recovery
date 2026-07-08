@@ -101,6 +101,8 @@ export interface LiveSnapshot {
   position_remediation_summary: LiveRow[];
   position_remediation_queue: LiveRow[];
   long_term_theses: LiveRow[];
+  long_term_coverage_summary: LiveRow[];
+  long_term_coverage_queue: LiveRow[];
   long_term_thesis_checklists: LiveRow[];
   long_term_valuation_models: LiveRow[];
   long_term_monte_carlo_runs: LiveRow[];
@@ -466,6 +468,12 @@ export interface GenerateLongTermResearchPacketInput {
   symbol?: string;
   exchange?: string;
   actor?: string;
+}
+
+export interface SyncLongTermCoverageInput {
+  actor?: string;
+  limit?: string | number;
+  create_tasks?: boolean;
 }
 
 export interface UpdateLongTermChecklistInput {
@@ -1115,6 +1123,13 @@ export function generateLongTermThesisMemo(input: GenerateLongTermThesisMemoInpu
 
 export function generateLongTermResearchPacket(input: GenerateLongTermResearchPacketInput = {}): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/portfolio/long-term-thesis/research-packet", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function syncLongTermCoverage(input: SyncLongTermCoverageInput = {}): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/portfolio/long-term-coverage/sync", {
     body: JSON.stringify(input),
     method: "POST"
   });

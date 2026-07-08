@@ -112,6 +112,7 @@ import {
   startStrategyPaperMonitor,
   stopStrategyPaperMonitor,
   syncLimitedLiveRequest,
+  syncLongTermCoverage,
   syncPositionReadinessRemediation,
   triageAgentMessage,
   updateBookAssignment
@@ -805,6 +806,8 @@ function App() {
   const [filingCollectorBusy, setFilingCollectorBusy] = useState(false);
   const [filingExtractorBusy, setFilingExtractorBusy] = useState(false);
   const [specialMemoBusyId, setSpecialMemoBusyId] = useState("");
+  const [longTermCoverageBusy, setLongTermCoverageBusy] = useState(false);
+  const [longTermCoverageMemoBusyKey, setLongTermCoverageMemoBusyKey] = useState("");
   const [longTermThesisBusy, setLongTermThesisBusy] = useState(false);
   const [longTermPacketBusyId, setLongTermPacketBusyId] = useState("");
   const [longTermCommitteeBusyId, setLongTermCommitteeBusyId] = useState("");
@@ -1031,6 +1034,8 @@ function App() {
   const dashboardPositionRemediationSummary = useMemo(() => snapshot?.position_remediation_summary ?? [], [snapshot]);
   const dashboardPositionRemediationQueue = useMemo(() => snapshot?.position_remediation_queue.slice(0, 8) ?? [], [snapshot]);
   const dashboardLongTermTheses = useMemo(() => snapshot?.long_term_theses.slice(0, 10) ?? [], [snapshot]);
+  const dashboardLongTermCoverageSummary = useMemo(() => snapshot?.long_term_coverage_summary ?? [], [snapshot]);
+  const dashboardLongTermCoverageQueue = useMemo(() => snapshot?.long_term_coverage_queue.slice(0, 12) ?? [], [snapshot]);
   const dashboardLongTermChecklistRows = useMemo(() => snapshot?.long_term_thesis_checklists.slice(0, 10) ?? [], [snapshot]);
   const dashboardLongTermValuationRows = useMemo(() => snapshot?.long_term_valuation_models.slice(0, 8) ?? [], [snapshot]);
   const dashboardLongTermMonteCarloRuns = useMemo(() => snapshot?.long_term_monte_carlo_runs.slice(0, 6) ?? [], [snapshot]);
@@ -1912,6 +1917,65 @@ function App() {
       setLiveStatus("offline");
     } finally {
       setLongTermThesisBusy(false);
+    }
+  };
+
+  const syncLongTermCoverageFromDashboard = async () => {
+    if (longTermCoverageBusy) {
+      return;
+    }
+    setLongTermCoverageBusy(true);
+    setUiError("");
+    try {
+      await syncLongTermCoverage({
+        actor: "Long-Term Portfolio Manager",
+        create_tasks: true,
+        limit: 120
+      });
+      const nextSnapshot = await fetchLiveSnapshot();
+      setSnapshot(nextSnapshot);
+      setItems(liveInbox(nextSnapshot));
+      setApprovalItems(liveApprovals(nextSnapshot));
+      setManualUpdates(liveManualUpdates(nextSnapshot));
+      setLiveStatus("online");
+    } catch (error) {
+      setUiError(error instanceof Error ? error.message : "Long-term coverage sync failed");
+      setLiveStatus("offline");
+    } finally {
+      setLongTermCoverageBusy(false);
+    }
+  };
+
+  const generateLongTermThesisFromCoverage = async (coverage: LiveRow) => {
+    const coverageKey = asText(coverage, "coverage_key", "");
+    const symbol = asText(coverage, "symbol", "").toUpperCase();
+    if (!coverageKey || !symbol || longTermCoverageMemoBusyKey) {
+      return;
+    }
+    setLongTermCoverageMemoBusyKey(coverageKey);
+    setUiError("");
+    try {
+      await generateLongTermThesisMemo({
+        actor: "Long-Term Portfolio Manager",
+        exchange: asText(coverage, "exchange", "NSE"),
+        symbol
+      });
+      await syncLongTermCoverage({
+        actor: "Long-Term Portfolio Manager",
+        create_tasks: true,
+        limit: 120
+      });
+      const nextSnapshot = await fetchLiveSnapshot();
+      setSnapshot(nextSnapshot);
+      setItems(liveInbox(nextSnapshot));
+      setApprovalItems(liveApprovals(nextSnapshot));
+      setManualUpdates(liveManualUpdates(nextSnapshot));
+      setLiveStatus("online");
+    } catch (error) {
+      setUiError(error instanceof Error ? error.message : "Long-term thesis memo generation failed");
+      setLiveStatus("offline");
+    } finally {
+      setLongTermCoverageMemoBusyKey("");
     }
   };
 
@@ -3862,6 +3926,59 @@ function App() {
               <button className="mini-action-button" disabled={longTermThesisBusy} onClick={() => void generateLongTermThesisFromDashboard()} type="button">
                 {longTermThesisBusy ? "Generating..." : "Generate thesis memo"}
               </button>
+              <button className="mini-action-button" disabled={longTermCoverageBusy} onClick={() => void syncLongTermCoverageFromDashboard()} type="button">
+                {longTermCoverageBusy ? "Syncing..." : "Sync coverage"}
+              </button>
+            </div>
+            <div className="strategy-summary-strip">
+              {dashboardLongTermCoverageSummary.slice(0, 6).map((metric) => (
+                <div className="strategy-summary-cell" key={asText(metric, "metric")}>
+                  <span>{asText(metric, "metric", "metric").replace(/_/g, " ")}</span>
+                  <strong>{asText(metric, "value", "0")}</strong>
+                </div>
+              ))}
+              {!dashboardLongTermCoverageSummary.length ? (
+                <div className="strategy-summary-cell">
+                  <span>coverage items</span>
+                  <strong>0</strong>
+                </div>
+              ) : null}
+            </div>
+            <div className="source-check-list">
+              <h4>Coverage board</h4>
+              {dashboardLongTermCoverageQueue.length ? (
+                dashboardLongTermCoverageQueue.map((coverage) => {
+                  const coverageKey = asText(coverage, "coverage_key", asText(coverage, "id"));
+                  const canGenerateMemo = asText(coverage, "gap_type") === "missing_thesis_container";
+                  return (
+                    <article className="source-check-row" key={coverageKey}>
+                      <div>
+                        <strong>{asText(coverage, "symbol", "SYMBOL")} · {asText(coverage, "gap_type", "gap").replace(/_/g, " ")}</strong>
+                        <p>
+                          {asText(coverage, "owner_agent", "Long-Term Portfolio Manager")} · {compactInr(coverage.long_term_gross_exposure)} · {asText(coverage, "client_count", "0")} clients
+                        </p>
+                      </div>
+                      <StatusPill status={asText(coverage, "severity", "medium")} />
+                      <span>{asText(coverage, "status", "queued")}</span>
+                      {canGenerateMemo ? (
+                        <button
+                          className="mini-action-button"
+                          disabled={Boolean(longTermCoverageMemoBusyKey)}
+                          onClick={() => void generateLongTermThesisFromCoverage(coverage)}
+                          type="button"
+                        >
+                          {longTermCoverageMemoBusyKey === coverageKey ? "Memo..." : "Memo"}
+                        </button>
+                      ) : (
+                        <small>{asText(coverage, "task_status", "task")}</small>
+                      )}
+                      <time>{compactDate(coverage.updated_at)}</time>
+                    </article>
+                  );
+                })
+              ) : (
+                <EmptyState message="No Long-Term coverage gaps loaded. Sync coverage after holdings or research updates." />
+              )}
             </div>
             <div className="source-check-list">
               {dashboardLongTermTheses.length ? (

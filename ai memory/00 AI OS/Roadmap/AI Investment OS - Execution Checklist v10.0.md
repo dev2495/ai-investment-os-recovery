@@ -123,6 +123,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Exit criteria linked to holdings.
 - [~] Quarterly review schedule.
 - [~] Long-Term Office dashboard foundation.
+- [x] Long-Term coverage board v1. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; 52 live coverage gaps across 45 symbols synced from real Long-Term exposure, with API/MCP/UI and 52 tasks/inbox items verified.
 - [~] Research packet generator.
 - [~] Long-Term Portfolio Manager agent.
 - [~] Company Analyst agent.
@@ -136,14 +137,14 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Quality Score Agent.
 - [~] Portfolio Fit Agent.
 - [~] Long-Term Investment Committee workflow.
-- [ ] Business model checklist.
-- [ ] Industry structure checklist.
-- [ ] Moat scorecard.
-- [ ] Management scorecard.
-- [ ] Governance scorecard.
-- [ ] Capital allocation scorecard.
-- [ ] Financial statement quality scorecard.
-- [ ] Forensic accounting checklist.
+- [~] Business model checklist. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Industry structure checklist. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Moat scorecard. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Management scorecard. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Governance scorecard. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Capital allocation scorecard. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Financial statement quality scorecard. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
+- [~] Forensic accounting checklist. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; checklist table/UI exists, but coverage board shows many holdings still need source-backed completion.
 - [ ] DCF module.
 - [ ] Reverse DCF module.
 - [ ] Sum-of-parts module.
@@ -477,7 +478,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Portfolio Intelligence dashboard v3.
 - [ ] Client Folio dashboard.
 - [x] Symbol Intelligence dashboard v2. Evidence: [[2026-07-07-symbol-intelligence-v2]].
-- [ ] Long-Term Office dashboard v2.
+- [~] Long-Term Office dashboard v2. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; coverage board is now live inside Long-Term Thesis Control, but full client suitability and decision UI remain open.
 - [ ] Tactical Office dashboard.
 - [ ] Trading Desk dashboard.
 - [ ] Risk Center dashboard.
@@ -564,7 +565,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Add Symbol Intelligence action router into agent tasks/inbox. Evidence: [[2026-07-07-symbol-intelligence-action-router-v1]].
 - [~] Harden p2cursor and old algo system extraction. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; readiness/run/issues/API/MCP/UI are live, but full mapping/promotion gaps remain.
 - [x] Build Strategy Template Library v1. Evidence: [[2026-07-08-strategy-template-library-v1]]; migration, API route, MCP tools, dashboard panel, live API smoke, and build checks passed.
-- [ ] Implement Long-Term checklist tables and UI.
+- [x] Implement Long-Term checklist tables and UI. Evidence: [[2026-07-08-long-term-coverage-board-v1]] plus existing live `portfolio.v_long_term_thesis_checklists` dashboard rows; table/API/UI are live, while row completion remains tracked by the coverage board.
 - [ ] Implement Long-Term Monte Carlo engine and report.
 - [ ] Implement research/news/filing collector expansion.
 - [ ] Harden TradingView controller and straddle workflow.
