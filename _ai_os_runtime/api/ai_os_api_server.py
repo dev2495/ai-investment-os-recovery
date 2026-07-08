@@ -434,6 +434,35 @@ def build_snapshot() -> dict:
             FROM strategy.v_strategy_arsenal_summary
             ORDER BY metric
         """,
+        "strategy_template_summary": """
+            SELECT metric, value, interpretation
+            FROM strategy.v_strategy_template_summary
+            ORDER BY metric
+        """,
+        "strategy_template_library": """
+            SELECT id, template_key, template_name, template_family, asset_class,
+                   default_timeframe, engine_template, default_symbols,
+                   default_universe, description, entry_rule, exit_rule, risk_rule,
+                   data_requirements, required_gates, risk_controls,
+                   supported_assets, source_component, execution_readiness,
+                   owner_agent, status, display_rank, application_count,
+                   applications_7d, latest_application_at, updated_at
+            FROM strategy.v_strategy_template_library
+            ORDER BY display_rank, template_name
+            LIMIT 80
+        """,
+        "strategy_template_applications": """
+            SELECT id, application_key, template_key, template_name,
+                   template_family, asset_class, engine_template,
+                   execution_readiness, created_by, strategy_name, symbols,
+                   universe, timeframe, intake_id, intake_key, idea_id,
+                   idea_key, candidate_id, candidate_key, candidate_status,
+                   activation_gate, task_id, inbox_id, status, notes,
+                   created_at, updated_at
+            FROM strategy.v_strategy_template_applications
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
         "strategy_backtest_runs": """
             SELECT br.id, br.strategy_id, coalesce(sc.candidate_key, 'candidate_' || sc.id::TEXT) AS candidate_key,
                    sc.name AS strategy_name, br.run_status, br.data_start, br.data_end,
@@ -4230,6 +4259,61 @@ def create_strategy_intake(payload: dict) -> dict:
     return result
 
 
+def create_strategy_from_template(payload: dict) -> dict:
+    template_key = str(payload.get("template_key") or payload.get("templateKey") or "").strip()
+    if not template_key:
+        raise ValueError("template_key is required")
+    actor = str(payload.get("created_by") or payload.get("createdBy") or payload.get("actor") or "Devarsh").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH created AS (
+            SELECT strategy.create_strategy_from_template(
+                {sql_literal(template_key)},
+                {sql_literal(actor)},
+                {sql_literal(payload.get("strategy_name") or payload.get("strategyName"))},
+                {sql_text_array(payload.get("symbols")) if payload.get("symbols") else "NULL"},
+                {sql_literal(payload.get("universe"))},
+                {sql_literal(payload.get("timeframe"))},
+                {sql_literal(payload.get("notes"))}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'application_id')::BIGINT AS application_id,
+                result->>'application_key' AS application_key,
+                result->>'template_key' AS template_key,
+                result->>'template_name' AS template_name,
+                result->>'execution_readiness' AS execution_readiness,
+                result->>'engine_template' AS engine_template,
+                (result->>'intake_id')::BIGINT AS intake_id,
+                result->>'intake_key' AS intake_key,
+                (result->>'idea_id')::BIGINT AS idea_id,
+                result->>'idea_key' AS idea_key,
+                (result->>'candidate_id')::BIGINT AS candidate_id,
+                result->>'candidate_key' AS candidate_key,
+                (result->>'task_id')::BIGINT AS task_id,
+                (result->>'inbox_id')::BIGINT AS inbox_id,
+                result->>'activation_gate' AS activation_gate,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM created
+        ) output_rows
+        """
+    )
+    if not rows:
+        raise ValueError("strategy template application failed")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_create_strategy_from_template",
+        "create_strategy_from_template",
+        actor,
+        "strategy.strategy_template_applications",
+        result,
+        payload,
+    )
+    return result
+
+
 def run_strategy_dsl_quality_command(payload: dict, *, parse: bool = False, gate: bool = False) -> dict:
     try:
         candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
@@ -7151,6 +7235,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/strategy/intakes":
                 self._send_json(create_strategy_intake(payload), 201)
+                return
+            if self.path == "/api/strategy/templates/apply":
+                self._send_json(create_strategy_from_template(payload), 201)
                 return
             if self.path == "/api/strategy/dsl/parse":
                 self._send_json(parse_strategy_dsl(payload), 201)

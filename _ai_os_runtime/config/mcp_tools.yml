@@ -100,6 +100,27 @@ tools:
       - ai_os_fincept_component_review
       - ai_os_component_inventory
 
+  strategy_arsenal_operator:
+    type: mcp_tool_group
+    permission: write_with_approval
+    tools:
+      - ai_os_strategy_template_library
+      - ai_os_create_strategy_from_template
+      - ai_os_create_strategy_intake
+      - ai_os_strategy_intakes
+      - ai_os_create_generated_strategy_idea
+      - ai_os_strategy_lab
+      - ai_os_parse_strategy_dsl
+      - ai_os_strategy_data_quality_gate
+      - ai_os_queue_strategy_backtest
+      - ai_os_run_user_defined_strategy_optimizer
+    guardrails:
+      - paper_first
+      - no_broker_orders
+      - data_quality_before_backtest
+      - model_validation_before_alerts
+      - human_approval_before_live
+
   jarvis_runtime:
     type: runtime
     permission: write_with_approval

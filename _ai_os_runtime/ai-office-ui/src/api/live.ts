@@ -31,6 +31,9 @@ export interface LiveSnapshot {
   generated_strategy_ideas: LiveRow[];
   strategy_arsenal_queue: LiveRow[];
   strategy_arsenal_summary: LiveRow[];
+  strategy_template_summary: LiveRow[];
+  strategy_template_library: LiveRow[];
+  strategy_template_applications: LiveRow[];
   strategy_backtest_runs: LiveRow[];
   strategy_rule_specs: LiveRow[];
   strategy_data_quality_gates: LiveRow[];
@@ -647,6 +650,16 @@ export interface CreateStrategyIntakeInput {
   risk_notes?: string;
   requested_outputs?: string[];
   actor?: string;
+}
+
+export interface ApplyStrategyTemplateInput {
+  template_key: string;
+  actor?: string;
+  strategy_name?: string;
+  symbols?: string[];
+  universe?: string;
+  timeframe?: string;
+  notes?: string;
 }
 
 export interface RunStrategyBacktestInput {
@@ -1270,6 +1283,13 @@ export function routeSymbolIntelligenceAction(input: {
 
 export function createStrategyIntake(input: CreateStrategyIntakeInput): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/strategy/intakes", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function applyStrategyTemplate(input: ApplyStrategyTemplateInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/strategy/templates/apply", {
     body: JSON.stringify(input),
     method: "POST"
   });

@@ -31,6 +31,7 @@ import {
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  applyStrategyTemplate,
   calculateSpecialSituationSpread,
   checkStrategyDataQuality,
   createInboxItem,
@@ -759,6 +760,7 @@ function App() {
   const [bookAssignmentBusy, setBookAssignmentBusy] = useState(false);
   const [tradeTicketBusy, setTradeTicketBusy] = useState(false);
   const [strategyIntakeBusy, setStrategyIntakeBusy] = useState(false);
+  const [strategyTemplateBusyKey, setStrategyTemplateBusyKey] = useState("");
   const [userStrategyOptimizerBusy, setUserStrategyOptimizerBusy] = useState(false);
   const [strategyDiscoveryBusy, setStrategyDiscoveryBusy] = useState(false);
   const [strategyDiscoverySchedulerBusy, setStrategyDiscoverySchedulerBusy] = useState(false);
@@ -961,6 +963,9 @@ function App() {
   const dashboardStrategies = useMemo(() => liveStrategies(snapshot), [snapshot]);
   const dashboardStrategyArsenal = useMemo(() => snapshot?.strategy_arsenal_queue.slice(0, 8) ?? [], [snapshot]);
   const dashboardStrategySummary = useMemo(() => snapshot?.strategy_arsenal_summary ?? [], [snapshot]);
+  const dashboardStrategyTemplateSummary = useMemo(() => snapshot?.strategy_template_summary ?? [], [snapshot]);
+  const dashboardStrategyTemplates = useMemo(() => snapshot?.strategy_template_library.slice(0, 10) ?? [], [snapshot]);
+  const dashboardStrategyTemplateApplications = useMemo(() => snapshot?.strategy_template_applications.slice(0, 5) ?? [], [snapshot]);
   const dashboardStrategyDslReadiness = useMemo(() => snapshot?.strategy_dsl_readiness.slice(0, 8) ?? [], [snapshot]);
   const dashboardStrategyDataQualityGates = useMemo(() => snapshot?.strategy_data_quality_gates.slice(0, 6) ?? [], [snapshot]);
   const dashboardStrategyOptimizations = useMemo(() => snapshot?.strategy_optimization_runs.slice(0, 6) ?? [], [snapshot]);
@@ -2455,6 +2460,36 @@ function App() {
       setLiveStatus("offline");
     } finally {
       setUserStrategyOptimizerBusy(false);
+    }
+  };
+
+  const queueStrategyTemplateFromDashboard = async (template: LiveRow) => {
+    const templateKey = asText(template, "template_key");
+    if (!templateKey || strategyTemplateBusyKey) {
+      return;
+    }
+    setStrategyTemplateBusyKey(templateKey);
+    setUiError("");
+    try {
+      await applyStrategyTemplate({
+        actor: "Charlie Munger",
+        notes: "Queued from AI Office strategy template library. Keep paper-first gates and no live execution.",
+        strategy_name: `${asText(template, "template_name", "Strategy template")} - office queue`,
+        symbols: asStringArray(template, "default_symbols"),
+        template_key: templateKey,
+        timeframe: asText(template, "default_timeframe") || undefined,
+        universe: asText(template, "default_universe") || undefined
+      });
+      const nextSnapshot = await fetchLiveSnapshot();
+      setSnapshot(nextSnapshot);
+      setItems(liveInbox(nextSnapshot));
+      setApprovalItems(liveApprovals(nextSnapshot));
+      setLiveStatus("online");
+    } catch (error) {
+      setUiError(error instanceof Error ? error.message : "Strategy template queue failed");
+      setLiveStatus("offline");
+    } finally {
+      setStrategyTemplateBusyKey("");
     }
   };
 
@@ -5425,6 +5460,72 @@ function App() {
                 {userStrategyOptimizerBusy ? "Optimizing" : "Queue + Optimize"}
               </button>
             </form>
+          </Panel>
+
+          <Panel className="span-7" icon={<ListChecks size={17} />} title="Strategy Template Library" action={`${dashboardStrategyTemplates.length} templates`}>
+            <div className="strategy-summary-strip">
+              {dashboardStrategyTemplateSummary.slice(0, 6).map((metric) => (
+                <div className="strategy-summary-cell" key={asText(metric, "metric")}>
+                  <span>{asText(metric, "metric", "metric").replace(/_/g, " ")}</span>
+                  <strong>{asText(metric, "value", "0")}</strong>
+                </div>
+              ))}
+              {!dashboardStrategyTemplateSummary.length ? (
+                <div className="strategy-summary-cell">
+                  <span>templates</span>
+                  <strong>0</strong>
+                </div>
+              ) : null}
+            </div>
+            <div className="strategy-list compact-list">
+              {dashboardStrategyTemplates.length ? (
+                dashboardStrategyTemplates.map((template) => {
+                  const templateKey = asText(template, "template_key");
+                  const requirements = asStringArray(template, "data_requirements").slice(0, 3).join(", ");
+                  return (
+                    <article className="strategy-row" key={templateKey}>
+                      <div>
+                        <strong>{asText(template, "template_name", "Strategy template")}</strong>
+                        <p>{asText(template, "template_family", "family")} · {asText(template, "asset_class", "asset")} · {asText(template, "engine_template", "engine")} · {asText(template, "default_timeframe", "tf")}</p>
+                        <small>{requirements || asText(template, "description", "data requirements pending")}</small>
+                      </div>
+                      <div className="strategy-right">
+                        <span>{asText(template, "execution_readiness", "research")}</span>
+                        <small>used {asText(template, "application_count", "0")} · {asText(template, "owner_agent", "Strategy Intake Agent")}</small>
+                        <button
+                          className="mini-action-button"
+                          disabled={Boolean(strategyTemplateBusyKey)}
+                          onClick={() => void queueStrategyTemplateFromDashboard(template)}
+                          type="button"
+                        >
+                          {strategyTemplateBusyKey === templateKey ? "Queuing" : "Queue"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })
+              ) : (
+                <EmptyState message="No strategy templates loaded from the warehouse." />
+              )}
+            </div>
+            <div className="strategy-list compact-list">
+              {dashboardStrategyTemplateApplications.length ? (
+                dashboardStrategyTemplateApplications.map((application) => (
+                  <article className="strategy-row" key={asText(application, "application_key", asText(application, "id"))}>
+                    <div>
+                      <strong>{asText(application, "strategy_name", "Template application")}</strong>
+                      <p>{asText(application, "template_name", "template")} · {asText(application, "status", "queued")} · {asText(application, "candidate_key", "candidate pending")}</p>
+                    </div>
+                    <div className="strategy-right">
+                      <span>{asText(application, "execution_readiness", "research")}</span>
+                      <small>{asText(application, "timeframe", "tf")} · {asText(application, "activation_gate", "paper_first")}</small>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <EmptyState message="No template applications yet." />
+              )}
+            </div>
           </Panel>
 
           <Panel className="span-5" icon={<Gauge size={17} />} title="User Strategy Optimizer" action={`${dashboardUserOptimizerRuns.length} runs`}>

@@ -3477,6 +3477,101 @@ def strategy_intakes(arguments: dict) -> dict:
     )
 
 
+def strategy_template_library(arguments: dict) -> dict:
+    family = str(arguments.get("template_family") or arguments.get("family") or "").strip()
+    asset_class = str(arguments.get("asset_class") or arguments.get("assetClass") or "").strip()
+    readiness = str(arguments.get("execution_readiness") or arguments.get("readiness") or "").strip()
+    limit = limit_arg(arguments, default=50)
+    filters: list[str] = ["status = 'active'"]
+    if family:
+        filters.append(f"template_family = {sql_literal(family)}")
+    if asset_class:
+        filters.append(f"asset_class = {sql_literal(asset_class)}")
+    if readiness:
+        filters.append(f"execution_readiness = {sql_literal(readiness)}")
+    where = "WHERE " + " AND ".join(filters)
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                """
+                SELECT metric, value, interpretation
+                FROM strategy.v_strategy_template_summary
+                ORDER BY metric
+                """
+            ),
+            "templates": run_psql_json(
+                f"""
+                SELECT id, template_key, template_name, template_family,
+                       asset_class, default_timeframe, engine_template,
+                       default_symbols, default_universe, description,
+                       entry_rule, exit_rule, risk_rule, data_requirements,
+                       required_gates, risk_controls, supported_assets,
+                       source_component, execution_readiness, owner_agent,
+                       application_count, applications_7d,
+                       latest_application_at
+                FROM strategy.v_strategy_template_library
+                {where}
+                ORDER BY display_rank, template_name
+                LIMIT {limit}
+                """
+            ),
+        }
+    )
+
+
+def create_strategy_from_template(arguments: dict) -> dict:
+    template_key = required_text(arguments, "template_key")
+    actor = str(arguments.get("created_by") or arguments.get("actor") or "Devarsh").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH created AS (
+            SELECT strategy.create_strategy_from_template(
+                {sql_literal(template_key)},
+                {sql_literal(actor)},
+                {sql_literal(arguments.get("strategy_name"))},
+                {sql_text_array(arguments.get("symbols")) if arguments.get("symbols") else "NULL"},
+                {sql_literal(arguments.get("universe"))},
+                {sql_literal(arguments.get("timeframe"))},
+                {sql_literal(arguments.get("notes"))}
+            ) AS result
+        )
+        SELECT coalesce(json_agg(row_to_json(output_rows)), '[]'::json)::text
+        FROM (
+            SELECT
+                (result->>'application_id')::BIGINT AS application_id,
+                result->>'application_key' AS application_key,
+                result->>'template_key' AS template_key,
+                result->>'template_name' AS template_name,
+                result->>'execution_readiness' AS execution_readiness,
+                result->>'engine_template' AS engine_template,
+                (result->>'intake_id')::BIGINT AS intake_id,
+                result->>'intake_key' AS intake_key,
+                (result->>'idea_id')::BIGINT AS idea_id,
+                result->>'idea_key' AS idea_key,
+                (result->>'candidate_id')::BIGINT AS candidate_id,
+                result->>'candidate_key' AS candidate_key,
+                (result->>'task_id')::BIGINT AS task_id,
+                (result->>'inbox_id')::BIGINT AS inbox_id,
+                result->>'activation_gate' AS activation_gate,
+                (result->>'live_execution_allowed')::BOOLEAN AS live_execution_allowed
+            FROM created
+        ) output_rows
+        """
+    )
+    result = rows[0] if rows else {"error": "strategy template application failed"}
+    audit_mcp_call(
+        tool_name="ai_os_create_strategy_from_template",
+        action_type="create_strategy_from_template",
+        permission_level="write_with_approval",
+        actor=actor,
+        target_table="strategy.strategy_template_applications",
+        target_id=result.get("application_id") if isinstance(result, dict) else None,
+        request_payload=arguments,
+        result_payload=result,
+    )
+    return tool_result(result)
+
+
 def create_generated_strategy_idea(arguments: dict) -> dict:
     title = required_text(arguments, "title")
     thesis = required_text(arguments, "thesis")
@@ -5661,6 +5756,37 @@ TOOLS = {
             },
         },
         "handler": strategy_intakes,
+    },
+    "ai_os_strategy_template_library": {
+        "description": "List strategy templates with data requirements, gates, readiness, and application counts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "template_family": {"type": "string"},
+                "asset_class": {"type": "string"},
+                "execution_readiness": {"type": "string"},
+                "limit": {"type": "integer", "default": 50},
+            },
+        },
+        "handler": strategy_template_library,
+    },
+    "ai_os_create_strategy_from_template": {
+        "description": "Queue a strategy candidate from an approved template. This is paper-first and never places trades.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "template_key": {"type": "string"},
+                "created_by": {"type": "string", "default": "Devarsh"},
+                "actor": {"type": "string"},
+                "strategy_name": {"type": "string"},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "universe": {"type": "string"},
+                "timeframe": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["template_key"],
+        },
+        "handler": create_strategy_from_template,
     },
     "ai_os_create_generated_strategy_idea": {
         "description": "Record a generated strategy hypothesis or variant with evidence and optional candidate creation.",

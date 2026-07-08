@@ -38,7 +38,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] API server.
 - [~] AI Office dashboard shell.
 - [~] Obsidian vault memory surface.
-- [~] MCP server foundation.
+- [~] MCP server foundation. Evidence includes strategy template tools in [[2026-07-08-strategy-template-library-v1]]; `ai_os_strategy_template_library` and `ai_os_create_strategy_from_template` are registered and import-verified.
 - [~] Model endpoint registry.
 - [~] Data-source connector registry.
 - [~] Provider readiness board.
@@ -210,10 +210,10 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Strategy idea dossiers.
 - [~] Dossier semantic search.
 - [~] Dossier-to-workflow action bridge.
-- [ ] Strategy hypothesis editor.
+- [~] Strategy hypothesis editor. Evidence: [[2026-07-08-strategy-template-library-v1]]; AI Office now has controlled template-to-strategy queueing, but the full free-form visual editor is still open.
 - [ ] Strategy DSL visual builder.
-- [ ] Intraday strategy templates.
-- [ ] Options strategy templates.
+- [~] Intraday strategy templates. Evidence: [[2026-07-08-strategy-template-library-v1]]; v1 includes intraday momentum, mean reversion, opening range, tactical breakout, and low-volatility templates, with live API smoke into the paper-first candidate path.
+- [~] Options strategy templates. Evidence: [[2026-07-08-strategy-template-library-v1]]; v1 includes long-straddle and short-straddle research templates, but options chain/OI/IV/Greeks ingestion and payoff/risk gates remain open.
 - [ ] OpenAlgo read-only bridge.
 - [ ] Vibe-Trading pattern bridge.
 - [ ] Full strategy portfolio optimizer UI.
@@ -436,7 +436,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 15. MCP And External Adapters
 
-- [~] MCP server foundation.
+- [~] MCP server foundation. Evidence includes [[2026-07-08-strategy-template-library-v1]]; strategy template read/create tools are registered in API, MCP server, and `config/mcp_tools.yml`.
 - [~] Obsidian/vault read-write path.
 - [~] Postgres API tool path.
 - [~] Browser profile registry.
@@ -563,6 +563,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Build Symbol Intelligence v2 around multi-book exposure. Evidence: [[2026-07-07-symbol-intelligence-v2]].
 - [x] Add Symbol Intelligence action router into agent tasks/inbox. Evidence: [[2026-07-07-symbol-intelligence-action-router-v1]].
 - [~] Harden p2cursor and old algo system extraction. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; readiness/run/issues/API/MCP/UI are live, but full mapping/promotion gaps remain.
+- [x] Build Strategy Template Library v1. Evidence: [[2026-07-08-strategy-template-library-v1]]; migration, API route, MCP tools, dashboard panel, live API smoke, and build checks passed.
 - [ ] Implement Long-Term checklist tables and UI.
 - [ ] Implement Long-Term Monte Carlo engine and report.
 - [ ] Implement research/news/filing collector expansion.
