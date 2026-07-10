@@ -1403,7 +1403,7 @@ The system is not "complete" until:
 7. Implement Long-Term checklist tables and UI.
 8. Implement Long-Term Monte Carlo and committee integration.
 9. Expand research/news/filing collectors.
-10. Harden TradingView controller and straddle workflow.
+10. Harden TradingView controller and straddle workflow. Foundation verified 2026-07-10: local-only Desktop CDP is live through the guarded Launch Services relaunch script, browser profile evidence, and provider gate; chart action quality/retry and strategy templates remain next.
 11. Build Client Folio dashboard.
 12. Build Risk Office v2 with stress tests and portfolio Monte Carlo.
 13. Build Command Center foundation by extracting the monolithic AI Office UI into live-data modules without behavior loss.
