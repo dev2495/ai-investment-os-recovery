@@ -163,7 +163,10 @@ def run_psql_json_object(queries: dict[str, str], *, row_limit: int | None = Non
             f"""
             {alias} AS (
                 SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
-                FROM ({query}) result_rows{limit_clause}
+                FROM (
+                    SELECT *
+                    FROM ({query}) source_rows{limit_clause}
+                ) result_rows
             )
             """
         )
