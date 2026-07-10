@@ -12,6 +12,8 @@ from typing import Any
 
 
 SOURCE_KEY = "tradingview_mcp"
+PROFILE_KEY = "tradingview_desktop_cdp"
+CONNECTOR_KEY = "tradingview_mcp_connector"
 DEFAULT_PORT = 9222
 
 
@@ -108,6 +110,40 @@ def store_check(
     return rows[0] if rows else {}
 
 
+def sync_browser_readiness(
+    *,
+    port: int,
+    status: str,
+    sample_payload: dict[str, Any],
+    error_message: str | None,
+    actor: str,
+) -> dict[str, Any]:
+    browser_status = "available" if status == "ok" else "cdp_unavailable"
+    browser_payload = {
+        "profile_key": PROFILE_KEY,
+        "connector_key": CONNECTOR_KEY,
+        "check_type": "cdp_heartbeat",
+        "status": browser_status,
+        "remote_debugging_host": "127.0.0.1",
+        "remote_debugging_port": port,
+        "browser_label": "TradingView Desktop",
+        "target_base_url": "https://www.tradingview.com",
+        "error_message": error_message,
+        "sample_payload": {**sample_payload, "checked_by": actor, "source": "check_tradingview_cdp"},
+        "checked_by": actor,
+    }
+    browser_rows = run_psql_json(
+        f"SELECT jsonb_build_array(ops.record_browser_session_check({sql_jsonb(browser_payload)}))::text"
+    )
+    connector_rows = run_psql_json(
+        f"SELECT jsonb_build_array(core.run_source_connector_health_check({sql_literal(CONNECTOR_KEY)}, {sql_literal(actor)}))::text"
+    )
+    return {
+        "browser_session_check": browser_rows[0] if browser_rows else {},
+        "connector_health_check": connector_rows[0] if connector_rows else {},
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check TradingView Desktop CDP controller and record a data-source check.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -124,6 +160,15 @@ def main() -> int:
         sample_payload=payload,
         error_message=error_message,
         actor=args.actor,
+    )
+    result.update(
+        sync_browser_readiness(
+            port=args.port,
+            status=status,
+            sample_payload=payload,
+            error_message=error_message,
+            actor=args.actor,
+        )
     )
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
     return 0 if status == "ok" else 1

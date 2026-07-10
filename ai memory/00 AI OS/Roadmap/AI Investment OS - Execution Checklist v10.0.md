@@ -232,7 +232,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Manual trade entry UI with book/purpose.
 - [~] Paper trade entry UI with book/purpose.
 - [~] Trade setup taxonomy foundation.
-- [~] TradingView CDP connection foundation. Verified 2026-07-10: guarded `_ai_os_runtime/scripts/relaunch_tradingview_cdp.sh` launches TradingView through macOS Launch Services with local-only CDP on `127.0.0.1:9222`; browser profile check #6 is `available`, provider readiness marks `tradingview_mcp_connector` `ready`/assignable, and broker execution remains disabled. Production chart-action hardening remains open.
+- [~] TradingView CDP connection foundation. Verified 2026-07-10: guarded `_ai_os_runtime/scripts/relaunch_tradingview_cdp.sh` launches TradingView through macOS Launch Services with local-only CDP on `127.0.0.1:9222`; provider readiness marks `tradingview_mcp_connector` `ready`/assignable, and the 60-second daemon heartbeat mirrors CDP into browser-session check #8 and connector check #160. Broker execution remains disabled. Production chart-action hardening remains open.
 - [~] TradingView chart open workflow.
 - [~] TradingView screenshot artifact capture.
 - [~] TradingView action template registry.
