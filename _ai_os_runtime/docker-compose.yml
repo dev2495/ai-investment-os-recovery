@@ -12,9 +12,7 @@ services:
     ports:
       - "${AI_OS_POSTGRES_PORT:-54329}:5432"
     volumes:
-      - type: bind
-        source: ./docker_data/postgres
-        target: /var/lib/postgresql/data
+      - ai_os_postgres_data:/var/lib/postgresql/data
       - type: bind
         source: ./postgres/init
         target: /docker-entrypoint-initdb.d
@@ -33,9 +31,7 @@ services:
       - "${AI_OS_QDRANT_HTTP_PORT:-6333}:6333"
       - "${AI_OS_QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
-      - type: bind
-        source: ./docker_data/qdrant
-        target: /qdrant/storage
+      - ai_os_qdrant_data:/qdrant/storage
 
   ai_os_redis:
     image: redis:7-alpine
@@ -45,11 +41,20 @@ services:
     ports:
       - "${AI_OS_REDIS_PORT:-63799}:6379"
     volumes:
-      - type: bind
-        source: ./docker_data/redis
-        target: /data
+      - ai_os_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+volumes:
+  ai_os_postgres_data:
+    external: true
+    name: ai-os-runtime_ai_os_postgres_data
+  ai_os_qdrant_data:
+    external: true
+    name: ai-os-runtime_ai_os_qdrant_data
+  ai_os_redis_data:
+    external: true
+    name: ai-os-runtime_ai_os_redis_data

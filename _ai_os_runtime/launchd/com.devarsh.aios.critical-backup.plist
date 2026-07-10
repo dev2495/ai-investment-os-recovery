@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.critical-backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime/launchd/aios-critical-backup-service.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>20</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/critical_backup.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/critical_backup.launchd.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AI_OS_RUNTIME_ROOT</key>
+    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
+    <key>AI_OS_VAULT_ROOT</key>
+    <string>/Volumes/Devarsh SSD/Obsidian memory </string>
+    <key>AI_OS_CRITICAL_BACKUP_ROOT</key>
+    <string>/Users/devarshthakkar/AI_OS_CRITICAL_BACKUP</string>
+  </dict>
+</dict>
+</plist>

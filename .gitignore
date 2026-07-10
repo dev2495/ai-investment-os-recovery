@@ -11,6 +11,7 @@ _ai_os_runtime/.env
 _ai_os_runtime/logs/
 _ai_os_runtime/run/
 _ai_os_runtime/docker_data/
+_ai_os_runtime/docker_data
 _ai_os_runtime/browser_profiles/
 _ai_os_runtime/obsidian_writeback/tmp/
 
