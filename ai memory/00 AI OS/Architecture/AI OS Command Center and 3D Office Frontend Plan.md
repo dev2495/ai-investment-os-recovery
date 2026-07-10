@@ -149,6 +149,8 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 - URL routing is live for the two operating worlds and workspace context. Verified deep link: `?mode=office&workspace=risk` and return route `?mode=command&workspace=risk`.
 - The office has an accessible static mode for reduced-motion or unavailable WebGL. Verified static mode removes the canvas and keeps 10 live rooms, 36 employee controls, task inspection, mailbox handoff, and the committee strip.
 - The 3D office now renders deduplicated agent-message links as live handoff lines, priority-colored and counted in the office caption. The first verification showed 11 durable handoffs.
+- Office agents now use their live character names, color tokens, visual traits, and work state. Hover cards surface the employee identity and current assignment rather than a seed persona.
+- The first evidence drawer is live for Office mailbox items. It calls `/api/evidence/agent-message/{id}` and shows the durable message record plus linked task, inbox, and approval records; validation for message `#61` surfaced task `#294`, inbox `#379`, and the worker note path.
 - Gates A through D remain incomplete until the remaining work below is implemented and verified; this is an evidence checkpoint, not a completion claim.
 
 ### Gate A: Command Center foundation
