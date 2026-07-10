@@ -178,6 +178,15 @@
 .office-message-row { padding: 10px 0; border-bottom: 1px solid rgba(197, 220, 226, 0.08); }
 .office-message-row strong { display: block; overflow: hidden; font-size: 11px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
 .office-message-row p { display: -webkit-box; overflow: hidden; margin-top: 4px; color: var(--office-muted); font-size: 11px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.office-handoff-form { display: grid; gap: 7px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--office-border); }
+.office-handoff-form > span { color: var(--office-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.office-handoff-form input,
+.office-handoff-form textarea { width: 100%; border: 1px solid var(--office-border); border-radius: 5px; padding: 8px; outline: none; resize: vertical; background: #112027; color: var(--office-ink); font-size: 12px; line-height: 1.4; }
+.office-handoff-form input:focus,
+.office-handoff-form textarea:focus { border-color: var(--office-cyan); box-shadow: 0 0 0 2px rgba(99, 200, 177, 0.14); }
+.office-handoff-form button { display: inline-flex; width: fit-content; min-height: 32px; align-items: center; gap: 6px; border: 1px solid rgba(99, 200, 177, 0.4); border-radius: 5px; padding: 0 10px; background: #0d2c2c; color: #c9f8ed; font-size: 11px; font-weight: 750; }
+.office-handoff-form button:disabled { cursor: not-allowed; border-color: var(--office-border); background: #142128; color: var(--office-muted); }
+.office-handoff-error { margin: 0; color: #ee8b83; font-size: 11px; line-height: 1.35; }
 .office-empty { color: var(--office-muted); font-size: 11px; line-height: 1.45; }
 .office-committee-strip { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 16px; padding: 12px 18px; border-top: 1px solid var(--office-border); background: #0b151a; }
 .office-committee-heading { justify-content: space-between; gap: 10px; }

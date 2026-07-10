@@ -34,6 +34,7 @@ import {
   applyStrategyTemplate,
   calculateSpecialSituationSpread,
   checkStrategyDataQuality,
+  createAgentMessage,
   createInboxItem,
   createOrderIntent,
   createStrategyIntake,
@@ -3536,18 +3537,40 @@ function App() {
   if (interfaceMode === "office") {
     return (
       <Suspense fallback={<div className="office-loading-state">Loading live office...</div>}>
-        <LiveOffice
-          liveStatus={liveStatus}
+      <LiveOffice
+        liveStatus={liveStatus}
           onExit={() => setInterfaceMode("command")}
           onRefresh={() => {
             void refreshSnapshot();
           }}
-          onSelectWorkspace={(workspace) => {
-            setActiveWorkspace(workspace);
-            setInterfaceMode("command");
-          }}
-          snapshot={snapshot}
-        />
+        onSelectWorkspace={(workspace) => {
+          setActiveWorkspace(workspace);
+          setInterfaceMode("command");
+        }}
+        onSendMessage={async ({ body, subject, toAgent }) => {
+          setUiError("");
+          try {
+            await createAgentMessage({
+              body,
+              from_agent: "Charlie Munger",
+              metadata: {
+                source_surface: "live_office",
+                workspace: activeWorkspace
+              },
+              priority: "medium",
+              subject,
+              thread_key: `live-office-${toAgent.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+              to_agent: toAgent
+            });
+            await refreshSnapshot();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to send the agent handoff";
+            setUiError(message);
+            throw new Error(message);
+          }
+        }}
+        snapshot={snapshot}
+      />
       </Suspense>
     );
   }

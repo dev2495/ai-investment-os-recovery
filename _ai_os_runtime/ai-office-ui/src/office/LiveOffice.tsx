@@ -1,6 +1,7 @@
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { ArrowLeft, Building2, CircleAlert, RefreshCw, ShieldCheck, UsersRound } from "lucide-react";
+import { ArrowLeft, Building2, CircleAlert, RefreshCw, Send, ShieldCheck, UsersRound } from "lucide-react";
+import type { FormEvent } from "react";
 import { useMemo, useRef, useState } from "react";
 import type { Group } from "three";
 import type { LiveRow, LiveSnapshot } from "../api/live";
@@ -13,6 +14,7 @@ interface LiveOfficeProps {
   onExit: () => void;
   onRefresh: () => void;
   onSelectWorkspace: (workspace: WorkspaceId) => void;
+  onSendMessage: (input: { body: string; subject: string; toAgent: string }) => Promise<void>;
   snapshot: LiveSnapshot | null;
 }
 
@@ -204,10 +206,13 @@ function AgentStation({
   );
 }
 
-export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWorkspace, snapshot }: LiveOfficeProps) {
+export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWorkspace, onSendMessage, snapshot }: LiveOfficeProps) {
   const model = useMemo(() => buildOfficeModel(snapshot), [snapshot]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [hoveredAgent, setHoveredAgent] = useState<OfficeAgent | null>(null);
+  const [handoffDraft, setHandoffDraft] = useState({ body: "", subject: "" });
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffError, setHandoffError] = useState("");
   const rooms = useMemo<RoomPlacement[]>(() => model.rooms.map((room, index) => ({
     room,
     x: (index % 3 - 1) * 4.25,
@@ -224,6 +229,25 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
       return from === selectedAgent.name || to === selectedAgent.name;
     }).slice(0, 4);
   }, [selectedAgent, snapshot]);
+
+  const submitHandoff = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedAgent || handoffBusy || !handoffDraft.subject.trim() || !handoffDraft.body.trim()) return;
+    setHandoffBusy(true);
+    setHandoffError("");
+    try {
+      await onSendMessage({
+        body: handoffDraft.body.trim(),
+        subject: handoffDraft.subject.trim(),
+        toAgent: selectedAgent.name
+      });
+      setHandoffDraft({ body: "", subject: "" });
+    } catch (error) {
+      setHandoffError(error instanceof Error ? error.message : "Unable to send the agent handoff");
+    } finally {
+      setHandoffBusy(false);
+    }
+  };
 
   return (
     <main className="live-office-shell">
@@ -308,6 +332,13 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
                   </article>
                 )) : <div className="office-empty">No mailbox traffic for this employee in the current snapshot.</div>}
               </div>
+              <form className="office-handoff-form" onSubmit={submitHandoff}>
+                <span>Internal handoff</span>
+                <input aria-label="Handoff subject" onChange={(event) => setHandoffDraft((draft) => ({ ...draft, subject: event.target.value }))} placeholder="Subject" value={handoffDraft.subject} />
+                <textarea aria-label="Handoff message" onChange={(event) => setHandoffDraft((draft) => ({ ...draft, body: event.target.value }))} placeholder="Assignment, question, or review request" rows={3} value={handoffDraft.body} />
+                {handoffError ? <p className="office-handoff-error">{handoffError}</p> : null}
+                <button disabled={handoffBusy || !handoffDraft.subject.trim() || !handoffDraft.body.trim()} type="submit"><Send size={14} aria-hidden="true" />{handoffBusy ? "Sending" : `Send to ${selectedAgent.name}`}</button>
+              </form>
             </>
           ) : <div className="office-empty">Select an agent when the runtime publishes activity.</div>}
         </aside>

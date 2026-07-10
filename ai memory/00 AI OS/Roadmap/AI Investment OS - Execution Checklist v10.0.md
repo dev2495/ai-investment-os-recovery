@@ -505,7 +505,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Provider Readiness dashboard v2.
 - [ ] Committee Room dashboard v2.
 - [~] 3D office scene with procedural rooms, stable camera controls, and live room placement. Verified 2026-07-10; room teleport remains outstanding.
-- [~] Data-backed agent avatars: live status, current task, activity pulse, employee profile inspector, and keyboard employee selector. Durable message action remains outstanding.
+- [~] Data-backed agent avatars: live status, current task, activity pulse, employee profile inspector, keyboard employee selector, and durable mailbox handoff. Verified 2026-07-10: Live Office message #61 created task #294 and inbox #379 for Risk Agent; profile pages and direct canvas hit testing remain outstanding.
 - [~] Data-backed committee room: live agenda and decision state from committee queues. Participant, evidence, discussion, and follow-up drill-down remain outstanding.
 - [ ] Department KPI overlays, task arrows, activity feed, risk wall, and alert wall from live records.
 - [ ] Office non-WebGL and reduced-motion fallback.
