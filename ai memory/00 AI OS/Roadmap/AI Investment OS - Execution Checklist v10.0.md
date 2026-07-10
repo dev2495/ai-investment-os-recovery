@@ -479,7 +479,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Live snapshot/API contract for office, committee, chat, message, widget, portfolio, strategy, research, risk, and system surfaces. Evidence: `ai-office-ui/src/api/live.ts` and `/api/snapshot`.
 - [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
 - [ ] Command Center shell extraction from monolithic `App.tsx` with no behavior loss.
-- [~] Preserved Command Center / Live Office world switch. Verified 2026-07-10: both views share the same live snapshot and retain the selected workspace on return; addressable routes remain outstanding.
+- [~] Addressable Command Center / Live Office world routing with preserved context. Verified 2026-07-10: `?mode=office&workspace=risk` opens the office and the return action lands on `?mode=command&workspace=risk`; per-workspace module extraction remains outstanding.
 - [~] Snapshot/UI/chat state layer. Verified 2026-07-10: `useLiveSnapshot` owns the 30-second warehouse poll, reconnect state, and initial empty/offline behavior; existing focused post-action refresh remains intact. Stale-data state and error boundary remain outstanding.
 - [ ] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows.
 - [ ] Mission Control v2: Charlie chat, delegation, inbox, approvals, daily brief, widget materialization.

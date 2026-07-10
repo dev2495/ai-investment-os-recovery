@@ -141,6 +141,7 @@ import type {
 } from "./types";
 import type { LiveRow, LiveSnapshot } from "./api/live";
 import { useLiveSnapshot } from "./app/useLiveSnapshot";
+import { useWorkspaceRoute } from "./app/useWorkspaceRoute";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
@@ -753,8 +754,7 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
 }
 
 function App() {
-  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>("command");
-  const [interfaceMode, setInterfaceMode] = useState<"command" | "office">("command");
+  const { activeWorkspace, interfaceMode, openCommandWorkspace, setActiveWorkspace, setInterfaceMode } = useWorkspaceRoute();
   const [command, setCommand] = useState("");
   const [items, setItems] = useState<InboxItem[]>([]);
   const [approvalItems, setApprovalItems] = useState<ApprovalItem[]>([]);
@@ -3521,8 +3521,7 @@ function App() {
             void refreshSnapshot();
           }}
         onSelectWorkspace={(workspace) => {
-          setActiveWorkspace(workspace);
-          setInterfaceMode("command");
+          openCommandWorkspace(workspace);
         }}
         onSendMessage={async ({ body, subject, toAgent }) => {
           setUiError("");
