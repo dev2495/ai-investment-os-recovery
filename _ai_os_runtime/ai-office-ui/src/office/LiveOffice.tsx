@@ -1,5 +1,5 @@
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { Line, OrbitControls } from "@react-three/drei";
 import { Accessibility, ArrowLeft, Building2, CircleAlert, RefreshCw, Send, ShieldCheck, UsersRound } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -24,6 +24,12 @@ interface RoomPlacement {
   z: number;
 }
 
+interface OfficeMessageFlow {
+  fromAgentId: string;
+  priority: string;
+  toAgentId: string;
+}
+
 const roomTone = ["#2b5a69", "#345843", "#514b73", "#6d4e37", "#33516e", "#4f633d"];
 
 function activityTone(state: OfficeAgent["state"]): string {
@@ -32,6 +38,13 @@ function activityTone(state: OfficeAgent["state"]): string {
   if (state === "waiting") return "#7590a0";
   if (state === "active") return "#62c6b3";
   return "#71808c";
+}
+
+function flowTone(priority: string): string {
+  if (priority === "critical") return "#ee736c";
+  if (priority === "high") return "#e2a54a";
+  if (priority === "low") return "#7590a0";
+  return "#63c8b1";
 }
 
 function relativeTime(value: string): string {
@@ -78,12 +91,14 @@ function useOfficeRendererMode() {
 
 function OfficeScene({
   agents,
+  flows,
   onHover,
   onSelect,
   rooms,
   selectedAgentId
 }: {
   agents: OfficeAgent[];
+  flows: OfficeMessageFlow[];
   onHover: (agent: OfficeAgent | null) => void;
   onSelect: (agent: OfficeAgent) => void;
   rooms: RoomPlacement[];
@@ -91,6 +106,16 @@ function OfficeScene({
 }) {
   const placements = new Map(rooms.map((placement) => [placement.room.id, placement]));
   const perRoom = new Map<string, number>();
+  const agentStations = agents.flatMap((agent, index) => {
+    const room = placements.get(agent.roomId);
+    if (!room) return [];
+    const stationIndex = perRoom.get(agent.roomId) ?? 0;
+    perRoom.set(agent.roomId, stationIndex + 1);
+    const column = stationIndex % 3;
+    const row = Math.floor(stationIndex / 3);
+    return [{ agent, index, position: [room.x - 1.1 + column * 1.1, 0.12, room.z - 0.55 + row * 0.88] as [number, number, number] }];
+  });
+  const stationByAgentId = new Map(agentStations.map((station) => [station.agent.id, station]));
 
   return (
     <>
@@ -105,13 +130,13 @@ function OfficeScene({
       {rooms.map((placement, index) => (
         <OfficeRoomMesh key={placement.room.id} placement={placement} tone={roomTone[index % roomTone.length]} />
       ))}
-      {agents.map((agent, index) => {
-        const room = placements.get(agent.roomId);
-        if (!room) return null;
-        const stationIndex = perRoom.get(agent.roomId) ?? 0;
-        perRoom.set(agent.roomId, stationIndex + 1);
-        const column = stationIndex % 3;
-        const row = Math.floor(stationIndex / 3);
+      {flows.map((flow) => {
+        const from = stationByAgentId.get(flow.fromAgentId);
+        const to = stationByAgentId.get(flow.toAgentId);
+        if (!from || !to) return null;
+        return <Line color={flowTone(flow.priority)} key={`${flow.fromAgentId}-${flow.toAgentId}-${flow.priority}`} lineWidth={1.2} opacity={0.68} points={[[from.position[0], 0.54, from.position[2]], [to.position[0], 0.54, to.position[2]]]} transparent />;
+      })}
+      {agentStations.map(({ agent, index, position }) => {
         return (
           <AgentStation
             agent={agent}
@@ -119,7 +144,7 @@ function OfficeScene({
             key={agent.id}
             onHover={onHover}
             onSelect={onSelect}
-            position={[room.x - 1.1 + column * 1.1, 0.12, room.z - 0.55 + row * 0.88]}
+            position={position}
             selected={selectedAgentId === agent.id}
           />
         );
@@ -281,6 +306,19 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
       return from === selectedAgent.name || to === selectedAgent.name;
     }).slice(0, 4);
   }, [selectedAgent, snapshot]);
+  const messageFlows = useMemo(() => {
+    const agentIdsByName = new Map(model.agents.map((agent) => [agent.name, agent.id]));
+    const seen = new Set<string>();
+    return (snapshot?.agent_messages ?? []).flatMap((message) => {
+      const fromAgentId = agentIdsByName.get(rowText(message, "from_agent", "sender_agent"));
+      const toAgentId = agentIdsByName.get(rowText(message, "to_agent", "recipient_agent"));
+      const priority = rowText(message, "priority") || "medium";
+      const flowKey = `${fromAgentId}-${toAgentId}-${priority}`;
+      if (!fromAgentId || !toAgentId || fromAgentId === toAgentId || seen.has(flowKey)) return [];
+      seen.add(flowKey);
+      return [{ fromAgentId, priority, toAgentId }];
+    }).slice(0, 16);
+  }, [model.agents, snapshot]);
 
   const submitHandoff = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -340,7 +378,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
         <section className="office-stage" aria-label="Interactive AI office model">
           {rooms.length && model.agents.length && !useStaticOffice ? (
             <Canvas camera={{ fov: 44, position: [11, 13, 15] }} dpr={[1, 2]} gl={{ antialias: true, preserveDrawingBuffer: true }}>
-              <OfficeScene agents={model.agents} onHover={setHoveredAgent} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={rooms} selectedAgentId={selectedAgent?.id ?? ""} />
+              <OfficeScene agents={model.agents} flows={messageFlows} onHover={setHoveredAgent} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={rooms} selectedAgentId={selectedAgent?.id ?? ""} />
             </Canvas>
           ) : rooms.length && model.agents.length ? (
             <OfficeFallback agents={model.agents} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={model.rooms} />
@@ -353,7 +391,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
           )}
           <div className="office-stage-caption">
             <span>Live office</span>
-            {hoveredAgent ? <strong>{hoveredAgent.name} / {hoveredAgent.task}</strong> : <strong>{model.agents.length} employee records</strong>}
+            {hoveredAgent ? <strong>{hoveredAgent.name} / {hoveredAgent.task}</strong> : <strong>{model.agents.length} employee records / {messageFlows.length} live handoffs</strong>}
           </div>
         </section>
 

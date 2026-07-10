@@ -507,7 +507,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] 3D office scene with procedural rooms, stable camera controls, and live room placement. Verified 2026-07-10; room teleport remains outstanding.
 - [~] Data-backed agent avatars: live status, current task, activity pulse, employee profile inspector, keyboard employee selector, and durable mailbox handoff. Verified 2026-07-10: Live Office message #61 created task #294 and inbox #379 for Risk Agent; profile pages and direct canvas hit testing remain outstanding.
 - [~] Data-backed committee room: live agenda and decision state from committee queues. Participant, evidence, discussion, and follow-up drill-down remain outstanding.
-- [ ] Department KPI overlays, task arrows, activity feed, risk wall, and alert wall from live records.
+- [~] Live handoff lines between agents. Verified 2026-07-10: the 3D office renders 11 deduplicated mailbox flows from `agent_messages`, with priority color and an auditable caption. Department KPI overlays, activity feed, risk wall, and alert wall remain outstanding.
 - [~] Office non-WebGL and reduced-motion fallback. Verified 2026-07-10: static mode removes the canvas while retaining 10 live rooms, 36 selectable employee records, task inspection, mailbox handoff, and committee state. Automatic unsupported-WebGL fallback is present; broader assistive-technology review remains outstanding.
 - [~] 3D office desktop/mobile pixel checks prove a nonblank, framed live canvas. Verified 2026-07-10 at 1440x1000 and 390x844; direct canvas-agent hit testing remains outstanding.
 - [ ] Animated AI Office v1.

@@ -147,6 +147,7 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 - `useLiveSnapshot` now owns the 30-second snapshot poll, reconnect status, and empty/offline reset outside `App.tsx`; existing action handlers still force focused refresh after writes.
 - URL routing is live for the two operating worlds and workspace context. Verified deep link: `?mode=office&workspace=risk` and return route `?mode=command&workspace=risk`.
 - The office has an accessible static mode for reduced-motion or unavailable WebGL. Verified static mode removes the canvas and keeps 10 live rooms, 36 employee controls, task inspection, mailbox handoff, and the committee strip.
+- The 3D office now renders deduplicated agent-message links as live handoff lines, priority-colored and counted in the office caption. The first verification showed 11 durable handoffs.
 - Gates A through D remain incomplete until the remaining work below is implemented and verified; this is an evidence checkpoint, not a completion claim.
 
 ### Gate A: Command Center foundation
