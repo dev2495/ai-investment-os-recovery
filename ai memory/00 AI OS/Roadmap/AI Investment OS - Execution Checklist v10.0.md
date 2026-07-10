@@ -481,6 +481,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Command Center shell extraction from monolithic `App.tsx` with no behavior loss.
 - [~] Addressable Command Center / Live Office world routing with preserved context. Verified 2026-07-10: `?mode=office&workspace=risk` opens the office and the return action lands on `?mode=command&workspace=risk`; per-workspace module extraction remains outstanding.
 - [~] Snapshot/UI/chat state layer. Verified 2026-07-10: `useLiveSnapshot` owns the 30-second warehouse poll, reconnect state, and initial empty/offline behavior; existing focused post-action refresh remains intact. Stale-data state and error boundary remain outstanding.
+- [ ] Focused workspace snapshot profile and payload budget. Baseline 2026-07-10: full `/api/snapshot` was 8.95 MB and 10.36 s; daily operating views must use scoped reads without losing evidence access.
 - [ ] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows.
 - [ ] Mission Control v2: Charlie chat, delegation, inbox, approvals, daily brief, widget materialization.
 - [ ] Quant Lab v2: intake through committee, paper/live promotion, validation, optimization, and evidence.

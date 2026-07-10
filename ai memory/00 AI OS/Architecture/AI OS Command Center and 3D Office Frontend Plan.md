@@ -145,6 +145,7 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 - `npm run build` passes. Browser checks confirmed no console errors, a nonblank WebGL canvas, responsive framing at 1440x1000 and 390x844, and a keyboard-accessible employee selector.
 - The Live Office mailbox action is audited end to end. Validation message `#61` from Charlie Munger to Risk Agent created task `#294` and inbox item `#379` through the existing agent-message daemon; it has no capital-action permission.
 - `useLiveSnapshot` now owns the 30-second snapshot poll, reconnect status, and empty/offline reset outside `App.tsx`; existing action handlers still force focused refresh after writes.
+- Baseline performance measurement: the broad legacy `/api/snapshot` took 10.36 seconds and returned 8.95 MB on 2026-07-10. The next read-model milestone is a scoped operating snapshot with a payload and latency budget, while keeping deep evidence available on demand.
 - URL routing is live for the two operating worlds and workspace context. Verified deep link: `?mode=office&workspace=risk` and return route `?mode=command&workspace=risk`.
 - The office has an accessible static mode for reduced-motion or unavailable WebGL. Verified static mode removes the canvas and keeps 10 live rooms, 36 employee controls, task inspection, mailbox handoff, and the committee strip.
 - The 3D office now renders deduplicated agent-message links as live handoff lines, priority-colored and counted in the office caption. The first verification showed 11 durable handoffs.
