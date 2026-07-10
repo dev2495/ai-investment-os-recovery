@@ -12,6 +12,7 @@ First local AI Office command-center surface.
 - Stages manual holding updates into `portfolio.manual_holding_updates`.
 - Does not use seed/demo fallback data.
 - Collapses to a single-column mobile work surface.
+- Opens a lazy-loaded Live Office view backed by the same Postgres snapshot, including rooms, agents, tasks, mailboxes, and committee items.
 
 ## Commands
 
@@ -42,6 +43,7 @@ Last verified:
 - Mobile viewport: 390 x 844
 - Interaction: quick command -> API write -> Agent Inbox/TradingView task row
 - Interaction: approval button -> API write -> approval decision persisted
+- Interaction: Command Center -> Live Office -> agent inspection -> Command Center preserves the shared snapshot state
 - Data mode: no seed fallback
 
 ## Live Wiring

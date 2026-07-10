@@ -47,7 +47,7 @@ Local URL:
 http://127.0.0.1:5177/
 ```
 
-The current app uses seed data for the command center, inbox, approvals, signals, portfolio alerts, agent status, system health, control-plane modules, data-source registry, strategy registry, Fincept bridge, and manual holding staging. The next step is replacing seed data with a local DB/API adapter.
+The current app is warehouse-backed and has no seed/demo fallback. It reads the local API snapshot for command-center, portfolio, strategy, research, risk, model, MCP, and agent-office state. The Live Office is a lazy-loaded 3D view of the same agent, room, task, mailbox, and committee records; an empty warehouse renders explicit empty states rather than sample employees or trades.
 
 MCP is now the useful agent tool layer:
 

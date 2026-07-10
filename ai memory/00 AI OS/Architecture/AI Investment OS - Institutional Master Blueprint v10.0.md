@@ -3,6 +3,7 @@
 Date: 2026-07-07
 Owner: Devarsh
 Canonical checklist: [[AI Investment OS - Execution Checklist v10.0]]
+Canonical frontend specification: [[AI OS Command Center and 3D Office Frontend Plan]]
 Supersedes: [[AI Investment OS - Institutional Master Blueprint v9.0]]
 Main assistant: Charlie Munger
 Runtime operator: Jarvis
@@ -176,6 +177,8 @@ Final visual target:
 - later optional 3D office view.
 
 The rule: visuals come after real data-backed tasks, messages, approvals, and outputs exist.
+
+The Command Center and Live AI Office are now one linked frontend delivery stream. The Command Center is the data-dense working surface; the 3D office visualizes the same entities and uses the same audited action routes. Architecture, live-data mapping, delivery gates, responsive requirements, and acceptance criteria are canonical in [[AI OS Command Center and 3D Office Frontend Plan]].
 
 ## 7. Storage And Memory Contract
 
@@ -1347,13 +1350,17 @@ Phase 7: Full agent office.
 - model/cost controls,
 - department dashboards.
 
-Phase 8: Live AI office visual layer.
+Phase 8: Command Center and Live AI Office.
 
-- animated office,
-- hover cards,
-- activity flows,
-- risk wall,
-- alert wall.
+Verified foundation (2026-07-10): the live Postgres snapshot has been repaired and returns 36 agent profiles, 10 office rooms, 24 live activity records, 11 departments, 77 skills, and 10 strategy templates without query issues. The Command Center now opens a lazy-loaded React Three Fiber office backed by those rows, with real task/message inspection, committee agenda, desktop/mobile nonblank-canvas checks, and no seed fallback. This is the Phase 8 foundation only; the modular Command Center, addressable routing, evidence drill-down, agent messaging action, task arrows, and accessibility fallback are still required.
+
+- modular Command Center shell and addressable workspaces,
+- snapshot state and evidence drawer,
+- Charlie delegation/chat and widget materialization surface,
+- data-backed Mission Control, Portfolio, Quant, Trading, Risk, Research, and System Health modules,
+- procedural React Three Fiber office with keyboard/reduced-motion/WebGL fallback,
+- animated room/agent/committee activity only when backed by live records,
+- hover cards, task arrows, risk wall, alert wall, and employee profile/message actions.
 
 Phase 9: Production hardening.
 
@@ -1381,7 +1388,9 @@ The system is not "complete" until:
 - model routing and cost controls are enforced,
 - safety gates prevent unauthorized external actions,
 - backups and restore are tested,
-- the Live AI Office reflects real work rather than static visuals.
+- the Live AI Office reflects real work rather than static visuals,
+- Command Center and Live Office share live entity state, evidence links, and approval-aware action routes,
+- the 3D view is verified nonblank, interactive, responsive, accessible, and safely degradable when WebGL is unavailable.
 
 ## 31. Immediate Next Implementation Order
 
@@ -1397,4 +1406,6 @@ The system is not "complete" until:
 10. Harden TradingView controller and straddle workflow.
 11. Build Client Folio dashboard.
 12. Build Risk Office v2 with stress tests and portfolio Monte Carlo.
-13. Build Animated AI Office v1 only after real task arrows and agent work states are data-backed.
+13. Build Command Center foundation by extracting the monolithic AI Office UI into live-data modules without behavior loss.
+14. Build Animated AI Office v1 only after real task arrows and agent work states are data-backed.
+15. Complete the Command Center and 3D Office gates in [[AI OS Command Center and 3D Office Frontend Plan]] before calling the operating interface complete.

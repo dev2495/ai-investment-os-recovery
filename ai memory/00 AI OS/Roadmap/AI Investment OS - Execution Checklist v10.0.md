@@ -2,6 +2,7 @@
 
 Date: 2026-07-07
 Blueprint: [[AI Investment OS - Institutional Master Blueprint v10.0]]
+Frontend specification: [[AI OS Command Center and 3D Office Frontend Plan]]
 Purpose: track the build from foundation to complete AI hedge fund operating system.
 
 Status legend:
@@ -475,6 +476,19 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Long-Term Office dashboard foundation.
 - [~] Quant Lab dashboard foundation.
 - [~] AI Office live activity foundation.
+- [~] Live snapshot/API contract for office, committee, chat, message, widget, portfolio, strategy, research, risk, and system surfaces. Evidence: `ai-office-ui/src/api/live.ts` and `/api/snapshot`.
+- [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
+- [ ] Command Center shell extraction from monolithic `App.tsx` with no behavior loss.
+- [~] Preserved Command Center / Live Office world switch. Verified 2026-07-10: both views share the same live snapshot and retain the selected workspace on return; addressable routes remain outstanding.
+- [ ] Snapshot/UI/chat state layer with 30-second refresh, focused post-action refresh, stale-data state, and error boundary.
+- [ ] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows.
+- [ ] Mission Control v2: Charlie chat, delegation, inbox, approvals, daily brief, widget materialization.
+- [ ] Quant Lab v2: intake through committee, paper/live promotion, validation, optimization, and evidence.
+- [ ] Trading Desk v2: signals, TradingView, OI/intraday, paper monitor, and execution gates.
+- [ ] Portfolio Office v2: client folios, books, positions, thesis, exposure, attribution, and remediation.
+- [ ] Risk Center v2: limits, kill switches, conflicts, drift, stress, and Monte Carlo.
+- [ ] Research Hub v2: long-term research, filings/news, special situations, source documents, and outputs.
+- [ ] System Health v2: MCP, source, worker, provider, model, cost, storage, and recovery state.
 - [ ] Portfolio Intelligence dashboard v3.
 - [ ] Client Folio dashboard.
 - [x] Symbol Intelligence dashboard v2. Evidence: [[2026-07-07-symbol-intelligence-v2]].
@@ -490,6 +504,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Model Runtime dashboard.
 - [ ] Provider Readiness dashboard v2.
 - [ ] Committee Room dashboard v2.
+- [~] 3D office scene with procedural rooms, stable camera controls, and live room placement. Verified 2026-07-10; room teleport remains outstanding.
+- [~] Data-backed agent avatars: live status, current task, activity pulse, employee profile inspector, and keyboard employee selector. Durable message action remains outstanding.
+- [~] Data-backed committee room: live agenda and decision state from committee queues. Participant, evidence, discussion, and follow-up drill-down remain outstanding.
+- [ ] Department KPI overlays, task arrows, activity feed, risk wall, and alert wall from live records.
+- [ ] Office non-WebGL and reduced-motion fallback.
+- [~] 3D office desktop/mobile pixel checks prove a nonblank, framed live canvas. Verified 2026-07-10 at 1440x1000 and 390x844; direct canvas-agent hit testing remains outstanding.
 - [ ] Animated AI Office v1.
 - [ ] Mobile/remote dashboard access.
 

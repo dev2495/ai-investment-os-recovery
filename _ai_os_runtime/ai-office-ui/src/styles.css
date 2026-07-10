@@ -38,6 +38,16 @@ body {
   background: var(--bg);
 }
 
+.office-loading-state {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background: #081015;
+  color: #c6d4d8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 button,
 input,
 select,

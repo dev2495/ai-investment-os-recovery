@@ -29,7 +29,7 @@ import {
   X
 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   applyStrategyTemplate,
   calculateSpecialSituationSpread,
@@ -139,6 +139,8 @@ import type {
   WorkspaceId
 } from "./types";
 import type { LiveRow, LiveSnapshot } from "./api/live";
+
+const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
 interface ChatMessage {
   id: string;
@@ -750,6 +752,7 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
 
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>("command");
+  const [interfaceMode, setInterfaceMode] = useState<"command" | "office">("command");
   const [command, setCommand] = useState("");
   const [items, setItems] = useState<InboxItem[]>([]);
   const [approvalItems, setApprovalItems] = useState<ApprovalItem[]>([]);
@@ -3530,6 +3533,25 @@ function App() {
     }
   };
 
+  if (interfaceMode === "office") {
+    return (
+      <Suspense fallback={<div className="office-loading-state">Loading live office...</div>}>
+        <LiveOffice
+          liveStatus={liveStatus}
+          onExit={() => setInterfaceMode("command")}
+          onRefresh={() => {
+            void refreshSnapshot();
+          }}
+          onSelectWorkspace={(workspace) => {
+            setActiveWorkspace(workspace);
+            setInterfaceMode("command");
+          }}
+          snapshot={snapshot}
+        />
+      </Suspense>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -3585,6 +3607,10 @@ function App() {
             <span className={`live-status live-${liveStatus}`}>
               {liveStatus === "online" ? "Live warehouse" : liveStatus === "loading" ? "Connecting" : "Warehouse offline"}
             </span>
+            <button className="ghost-button" onClick={() => setInterfaceMode("office")} type="button">
+              <Building2 size={16} aria-hidden="true" />
+              Live Office
+            </button>
             <button className="ghost-button" type="button">
               <Search size={16} aria-hidden="true" />
               Search memory
@@ -3695,8 +3721,8 @@ function App() {
           <Panel className="span-7" icon={<Gauge size={17} />} title="Portfolio Intelligence v2" action={`${dashboardPortfolioIntelligenceV2.length} signals`}>
             <div className="source-check-list">
               {dashboardPortfolioIntelligenceV2.length ? (
-                dashboardPortfolioIntelligenceV2.map((item) => (
-                  <article className="source-check-row" key={`${asText(item, "section")}-${asText(item, "item_key")}-${asText(item, "item_name")}`}>
+                dashboardPortfolioIntelligenceV2.map((item, index) => (
+                  <article className="source-check-row" key={`${asText(item, "section")}-${asText(item, "item_key")}-${asText(item, "item_name")}-${index}`}>
                     <div>
                       <strong>{asText(item, "item_name", "Metric")}</strong>
                       <p>{asText(item, "interpretation", "Portfolio Intelligence signal.")}</p>
@@ -3782,8 +3808,8 @@ function App() {
           <Panel className="span-7" icon={<LineChart size={17} />} title="Symbol Intelligence v2" action={`${portfolioSummaryValue(snapshot, "gross_book_exposure")} gross`}>
             <div className="source-check-list">
               {[...dashboardSymbolIntelligenceV2Summary, ...dashboardSymbolIntelligenceActionSummary].length ? (
-                [...dashboardSymbolIntelligenceV2Summary, ...dashboardSymbolIntelligenceActionSummary].map((metric) => (
-                  <article className="source-check-row" key={asText(metric, "metric")}>
+                [...dashboardSymbolIntelligenceV2Summary, ...dashboardSymbolIntelligenceActionSummary].map((metric, index) => (
+                  <article className="source-check-row" key={`${asText(metric, "metric")}-${index}`}>
                     <div>
                       <strong>{asText(metric, "metric", "metric").replace(/_/g, " ")}</strong>
                       <p>{asText(metric, "interpretation", "Symbol Intelligence v2 metric.")}</p>
@@ -7733,8 +7759,8 @@ function App() {
           <Panel className="span-12" icon={<GitBranch size={17} />} title="Public Source Checks" action="SEC / NSE / BSE">
             <div className="source-check-list">
               {(snapshot?.data_source_checks ?? []).length ? (
-                (snapshot?.data_source_checks ?? []).slice(0, 8).map((check) => (
-                  <article className="source-check-row" key={`${asText(check, "source_key")}-${asText(check, "checked_at")}`}>
+                (snapshot?.data_source_checks ?? []).slice(0, 8).map((check, index) => (
+                  <article className="source-check-row" key={`${asText(check, "source_key")}-${asText(check, "checked_at")}-${index}`}>
                     <div>
                       <strong>{asText(check, "source_key", "source")}</strong>
                       <p>{asText(check, "target_url", "target")}</p>
