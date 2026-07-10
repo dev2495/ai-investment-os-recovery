@@ -215,6 +215,7 @@ function AgentStation({
 }) {
   const group = useRef<Group>(null);
   const tone = activityTone(agent.state);
+  const identityTone = agent.colorToken || tone;
 
   useFrame(({ clock }) => {
     if (!group.current || agent.state !== "active") return;
@@ -241,11 +242,15 @@ function AgentStation({
       </mesh>
       <mesh position={[0, 0.47, 0]}>
         <capsuleGeometry args={[0.16, 0.38, 6, 12]} />
-        <meshStandardMaterial color="#b3c3c9" roughness={0.48} metalness={0.16} />
+        <meshStandardMaterial color={identityTone} roughness={0.48} metalness={0.16} />
       </mesh>
       <mesh position={[0, 0.86, 0]}>
         <sphereGeometry args={[0.15, 18, 18]} />
         <meshStandardMaterial color="#e2c7ab" roughness={0.62} />
+      </mesh>
+      <mesh position={[0, 0.95, 0]} scale={[1, 0.42, 1]}>
+        <sphereGeometry args={[0.155, 18, 18]} />
+        <meshStandardMaterial color={identityTone} roughness={0.52} metalness={0.1} />
       </mesh>
       <mesh position={[0, 0.12, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <torusGeometry args={[0.36, 0.022, 12, 32]} />
@@ -270,8 +275,8 @@ function OfficeFallback({ agents, onSelect, rooms }: { agents: OfficeAgent[]; on
             <div className="office-static-agents">
               {roomAgents.length ? roomAgents.map((agent) => (
                 <button key={agent.id} onClick={() => onSelect(agent)} type="button">
-                  <span className={`office-agent-avatar state-${agent.state}`}>{agent.name.slice(0, 1)}</span>
-                  <span><strong>{agent.name}</strong><small>{agent.task}</small></span>
+                  <span className={`office-agent-avatar state-${agent.state}`} style={{ borderColor: agent.colorToken || undefined, color: agent.colorToken || undefined }}>{agent.characterName.slice(0, 1) || agent.name.slice(0, 1)}</span>
+                  <span><strong>{agent.characterName || agent.name}</strong><small>{agent.task}</small></span>
                 </button>
               )) : <span className="office-empty">No active employee record.</span>}
             </div>
@@ -389,6 +394,14 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
               <span>The Command Center remains available while the agent runtime publishes activity.</span>
             </div>
           )}
+          {hoveredAgent ? (
+            <article className="office-hover-card" style={{ borderLeftColor: hoveredAgent.colorToken || activityTone(hoveredAgent.state) }}>
+              <span>{hoveredAgent.characterName || hoveredAgent.name}</span>
+              <strong>{hoveredAgent.name} / {hoveredAgent.role}</strong>
+              <p>{hoveredAgent.task}</p>
+              {hoveredAgent.visualTraits ? <small>{hoveredAgent.visualTraits}</small> : null}
+            </article>
+          ) : null}
           <div className="office-stage-caption">
             <span>Live office</span>
             {hoveredAgent ? <strong>{hoveredAgent.name} / {hoveredAgent.task}</strong> : <strong>{model.agents.length} employee records / {messageFlows.length} live handoffs</strong>}
@@ -406,8 +419,8 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
                 </select>
               </label>
               <article className="office-agent-profile">
-                <div className={`office-agent-avatar state-${selectedAgent.state}`}>{selectedAgent.name.slice(0, 1)}</div>
-                <div><h1>{selectedAgent.name}</h1><p>{selectedAgent.role}</p></div>
+                <div className={`office-agent-avatar state-${selectedAgent.state}`} style={{ borderColor: selectedAgent.colorToken || undefined, color: selectedAgent.colorToken || undefined }}>{selectedAgent.characterName.slice(0, 1) || selectedAgent.name.slice(0, 1)}</div>
+                <div><h1>{selectedAgent.characterName || selectedAgent.name}</h1><p>{selectedAgent.name} / {selectedAgent.role}</p></div>
                 <span className={`office-state state-${selectedAgent.state}`}>{selectedAgent.state}</span>
               </article>
               <article className="office-task-card">

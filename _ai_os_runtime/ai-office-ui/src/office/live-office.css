@@ -148,6 +148,11 @@
 .office-stage { position: relative; min-height: 520px; overflow: hidden; background: #081015; }
 .office-stage canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 .office-stage::before { position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; border: 1px solid rgba(197, 220, 226, 0.08); content: ""; }
+.office-hover-card { position: absolute; z-index: 3; top: 14px; left: 14px; display: grid; max-width: min(300px, calc(100% - 28px)); gap: 4px; border: 1px solid rgba(197, 220, 226, 0.18); border-left: 3px solid var(--office-cyan); border-radius: 5px; padding: 10px 11px; background: rgba(9, 18, 23, 0.92); pointer-events: none; }
+.office-hover-card > span { color: var(--office-cyan); font-size: 10px; font-weight: 800; line-height: 1.25; text-transform: uppercase; }
+.office-hover-card > strong { font-size: 12px; font-weight: 760; line-height: 1.35; }
+.office-hover-card > p { margin: 0; color: var(--office-ink); font-size: 12px; line-height: 1.4; }
+.office-hover-card > small { color: var(--office-muted); font-size: 10px; line-height: 1.4; }
 .office-stage-caption { position: absolute; z-index: 2; right: 14px; bottom: 14px; left: 14px; display: grid; gap: 3px; padding: 10px 11px; border: 1px solid rgba(197, 220, 226, 0.16); border-radius: 5px; background: rgba(9, 18, 23, 0.86); pointer-events: none; }
 .office-stage-caption span { color: var(--office-cyan); font-size: 10px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
 .office-stage-caption strong { overflow: hidden; font-size: 12px; font-weight: 690; text-overflow: ellipsis; white-space: nowrap; }

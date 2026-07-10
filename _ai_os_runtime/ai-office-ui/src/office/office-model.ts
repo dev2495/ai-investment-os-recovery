@@ -3,6 +3,9 @@ import type { LiveRow, OfficeSnapshot } from "../api/live";
 export type OfficeAgentState = "active" | "blocked" | "idle" | "review" | "waiting";
 
 export interface OfficeAgent {
+  avatarRole: string;
+  characterName: string;
+  colorToken: string;
   id: string;
   name: string;
   role: string;
@@ -10,6 +13,8 @@ export interface OfficeAgent {
   roomLabel: string;
   state: OfficeAgentState;
   task: string;
+  visualTraits: string;
+  voiceStyle: string;
   workload: number;
   model: string;
   updatedAt: string;
@@ -91,6 +96,9 @@ function toAgent(row: LiveRow): OfficeAgent | null {
 
   const roomLabel = text(row, "room_name", "office_room", "department_name", "department", "department_key") || "Unassigned";
   return {
+    avatarRole: text(row, "avatar_role"),
+    characterName: text(row, "character_name"),
+    colorToken: text(row, "color_token"),
     id: text(row, "agent_id", "id") || key(name),
     name,
     role: text(row, "display_title", "role", "agent_role", "title") || "AI specialist",
@@ -98,6 +106,8 @@ function toAgent(row: LiveRow): OfficeAgent | null {
     roomLabel,
     state: agentState(text(row, "live_state", "activity_status", "status", "state", "task_status")),
     task: text(row, "current_work_title", "current_task", "task_title", "activity_summary", "work_description", "task") || "No live task detail recorded",
+    visualTraits: text(row, "visual_traits"),
+    voiceStyle: text(row, "voice_style"),
     workload: number(row, "workload_score", "workload", "priority_score"),
     model: text(row, "model_name", "model", "provider_model", "default_model"),
     updatedAt: text(row, "latest_activity_at", "updated_at", "last_activity_at", "started_at")
@@ -147,6 +157,9 @@ export function buildOfficeModel(snapshot: OfficeSnapshot | null): OfficeModel {
     const existing = byAgent.get(agent.id);
     byAgent.set(agent.id, existing ? {
       ...agent,
+      avatarRole: existing.avatarRole || agent.avatarRole,
+      characterName: existing.characterName || agent.characterName,
+      colorToken: existing.colorToken || agent.colorToken,
       model: existing.model || agent.model,
       role: existing.role || agent.role,
       roomId: existing.roomId || agent.roomId,
@@ -154,6 +167,8 @@ export function buildOfficeModel(snapshot: OfficeSnapshot | null): OfficeModel {
       state: existing.state,
       task: existing.task || agent.task,
       updatedAt: existing.updatedAt || agent.updatedAt,
+      visualTraits: existing.visualTraits || agent.visualTraits,
+      voiceStyle: existing.voiceStyle || agent.voiceStyle,
       workload: Math.max(existing.workload, agent.workload)
     } : agent);
   }
