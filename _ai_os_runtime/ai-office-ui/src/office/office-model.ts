@@ -1,4 +1,4 @@
-import type { LiveRow, LiveSnapshot } from "../api/live";
+import type { LiveRow, OfficeSnapshot } from "../api/live";
 
 export type OfficeAgentState = "active" | "blocked" | "idle" | "review" | "waiting";
 
@@ -133,7 +133,7 @@ function toCommitteeItem(row: LiveRow): CommitteeItem | null {
   };
 }
 
-export function buildOfficeModel(snapshot: LiveSnapshot | null): OfficeModel {
+export function buildOfficeModel(snapshot: OfficeSnapshot | null): OfficeModel {
   if (!snapshot) {
     return { agents: [], committeeItems: [], rooms: [] };
   }
@@ -189,7 +189,11 @@ export function buildOfficeModel(snapshot: LiveSnapshot | null): OfficeModel {
   }
 
   const byCommitteeItem = new Map<string, CommitteeItem>();
-  for (const row of [...snapshot.committee_room_items, ...snapshot.strategy_committee_queue, ...snapshot.long_term_committee_queue]) {
+  for (const row of [
+    ...snapshot.committee_room_items,
+    ...(snapshot.strategy_committee_queue ?? []),
+    ...(snapshot.long_term_committee_queue ?? [])
+  ]) {
     const item = toCommitteeItem(row);
     if (item) {
       byCommitteeItem.set(item.id, item);

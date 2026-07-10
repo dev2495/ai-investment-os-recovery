@@ -189,6 +189,98 @@ def run_psql_json_statement(sql: str) -> list[dict]:
     return json.loads(output or "[]")
 
 
+def build_office_snapshot() -> dict:
+    """Return the small, live read model used by the animated AI Office."""
+    issues: list[dict] = []
+    queries = {
+        "agents": """
+            SELECT agent_name, department, department_name, display_title, role_scope,
+                   persona, operating_style, mental_models, default_model_route,
+                   default_tools, permission_level, output_targets, guardrails,
+                   escalation_rules, daily_cadence, cost_policy, human_interface,
+                   skill_count, primary_skills, latest_worker_finished_at,
+                   latest_worker_status
+            FROM agent.v_active_agents
+            ORDER BY CASE agent_name WHEN 'Charlie Munger' THEN 1 WHEN 'Jarvis' THEN 2 ELSE 3 END,
+                     department, agent_name
+        """,
+        "live_office_rooms": """
+            SELECT room_key, room_name, room_rank, agent_count,
+                   active_agent_count, open_task_count, blocked_task_count,
+                   unread_message_count, open_inbox_count, open_risk_event_count,
+                   room_workload_score, latest_activity_at, room_state, agents
+            FROM agent.v_live_office_rooms
+            ORDER BY room_rank, room_name
+        """,
+        "live_office_agent_activity": """
+            SELECT agent_name, display_title, reports_to_agent, department_key,
+                   department_name, role_rank, hierarchy_level, character_name,
+                   avatar_role, visual_traits, voice_style, office_location,
+                   animation_state, color_token, icon_hint, mailbox_address,
+                   mailbox_key, unread_message_count, mailbox_latest_message_at,
+                   open_task_count, queued_task_count, in_progress_task_count,
+                   blocked_task_count, open_inbox_count, urgent_inbox_count,
+                   open_risk_event_count, critical_risk_event_count,
+                   high_risk_event_count, current_task_id, current_task_title,
+                   current_task_status, current_task_priority, current_work_title,
+                   current_work_detail, latest_message_id, latest_message_from_agent,
+                   latest_message_subject, latest_message_priority,
+                   latest_message_status, latest_message_at,
+                   latest_worker_run_id, latest_worker_skill_key,
+                   latest_worker_skill_name, latest_worker_status,
+                   latest_worker_summary, latest_worker_output_note_path,
+                   latest_worker_finished_at, open_tasks, workload_score,
+                   live_state, latest_activity_at
+            FROM agent.v_live_office_agent_activity
+            ORDER BY role_rank, agent_name
+        """,
+        "agent_messages": """
+            SELECT id, thread_key, from_agent, from_title, to_agent, to_title,
+                   subject, body, priority, status, related_task_id,
+                   related_skill_key, metadata, created_at, read_at,
+                   processing_status, processed_at, generated_task_id,
+                   generated_inbox_id, error_message
+            FROM agent.v_agent_message_threads
+            ORDER BY created_at DESC NULLS LAST, id DESC
+            LIMIT 50
+        """,
+        "committee_room_items": """
+            SELECT committee_item_key, committee_lane, committee_scope,
+                   source_view, source_id, review_key, strategy_id,
+                   holding_thesis_id, special_memo_id, symbol, exchange,
+                   subject_name, title, review_status, decision_status,
+                   recommended_decision, final_decision, proposed_mode,
+                   risk_level, memo_status, memo_note_path, approval_id,
+                   approval_status, decided_by, decided_at,
+                   paper_monitor_allowed, capital_action_allowed,
+                   live_execution_allowed, member_count, evidence_gap_count,
+                   required_followup_count, created_by, created_at, updated_at,
+                   evidence, decision_pending, approval_pending, memo_missing,
+                   room_state, recommended_next_action, latest_activity_at
+            FROM agent.v_committee_room_items
+            ORDER BY priority_rank, risk_rank, latest_activity_at DESC
+            LIMIT 50
+        """,
+    }
+    try:
+        data = run_psql_json_object(queries, row_limit=50)
+    except Exception as exc:  # noqa: BLE001
+        issues.append({"section": "office_snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
+        data = {name: [] for name in queries}
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {
+            "seed_data_allowed": False,
+            "display_policy": "Show warehouse-backed rows only; empty states mean the source is not connected or has no records yet.",
+        },
+        "issues": issues,
+        **data,
+    }
+
+
 def safe_query(name: str, query: str, issues: list[dict]) -> list[dict]:
     try:
         return run_psql_json(query)
@@ -7140,6 +7232,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())
+                return
+            if self.path.startswith("/api/office/snapshot"):
+                self._send_json(build_office_snapshot())
                 return
             if self.path.startswith("/api/tradingview/cdp-status"):
                 self._send_json(probe_tradingview_cdp())

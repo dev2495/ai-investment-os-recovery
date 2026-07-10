@@ -213,6 +213,17 @@ export interface LiveSnapshot {
   issues: LiveRow[];
 }
 
+export type OfficeSnapshot = Pick<
+  LiveSnapshot,
+  | "agents"
+  | "agent_messages"
+  | "committee_room_items"
+  | "generated_at"
+  | "issues"
+  | "live_office_agent_activity"
+  | "live_office_rooms"
+> & Partial<Pick<LiveSnapshot, "long_term_committee_queue" | "strategy_committee_queue">>;
+
 export interface CreateTradingViewTaskInput {
   task_title: string;
   task_type?: string;
@@ -965,6 +976,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchLiveSnapshot(): Promise<LiveSnapshot> {
   return requestJson<LiveSnapshot>("/api/snapshot");
+}
+
+export function fetchOfficeSnapshot(): Promise<OfficeSnapshot> {
+  return requestJson<OfficeSnapshot>("/api/office/snapshot");
 }
 
 export function createTradingViewTask(input: CreateTradingViewTaskInput): Promise<LiveRow> {

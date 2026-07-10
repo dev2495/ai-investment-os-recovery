@@ -60,6 +60,7 @@ import {
   evaluateExecutionGate,
   evaluateStrategyDrift,
   fetchLiveSnapshot,
+  fetchOfficeSnapshot,
   generateLongTermResearchPacket,
   generateLongTermCommitteeMemo,
   generateLongTermThesisMemo,
@@ -139,9 +140,9 @@ import type {
   Workspace,
   WorkspaceId
 } from "./types";
-import type { LiveRow, LiveSnapshot } from "./api/live";
+import type { LiveRow, LiveSnapshot, OfficeSnapshot } from "./api/live";
 import { useLiveSnapshot } from "./app/useLiveSnapshot";
-import { useWorkspaceRoute } from "./app/useWorkspaceRoute";
+import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
@@ -753,8 +754,58 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
   };
 }
 
-function App() {
-  const { activeWorkspace, interfaceMode, openCommandWorkspace, setActiveWorkspace, setInterfaceMode } = useWorkspaceRoute();
+interface CommandCenterAppProps {
+  activeWorkspace: WorkspaceId;
+  setActiveWorkspace: (workspace: WorkspaceId) => void;
+  setInterfaceMode: (mode: InterfaceMode) => void;
+}
+
+interface OfficeWorkspaceProps {
+  activeWorkspace: WorkspaceId;
+  onExit: () => void;
+  onSelectWorkspace: (workspace: WorkspaceId) => void;
+}
+
+function OfficeWorkspace({ activeWorkspace, onExit, onSelectWorkspace }: OfficeWorkspaceProps) {
+  const ignoreOfficeSnapshot = useCallback((_snapshot: OfficeSnapshot) => {}, []);
+  const ignoreOfficeOffline = useCallback(() => {}, []);
+  const { liveStatus, refresh, snapshot } = useLiveSnapshot<OfficeSnapshot>({
+    fetchSnapshot: fetchOfficeSnapshot,
+    onOffline: ignoreOfficeOffline,
+    onSnapshot: ignoreOfficeSnapshot
+  });
+
+  return (
+    <Suspense fallback={<div className="office-loading-state">Loading live office...</div>}>
+      <LiveOffice
+        liveStatus={liveStatus}
+        onExit={onExit}
+        onRefresh={() => {
+          void refresh();
+        }}
+        onSelectWorkspace={onSelectWorkspace}
+        onSendMessage={async ({ body, subject, toAgent }) => {
+          await createAgentMessage({
+            body,
+            from_agent: "Charlie Munger",
+            metadata: {
+              source_surface: "live_office",
+              workspace: activeWorkspace
+            },
+            priority: "medium",
+            subject,
+            thread_key: `live-office-${toAgent.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+            to_agent: toAgent
+          });
+          await refresh();
+        }}
+        snapshot={snapshot}
+      />
+    </Suspense>
+  );
+}
+
+function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMode }: CommandCenterAppProps) {
   const [command, setCommand] = useState("");
   const [items, setItems] = useState<InboxItem[]>([]);
   const [approvalItems, setApprovalItems] = useState<ApprovalItem[]>([]);
@@ -3510,46 +3561,6 @@ function App() {
       setLegacySourceBusy(false);
     }
   };
-
-  if (interfaceMode === "office") {
-    return (
-      <Suspense fallback={<div className="office-loading-state">Loading live office...</div>}>
-      <LiveOffice
-        liveStatus={liveStatus}
-          onExit={() => setInterfaceMode("command")}
-          onRefresh={() => {
-            void refreshSnapshot();
-          }}
-        onSelectWorkspace={(workspace) => {
-          openCommandWorkspace(workspace);
-        }}
-        onSendMessage={async ({ body, subject, toAgent }) => {
-          setUiError("");
-          try {
-            await createAgentMessage({
-              body,
-              from_agent: "Charlie Munger",
-              metadata: {
-                source_surface: "live_office",
-                workspace: activeWorkspace
-              },
-              priority: "medium",
-              subject,
-              thread_key: `live-office-${toAgent.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-              to_agent: toAgent
-            });
-            await refreshSnapshot();
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Unable to send the agent handoff";
-            setUiError(message);
-            throw new Error(message);
-          }
-        }}
-        snapshot={snapshot}
-      />
-      </Suspense>
-    );
-  }
 
   return (
     <div className="app-shell">
@@ -8308,6 +8319,28 @@ function SeverityBadge({ severity }: { severity: Severity }) {
 
 function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill status-${status}`}>{status.replace("_", " ")}</span>;
+}
+
+function App() {
+  const { activeWorkspace, interfaceMode, openCommandWorkspace, setActiveWorkspace, setInterfaceMode } = useWorkspaceRoute();
+
+  if (interfaceMode === "office") {
+    return (
+      <OfficeWorkspace
+        activeWorkspace={activeWorkspace}
+        onExit={() => setInterfaceMode("command")}
+        onSelectWorkspace={openCommandWorkspace}
+      />
+    );
+  }
+
+  return (
+    <CommandCenterApp
+      activeWorkspace={activeWorkspace}
+      setActiveWorkspace={setActiveWorkspace}
+      setInterfaceMode={setInterfaceMode}
+    />
+  );
 }
 
 export default App;

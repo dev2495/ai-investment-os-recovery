@@ -4,7 +4,7 @@ import { Accessibility, ArrowLeft, Building2, CircleAlert, RefreshCw, Send, Shie
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Group } from "three";
-import type { LiveRow, LiveSnapshot } from "../api/live";
+import type { LiveRow, OfficeSnapshot } from "../api/live";
 import type { WorkspaceId } from "../types";
 import { buildOfficeModel, type OfficeAgent, type OfficeRoom } from "./office-model";
 import "./live-office.css";
@@ -15,7 +15,7 @@ interface LiveOfficeProps {
   onRefresh: () => void;
   onSelectWorkspace: (workspace: WorkspaceId) => void;
   onSendMessage: (input: { body: string; subject: string; toAgent: string }) => Promise<void>;
-  snapshot: LiveSnapshot | null;
+  snapshot: OfficeSnapshot | null;
 }
 
 interface RoomPlacement {
