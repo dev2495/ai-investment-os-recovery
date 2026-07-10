@@ -30,7 +30,18 @@ export interface OfficeRoom {
 }
 
 export interface CommitteeItem {
+  approvalId: string;
+  approvalStatus: string;
+  decisionStatus: string;
+  evidenceSummary: string[];
+  finalDecision: string;
   id: string;
+  memoNotePath: string;
+  memoStatus: string;
+  requiredFollowups: number;
+  riskLevel: string;
+  sourceId: string;
+  sourceView: string;
   title: string;
   status: string;
   owner: string;
@@ -69,6 +80,21 @@ function key(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "") || "unassigned";
+}
+
+function evidenceSummary(row: LiveRow): string[] {
+  const evidence = row.evidence;
+  if (!evidence || typeof evidence !== "object") {
+    return [];
+  }
+  if (Array.isArray(evidence)) {
+    return evidence.slice(0, 4).map((item) => typeof item === "string" ? item : JSON.stringify(item));
+  }
+  return Object.entries(evidence as Record<string, unknown>).slice(0, 5).map(([label, value]) => {
+    if (Array.isArray(value)) return `${label}: ${value.map(String).join(", ")}`;
+    if (value && typeof value === "object") return `${label}: ${Object.keys(value as Record<string, unknown>).join(", ")}`;
+    return `${label}: ${String(value)}`;
+  });
 }
 
 function agentState(value: string): OfficeAgentState {
@@ -135,7 +161,18 @@ function toCommitteeItem(row: LiveRow): CommitteeItem | null {
     return null;
   }
   return {
-    id: text(row, "id", "review_key", "committee_key") || key(title),
+    approvalId: text(row, "approval_id"),
+    approvalStatus: text(row, "approval_status"),
+    decisionStatus: text(row, "decision_status"),
+    evidenceSummary: evidenceSummary(row),
+    finalDecision: text(row, "final_decision"),
+    id: text(row, "committee_item_key", "id", "review_key", "committee_key") || key(title),
+    memoNotePath: text(row, "memo_note_path"),
+    memoStatus: text(row, "memo_status"),
+    requiredFollowups: number(row, "required_followup_count"),
+    riskLevel: text(row, "risk_level"),
+    sourceId: text(row, "source_id", "review_key"),
+    sourceView: text(row, "source_view"),
     title,
     status: text(row, "status", "decision_status", "review_status") || "open",
     owner: text(row, "owner_agent", "chair", "requested_by", "owner") || "Committee",

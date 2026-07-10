@@ -313,6 +313,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
   const [messageEvidence, setMessageEvidence] = useState<AgentMessageEvidence | null>(null);
   const [messageEvidenceBusyId, setMessageEvidenceBusyId] = useState("");
   const [messageEvidenceError, setMessageEvidenceError] = useState("");
+  const [selectedCommitteeItemId, setSelectedCommitteeItemId] = useState("");
   const { toggleRenderer, useStaticOffice } = useOfficeRendererMode();
   const rooms = useMemo<RoomPlacement[]>(() => model.rooms.map((room, index) => ({
     room,
@@ -322,6 +323,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
   const selectedAgent = model.agents.find((agent) => agent.id === selectedAgentId) ?? hoveredAgent ?? model.agents[0] ?? null;
   const activeAgents = model.agents.filter((agent) => agent.state !== "idle").length;
   const blockedAgents = model.agents.filter((agent) => agent.state === "blocked").length;
+  const selectedCommitteeItem = model.committeeItems.find((item) => item.id === selectedCommitteeItemId) ?? null;
   const selectedMessages = useMemo(() => {
     if (!selectedAgent) return [];
     return (snapshot?.agent_messages ?? []).filter((message) => {
@@ -502,14 +504,29 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
         <div className="office-committee-heading"><span>Committee Room</span><strong>{model.committeeItems.length} open matters</strong></div>
         <div className="office-committee-list">
           {model.committeeItems.length ? model.committeeItems.map((item) => (
-            <article className="office-committee-item" key={item.id}>
+            <button aria-pressed={selectedCommitteeItem?.id === item.id} className="office-committee-item" key={item.id} onClick={() => setSelectedCommitteeItemId(item.id)} type="button">
               <span className={`office-status-dot status-${item.status.toLowerCase().replace(/[^a-z]+/g, "-")}`} />
               <div><strong>{item.title}</strong><p>{item.owner} / {item.nextAction}</p></div>
               <small>{item.status}</small>
-            </article>
+            </button>
           )) : <div className="office-empty">No live committee items are awaiting review.</div>}
         </div>
       </section>
+      {selectedCommitteeItem ? (
+        <section className="office-committee-detail" aria-label="Selected committee decision packet">
+          <header>
+            <div><span>Committee Decision Packet</span><strong>{selectedCommitteeItem.title}</strong></div>
+            <button aria-label="Close committee decision packet" onClick={() => setSelectedCommitteeItemId("")} title="Close committee decision packet" type="button"><X size={15} aria-hidden="true" /></button>
+          </header>
+          <dl>
+            <div><dt>Source</dt><dd>{selectedCommitteeItem.sourceView || "No source view recorded"}{selectedCommitteeItem.sourceId ? ` / #${selectedCommitteeItem.sourceId}` : ""}</dd></div>
+            <div><dt>Decision</dt><dd>{selectedCommitteeItem.finalDecision || selectedCommitteeItem.nextAction}</dd></div>
+            <div><dt>Approval</dt><dd>{selectedCommitteeItem.approvalId ? `#${selectedCommitteeItem.approvalId} / ${selectedCommitteeItem.approvalStatus || "unresolved"}` : "No approval record"}</dd></div>
+            <div><dt>Memo</dt><dd>{selectedCommitteeItem.memoNotePath || selectedCommitteeItem.memoStatus || "No memo recorded"}</dd></div>
+          </dl>
+          {selectedCommitteeItem.evidenceSummary.length ? <ul>{selectedCommitteeItem.evidenceSummary.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="office-empty">No structured evidence summary is attached to this committee item.</p>}
+        </section>
+      ) : null}
     </main>
   );
 }

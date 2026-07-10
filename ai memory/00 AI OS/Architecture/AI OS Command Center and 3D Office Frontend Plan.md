@@ -151,6 +151,7 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 - The 3D office now renders deduplicated agent-message links as live handoff lines, priority-colored and counted in the office caption. The first verification showed 11 durable handoffs.
 - Office agents now use their live character names, color tokens, visual traits, and work state. Hover cards surface the employee identity and current assignment rather than a seed persona.
 - The first evidence drawer is live for Office mailbox items. It calls `/api/evidence/agent-message/{id}` and shows the durable message record plus linked task, inbox, and approval records; validation for message `#61` surfaced task `#294`, inbox `#379`, and the worker note path.
+- Committee strip items now open a live decision packet containing the source view/row, decision, approval, memo reference, and structured evidence. Mobile verification at 390 px found no horizontal overflow for the TATASTEEL strategy review packet.
 - Gates A through D remain incomplete until the remaining work below is implemented and verified; this is an evidence checkpoint, not a completion claim.
 
 ### Gate A: Command Center foundation
