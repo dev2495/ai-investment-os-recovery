@@ -476,12 +476,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Long-Term Office dashboard foundation.
 - [~] Quant Lab dashboard foundation.
 - [~] AI Office live activity foundation.
-- [~] Live snapshot/API contract for office, committee, chat, message, widget, portfolio, strategy, research, risk, and system surfaces. Evidence: `ai-office-ui/src/api/live.ts` and `/api/snapshot`.
+- [~] Live snapshot/API contract for office, committee, chat, message, widget, portfolio, strategy, research, risk, and system surfaces. Evidence: `ai-office-ui/src/api/live.ts`, `/api/snapshot`, and scoped `/api/office/snapshot`.
 - [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
-- [ ] Command Center shell extraction from monolithic `App.tsx` with no behavior loss.
+- [~] Command Center shell extraction from monolithic `App.tsx` with no behavior loss. Verified 2026-07-10: Live Office now mounts as its own workspace component and stops the broad Command Center snapshot lifecycle; Command Center workspace modules remain to be extracted.
 - [~] Addressable Command Center / Live Office world routing with preserved context. Verified 2026-07-10: `?mode=office&workspace=risk` opens the office and the return action lands on `?mode=command&workspace=risk`; per-workspace module extraction remains outstanding.
 - [~] Snapshot/UI/chat state layer. Verified 2026-07-10: `useLiveSnapshot` owns the 30-second warehouse poll, reconnect state, and initial empty/offline behavior; existing focused post-action refresh remains intact. Stale-data state and error boundary remain outstanding.
-- [ ] Focused workspace snapshot profile and payload budget. Baseline 2026-07-10: full `/api/snapshot` was 8.95 MB and 10.36 s; daily operating views must use scoped reads without losing evidence access.
+- [~] Focused workspace snapshot profile and payload budget. Verified 2026-07-10: bounded `/api/snapshot` is 7.40 MB in 9.20 s; `/api/office/snapshot` is 242 KB in 105 ms and preserves 36 agents, 10 rooms, 24 live activity rows, 50 recent durable messages, and 6 committee matters. Deep evidence remains in Postgres and the broad snapshot; Command Center workspace scopes remain open.
 - [ ] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows.
 - [ ] Mission Control v2: Charlie chat, delegation, inbox, approvals, daily brief, widget materialization.
 - [ ] Quant Lab v2: intake through committee, paper/live promotion, validation, optimization, and evidence.
