@@ -153,16 +153,17 @@ def run_psql_json(query: str) -> list[dict]:
     return json.loads(output or "[]")
 
 
-def run_psql_json_object(queries: dict[str, str]) -> dict[str, list[dict]]:
+def run_psql_json_object(queries: dict[str, str], *, row_limit: int | None = None) -> dict[str, list[dict]]:
     ctes: list[str] = []
     rows: list[str] = []
     for index, (name, query) in enumerate(queries.items()):
         alias = f"q_{index}"
+        limit_clause = f" LIMIT {row_limit}" if row_limit is not None else ""
         ctes.append(
             f"""
             {alias} AS (
                 SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
-                FROM ({query}) result_rows
+                FROM ({query}) result_rows{limit_clause}
             )
             """
         )
@@ -2474,7 +2475,7 @@ def build_snapshot() -> dict:
         """,
     }
     try:
-        data = run_psql_json_object(queries)
+        data = run_psql_json_object(queries, row_limit=50)
     except Exception as exc:  # noqa: BLE001
         issues.append({"section": "snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
         data = {name: [] for name in queries}
