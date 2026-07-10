@@ -1,10 +1,11 @@
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Line, OrbitControls } from "@react-three/drei";
-import { Accessibility, ArrowLeft, Building2, CircleAlert, RefreshCw, Send, ShieldCheck, UsersRound } from "lucide-react";
+import { Accessibility, ArrowLeft, Building2, CircleAlert, FileSearch, RefreshCw, Send, ShieldCheck, UsersRound, X } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Group } from "three";
-import type { LiveRow, OfficeSnapshot } from "../api/live";
+import { fetchAgentMessageEvidence } from "../api/live";
+import type { AgentMessageEvidence, LiveRow, OfficeSnapshot } from "../api/live";
 import type { WorkspaceId } from "../types";
 import { buildOfficeModel, type OfficeAgent, type OfficeRoom } from "./office-model";
 import "./live-office.css";
@@ -287,6 +288,21 @@ function OfficeFallback({ agents, onSelect, rooms }: { agents: OfficeAgent[]; on
   );
 }
 
+function EvidenceRows({ label, records }: { label: string; records: LiveRow[] }) {
+  if (!records.length) return null;
+  return (
+    <section className="office-evidence-group">
+      <span>{label}</span>
+      {records.map((record, index) => (
+        <article key={`${label}-${rowText(record, "id", "task_id", "approval_id")}-${index}`}>
+          <strong>{rowText(record, "title", "subject", "approval_type", "thread_key") || "Linked record"}</strong>
+          <p>{rowText(record, "status", "processing_status", "owner_agent", "target_workspace", "source_kind") || "Recorded"}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
 export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWorkspace, onSendMessage, snapshot }: LiveOfficeProps) {
   const model = useMemo(() => buildOfficeModel(snapshot), [snapshot]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -294,6 +310,9 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
   const [handoffDraft, setHandoffDraft] = useState({ body: "", subject: "" });
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [handoffError, setHandoffError] = useState("");
+  const [messageEvidence, setMessageEvidence] = useState<AgentMessageEvidence | null>(null);
+  const [messageEvidenceBusyId, setMessageEvidenceBusyId] = useState("");
+  const [messageEvidenceError, setMessageEvidenceError] = useState("");
   const { toggleRenderer, useStaticOffice } = useOfficeRendererMode();
   const rooms = useMemo<RoomPlacement[]>(() => model.rooms.map((room, index) => ({
     room,
@@ -341,6 +360,21 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
       setHandoffError(error instanceof Error ? error.message : "Unable to send the agent handoff");
     } finally {
       setHandoffBusy(false);
+    }
+  };
+
+  const openMessageEvidence = async (message: LiveRow) => {
+    const messageId = rowText(message, "id");
+    if (!messageId || messageEvidenceBusyId) return;
+    setMessageEvidenceBusyId(messageId);
+    setMessageEvidenceError("");
+    try {
+      setMessageEvidence(await fetchAgentMessageEvidence(messageId));
+    } catch (error) {
+      setMessageEvidence(null);
+      setMessageEvidenceError(error instanceof Error ? error.message : "Unable to load the evidence chain");
+    } finally {
+      setMessageEvidenceBusyId("");
     }
   };
 
@@ -433,11 +467,25 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
                 <div className="office-section-title"><CircleAlert size={15} aria-hidden="true" /><span>Recent messages</span></div>
                 {selectedMessages.length ? selectedMessages.map((message) => (
                   <article className="office-message-row" key={rowText(message, "id", "message_key")}>
-                    <strong>{rowText(message, "subject", "title", "message_type") || "Agent message"}</strong>
-                    <p>{rowText(message, "body", "summary", "message") || "No message body recorded."}</p>
+                    <div>
+                      <strong>{rowText(message, "subject", "title", "message_type") || "Agent message"}</strong>
+                      <p>{rowText(message, "body", "summary", "message") || "No message body recorded."}</p>
+                    </div>
+                    <button aria-label="Open evidence chain" disabled={messageEvidenceBusyId === rowText(message, "id")} onClick={() => void openMessageEvidence(message)} title="Open evidence chain" type="button"><FileSearch size={14} aria-hidden="true" /></button>
                   </article>
                 )) : <div className="office-empty">No mailbox traffic for this employee in the current snapshot.</div>}
               </div>
+              {messageEvidence ? (
+                <section className="office-evidence-drawer" aria-label="Mailbox evidence chain">
+                  <header><span>Evidence chain</span><button aria-label="Close evidence chain" onClick={() => setMessageEvidence(null)} title="Close evidence chain" type="button"><X size={14} aria-hidden="true" /></button></header>
+                  <article className="office-evidence-message"><strong>{rowText(messageEvidence.message, "subject") || "Agent message"}</strong><p>Message #{messageEvidence.entity_id} / {rowText(messageEvidence.message, "thread_key", "id")}</p></article>
+                  <EvidenceRows label="Linked tasks" records={messageEvidence.tasks} />
+                  <EvidenceRows label="Inbox items" records={messageEvidence.inbox_items} />
+                  <EvidenceRows label="Approvals" records={messageEvidence.approvals} />
+                  {!messageEvidence.tasks.length && !messageEvidence.inbox_items.length && !messageEvidence.approvals.length ? <p className="office-empty">No downstream task, inbox, or approval record is linked to this message.</p> : null}
+                </section>
+              ) : null}
+              {messageEvidenceError ? <p className="office-evidence-error">{messageEvidenceError}</p> : null}
               <form className="office-handoff-form" onSubmit={submitHandoff}>
                 <span>Internal handoff</span>
                 <input aria-label="Handoff subject" onChange={(event) => setHandoffDraft((draft) => ({ ...draft, subject: event.target.value }))} placeholder="Subject" value={handoffDraft.subject} />

@@ -281,6 +281,73 @@ def build_office_snapshot() -> dict:
     }
 
 
+def build_agent_message_evidence(message_id: int) -> dict:
+    """Return an auditable, bounded evidence chain for one Office mailbox item."""
+    message_rows = run_psql_json(
+        f"""
+        SELECT id, thread_key, from_agent, to_agent, subject, body, priority, status,
+               related_task_id, related_skill_key, metadata, created_at, read_at,
+               processing_status, processed_at, generated_task_id, generated_inbox_id,
+               error_message
+        FROM agent.agent_messages
+        WHERE id = {message_id}
+        LIMIT 1
+        """
+    )
+    if not message_rows:
+        raise ValueError(f"agent message not found: {message_id}")
+    message = message_rows[0]
+
+    task_ids = sorted(
+        {
+            int(value)
+            for value in (message.get("related_task_id"), message.get("generated_task_id"))
+            if value not in (None, "")
+        }
+    )
+    task_id_sql = ",".join(str(task_id) for task_id in task_ids) or "NULL"
+    tasks = run_psql_json(
+        f"""
+        SELECT id, title, objective, owner_agent, status, priority, approval_required,
+               source_kind, source_ref, output_format, output_note_path, evidence,
+               created_at, updated_at
+        FROM agent.tasks
+        WHERE id IN ({task_id_sql})
+        ORDER BY id
+        """
+    ) if task_ids else []
+    inbox_items = run_psql_json(
+        f"""
+        SELECT id, task_id, title, owner_agent, status, priority, recommended_action,
+               evidence, target_workspace, created_at, updated_at
+        FROM agent.inbox_items
+        WHERE id = {sql_literal(message.get('generated_inbox_id'))}
+           OR task_id IN ({task_id_sql})
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 20
+        """
+    ) if task_ids or message.get("generated_inbox_id") not in (None, "") else []
+    approvals = run_psql_json(
+        f"""
+        SELECT id, task_id, approval_type, title, owner_agent, risk_level, status,
+               requested_action, rationale, decided_by, decided_at, created_at
+        FROM agent.approvals
+        WHERE task_id IN ({task_id_sql})
+        ORDER BY created_at DESC, id DESC
+        LIMIT 20
+        """
+    ) if task_ids else []
+
+    return {
+        "entity": "agent_message",
+        "entity_id": message_id,
+        "message": message,
+        "tasks": tasks,
+        "inbox_items": inbox_items,
+        "approvals": approvals,
+    }
+
+
 def safe_query(name: str, query: str, issues: list[dict]) -> list[dict]:
     try:
         return run_psql_json(query)
@@ -7235,6 +7302,10 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path.startswith("/api/office/snapshot"):
                 self._send_json(build_office_snapshot())
+                return
+            if self.path.startswith("/api/evidence/agent-message/"):
+                message_id = int(self.path.rsplit("/", 1)[-1].split("?", 1)[0])
+                self._send_json(build_agent_message_evidence(message_id))
                 return
             if self.path.startswith("/api/tradingview/cdp-status"):
                 self._send_json(probe_tradingview_cdp())

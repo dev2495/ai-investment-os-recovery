@@ -224,6 +224,15 @@ export type OfficeSnapshot = Pick<
   | "live_office_rooms"
 > & Partial<Pick<LiveSnapshot, "long_term_committee_queue" | "strategy_committee_queue">>;
 
+export interface AgentMessageEvidence {
+  approvals: LiveRow[];
+  entity: "agent_message";
+  entity_id: number;
+  inbox_items: LiveRow[];
+  message: LiveRow;
+  tasks: LiveRow[];
+}
+
 export interface CreateTradingViewTaskInput {
   task_title: string;
   task_type?: string;
@@ -980,6 +989,10 @@ export function fetchLiveSnapshot(): Promise<LiveSnapshot> {
 
 export function fetchOfficeSnapshot(): Promise<OfficeSnapshot> {
   return requestJson<OfficeSnapshot>("/api/office/snapshot");
+}
+
+export function fetchAgentMessageEvidence(messageId: string | number): Promise<AgentMessageEvidence> {
+  return requestJson<AgentMessageEvidence>(`/api/evidence/agent-message/${encodeURIComponent(String(messageId))}`);
 }
 
 export function createTradingViewTask(input: CreateTradingViewTaskInput): Promise<LiveRow> {
