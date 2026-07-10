@@ -155,6 +155,20 @@
 .office-stage-empty svg { color: var(--office-cyan); }
 .office-stage-empty strong { max-width: 330px; color: var(--office-ink); font-size: 14px; }
 .office-stage-empty span { max-width: 380px; font-size: 12px; line-height: 1.5; }
+.office-static-floor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); height: 100%; gap: 1px; overflow: auto; background: var(--office-border); }
+.office-static-room { min-width: 0; padding: 13px; background: #0b151a; }
+.office-static-room-heading { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding-bottom: 9px; border-bottom: 1px solid rgba(197, 220, 226, 0.09); }
+.office-static-room-heading strong { overflow: hidden; font-size: 11px; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
+.office-static-room-heading small { color: var(--office-muted); font-size: 10px; }
+.office-static-agents { display: grid; gap: 5px; padding-top: 9px; }
+.office-static-agents > button { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 7px; width: 100%; border: 1px solid transparent; border-radius: 5px; padding: 4px; background: transparent; color: var(--office-ink); text-align: left; }
+.office-static-agents > button:hover,
+.office-static-agents > button:focus-visible { border-color: rgba(99, 200, 177, 0.45); background: #112128; outline: none; }
+.office-static-agents .office-agent-avatar { width: 26px; height: 26px; font-size: 11px; }
+.office-static-agents strong,
+.office-static-agents small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-static-agents strong { font-size: 11px; font-weight: 690; }
+.office-static-agents small { margin-top: 2px; color: var(--office-muted); font-size: 10px; }
 .office-agent-profile { position: relative; gap: 10px; margin-top: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--office-border); }
 .office-agent-picker { display: grid; gap: 5px; margin-top: 14px; color: var(--office-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .office-agent-picker select { width: 100%; min-height: 34px; border: 1px solid var(--office-border); border-radius: 5px; padding: 0 8px; outline: none; background: #112027; color: var(--office-ink); font-size: 12px; font-weight: 650; text-transform: none; }
@@ -214,5 +228,6 @@
   .office-room-row { min-height: 46px; }
   .office-stat-stack { display: none; }
   .office-stage { min-height: 460px; }
+  .office-static-floor { grid-template-columns: 1fr; }
   .office-committee-strip { grid-template-columns: 1fr; gap: 9px; padding: 12px; }
 }

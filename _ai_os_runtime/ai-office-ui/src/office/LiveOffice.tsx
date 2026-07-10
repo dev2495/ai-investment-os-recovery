@@ -1,8 +1,8 @@
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { ArrowLeft, Building2, CircleAlert, RefreshCw, Send, ShieldCheck, UsersRound } from "lucide-react";
+import { Accessibility, ArrowLeft, Building2, CircleAlert, RefreshCw, Send, ShieldCheck, UsersRound } from "lucide-react";
 import type { FormEvent } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Group } from "three";
 import type { LiveRow, LiveSnapshot } from "../api/live";
 import type { WorkspaceId } from "../types";
@@ -50,6 +50,30 @@ function rowText(row: LiveRow, ...keys: string[]): string {
     if (value !== null && value !== undefined && String(value).trim()) return String(value).trim();
   }
   return "";
+}
+
+function supportsWebGl(): boolean {
+  const canvas = document.createElement("canvas");
+  return Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl"));
+}
+
+function useOfficeRendererMode() {
+  const [systemStaticOffice, setSystemStaticOffice] = useState(() => !supportsWebGl() || window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [rendererOverride, setRendererOverride] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updateMode = () => setSystemStaticOffice(!supportsWebGl() || motionQuery.matches);
+    updateMode();
+    motionQuery.addEventListener("change", updateMode);
+    return () => motionQuery.removeEventListener("change", updateMode);
+  }, []);
+
+  const useStaticOffice = rendererOverride ?? systemStaticOffice;
+  return {
+    toggleRenderer: () => setRendererOverride((current) => !(current ?? systemStaticOffice)),
+    useStaticOffice
+  };
 }
 
 function OfficeScene({
@@ -206,6 +230,33 @@ function AgentStation({
   );
 }
 
+function OfficeFallback({ agents, onSelect, rooms }: { agents: OfficeAgent[]; onSelect: (agent: OfficeAgent) => void; rooms: OfficeRoom[] }) {
+  return (
+    <div className="office-static-floor" aria-label="Live AI Office static view">
+      {rooms.map((room) => {
+        const roomAgents = agents.filter((agent) => agent.roomId === room.id);
+        return (
+          <section className="office-static-room" key={room.id}>
+            <div className="office-static-room-heading">
+              <span className={`office-status-dot status-${room.status.toLowerCase().replace(/[^a-z]+/g, "-")}`} />
+              <strong>{room.label}</strong>
+              <small>{room.activeCount}/{room.agentCount || roomAgents.length}</small>
+            </div>
+            <div className="office-static-agents">
+              {roomAgents.length ? roomAgents.map((agent) => (
+                <button key={agent.id} onClick={() => onSelect(agent)} type="button">
+                  <span className={`office-agent-avatar state-${agent.state}`}>{agent.name.slice(0, 1)}</span>
+                  <span><strong>{agent.name}</strong><small>{agent.task}</small></span>
+                </button>
+              )) : <span className="office-empty">No active employee record.</span>}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWorkspace, onSendMessage, snapshot }: LiveOfficeProps) {
   const model = useMemo(() => buildOfficeModel(snapshot), [snapshot]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -213,6 +264,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
   const [handoffDraft, setHandoffDraft] = useState({ body: "", subject: "" });
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [handoffError, setHandoffError] = useState("");
+  const { toggleRenderer, useStaticOffice } = useOfficeRendererMode();
   const rooms = useMemo<RoomPlacement[]>(() => model.rooms.map((room, index) => ({
     room,
     x: (index % 3 - 1) * 4.25,
@@ -261,6 +313,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
         </div>
         <div className="office-header-actions">
           <span className={`office-connection office-${liveStatus}`}>{liveStatus === "online" ? "Live warehouse" : liveStatus === "loading" ? "Connecting" : "Warehouse offline"}</span>
+          <button aria-label={useStaticOffice ? "Use animated office" : "Use static office"} aria-pressed={useStaticOffice} className="office-icon-button" onClick={toggleRenderer} title={useStaticOffice ? "Use animated office" : "Use static office"} type="button"><Accessibility size={17} aria-hidden="true" /></button>
           <button className="office-icon-button" onClick={onRefresh} title="Refresh office activity" type="button"><RefreshCw size={17} aria-hidden="true" /></button>
           <button className="office-return-button" onClick={onExit} type="button"><ArrowLeft size={16} aria-hidden="true" /> Command Center</button>
         </div>
@@ -285,10 +338,12 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
         </aside>
 
         <section className="office-stage" aria-label="Interactive AI office model">
-          {rooms.length && model.agents.length ? (
+          {rooms.length && model.agents.length && !useStaticOffice ? (
             <Canvas camera={{ fov: 44, position: [11, 13, 15] }} dpr={[1, 2]} gl={{ antialias: true, preserveDrawingBuffer: true }}>
               <OfficeScene agents={model.agents} onHover={setHoveredAgent} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={rooms} selectedAgentId={selectedAgent?.id ?? ""} />
             </Canvas>
+          ) : rooms.length && model.agents.length ? (
+            <OfficeFallback agents={model.agents} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={model.rooms} />
           ) : (
             <div className="office-stage-empty">
               <Building2 size={30} aria-hidden="true" />
@@ -298,7 +353,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
           )}
           <div className="office-stage-caption">
             <span>Live office</span>
-            {hoveredAgent ? <strong>{hoveredAgent.name} / {hoveredAgent.task}</strong> : <strong>{model.agents.length} active records</strong>}
+            {hoveredAgent ? <strong>{hoveredAgent.name} / {hoveredAgent.task}</strong> : <strong>{model.agents.length} employee records</strong>}
           </div>
         </section>
 

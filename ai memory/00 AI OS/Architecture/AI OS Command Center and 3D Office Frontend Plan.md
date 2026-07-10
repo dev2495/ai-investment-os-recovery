@@ -146,6 +146,7 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 - The Live Office mailbox action is audited end to end. Validation message `#61` from Charlie Munger to Risk Agent created task `#294` and inbox item `#379` through the existing agent-message daemon; it has no capital-action permission.
 - `useLiveSnapshot` now owns the 30-second snapshot poll, reconnect status, and empty/offline reset outside `App.tsx`; existing action handlers still force focused refresh after writes.
 - URL routing is live for the two operating worlds and workspace context. Verified deep link: `?mode=office&workspace=risk` and return route `?mode=command&workspace=risk`.
+- The office has an accessible static mode for reduced-motion or unavailable WebGL. Verified static mode removes the canvas and keeps 10 live rooms, 36 employee controls, task inspection, mailbox handoff, and the committee strip.
 - Gates A through D remain incomplete until the remaining work below is implemented and verified; this is an evidence checkpoint, not a completion claim.
 
 ### Gate A: Command Center foundation
