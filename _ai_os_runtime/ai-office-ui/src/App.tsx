@@ -29,7 +29,7 @@ import {
   X
 } from "lucide-react";
 import type { FormEvent } from "react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import {
   applyStrategyTemplate,
   calculateSpecialSituationSpread,
@@ -140,6 +140,7 @@ import type {
   WorkspaceId
 } from "./types";
 import type { LiveRow, LiveSnapshot } from "./api/live";
+import { useLiveSnapshot } from "./app/useLiveSnapshot";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
@@ -758,8 +759,6 @@ function App() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [approvalItems, setApprovalItems] = useState<ApprovalItem[]>([]);
   const [manualUpdates, setManualUpdates] = useState<ManualUpdateItem[]>([]);
-  const [snapshot, setSnapshot] = useState<LiveSnapshot | null>(null);
-  const [liveStatus, setLiveStatus] = useState<"loading" | "online" | "offline">("loading");
   const [commandBusy, setCommandBusy] = useState(false);
   const [holdingBusy, setHoldingBusy] = useState(false);
   const [bookAssignmentBusy, setBookAssignmentBusy] = useState(false);
@@ -902,6 +901,22 @@ function App() {
     toAgent: "Jarvis"
   });
 
+  const applyLiveSnapshot = useCallback((nextSnapshot: LiveSnapshot) => {
+    setItems(liveInbox(nextSnapshot));
+    setApprovalItems(liveApprovals(nextSnapshot));
+    setManualUpdates(liveManualUpdates(nextSnapshot));
+    setUiError("");
+  }, []);
+  const clearLiveSnapshot = useCallback(() => {
+    setItems([]);
+    setApprovalItems([]);
+    setManualUpdates([]);
+  }, []);
+  const { liveStatus, refresh: refreshLiveSnapshot, setLiveStatus, setSnapshot, snapshot } = useLiveSnapshot({
+    onOffline: clearLiveSnapshot,
+    onSnapshot: applyLiveSnapshot
+  });
+
   const workspaceNav = useMemo(() => {
     const counts = workspaceCounts(snapshot);
     return baseWorkspaces.map((workspace) => ({ ...workspace, count: counts[workspace.id] }));
@@ -918,48 +933,10 @@ function App() {
   const highPriorityItems = items.filter((item) => item.priority === "high" || item.priority === "critical").length;
 
   const refreshSnapshot = async () => {
-    const nextSnapshot = await fetchLiveSnapshot();
-    setSnapshot(nextSnapshot);
-    setItems(liveInbox(nextSnapshot));
-    setApprovalItems(liveApprovals(nextSnapshot));
-    setManualUpdates(liveManualUpdates(nextSnapshot));
-    setLiveStatus("online");
+    const nextSnapshot = await refreshLiveSnapshot();
     setUiError("");
     return nextSnapshot;
   };
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadSnapshot = async () => {
-      try {
-        const nextSnapshot = await fetchLiveSnapshot();
-        if (cancelled) {
-          return;
-        }
-        setSnapshot(nextSnapshot);
-        setItems(liveInbox(nextSnapshot));
-        setApprovalItems(liveApprovals(nextSnapshot));
-        setManualUpdates(liveManualUpdates(nextSnapshot));
-        setLiveStatus("online");
-        setUiError("");
-      } catch {
-        if (!cancelled) {
-          setLiveStatus("offline");
-          setSnapshot(null);
-          setItems([]);
-          setApprovalItems([]);
-          setManualUpdates([]);
-        }
-      }
-    };
-
-    void loadSnapshot();
-    const timer = window.setInterval(loadSnapshot, 30000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, []);
 
   const dashboardMetrics = useMemo(() => liveMetrics(snapshot), [snapshot]);
   const dashboardModules = useMemo(() => liveControlModules(snapshot), [snapshot]);

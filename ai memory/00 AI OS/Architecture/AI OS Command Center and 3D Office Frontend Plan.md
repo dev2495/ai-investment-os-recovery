@@ -144,6 +144,7 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 - The database recovery gap that prevented snapshot reads was closed by applying checked-in migrations `108_strategy_template_library_v1.sql` and `109_long_term_coverage_board_v1.sql`.
 - `npm run build` passes. Browser checks confirmed no console errors, a nonblank WebGL canvas, responsive framing at 1440x1000 and 390x844, and a keyboard-accessible employee selector.
 - The Live Office mailbox action is audited end to end. Validation message `#61` from Charlie Munger to Risk Agent created task `#294` and inbox item `#379` through the existing agent-message daemon; it has no capital-action permission.
+- `useLiveSnapshot` now owns the 30-second snapshot poll, reconnect status, and empty/offline reset outside `App.tsx`; existing action handlers still force focused refresh after writes.
 - Gates A through D remain incomplete until the remaining work below is implemented and verified; this is an evidence checkpoint, not a completion claim.
 
 ### Gate A: Command Center foundation

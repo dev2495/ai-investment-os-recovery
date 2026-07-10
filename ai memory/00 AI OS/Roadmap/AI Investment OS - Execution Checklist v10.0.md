@@ -480,7 +480,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
 - [ ] Command Center shell extraction from monolithic `App.tsx` with no behavior loss.
 - [~] Preserved Command Center / Live Office world switch. Verified 2026-07-10: both views share the same live snapshot and retain the selected workspace on return; addressable routes remain outstanding.
-- [ ] Snapshot/UI/chat state layer with 30-second refresh, focused post-action refresh, stale-data state, and error boundary.
+- [~] Snapshot/UI/chat state layer. Verified 2026-07-10: `useLiveSnapshot` owns the 30-second warehouse poll, reconnect state, and initial empty/offline behavior; existing focused post-action refresh remains intact. Stale-data state and error boundary remain outstanding.
 - [ ] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows.
 - [ ] Mission Control v2: Charlie chat, delegation, inbox, approvals, daily brief, widget materialization.
 - [ ] Quant Lab v2: intake through committee, paper/live promotion, validation, optimization, and evidence.
