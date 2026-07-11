@@ -20,7 +20,7 @@ AIOS_UI_DIST_DIR="${AIOS_SUPPORT_DIR}/ui-dist"
 LAUNCHD_DIR="/Users/devarshthakkar/Library/LaunchAgents"
 LAUNCHD_LOG_DIR="/Users/devarshthakkar/Library/Logs/AIOS"
 OLLAMA_HOST_URL="${OLLAMA_HOST_URL:-http://127.0.0.1:11434}"
-AI_OS_START_OLLAMA_LAUNCHD="${AI_OS_START_OLLAMA_LAUNCHD:-0}"
+AI_OS_START_OLLAMA_LAUNCHD="${AI_OS_START_OLLAMA_LAUNCHD:-1}"
 
 if [[ "${AI_OS_SKIP_STORAGE_GUARD:-0}" != "1" && -x "${RUNTIME_ROOT}/scripts/verify_external_storage.sh" ]]; then
   "${RUNTIME_ROOT}/scripts/verify_external_storage.sh" >/dev/null
@@ -40,12 +40,29 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_message_daemon.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_message_daemon.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_source_freshness.py" "${AIOS_SERVICE_DIR}/scripts/check_source_freshness.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_tradingview_cdp.py" "${AIOS_SERVICE_DIR}/scripts/check_tradingview_cdp.py"
+  cp -f "${RUNTIME_ROOT}/scripts/check_model_endpoint_live.py" "${AIOS_SERVICE_DIR}/scripts/check_model_endpoint_live.py"
   cp -f "${RUNTIME_ROOT}/scripts/aggregate_ticks_to_ohlcv.py" "${AIOS_SERVICE_DIR}/scripts/aggregate_ticks_to_ohlcv.py"
   rsync -a --delete "${RUNTIME_ROOT}/ai-office-ui/dist/" "${AIOS_UI_DIST_DIR}/"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.api.plist" "${LAUNCHD_API_PLIST}"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ui.plist" "${LAUNCHD_UI_PLIST}"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.agent-daemon.plist" "${LAUNCHD_AGENT_DAEMON_PLIST}"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ollama.plist" "${LAUNCHD_OLLAMA_PLIST}"
+}
+
+trim_launchd_logs() {
+  local max_bytes="${AI_OS_LAUNCHD_LOG_MAX_BYTES:-8388608}"
+  local keep_bytes="${AI_OS_LAUNCHD_LOG_KEEP_BYTES:-1048576}"
+  local log_file size tmp_file
+  for log_file in "${LAUNCHD_LOG_DIR}"/*.log "${LAUNCHD_LOG_DIR}"/*.err; do
+    [[ -f "${log_file}" ]] || continue
+    size="$(stat -f '%z' "${log_file}" 2>/dev/null || printf '0')"
+    if [[ "${size}" -gt "${max_bytes}" ]]; then
+      tmp_file="${log_file}.trim.$$"
+      tail -c "${keep_bytes}" "${log_file}" > "${tmp_file}"
+      cat "${tmp_file}" > "${log_file}"
+      rm -f "${tmp_file}"
+    fi
+  done
 }
 
 start_launchd_services() {
@@ -58,12 +75,13 @@ start_launchd_services() {
   launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_API_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_AGENT_DAEMON_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_OLLAMA_PLIST}" 2>/dev/null || true
+  trim_launchd_logs
   if [[ "${AI_OS_START_OLLAMA_LAUNCHD}" == "1" ]]; then
     launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_OLLAMA_PLIST}" 2>/dev/null || true
     launchctl kickstart -k "${LAUNCHD_DOMAIN}/com.devarsh.aios.ollama"
-    wait_for_http "${OLLAMA_HOST_URL}/api/version" "Ollama" "/Users/devarshthakkar/Library/Logs/AIOS/ollama.launchd.err" || return 1
+    wait_for_http "${OLLAMA_HOST_URL}/api/version" "Ollama" "${LAUNCHD_LOG_DIR}/ollama.launchd.err" || return 1
   else
-    echo "Skipped Ollama LaunchAgent by default; use scripts/start_ollama_foreground.sh for the working SSD-backed local model server."
+    echo "Skipped Ollama LaunchAgent by explicit request; use scripts/start_ollama_foreground.sh for a temporary local model server."
   fi
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_API_PLIST}" 2>/dev/null || true
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_AGENT_DAEMON_PLIST}" 2>/dev/null || true
@@ -71,8 +89,8 @@ start_launchd_services() {
   launchctl kickstart -k "${LAUNCHD_DOMAIN}/com.devarsh.aios.api"
   launchctl kickstart -k "${LAUNCHD_DOMAIN}/com.devarsh.aios.agent-daemon"
   launchctl kickstart -k "${LAUNCHD_DOMAIN}/com.devarsh.aios.ui"
-  wait_for_http "http://${API_HOST}:${API_PORT}/api/health" "AI OS API" "/Users/devarshthakkar/Library/Logs/AIOS/ai_os_api.launchd.err" || return 1
-  wait_for_http "http://127.0.0.1:${UI_PORT}/" "AI Office UI" "/Users/devarshthakkar/Library/Logs/AIOS/ai_office_ui.launchd.err" || return 1
+  wait_for_http "http://${API_HOST}:${API_PORT}/api/health" "AI OS API" "${LAUNCHD_LOG_DIR}/ai_os_api.launchd.err" || return 1
+  wait_for_http "http://127.0.0.1:${UI_PORT}/" "AI Office UI" "${LAUNCHD_LOG_DIR}/ai_office_ui.launchd.err" || return 1
   echo "Started AI OS LaunchAgents:"
   if [[ "${AI_OS_START_OLLAMA_LAUNCHD}" == "1" ]]; then
     echo "  ${OLLAMA_HOST_URL}/api/version"

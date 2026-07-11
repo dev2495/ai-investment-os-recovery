@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from check_model_endpoint_live import check_endpoint
+
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,11 +114,7 @@ def run_model_checks(actor: str, limit: int) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for row in endpoints:
         endpoint_key = str(row["endpoint_key"])
-        check = run_psql_json_statement(
-            f"SELECT jsonb_build_array(agent.run_model_endpoint_health_check({sql_literal(endpoint_key)}, {sql_literal(actor)}))::text"
-        )
-        if check:
-            results.append(check[0])
+        results.append(check_endpoint(endpoint_key, actor))
     return results
 
 

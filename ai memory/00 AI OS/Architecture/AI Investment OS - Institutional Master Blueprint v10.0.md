@@ -182,20 +182,33 @@ The Command Center and Live AI Office are now one linked frontend delivery strea
 
 ## 7. Storage And Memory Contract
 
-External SSD stores:
+Internal Mac storage holds only the lightweight, recoverable runtime source and installed service payload:
 
-- `_ai_os_runtime`,
-- Docker volumes,
+- canonical Git worktree,
+- API/UI/agent source,
+- small LaunchAgent service copies,
+- build metadata required to run the code.
+- a small Git-tracked evidence snapshot and import manifests required for repository-level recovery.
+
+External SSD stores all persistent and heavy state:
+
+- Obsidian vault and canonical knowledge notes,
+- the stable `_ai_os_runtime` access path, which may symlink to the internal Git worktree,
+- Docker Desktop disk image and Docker-managed volumes,
 - Postgres data,
 - Redis data,
 - Qdrant data,
 - imported artifacts,
-- logs,
+- generated/runtime logs,
 - screenshots,
 - browser profiles,
 - generated reports,
 - backtest artifacts,
 - model caches where practical.
+
+Verified recovery layout (2026-07-11): the canonical worktree is `/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os`; `/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime` is a stable symlink to that source; Docker uses `/Volumes/Devarsh SSD/Docker/DockerDesktop/Docker.raw`; and Ollama uses `/Volumes/Devarsh SSD/OllamaModels`. Startup must fail if the SSD, vault, model directory, or external Docker disk image is unavailable. The code location itself is not a heavy-data gate.
+
+macOS service exception: `launchd` must pre-open its standard output/error paths and cannot use the removable SSD for those files under the current privacy grant. The four small supervisor logs therefore remain under `~/Library/Logs/AIOS`, are trimmed from 8 MB to the latest 1 MB on service restart, and must never hold investment artifacts or source data. Runtime logs and all other growing artifacts remain external. The scheduled critical backup also requires explicit removable-volume access before unattended vault rsync can be considered production-ready.
 
 Obsidian stores:
 
@@ -1232,6 +1245,8 @@ Each model route must define:
 - fallback,
 - escalation rule,
 - logging.
+
+Current runtime decision (2026-07-11): `llama3.2:3b` is the always-on local daily driver for Charlie/Jarvis intake, chat, summaries, news triage, research intake, strategy intake, and trade-journal learning. `mxbai-embed-large` owns local retrieval embeddings. Deterministic Python owns backtests, optimization, execution gates, and other reproducible calculations. Qwen 8B/14B routes remain optional escalation slots and must be treated as unavailable until their exact Ollama model names are installed. A running Ollama server is insufficient evidence: readiness must query `/api/tags`, persist the exact model check, and block assignment when the configured model is absent. Frontier/Codex use remains explicit-approval escalation only.
 
 ## 27. Reports And Briefs
 

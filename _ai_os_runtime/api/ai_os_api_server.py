@@ -3468,12 +3468,30 @@ def check_model_endpoint(payload: dict) -> dict:
     if not endpoint_key:
         raise ValueError("endpoint_key is required")
     actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
-    rows = run_psql_json_statement(
-        f"""
-        SELECT jsonb_build_array(agent.run_model_endpoint_health_check({sql_literal(endpoint_key)}, {sql_literal(actor)}))::text
-        """
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "check_model_endpoint_live.py"),
+        "--endpoint-key",
+        endpoint_key,
+        "--actor",
+        actor,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=str(RUNTIME_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
-    result = rows[0] if rows else {}
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "model endpoint health check failed").strip()
+        raise ValueError(message)
+    try:
+        response = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("model endpoint health check returned invalid JSON") from exc
+    result = response.get("result") or {}
     audit_api_write("ai_os_api_check_model_endpoint", "check_model_endpoint", actor, "core.connector_health_checks", result, payload)
     return result
 

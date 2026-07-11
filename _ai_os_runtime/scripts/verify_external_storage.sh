@@ -3,17 +3,57 @@ set -euo pipefail
 
 runtime_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 external_prefix="/Volumes/Devarsh SSD"
+vault_root="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memory }"
+ollama_models="${AI_OS_OLLAMA_MODELS:-/Volumes/Devarsh SSD/OllamaModels}"
 docker_raw="${HOME}/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
 external_docker_raw="$(find "${external_prefix}" -maxdepth 5 \( -name 'Docker.raw' -o -name '*.raw' \) -print 2>/dev/null | head -n 1 || true)"
 
 echo "AI OS runtime root: ${runtime_root}"
 
-if [[ "${runtime_root}" != "${external_prefix}"* ]]; then
-  echo "ERROR: runtime root is not on external SSD: ${runtime_root}" >&2
+if [[ ! -d "${external_prefix}" ]]; then
+  echo "ERROR: external SSD is not mounted at ${external_prefix}" >&2
   exit 1
 fi
 
-echo "OK: runtime root is on external SSD."
+echo "OK: external SSD is mounted."
+
+if [[ "${vault_root}" != "${external_prefix}"* || ! -d "${vault_root}" ]]; then
+  echo "ERROR: vault root is not available on the external SSD: ${vault_root}" >&2
+  exit 1
+fi
+
+if [[ "${ollama_models}" != "${external_prefix}"* || ! -d "${ollama_models}" ]]; then
+  echo "ERROR: Ollama model storage is not available on the external SSD: ${ollama_models}" >&2
+  exit 1
+fi
+
+echo "OK: vault data is external: ${vault_root}"
+echo "OK: Ollama model data is external: ${ollama_models}"
+
+persistent_paths=(
+  "${runtime_root}/logs"
+  "${runtime_root}/run"
+  "${runtime_root}/ai-office-ui/node_modules"
+)
+
+for persistent_path in "${persistent_paths[@]}"; do
+  if [[ ! -e "${persistent_path}" ]]; then
+    echo "ERROR: required persistent path is missing: ${persistent_path}" >&2
+    exit 1
+  fi
+  resolved_path="$(cd "${persistent_path}" && pwd -P)"
+  if [[ "${resolved_path}" != "${external_prefix}"* ]]; then
+    echo "ERROR: persistent path is not on the external SSD: ${persistent_path} -> ${resolved_path}" >&2
+    exit 1
+  fi
+  echo "OK: persistent path is external: ${persistent_path} -> ${resolved_path}"
+done
+
+if [[ "${runtime_root}" == "${external_prefix}"* ]]; then
+  echo "OK: runtime source is on the external SSD."
+else
+  echo "INFO: runtime source is on internal storage; persistent vault, model, and Docker data remain external."
+fi
 
 cd "${runtime_root}"
 docker compose config >/dev/null

@@ -31,28 +31,28 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 1. Foundation Runtime
 
-- [~] Runtime workspace on external SSD.
-- [~] Docker services on external SSD.
-- [~] Postgres warehouse.
-- [~] Redis.
-- [~] Qdrant.
-- [~] API server.
-- [~] AI Office dashboard shell.
-- [~] Obsidian vault memory surface.
+- [x] Recovery storage layout: source code plus a small Git-tracked evidence snapshot on the Mac; vault, Docker disk image/volumes, model files, generated dependency cache, runtime logs/state, and heavy-data mirrors on the external SSD. Verified 2026-07-11 by `scripts/verify_external_storage.sh`; evidence: [[2026-07-11-runtime-command-model-readiness-v2]].
+- [x] Docker services use the external SSD disk image. Verified 2026-07-11 at `/Volumes/Devarsh SSD/Docker/DockerDesktop/Docker.raw`; Postgres, Qdrant, and Redis containers are healthy/running.
+- [x] Postgres warehouse foundation. Verified 2026-07-11 through `/api/health` and container health.
+- [x] Redis foundation. Verified 2026-07-11 through the healthy `ai_os_redis` container.
+- [x] Qdrant foundation. Verified 2026-07-11 with six live collections from `/collections`.
+- [x] API server foundation. Verified 2026-07-11 at `http://127.0.0.1:8765/api/health` with Postgres and TradingView CDP checks passing.
+- [x] AI Office dashboard shell. Verified 2026-07-11 at `http://127.0.0.1:5177/` through the deployed LaunchAgent build.
+- [x] Obsidian vault memory surface. Verified 2026-07-11 at `/Volumes/Devarsh SSD/Obsidian memory ` with the runtime symlink preserved.
 - [~] MCP server foundation. Evidence includes strategy template tools in [[2026-07-08-strategy-template-library-v1]]; `ai_os_strategy_template_library` and `ai_os_create_strategy_from_template` are registered and import-verified.
 - [~] Model endpoint registry.
 - [~] Data-source connector registry.
-- [~] Provider readiness board.
-- [~] Provider assignment gates.
+- [x] Provider readiness board foundation with live model availability checks. Verified 2026-07-11 by readiness run `live-model-readiness-v2-20260711`; installed models are assignable and five absent Qwen routes are degraded/non-assignable.
+- [x] Provider assignment gate foundation. Verified 2026-07-11 by Command Center task `#327` and provider gate inbox `#413`; approval policy held the task at `needs_review`.
 - [~] Department-level provider policy controls.
 - [x] Blueprint v9 operating-model registry. Evidence: [[2026-07-07-blueprint-v9-operating-model-registry-v1]].
 - [ ] Blueprint v10 operating-model registry.
 - [ ] Worker daemon health monitor.
 - [ ] System health dashboard v2.
-- [ ] Durable backup job.
-- [ ] Restore test.
+- [~] Durable backup job. A verified Postgres/Qdrant/vault snapshot exists at `~/AI_OS_CRITICAL_BACKUP/current` from 2026-07-10 and the daily LaunchAgent is installed, but macOS removable-volume privacy blocks unattended vault rsync with exit `23`; explicit Files & Folders/Full Disk Access approval is required before marking complete. Evidence: [[2026-07-11-runtime-command-model-readiness-v2]].
+- [ ] Restore test. Do not mark complete until a fresh post-permission backup is restored into an isolated runtime and reconciled.
 - [ ] Remote access plan and security model.
-- [ ] Local model daily-driver benchmark.
+- [~] Local model daily-driver benchmark. `llama3.2:3b` is selected, installed on the SSD, GPU-loaded, returned `LOCAL MODEL READY`, and completed persisted chat turn `#44` with `model_status=called`; a comparative quality/throughput eval set remains open.
 - [ ] Cloud escalation approval workflow.
 
 ## 2. Data Spine
@@ -467,7 +467,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 16. Dashboards And Live Office
 
-- [~] Command Center foundation.
+- [x] Command Center foundation with durable delegation. Verified 2026-07-11 through the deployed UI: Charlie message `#94` routed to Research Analyst, created task `#327`, task inbox `#412`, and provider-policy inbox `#413`; no investment or trading action was requested or executed.
 - [~] Portfolio widget foundation.
 - [~] Book exposure widget.
 - [~] Strategy Committee Gate panel.
@@ -545,12 +545,13 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 ## 18. Model And Cost Controls
 
 - [~] Model endpoint registry foundation.
-- [~] Local model route foundation.
-- [~] Ollama/local model runtime foundation.
+- [x] Local model route foundation. `always_on_daily_driver`, `jarvis_intake`, `jarvis_runtime`, daily brief, research, news, strategy intake, and trade-journal routes can use installed `llama3.2:3b`.
+- [x] Ollama/local model runtime foundation. LaunchAgent startup is enabled by default, bound to `127.0.0.1:11434`, and model files remain under `/Volumes/Devarsh SSD/OllamaModels`.
 - [~] Per-agent model route table.
 - [~] Cost ledger.
-- [~] Embedding model path.
-- [ ] Daily driver model selected and benchmarked.
+- [x] Embedding model path. `mxbai-embed-large` is installed on the SSD and six Qdrant collections are registered against the embedding path.
+- [x] Live model availability gate. API and readiness sweeps query Ollama `/api/tags`; installed `llama3.2:3b` is `configured`, while absent `qwen3:8b`/`qwen3:14b` routes are `model_unavailable` and non-assignable. Evidence: health checks `#773` and `#774`.
+- [~] Daily driver model selected and smoke-benchmarked. `llama3.2:3b` direct cold-load verification completed in 9.73 seconds and Charlie chat turn `#44` used the model successfully; formal task-quality and sustained-throughput benchmarks remain open.
 - [ ] Model call cache.
 - [ ] Escalation policy.
 - [ ] Cloud model approval flow.

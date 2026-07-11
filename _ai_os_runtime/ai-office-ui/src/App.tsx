@@ -35,7 +35,6 @@ import {
   calculateSpecialSituationSpread,
   checkStrategyDataQuality,
   createAgentMessage,
-  createInboxItem,
   createOrderIntent,
   createStrategyIntake,
   createTradingViewTask,
@@ -387,7 +386,7 @@ function routeCommand(text: string): Pick<InboxItem, "agent" | "priority" | "rec
 
   if (normalized.includes("quant") || normalized.includes("backtest") || normalized.includes("strategy")) {
     return {
-      agent: "Quant Agent",
+      agent: "Strategy Intake Agent",
       priority: "medium",
       recommendedAction: "Run validation in paper/shadow mode and save results."
     };
@@ -411,7 +410,7 @@ function routeCommand(text: string): Pick<InboxItem, "agent" | "priority" | "rec
 
   if (normalized.includes("research") || normalized.includes("thesis") || normalized.includes("valuation")) {
     return {
-      agent: "Equity Research",
+      agent: "Research Analyst",
       priority: "medium",
       recommendedAction: "Create or update research note with evidence and assumptions."
     };
@@ -426,7 +425,7 @@ function routeCommand(text: string): Pick<InboxItem, "agent" | "priority" | "rec
   }
 
   return {
-    agent: "Chief of Staff",
+    agent: "Jarvis",
     priority: "medium",
     recommendedAction: "Convert request into scoped tasks and route specialist agents."
   };
@@ -1201,15 +1200,27 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           metadata: { routed_agent: routed.agent }
         });
       } else {
-        await createInboxItem({
-          title,
-          owner_agent: routed.agent,
-          status: "queued",
+        const handoff = await createAgentMessage({
+          body: cleanCommand,
+          from_agent: "Charlie Munger",
+          metadata: {
+            source_surface: "command_center",
+            workspace: activeWorkspace
+          },
+          priority: routed.priority,
+          subject: title,
+          thread_key: `command-${Date.now()}`,
+          to_agent: routed.agent
+        });
+        await triageAgentMessage({
+          action: "create_task",
+          actor: "Jarvis",
+          message_id: asText(handoff, "id"),
           priority: routed.priority,
           recommended_action: routed.recommendedAction,
           target_workspace: activeWorkspace,
-          actor: "Charlie Munger",
-          evidence: [{ source: "AI Office command bar", workspace: activeWorkspaceLabel }]
+          task_objective: cleanCommand,
+          task_title: title
         });
       }
       const nextSnapshot = await fetchLiveSnapshot();

@@ -8,7 +8,9 @@
 
 # Local runtime and secrets
 _ai_os_runtime/.env
+_ai_os_runtime/logs
 _ai_os_runtime/logs/
+_ai_os_runtime/run
 _ai_os_runtime/run/
 _ai_os_runtime/docker_data/
 _ai_os_runtime/docker_data
@@ -24,6 +26,7 @@ _ai_os_runtime/imports/**/*.csv
 _ai_os_runtime/imports/**/*.pdf
 
 # Build/dependency caches
+_ai_os_runtime/ai-office-ui/node_modules
 _ai_os_runtime/ai-office-ui/node_modules/
 _ai_os_runtime/ai-office-ui/dist/
 **/__pycache__/
