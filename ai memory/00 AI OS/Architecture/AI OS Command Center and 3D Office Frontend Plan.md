@@ -138,6 +138,9 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 
 ### Verified Progress: 2026-07-10
 
+- Verified 2026-07-11: the supplied two-world frontend proposal is now an explicit blueprint v10 operating contract. The canonical checklist is synchronized into Postgres as 21 domains and 521 requirements; the live 36-agent registry is authoritative over the historical 16-agent count.
+- Canonical blueprint reads are live through `/api/blueprint/summary`, `/api/blueprint/requirements`, `ai_os_blueprint_summary`, `ai_os_blueprint_requirements`, and the Command Center `Blueprint v10 Coverage` panel. Browser checks found zero console errors; desktop/mobile Live Office canvas and overflow checks passed. Evidence: [[2026-07-11-ssd-recovery-blueprint-v10-frontend-contract]].
+
 - The Command Center and Live Office world toggle is live. Command Center retains `/api/snapshot`; Live Office uses its own `/api/office/snapshot` warehouse read model and mounts without starting the broad Command Center snapshot lifecycle.
 - `LiveOffice` is a lazy-loaded React Three Fiber module, keeping the existing Command Center bundle independent from the 3D renderer.
 - The office maps 36 configured agents, 10 live rooms, live task/message state, and committee queues from Postgres with no client-side seed fallback.

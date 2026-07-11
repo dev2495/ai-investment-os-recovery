@@ -990,9 +990,21 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
 
   const dashboardMetrics = useMemo(() => liveMetrics(snapshot), [snapshot]);
   const dashboardModules = useMemo(() => liveControlModules(snapshot), [snapshot]);
-  const dashboardBlueprintSummary = useMemo(() => snapshot?.blueprint_v9_summary ?? [], [snapshot]);
-  const dashboardBlueprintDomains = useMemo(() => snapshot?.blueprint_v9_domains.slice(0, 8) ?? [], [snapshot]);
-  const dashboardBlueprintRequirements = useMemo(() => snapshot?.blueprint_v9_requirements.slice(0, 8) ?? [], [snapshot]);
+  const dashboardBlueprintSummary = useMemo(
+    () => snapshot?.blueprint_summary ?? snapshot?.blueprint_v9_summary ?? [],
+    [snapshot]
+  );
+  const dashboardBlueprintDomains = useMemo(() => {
+    const domains = snapshot?.blueprint_domains ?? snapshot?.blueprint_v9_domains ?? [];
+    const frontend = domains.filter((domain) => asText(domain, "section_number") === "16");
+    const remaining = domains.filter((domain) => asText(domain, "section_number") !== "16");
+    return [...frontend, ...remaining].slice(0, 8);
+  }, [snapshot]);
+  const dashboardBlueprintRequirements = useMemo(
+    () => (snapshot?.blueprint_requirements ?? snapshot?.blueprint_v9_requirements ?? []).slice(0, 8),
+    [snapshot]
+  );
+  const latestBlueprintSync = useMemo(() => snapshot?.blueprint_sync_runs?.[0] ?? null, [snapshot]);
   const dashboardSources = useMemo(() => liveDataSources(snapshot), [snapshot]);
   const dashboardStrategies = useMemo(() => liveStrategies(snapshot), [snapshot]);
   const dashboardStrategyArsenal = useMemo(() => snapshot?.strategy_arsenal_queue.slice(0, 8) ?? [], [snapshot]);
@@ -5017,7 +5029,12 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
             </div>
           </Panel>
 
-          <Panel className="span-4" icon={<ListChecks size={17} />} title="Blueprint v9 Coverage" action={`${asText(dashboardBlueprintSummary.find((row) => asText(row, "metric") === "requirements") ?? {}, "value", "0")} reqs`}>
+          <Panel
+            className="span-4"
+            icon={<ListChecks size={17} />}
+            title="Blueprint v10 Coverage"
+            action={`${asText(dashboardBlueprintSummary.find((row) => asText(row, "metric") === "requirements") ?? {}, "value", "0")} reqs · ${asText(latestBlueprintSync ?? {}, "status", "unsynced")}`}
+          >
             <div className="employee-profile-summary">
               {dashboardBlueprintSummary.length ? (
                 dashboardBlueprintSummary.map((metric) => (
@@ -5047,7 +5064,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
                   </article>
                 ))
               ) : (
-                <EmptyState message="No v9 blueprint domains loaded from the warehouse." />
+                <EmptyState message="No canonical blueprint domains loaded from the warehouse." />
               )}
             </div>
             <div className="source-check-list">

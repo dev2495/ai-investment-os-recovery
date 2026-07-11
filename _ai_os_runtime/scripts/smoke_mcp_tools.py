@@ -56,6 +56,8 @@ def main() -> int:
     required = {
         "ai_os_control_plane_snapshot",
         "ai_os_orchestration_stack",
+        "ai_os_blueprint_summary",
+        "ai_os_blueprint_requirements",
         "ai_os_upsert_client",
         "ai_os_stage_holding_update",
         "ai_os_apply_holding_update",
@@ -74,6 +76,10 @@ def main() -> int:
     checks = {
         "control_plane": parse_tool_content(call("tools/call", {"name": "ai_os_control_plane_snapshot", "arguments": {}})),
         "orchestration_stack": parse_tool_content(call("tools/call", {"name": "ai_os_orchestration_stack", "arguments": {}})),
+        "blueprint_summary": parse_tool_content(call("tools/call", {"name": "ai_os_blueprint_summary", "arguments": {}})),
+        "blueprint_requirements": parse_tool_content(
+            call("tools/call", {"name": "ai_os_blueprint_requirements", "arguments": {"domain_key": "v10_16_dashboards_and_live_office", "limit": 5}})
+        ),
         "client_summary": parse_tool_content(call("tools/call", {"name": "ai_os_client_3081282_summary", "arguments": {}})),
         "open_symbols": parse_tool_content(call("tools/call", {"name": "ai_os_client_3081282_symbol_dates", "arguments": {"open_only": True, "limit": 3}})),
         "research_sjs": parse_tool_content(call("tools/call", {"name": "ai_os_research_outputs", "arguments": {"query": "SJS", "limit": 3}})),
@@ -93,6 +99,10 @@ def main() -> int:
         "control_plane_strategies": len((checks["control_plane"] or {}).get("strategies", [])),
         "control_plane_workflows": len((checks["control_plane"] or {}).get("workflows", [])),
         "orchestration_rows": len(checks["orchestration_stack"] or []),
+        "blueprint_summary_metrics": len((checks["blueprint_summary"] or {}).get("summary", [])),
+        "blueprint_domains": len((checks["blueprint_summary"] or {}).get("domains", [])),
+        "blueprint_sync_runs": len((checks["blueprint_summary"] or {}).get("sync_runs", [])),
+        "blueprint_requirement_rows": len(checks["blueprint_requirements"] or []),
         "client_summary_metrics": len((checks["client_summary"] or {}).get("summary", [])),
         "open_symbol_rows": len(checks["open_symbols"] or []),
         "research_rows": len(checks["research_sjs"] or []),

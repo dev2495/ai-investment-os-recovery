@@ -22,9 +22,13 @@ export interface LiveSnapshot {
   };
   metrics: LiveRow[];
   modules: LiveRow[];
-  blueprint_v9_summary: LiveRow[];
-  blueprint_v9_domains: LiveRow[];
-  blueprint_v9_requirements: LiveRow[];
+  blueprint_summary: LiveRow[];
+  blueprint_domains: LiveRow[];
+  blueprint_requirements: LiveRow[];
+  blueprint_sync_runs: LiveRow[];
+  blueprint_v9_summary?: LiveRow[];
+  blueprint_v9_domains?: LiveRow[];
+  blueprint_v9_requirements?: LiveRow[];
   data_sources: LiveRow[];
   strategies: LiveRow[];
   strategy_intakes: LiveRow[];

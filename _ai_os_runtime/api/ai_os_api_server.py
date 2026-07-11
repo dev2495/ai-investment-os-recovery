@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -512,6 +513,87 @@ def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: 
         pass
 
 
+def build_blueprint_registry(
+    *,
+    status: str = "",
+    domain_key: str = "",
+    priority: str = "",
+    limit: int = 120,
+    include_requirements: bool = True,
+) -> dict:
+    allowed_statuses = {"planned", "partial", "done", "blocked"}
+    allowed_priorities = {"critical", "high", "medium", "low"}
+    if status and status not in allowed_statuses:
+        raise ValueError(f"status must be one of {sorted(allowed_statuses)}")
+    if priority and priority not in allowed_priorities:
+        raise ValueError(f"priority must be one of {sorted(allowed_priorities)}")
+
+    clauses: list[str] = []
+    if status:
+        clauses.append(f"current_status = {sql_literal(status)}")
+    if domain_key:
+        clauses.append(f"domain_key = {sql_literal(domain_key)}")
+    if priority:
+        clauses.append(f"priority = {sql_literal(priority)}")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    bounded_limit = max(1, min(int(limit), 500))
+
+    queries = {
+        "version": """
+            SELECT blueprint_key, blueprint_name, version_label, status, note_path,
+                   checklist_path, owner_agent, runtime_operator, adopted_at, metadata, updated_at
+            FROM core.os_blueprint_versions
+            WHERE status = 'canonical'
+            ORDER BY adopted_at DESC
+            LIMIT 1
+        """,
+        "summary": """
+            SELECT metric, value, interpretation
+            FROM core.v_os_blueprint_summary
+            ORDER BY metric
+        """,
+        "domains": """
+            SELECT domain_key, section_number, domain_name, domain_type, owner_agent,
+                   owner_department, priority, status, objective, primary_workspace,
+                   requirement_count, done_count, partial_count, planned_count,
+                   blocked_count, mapped_count, progress_score, next_action
+            FROM core.v_os_blueprint_domains
+            ORDER BY section_number
+        """,
+        "sync_runs": """
+            SELECT run_key, version_label, status, source_path, source_sha256,
+                   domain_count, requirement_count, done_count, partial_count,
+                   planned_count, error_message, started_at, finished_at, created_by
+            FROM core.v_os_blueprint_sync_runs
+            ORDER BY created_at DESC
+            LIMIT 10
+        """,
+    }
+    if include_requirements:
+        queries["requirements"] = f"""
+            SELECT requirement_key, requirement_name, requirement_type, priority,
+                   current_status, owner_agent, owner_department, domain_key,
+                   domain_name, section_number, domain_type, primary_workspace,
+                   mapped_object_type, mapped_object_key, mapped_object_status,
+                   mapped_object_found, evidence_note_path, acceptance_criteria,
+                   next_action, metadata, updated_at
+            FROM core.v_os_blueprint_requirements
+            {where}
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                CASE current_status WHEN 'planned' THEN 1 WHEN 'partial' THEN 2 WHEN 'blocked' THEN 3 WHEN 'done' THEN 4 ELSE 5 END,
+                section_number,
+                requirement_key
+            LIMIT {bounded_limit}
+        """
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "data_mode": {"seed_data_allowed": False, "source": "canonical_checklist_sync"},
+        **run_psql_json_object(queries),
+    }
+
+
 def build_snapshot() -> dict:
     issues: list[dict] = []
     queries = {
@@ -523,33 +605,41 @@ def build_snapshot() -> dict:
             FROM core.v_control_plane_overview
             ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, module_name
         """,
-        "blueprint_v9_summary": """
+        "blueprint_summary": """
             SELECT metric, value, interpretation
-            FROM core.v_os_blueprint_v9_summary
+            FROM core.v_os_blueprint_summary
             ORDER BY metric
         """,
-        "blueprint_v9_domains": """
+        "blueprint_domains": """
             SELECT domain_key, section_number, domain_name, domain_type, owner_agent,
                    owner_department, priority, status, objective, primary_workspace,
                    requirement_count, done_count, partial_count, planned_count,
                    blocked_count, mapped_count, progress_score, next_action
-            FROM core.v_os_blueprint_v9_domains
+            FROM core.v_os_blueprint_domains
             ORDER BY section_number
         """,
-        "blueprint_v9_requirements": """
+        "blueprint_requirements": """
             SELECT requirement_key, requirement_name, requirement_type, priority,
                    current_status, owner_agent, owner_department, domain_key,
                    domain_name, section_number, domain_type, primary_workspace,
                    mapped_object_type, mapped_object_key, mapped_object_status,
                    mapped_object_found, evidence_note_path, acceptance_criteria,
                    next_action, metadata, updated_at
-            FROM core.v_os_blueprint_v9_requirements
+            FROM core.v_os_blueprint_requirements
             ORDER BY
                 CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
                 CASE current_status WHEN 'planned' THEN 1 WHEN 'partial' THEN 2 WHEN 'blocked' THEN 3 WHEN 'done' THEN 4 ELSE 5 END,
                 section_number,
                 requirement_key
             LIMIT 120
+        """,
+        "blueprint_sync_runs": """
+            SELECT run_key, version_label, status, source_path, source_sha256,
+                   domain_count, requirement_count, done_count, partial_count,
+                   planned_count, error_message, started_at, finished_at, created_by
+            FROM core.v_os_blueprint_sync_runs
+            ORDER BY created_at DESC
+            LIMIT 10
         """,
         "data_sources": """
             SELECT source_key, source_name, source_type, provider, connection_mode, status,
@@ -2641,6 +2731,11 @@ def build_snapshot() -> dict:
     except Exception as exc:  # noqa: BLE001
         issues.append({"section": "snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
         data = {name: [] for name in queries}
+
+    # Preserve the previous snapshot contract while clients migrate to canonical keys.
+    data["blueprint_v9_summary"] = data.get("blueprint_summary", [])
+    data["blueprint_v9_domains"] = data.get("blueprint_domains", [])
+    data["blueprint_v9_requirements"] = data.get("blueprint_requirements", [])
 
     snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -7300,7 +7395,10 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         try:
-            if self.path in {"/", "/api/health"}:
+            parsed_path = urllib.parse.urlparse(self.path)
+            request_path = parsed_path.path
+            query = urllib.parse.parse_qs(parsed_path.query)
+            if request_path in {"/", "/api/health"}:
                 self._send_json(
                     {
                         "ok": True,
@@ -7313,6 +7411,19 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                             [],
                         ),
                     }
+                )
+                return
+            if request_path == "/api/blueprint/summary":
+                self._send_json(build_blueprint_registry(include_requirements=False))
+                return
+            if request_path == "/api/blueprint/requirements":
+                self._send_json(
+                    build_blueprint_registry(
+                        status=str(query.get("status", [""])[0]),
+                        domain_key=str(query.get("domain_key", [""])[0]),
+                        priority=str(query.get("priority", [""])[0]),
+                        limit=int(query.get("limit", ["120"])[0]),
+                    )
                 )
                 return
             if self.path.startswith("/api/snapshot"):

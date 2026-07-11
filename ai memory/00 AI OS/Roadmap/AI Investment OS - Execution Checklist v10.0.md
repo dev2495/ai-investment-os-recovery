@@ -18,7 +18,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Create institutional master blueprint v10.0. Evidence: [[AI Investment OS - Institutional Master Blueprint v10.0]].
 - [x] Create execution checklist v10.0. Evidence: this file.
 - [x] Mark v10.0 as canonical in top-level AI OS index. Evidence: [[AI OS Master Blueprint]].
-- [ ] Convert v10 domains and requirements into database-backed registry rows.
+- [x] Adopt the Command Center plus 3D Live AI Office frontend delivery contract. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]] and blueprint section 6.1.
+- [x] Convert v10 domains and requirements into database-backed registry rows. Verified 2026-07-11 through parser-backed sync run `blueprint-v10-live-sync-20260711`; zero seed rows were created.
 - [ ] Architecture decision record table/API.
 - [ ] Architecture change-control workflow.
 - [ ] Decision log template.
@@ -27,7 +28,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Production data vs test data enforcement check.
 - [ ] Investment disclaimer and human-control notice visible in UI.
 - [ ] Broker execution safety constitution visible in UI.
-- [ ] Runtime disaster recovery runbook.
+- [x] Runtime disaster recovery runbook. Evidence: [[External SSD and AI OS Runtime Recovery Runbook]] and [[2026-07-11-ssd-recovery-blueprint-v10-frontend-contract]].
 
 ## 1. Foundation Runtime
 
@@ -46,7 +47,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Provider assignment gate foundation. Verified 2026-07-11 by Command Center task `#327` and provider gate inbox `#413`; approval policy held the task at `needs_review`.
 - [~] Department-level provider policy controls.
 - [x] Blueprint v9 operating-model registry. Evidence: [[2026-07-07-blueprint-v9-operating-model-registry-v1]].
-- [ ] Blueprint v10 operating-model registry.
+- [x] Blueprint v10 operating-model registry. Verified 2026-07-11 through `core.v_os_blueprint_summary`, `core.v_os_blueprint_domains`, `core.v_os_blueprint_requirements`, API blueprint routes, and MCP tools `ai_os_blueprint_summary` and `ai_os_blueprint_requirements`.
 - [ ] Worker daemon health monitor.
 - [ ] System health dashboard v2.
 - [~] Durable backup job. A verified Postgres/Qdrant/vault snapshot exists at `~/AI_OS_CRITICAL_BACKUP/current` from 2026-07-10 and the daily LaunchAgent is installed, but macOS removable-volume privacy blocks unattended vault rsync with exit `23`; explicit Files & Folders/Full Disk Access approval is required before marking complete. Evidence: [[2026-07-11-runtime-command-model-readiness-v2]].
@@ -467,6 +468,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 16. Dashboards And Live Office
 
+- [x] Canonical frontend delivery plan linked to blueprint and checklist. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]]; the live 36-agent registry overrides the historical 16-agent count in the supplied proposal.
 - [x] Command Center foundation with durable delegation. Verified 2026-07-11 through the deployed UI: Charlie message `#94` routed to Research Analyst, created task `#327`, task inbox `#412`, and provider-policy inbox `#413`; no investment or trading action was requested or executed.
 - [~] Portfolio widget foundation.
 - [~] Book exposure widget.

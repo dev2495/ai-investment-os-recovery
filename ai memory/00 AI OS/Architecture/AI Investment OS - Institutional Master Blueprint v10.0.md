@@ -180,6 +180,17 @@ The rule: visuals come after real data-backed tasks, messages, approvals, and ou
 
 The Command Center and Live AI Office are now one linked frontend delivery stream. The Command Center is the data-dense working surface; the 3D office visualizes the same entities and uses the same audited action routes. Architecture, live-data mapping, delivery gates, responsive requirements, and acceptance criteria are canonical in [[AI OS Command Center and 3D Office Frontend Plan]].
 
+### 6.1 Frontend Operating Contract
+
+The frontend is delivered as two interlinked worlds that preserve the selected entity, workspace, filters, evidence context, and conversation state when the operator switches between them:
+
+1. **Command Center**: Mission Control, Portfolio Office, Quant Lab, Trading Desk, Risk Center, Research Hub, and System Health. This is the primary data-dense analyst workspace and remains fully usable without WebGL.
+2. **Live AI Office**: a React Three Fiber office with Executive, Research, Quant, Trading, Portfolio, Data Center, and Committee rooms. Avatars, task handoffs, committee activity, room KPIs, status pulses, and employee panels must come from live API/Postgres rows.
+
+Charlie chat is the common work-entry surface. A command must show its interpreted objective, delegation, source/tool use, blockers, approvals, evidence, durable task/message records, and resulting widgets. Clicking an office employee uses the same audited agent-message route; the 3D scene has no separate action authority and cannot bypass risk, provider, committee, or execution gates.
+
+The delivery architecture keeps React, TypeScript, Vite, and the existing API contract; uses React Router for addressable workspaces, Zustand only for client selection/view state, React Three Fiber/Three.js/Drei for the office, and standard DOM charts for decision-critical analytics. The implementation order is shell and scoped live reads, Mission Control and core workspaces, 3D interaction completion, then production/accessibility/performance hardening. The current 36-agent live registry is authoritative; older frontend proposals that mention 16 agents are historical snapshots, not the runtime target.
+
 ## 7. Storage And Memory Contract
 
 Internal Mac storage holds only the lightweight, recoverable runtime source and installed service payload:

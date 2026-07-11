@@ -169,13 +169,13 @@ def list_open_tasks(arguments: dict) -> dict:
     )
 
 
-def blueprint_v9_summary(arguments: dict) -> dict:
+def blueprint_summary(arguments: dict) -> dict:
     return tool_result(
         {
             "summary": run_psql_json(
                 """
                 SELECT metric, value, interpretation
-                FROM core.v_os_blueprint_v9_summary
+                FROM core.v_os_blueprint_summary
                 ORDER BY metric
                 """
             ),
@@ -186,15 +186,25 @@ def blueprint_v9_summary(arguments: dict) -> dict:
                        requirement_count, done_count, partial_count,
                        planned_count, blocked_count, mapped_count,
                        progress_score, next_action
-                FROM core.v_os_blueprint_v9_domains
+                FROM core.v_os_blueprint_domains
                 ORDER BY section_number
+                """
+            ),
+            "sync_runs": run_psql_json(
+                """
+                SELECT run_key, version_label, status, source_path, source_sha256,
+                       domain_count, requirement_count, done_count, partial_count,
+                       planned_count, error_message, started_at, finished_at, created_by
+                FROM core.v_os_blueprint_sync_runs
+                ORDER BY created_at DESC
+                LIMIT 10
                 """
             ),
         }
     )
 
 
-def blueprint_v9_requirements(arguments: dict) -> dict:
+def blueprint_requirements(arguments: dict) -> dict:
     status = str(arguments.get("status") or "").strip()
     domain_key = str(arguments.get("domain_key") or "").strip()
     priority = str(arguments.get("priority") or "").strip()
@@ -215,7 +225,7 @@ def blueprint_v9_requirements(arguments: dict) -> dict:
                    domain_name, section_number, mapped_object_type, mapped_object_key,
                    mapped_object_status, mapped_object_found, evidence_note_path,
                    acceptance_criteria, next_action, updated_at
-            FROM core.v_os_blueprint_v9_requirements
+            FROM core.v_os_blueprint_requirements
             {where}
             ORDER BY
                 CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
@@ -226,6 +236,16 @@ def blueprint_v9_requirements(arguments: dict) -> dict:
             """
         )
     )
+
+
+def blueprint_v9_summary(arguments: dict) -> dict:
+    """Compatibility alias for clients using the pre-v10 MCP tool name."""
+    return blueprint_summary(arguments)
+
+
+def blueprint_v9_requirements(arguments: dict) -> dict:
+    """Compatibility alias for clients using the pre-v10 MCP tool name."""
+    return blueprint_requirements(arguments)
 
 
 def sync_position_remediation_queue(arguments: dict) -> dict:
@@ -4881,13 +4901,31 @@ TOOLS = {
         "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 25}}},
         "handler": list_open_tasks,
     },
+    "ai_os_blueprint_summary": {
+        "description": "Read canonical AI Investment OS blueprint progress, domain coverage, and registry sync evidence.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": blueprint_summary,
+    },
+    "ai_os_blueprint_requirements": {
+        "description": "Read canonical blueprint requirements with owners, mapped runtime objects, evidence, acceptance criteria, and next actions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["planned", "partial", "done", "blocked"]},
+                "domain_key": {"type": "string"},
+                "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+                "limit": {"type": "integer", "default": 50},
+            },
+        },
+        "handler": blueprint_requirements,
+    },
     "ai_os_blueprint_v9_summary": {
-        "description": "Read v9 AI Investment OS blueprint domain coverage from the warehouse.",
+        "description": "Compatibility alias for ai_os_blueprint_summary; returns the canonical blueprint rather than frozen v9 rows.",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": blueprint_v9_summary,
     },
     "ai_os_blueprint_v9_requirements": {
-        "description": "Read v9 blueprint requirements with owners, mapped runtime objects, acceptance criteria, and next actions.",
+        "description": "Compatibility alias for ai_os_blueprint_requirements; returns canonical requirements.",
         "inputSchema": {
             "type": "object",
             "properties": {
