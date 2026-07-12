@@ -585,6 +585,10 @@ button {
   min-width: 0;
 }
 
+.trading-quant-risk-workspace {
+  min-width: 0;
+}
+
 .workspace-filter-bar {
   display: flex;
   align-items: flex-end;
@@ -699,6 +703,117 @@ button {
 
 .research-ideas-workspace .span-5 .source-check-row > div {
   grid-column: 1 / -1;
+}
+
+.trading-quant-risk-workspace .source-check-row {
+  grid-template-columns: minmax(180px, 1fr) auto minmax(80px, auto) minmax(92px, auto);
+  gap: 8px;
+}
+
+.trading-quant-risk-workspace .source-check-row > span:not(.status-pill),
+.trading-quant-risk-workspace .source-check-row time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: normal;
+}
+
+.trading-quant-risk-workspace .status-pill {
+  min-width: 0;
+  max-width: 132px;
+  min-height: 22px;
+  height: auto;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+
+.trading-quant-risk-workspace .span-5 .source-check-row,
+.trading-quant-risk-workspace .span-6 .source-check-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.trading-quant-risk-workspace .span-5 .source-check-row > div,
+.trading-quant-risk-workspace .span-6 .source-check-row > div {
+  grid-column: 1 / -1;
+}
+
+.panel-action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quant-control-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.quant-control-strip span {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--neutral);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.operator-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.operator-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.operator-form label span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.operator-form input,
+.operator-form select {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: none;
+  background: #fbfcfb;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.operator-form .span-form {
+  grid-column: 1 / -1;
+}
+
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(178, 55, 55, 0.3);
+  border-radius: 8px;
+  background: var(--bad-bg);
+  color: var(--bad);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .portfolio-intelligence-row,
@@ -3795,6 +3910,11 @@ button {
     white-space: normal;
   }
 
+  .trading-quant-risk-workspace .scoped-scroll-list .source-check-row > span:not(.status-pill) {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .workspace-filter-bar {
     align-items: stretch;
     flex-direction: column;
@@ -3823,9 +3943,23 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .operator-form,
+  .quant-control-strip {
+    grid-template-columns: 1fr;
+  }
+
   .holding-stage-form .span-form,
   .strategy-intake-form .span-form {
     grid-column: 1;
+  }
+
+  .operator-form .span-form {
+    grid-column: 1;
+  }
+
+  .panel-action-group {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .mission-list .source-check-row strong {
