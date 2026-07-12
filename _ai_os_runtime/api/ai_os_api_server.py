@@ -1099,6 +1099,217 @@ def build_research_ideas_snapshot() -> dict:
     }
 
 
+def build_trading_quant_risk_snapshot() -> dict:
+    """Return the bounded quant-validation, trading-control, and risk read model."""
+    queries = {
+        "quant_lab": """
+            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
+                   timeframe, validation_status, activation_gate, parse_status,
+                   data_quality_status, data_quality_reasons, allocation_key,
+                   target_weight, target_notional, expected_return,
+                   expected_volatility, risk_contribution, allocation_status,
+                   ruin_probability, max_drawdown_p95, ruin_quality_flags,
+                   review_key, review_status, recommended_action, severity,
+                   trigger_reasons, assigned_agents, open_assignments,
+                   total_assignments, updated_at
+            FROM strategy.v_quant_lab_dashboard_v2
+            ORDER BY updated_at DESC, strategy_id DESC
+            LIMIT 100
+        """,
+        "model_validation": """
+            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
+                   validation_status, activation_gate, timeframe, parse_status,
+                   data_quality_status, data_quality_reasons,
+                   latest_backtest_run_id, latest_backtest_status,
+                   latest_optimization_run_id, latest_optimization_status,
+                   validation_review_id, reviewer_agent, review_status,
+                   decision, leakage_risk, overfit_risk, required_fixes,
+                   issues, validation_gate_status, validation_gate_reason,
+                   retirement_recommended_action, retirement_severity,
+                   live_execution_allowed, updated_at
+            FROM strategy.v_model_validation_dashboard
+            ORDER BY updated_at DESC, strategy_id DESC
+            LIMIT 100
+        """,
+        "promotion_board": """
+            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
+                   validation_status, activation_gate, parse_status,
+                   data_quality_status, validation_gate_status,
+                   validation_gate_reason, validation_decision, required_fixes,
+                   committee_review_id, committee_review_status,
+                   committee_recommended_decision, committee_proposed_mode,
+                   committee_decision_status, paper_monitor_allowed,
+                   committee_live_execution_allowed, paper_monitor_session_id,
+                   paper_monitor_status, paper_heartbeat_status,
+                   paper_last_heartbeat_at, limited_live_request_id,
+                   limited_live_request_status, limited_live_approval_status,
+                   max_notional, max_daily_loss,
+                   limited_live_execution_allowed, promotion_stage,
+                   next_required_action, broker_order_allowed,
+                   autonomous_live_execution_allowed, updated_at
+            FROM strategy.v_strategy_promotion_board
+            ORDER BY updated_at DESC, strategy_id DESC
+            LIMIT 100
+        """,
+        "strategy_committee": """
+            SELECT id, review_key, strategy_id, strategy_name,
+                   review_status, recommended_decision, proposed_mode,
+                   risk_level, final_decision, decision_status,
+                   paper_monitor_allowed, live_execution_allowed,
+                   memo_note_path, memo_status, approval_status,
+                   decided_by, decided_at, created_at, updated_at
+            FROM strategy.v_strategy_committee_queue
+            ORDER BY updated_at DESC
+            LIMIT 60
+        """,
+        "paper_monitors": """
+            SELECT id, session_key, strategy_id, strategy_name, candidate_key,
+                   instance_id, instance_name, status, monitor_mode,
+                   owner_agent, started_at, stopped_at, last_heartbeat_at,
+                   heartbeat_status, is_stale, live_execution_allowed,
+                   metrics, latest_event_type, latest_event_status,
+                   latest_event_at, total_events, updated_at
+            FROM strategy.v_paper_monitor_sessions
+            ORDER BY updated_at DESC
+            LIMIT 80
+        """,
+        "drift_checks": """
+            SELECT id, session_key, strategy_id, strategy_name, instance_name,
+                   check_status, drift_level, drift_score, findings,
+                   risk_event_id, risk_event_status, inbox_item_id,
+                   live_execution_allowed, checked_by, checked_at
+            FROM strategy.v_drift_monitor_checks
+            ORDER BY checked_at DESC
+            LIMIT 80
+        """,
+        "retirement_queue": """
+            SELECT id, review_key, strategy_id, candidate_key, strategy_name,
+                   review_status, recommended_action, severity,
+                   trigger_source, trigger_reasons, human_decision,
+                   open_assignments, completed_assignments, total_assignments,
+                   created_at, updated_at
+            FROM strategy.v_strategy_retirement_queue
+            ORDER BY updated_at DESC
+            LIMIT 80
+        """,
+        "signals": """
+            SELECT id, ts, strategy, symbol, exchange, action, price,
+                   quantity, confidence, status, payload
+            FROM trading.v_recent_signals
+            ORDER BY ts DESC
+            LIMIT 100
+        """,
+        "alerts": """
+            SELECT id, ts, symbol, exchange, timeframe, severity, status,
+                   title, message, payload
+            FROM strategy.v_open_alerts
+            ORDER BY ts DESC
+            LIMIT 100
+        """,
+        "tradingview_tasks": """
+            SELECT id, task_title, task_type, requested_by, owner_agent,
+                   status, symbols, exchange, timeframe, chart_layout,
+                   instruction, source_ref, browser_run_id,
+                   extracted_artifact_id, output_note_path, result_summary,
+                   evidence, created_at, updated_at, completed_at
+            FROM ops.v_tradingview_tasks
+            ORDER BY created_at DESC
+            LIMIT 80
+        """,
+        "tradingview_templates": """
+            SELECT template_key, template_name, category, action_kind,
+                   default_exchange, default_timeframe, default_chart_layout,
+                   requires_symbol, approval_required, execution_mode, status,
+                   owner_agent, description, risk_notes, updated_at
+            FROM ops.v_tradingview_action_templates
+            ORDER BY category, template_name
+            LIMIT 80
+        """,
+        "trade_activity": """
+            SELECT id, activity_type, execution_mode, source_kind, source_ref,
+                   client_code, account_code, strategy_key, symbol, exchange,
+                   instrument_type, side, quantity, price, trade_ts, status,
+                   thesis, setup_type, timeframe, stop_loss, target_price,
+                   realized_pnl, fees, created_by, created_at, updated_at
+            FROM trading.v_trade_activity_ledger
+            ORDER BY trade_ts DESC, created_at DESC
+            LIMIT 120
+        """,
+        "paper_trade_summary": """
+            SELECT strategy_key, symbol, trade_count, first_trade_ts,
+                   last_trade_ts, realized_pnl, average_price, statuses
+            FROM trading.v_paper_trade_summary
+            ORDER BY last_trade_ts DESC NULLS LAST
+            LIMIT 100
+        """,
+        "risk_summary": """
+            SELECT metric, value, interpretation
+            FROM risk.v_portfolio_risk_dashboard_summary
+            ORDER BY metric
+        """,
+        "risk_limits": """
+            SELECT check_key, book_key, book_name, client_code, client_name,
+                   symbol, exchange, scope_type, scope_ref, limit_key,
+                   limit_name, limit_type, threshold_value, unit, severity,
+                   actual_value, exposure_value, utilization_pct,
+                   check_status, check_message, recommended_action,
+                   latest_as_of
+            FROM risk.v_portfolio_risk_limit_checks
+            ORDER BY
+                CASE check_status WHEN 'breach' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+                actual_value DESC NULLS LAST
+            LIMIT 160
+        """,
+        "limited_live_requests": """
+            SELECT id, request_key, strategy_id, strategy_name, instance_id,
+                   instance_name, book_key, symbol, requested_mode,
+                   request_status, approval_id, approval_status, max_notional,
+                   max_orders_per_day, max_daily_loss, expires_at,
+                   requested_by, rationale, live_execution_allowed,
+                   created_at, updated_at
+            FROM trading.v_limited_live_requests
+            ORDER BY updated_at DESC
+            LIMIT 60
+        """,
+        "order_intents": """
+            SELECT id, order_intent_key, strategy_id, strategy_name,
+                   client_code, account_code, book_key, book_name, symbol,
+                   exchange, instrument_type, side, order_type, quantity,
+                   limit_price, notional, estimated_loss, status, approval_id,
+                   approval_status, gate_status, broker_order_allowed,
+                   live_execution_allowed, created_by, rationale,
+                   created_at, updated_at
+            FROM trading.v_order_intents
+            ORDER BY updated_at DESC
+            LIMIT 100
+        """,
+        "execution_control": """
+            SELECT state_key, global_execution_locked,
+                   broker_execution_policy, paper_trading_allowed,
+                   limited_live_allowed, live_broker_writes_allowed,
+                   lock_reason, updated_by, updated_at,
+                   open_limited_live_requests, blocked_gate_checks,
+                   latest_global_kill_switch_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "tradingview_cdp": probe_tradingview_cdp(),
+        "data_mode": {"seed_data_allowed": False, "source": "scoped_trading_quant_risk_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
     try:
         run_psql_text(
@@ -8049,6 +8260,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/research-ideas/snapshot":
                 self._send_json(build_research_ideas_snapshot())
+                return
+            if request_path == "/api/trading-quant-risk/snapshot":
+                self._send_json(build_trading_quant_risk_snapshot())
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())
