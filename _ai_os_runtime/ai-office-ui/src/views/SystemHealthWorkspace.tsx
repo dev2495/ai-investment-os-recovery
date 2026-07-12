@@ -102,7 +102,12 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => window.clearInterval(timer);
+    const handleRefresh = () => void refresh();
+    window.addEventListener("aios:system-health-refresh", handleRefresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("aios:system-health-refresh", handleRefresh);
+    };
   }, [refresh]);
 
   const storageReady = useMemo(

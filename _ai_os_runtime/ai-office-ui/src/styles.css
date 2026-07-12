@@ -65,7 +65,7 @@ button {
   min-height: 100vh;
 }
 
-.app-shell-system {
+.app-shell-focused {
   grid-template-columns: 248px minmax(0, 1fr);
 }
 
@@ -543,6 +543,38 @@ button {
   max-height: 520px;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.mission-control-workspace {
+  min-width: 0;
+}
+
+.mission-list {
+  max-height: 520px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.mission-brief {
+  min-height: 132px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-brief > p {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.mission-brief .row-footer {
+  margin-top: 12px;
+}
+
+.mission-chat-form {
+  padding-top: 12px;
 }
 
 .artifact-registry-grid {
@@ -3459,6 +3491,47 @@ button {
 
   .system-health-list {
     max-height: 440px;
+  }
+
+  .mission-list {
+    max-height: 440px;
+  }
+
+  .mission-list .source-check-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 7px 10px;
+    min-height: 94px;
+    flex: 0 0 auto;
+    padding: 12px;
+  }
+
+  .mission-list .source-check-row > div {
+    grid-column: 1 / -1;
+  }
+
+  .mission-list .source-check-row > span:not(.status-pill) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-list .source-check-row time {
+    text-align: right;
+  }
+
+  .mission-list .source-check-row strong {
+    display: -webkit-box;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .mission-list .source-check-row p {
+    display: -webkit-box;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .control-head {

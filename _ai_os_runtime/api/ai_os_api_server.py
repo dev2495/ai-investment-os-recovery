@@ -625,6 +625,142 @@ def build_system_health_snapshot() -> dict:
     }
 
 
+def build_mission_control_snapshot() -> dict:
+    """Return the bounded executive read model for Charlie and Jarvis operations."""
+    queries = {
+        "metrics": "SELECT metric, value FROM core.v_control_plane_snapshot ORDER BY metric",
+        "inbox": """
+            SELECT id, task_id, title, owner_agent, status, priority,
+                   recommended_action, target_workspace, created_at, updated_at
+            FROM agent.inbox_items
+            WHERE target_workspace IN ('command', 'system') OR target_workspace IS NULL
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                updated_at DESC
+            LIMIT 30
+        """,
+        "approvals": """
+            SELECT id, task_id, approval_type, title, owner_agent, risk_level,
+                   status, requested_action, rationale, decided_by, decided_at, created_at
+            FROM agent.approvals
+            ORDER BY
+                CASE status WHEN 'pending' THEN 1 ELSE 2 END,
+                CASE risk_level WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+                created_at DESC
+            LIMIT 30
+        """,
+        "approval_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_approval_board_summary
+            ORDER BY metric
+        """,
+        "agent_messages": """
+            SELECT id, thread_key, from_agent, from_title, to_agent, to_title,
+                   subject, body, priority, status, related_task_id,
+                   processing_status, generated_task_id, generated_inbox_id,
+                   error_message, created_at, processed_at
+            FROM agent.v_agent_message_threads
+            ORDER BY created_at DESC NULLS LAST, id DESC
+            LIMIT 30
+        """,
+        "tasks": """
+            SELECT id, title, objective, owner_agent, status, priority,
+                   approval_required, source_kind, source_ref,
+                   output_note_path, created_at, updated_at
+            FROM agent.tasks
+            ORDER BY
+                CASE status WHEN 'in_progress' THEN 1 WHEN 'queued' THEN 2 WHEN 'needs_review' THEN 3 WHEN 'blocked' THEN 4 ELSE 5 END,
+                updated_at DESC
+            LIMIT 30
+        """,
+        "chat_turns": """
+            SELECT id, session_key, actor, assistant_name, user_message,
+                   assistant_message, route_name, model_provider, model_name,
+                   model_status, retrieval_hits, widget_intents, tool_intents,
+                   metadata, created_at
+            FROM agent.v_recent_chat_turns
+            LIMIT 12
+        """,
+        "widget_intents": """
+            SELECT id, session_key, source_chat_turn_id, widget_key, widget_title,
+                   widget_type, workspace, status, priority, owner_agent,
+                   query_ref, materialized_widget_id, created_at, updated_at
+            FROM ops.v_dashboard_widget_intents
+            WHERE workspace = 'command'
+            ORDER BY updated_at DESC
+            LIMIT 20
+        """,
+        "dashboard_widgets": """
+            SELECT id, widget_key, widget_title, widget_type, workspace, status,
+                   priority, owner_agent, query_ref, linked_task_id, task_status,
+                   task_approval_required, inbox_item_id, inbox_status,
+                   last_materialized_at, last_refreshed_at, updated_at
+            FROM ops.v_dashboard_widgets
+            WHERE workspace = 'command'
+            ORDER BY updated_at DESC
+            LIMIT 20
+        """,
+        "agent_worker_queue": """
+            SELECT task_id, title, objective, owner_agent, task_status, priority,
+                   widget_key, widget_title, workspace, suggested_skill_key,
+                   suggested_execution_mode, latest_worker_status,
+                   latest_worker_finished_at, latest_output_note_path,
+                   inbox_item_id, inbox_status, updated_at
+            FROM agent.v_live_agent_worker_queue
+            WHERE workspace = 'command'
+            LIMIT 20
+        """,
+        "agent_worker_runs": """
+            SELECT id, task_id, task_title, widget_key, widget_title,
+                   agent_name, display_title, department, skill_key, skill_name,
+                   run_mode, status, output_summary, output_note_path,
+                   started_at, finished_at, updated_at
+            FROM agent.v_recent_worker_runs
+            ORDER BY finished_at DESC NULLS LAST, id DESC
+            LIMIT 20
+        """,
+        "task_provider_gates": """
+            SELECT task_id, title, owner_agent, task_status, provider_gate_count,
+                   passed_provider_gates, approval_required_provider_gates,
+                   blocked_provider_gates, provider_gate_status,
+                   latest_provider_gate_at
+            FROM agent.v_task_provider_gate_status
+            ORDER BY latest_provider_gate_at DESC NULLS LAST, task_id DESC
+            LIMIT 20
+        """,
+        "source_freshness": """
+            SELECT source_key, source_name, staleness_minutes, status, severity,
+                   rows_seen, risk_event_status, created_at
+            FROM core.v_latest_data_source_freshness
+            ORDER BY
+                CASE status WHEN 'stale' THEN 1 WHEN 'error' THEN 2 WHEN 'missing_check' THEN 3 ELSE 4 END,
+                created_at DESC
+            LIMIT 12
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at,
+                   open_limited_live_requests, blocked_gate_checks
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "tradingview_cdp": probe_tradingview_cdp(),
+        "data_mode": {"seed_data_allowed": False, "source": "scoped_mission_control_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
     try:
         run_psql_text(
@@ -7566,6 +7702,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/system-health/snapshot":
                 self._send_json(build_system_health_snapshot())
+                return
+            if request_path == "/api/mission-control/snapshot":
+                self._send_json(build_mission_control_snapshot())
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())

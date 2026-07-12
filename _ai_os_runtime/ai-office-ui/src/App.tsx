@@ -142,6 +142,7 @@ import type {
 import type { LiveRow, LiveSnapshot, OfficeSnapshot } from "./api/live";
 import { useLiveSnapshot } from "./app/useLiveSnapshot";
 import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
+import MissionControlWorkspace from "./views/MissionControlWorkspace";
 import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
@@ -964,7 +965,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
     setManualUpdates([]);
   }, []);
   const { liveStatus, refresh: refreshLiveSnapshot, setLiveStatus, setSnapshot, snapshot } = useLiveSnapshot({
-    enabled: activeWorkspace !== "system",
+    enabled: !["command", "system"].includes(activeWorkspace),
     onOffline: clearLiveSnapshot,
     onSnapshot: applyLiveSnapshot
   });
@@ -1237,12 +1238,18 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           task_title: title
         });
       }
-      const nextSnapshot = await fetchLiveSnapshot();
-      setSnapshot(nextSnapshot);
-      setItems(liveInbox(nextSnapshot));
-      setApprovalItems(liveApprovals(nextSnapshot));
-      setManualUpdates(liveManualUpdates(nextSnapshot));
       setLiveStatus("online");
+      if (activeWorkspace === "command") {
+        window.dispatchEvent(new Event("aios:mission-control-refresh"));
+      } else if (activeWorkspace === "system") {
+        window.dispatchEvent(new Event("aios:system-health-refresh"));
+      } else {
+        const nextSnapshot = await fetchLiveSnapshot();
+        setSnapshot(nextSnapshot);
+        setItems(liveInbox(nextSnapshot));
+        setApprovalItems(liveApprovals(nextSnapshot));
+        setManualUpdates(liveManualUpdates(nextSnapshot));
+      }
     } catch (error) {
       setUiError(error instanceof Error ? error.message : "Command write failed");
       setLiveStatus("offline");
@@ -3588,7 +3595,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
   };
 
   return (
-    <div className={activeWorkspace === "system" ? "app-shell app-shell-system" : "app-shell"}>
+    <div className={["command", "system"].includes(activeWorkspace) ? "app-shell app-shell-focused" : "app-shell"}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -3696,6 +3703,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
 
         {activeWorkspace === "system" ? (
           <SystemHealthWorkspace onStatusChange={setLiveStatus} />
+        ) : activeWorkspace === "command" ? (
+          <MissionControlWorkspace onStatusChange={setLiveStatus} />
         ) : (
           <>
         <section className="metric-grid" aria-label="Portfolio operating metrics">
@@ -7953,7 +7962,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         )}
       </main>
 
-      {activeWorkspace !== "system" ? (
+      {!["command", "system"].includes(activeWorkspace) ? (
       <aside className="right-rail">
         <section className="rail-panel assistant-panel">
           <div className="rail-heading">
