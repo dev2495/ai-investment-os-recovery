@@ -490,6 +490,141 @@ def qdrant_search(message: str, limit_per_collection: int = 3) -> tuple[list[dic
     return hits[:8], "ok"
 
 
+def build_system_health_snapshot() -> dict:
+    """Return the scoped operational read model for the System Health workspace."""
+    queries = {
+        "metrics": "SELECT metric, value FROM core.v_control_plane_snapshot ORDER BY metric",
+        "blueprint_summary": "SELECT metric, value, interpretation FROM core.v_os_blueprint_summary ORDER BY metric",
+        "blueprint_domains": """
+            SELECT domain_key, section_number, domain_name, owner_agent, status,
+                   requirement_count, done_count, partial_count, planned_count,
+                   progress_score, next_action
+            FROM core.v_os_blueprint_domains
+            WHERE section_number IN (0, 1, 15, 16, 18, 19, 20)
+            ORDER BY section_number
+        """,
+        "blueprint_sync_runs": """
+            SELECT run_key, version_label, status, source_sha256, domain_count,
+                   requirement_count, done_count, partial_count, planned_count,
+                   error_message, started_at, finished_at, created_by
+            FROM core.v_os_blueprint_sync_runs
+            ORDER BY created_at DESC
+            LIMIT 5
+        """,
+        "data_sources": """
+            SELECT source_key, source_name, source_type, provider, connection_mode,
+                   status, freshness_target_minutes, last_seen_at, owner_agent,
+                   source_system_status, updated_at
+            FROM core.v_data_source_registry
+            ORDER BY source_key
+        """,
+        "data_source_checks": """
+            SELECT source_key, check_name, target_url, status, http_status,
+                   latency_ms, rows_seen, error_message, checked_at
+            FROM core.v_recent_data_source_checks
+            ORDER BY checked_at DESC
+            LIMIT 20
+        """,
+        "source_freshness": """
+            SELECT source_key, source_name, freshness_target_minutes,
+                   staleness_minutes, status, severity, rows_seen,
+                   risk_event_status, created_at
+            FROM core.v_latest_data_source_freshness
+            ORDER BY
+                CASE status WHEN 'stale' THEN 1 WHEN 'error' THEN 2 WHEN 'missing_check' THEN 3 ELSE 4 END,
+                created_at DESC
+            LIMIT 30
+        """,
+        "source_freshness_scheduler_runs": """
+            SELECT run_key, status, scheduler_interval_seconds, checked_count,
+                   fresh_count, stale_or_error_count, error_message,
+                   started_at, finished_at, duration_ms, created_by
+            FROM core.v_source_freshness_scheduler_runs
+            LIMIT 5
+        """,
+        "model_routes": """
+            SELECT route_name, task_class, default_provider, default_model,
+                   escalation_provider, escalation_model, max_cost_tier, enabled
+            FROM agent.model_routes
+            WHERE enabled = true
+            ORDER BY route_name
+        """,
+        "model_endpoints": """
+            SELECT endpoint_key, endpoint_name, provider, model_name, route_name,
+                   endpoint_type, status, cost_tier, capabilities, health_status,
+                   last_checked_at, last_latency_ms, last_error, owner_agent
+            FROM agent.v_model_endpoint_control
+            ORDER BY endpoint_key
+            LIMIT 50
+        """,
+        "provider_readiness_summary": """
+            SELECT metric, value, detail
+            FROM core.v_provider_readiness_summary
+            ORDER BY metric
+        """,
+        "provider_readiness_board": """
+            SELECT provider_kind, provider_key, provider_name, provider,
+                   subject_name, status, health_status, readiness_status,
+                   next_action, assignable, last_checked_at, last_error
+            FROM core.v_provider_readiness_board
+            ORDER BY assignable, provider_kind, provider_key
+            LIMIT 50
+        """,
+        "connector_health_checks": """
+            SELECT target_kind, target_key, check_name, status, latency_ms,
+                   rows_seen, error_message, checked_by, checked_at
+            FROM core.v_connector_health_checks
+            LIMIT 30
+        """,
+        "browser_session_checks": """
+            SELECT profile_key, browser_label, connector_key, status,
+                   remote_debugging_port, target_base_url, checked_at, error_message
+            FROM ops.v_browser_session_checks
+            LIMIT 20
+        """,
+        "execution_control": """
+            SELECT state_key, global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_by,
+                   updated_at, open_limited_live_requests, blocked_gate_checks
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+        "pipeline_readiness": """
+            SELECT 'configuration' AS record_class, 'control modules' AS area,
+                   'core.control_plane_modules' AS relation_name, count(*)::TEXT AS row_count
+            FROM core.control_plane_modules
+            UNION ALL SELECT 'configuration', 'MCP tools', 'agent.tool_registry', count(*)::TEXT FROM agent.tool_registry
+            UNION ALL SELECT 'configuration', 'data sources', 'core.data_source_registry', count(*)::TEXT FROM core.data_source_registry
+            UNION ALL SELECT 'configuration', 'model endpoints', 'agent.model_endpoints', count(*)::TEXT FROM agent.model_endpoints
+            UNION ALL SELECT 'runtime_generated', 'source checks', 'core.data_source_checks', count(*)::TEXT FROM core.data_source_checks
+            UNION ALL SELECT 'runtime_generated', 'connector checks', 'core.connector_health_checks', count(*)::TEXT FROM core.connector_health_checks
+            UNION ALL SELECT 'imported_data', 'research artifacts', 'core.raw_artifacts', count(*)::TEXT FROM core.raw_artifacts
+            UNION ALL SELECT 'user_created', 'portfolio positions', 'portfolio.positions', count(*)::TEXT FROM portfolio.positions
+            ORDER BY record_class, area
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "tradingview_cdp": probe_tradingview_cdp(),
+        "storage": {
+            "vault_mounted": VAULT_ROOT.exists(),
+            "ollama_models_external": Path("/Volumes/Devarsh SSD/OllamaModels").is_dir(),
+            "docker_raw_external": Path("/Volumes/Devarsh SSD/Docker/DockerDesktop/Docker.raw").is_file(),
+            "heavy_state_external": Path("/Volumes/Devarsh SSD/AI OS Data").is_dir(),
+        },
+        "data_mode": {"seed_data_allowed": False, "source": "scoped_system_health_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
     try:
         run_psql_text(
@@ -7399,18 +7534,21 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             request_path = parsed_path.path
             query = urllib.parse.parse_qs(parsed_path.query)
             if request_path in {"/", "/api/health"}:
+                db_rows = safe_query(
+                    "db",
+                    "SELECT 'ok' AS status, now() AS checked_at",
+                    [],
+                )
+                healthy = bool(db_rows) and str(db_rows[0].get("status")) == "ok"
                 self._send_json(
                     {
-                        "ok": True,
+                        "ok": healthy,
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                         "runtime_root": str(RUNTIME_ROOT),
                         "tradingview_cdp": probe_tradingview_cdp(),
-                        "db": safe_query(
-                            "db",
-                            "SELECT 'ok' AS status, now() AS checked_at",
-                            [],
-                        ),
-                    }
+                        "db": db_rows,
+                    },
+                    200 if healthy else 503,
                 )
                 return
             if request_path == "/api/blueprint/summary":
@@ -7425,6 +7563,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                         limit=int(query.get("limit", ["120"])[0]),
                     )
                 )
+                return
+            if request_path == "/api/system-health/snapshot":
+                self._send_json(build_system_health_snapshot())
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())

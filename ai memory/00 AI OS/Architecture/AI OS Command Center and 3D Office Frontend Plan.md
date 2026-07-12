@@ -138,6 +138,7 @@ Polling begins at 30 seconds with focused refresh after a user action. A later e
 
 ### Verified Progress: 2026-07-10
 
+- Verified 2026-07-13: System Health is the first extracted Command Center workspace. Direct `?mode=command&workspace=system` routing mounts `SystemHealthWorkspace`, stops the 7.6 MB global poll, removes the stale broad-snapshot right rail, and uses `/api/system-health/snapshot` (about 83 KB, 209 live rows, 16 bounded queries). Desktop/mobile browser checks proved one scoped request, zero console errors, zero panel overlap, and zero horizontal overflow. Evidence: [[2026-07-13-system-health-v2-and-docker-runtime-recovery]].
 - Verified 2026-07-11: the supplied two-world frontend proposal is now an explicit blueprint v10 operating contract. The canonical checklist is synchronized into Postgres as 21 domains and 521 requirements; the live 36-agent registry is authoritative over the historical 16-agent count.
 - Canonical blueprint reads are live through `/api/blueprint/summary`, `/api/blueprint/requirements`, `ai_os_blueprint_summary`, `ai_os_blueprint_requirements`, and the Command Center `Blueprint v10 Coverage` panel. Browser checks found zero console errors; desktop/mobile Live Office canvas and overflow checks passed. Evidence: [[2026-07-11-ssd-recovery-blueprint-v10-frontend-contract]].
 

@@ -40,6 +40,14 @@ Safety rule: never format, erase, reset Docker data, delete a named volume, or r
 - Two NUL-filled Qdrant `strategy_artifacts_mxbai_embed_large` segment metadata files were preserved as `.corrupt-20260711` and replaced with the checksum-identical valid metadata used by three healthy sibling segments. Qdrant recovered all six collections; the repaired strategy collection was green with 43 points.
 - Redis returned `PONG`. API, UI, Ollama, agent daemon, and TradingView CDP returned healthy live checks.
 
+## 2026-07-13 Recurrence Evidence
+
+- APFS stayed mounted and `diskutil verifyVolume /dev/disk5s1` returned exit code `0`, but Docker containerd again returned blob `input/output error`; Redis health checks failed because `/usr/local/bin/redis-cli` could not be read, and API database probes returned no rows.
+- AI OS LaunchAgents were stopped before Docker recovery. Named volumes remained listed and no volume was deleted, reset, or recreated.
+- Docker Desktop was fully stopped. A fresh APFS clone was preserved at `/Volumes/Devarsh SSD/AI OS Data/backups/docker-recovery-20260713/Docker.raw.pre-restart-clone`.
+- Starting the untouched original `Docker.raw` cleared the stale containerd state. Image inventory became readable; Postgres and Redis returned healthy, Redis returned `PONG`, Qdrant served all six collections, and `strategy_artifacts_mxbai_embed_large` remained green with 43 points.
+- `/api/health` was hardened to return HTTP `503` and `ok: false` when its Postgres probe is empty; it can no longer claim health while the database is unreachable.
+
 ## Prevention And Remaining Risk
 
 - Startup storage guards prevent the AI OS from intentionally starting against internal fallback paths.
@@ -47,4 +55,4 @@ Safety rule: never format, erase, reset Docker data, delete a named volume, or r
 - The physical disconnect itself cannot be prevented in software. Use a short certified USB 3.x cable, avoid loose hubs, do not move the SSD while active, and eject only after Docker/Ollama/AI OS services are stopped.
 - The daily critical-backup LaunchAgent still needs macOS removable-volume permission before unattended vault backup can be marked complete.
 - Qdrant needs scheduled snapshots, and the isolated Postgres/Qdrant restore test remains open.
-
+- A recurring Docker containerd I/O state remains an operational risk even when APFS verifies cleanly. Until root cause is eliminated, treat any executable/blob I/O error as a stop-and-clone event and never attempt repeated container restarts against the stale VM state.

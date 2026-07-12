@@ -142,6 +142,7 @@ import type {
 import type { LiveRow, LiveSnapshot, OfficeSnapshot } from "./api/live";
 import { useLiveSnapshot } from "./app/useLiveSnapshot";
 import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
+import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
@@ -963,6 +964,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
     setManualUpdates([]);
   }, []);
   const { liveStatus, refresh: refreshLiveSnapshot, setLiveStatus, setSnapshot, snapshot } = useLiveSnapshot({
+    enabled: activeWorkspace !== "system",
     onOffline: clearLiveSnapshot,
     onSnapshot: applyLiveSnapshot
   });
@@ -3586,7 +3588,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
   };
 
   return (
-    <div className="app-shell">
+    <div className={activeWorkspace === "system" ? "app-shell app-shell-system" : "app-shell"}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -3692,6 +3694,10 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           </div>
         </section>
 
+        {activeWorkspace === "system" ? (
+          <SystemHealthWorkspace onStatusChange={setLiveStatus} />
+        ) : (
+          <>
         <section className="metric-grid" aria-label="Portfolio operating metrics">
           {dashboardMetrics.length ? (
             dashboardMetrics.map((metric) => (
@@ -7943,8 +7949,11 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
             </div>
           </Panel>
         </section>
+          </>
+        )}
       </main>
 
+      {activeWorkspace !== "system" ? (
       <aside className="right-rail">
         <section className="rail-panel assistant-panel">
           <div className="rail-heading">
@@ -8178,6 +8187,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           </ol>
         </section>
       </aside>
+      ) : null}
     </div>
   );
 }

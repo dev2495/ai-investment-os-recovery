@@ -4,6 +4,7 @@ import { fetchLiveSnapshot, type LiveSnapshot } from "../api/live";
 export type LiveConnectionStatus = "loading" | "online" | "offline";
 
 interface UseLiveSnapshotOptions<TSnapshot> {
+  enabled?: boolean;
   fetchSnapshot?: () => Promise<TSnapshot>;
   onOffline: () => void;
   onSnapshot: (snapshot: TSnapshot) => void;
@@ -11,6 +12,7 @@ interface UseLiveSnapshotOptions<TSnapshot> {
 }
 
 export function useLiveSnapshot<TSnapshot = LiveSnapshot>({
+  enabled = true,
   fetchSnapshot = fetchLiveSnapshot as () => Promise<TSnapshot>,
   onOffline,
   onSnapshot,
@@ -28,6 +30,9 @@ export function useLiveSnapshot<TSnapshot = LiveSnapshot>({
   }, [fetchSnapshot, onSnapshot]);
 
   useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
     let cancelled = false;
     const load = async () => {
       try {
@@ -50,7 +55,7 @@ export function useLiveSnapshot<TSnapshot = LiveSnapshot>({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [fetchSnapshot, onOffline, onSnapshot, pollIntervalMs]);
+  }, [enabled, fetchSnapshot, onOffline, onSnapshot, pollIntervalMs]);
 
   return { liveStatus, refresh, setLiveStatus, setSnapshot, snapshot };
 }

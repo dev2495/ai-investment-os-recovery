@@ -65,6 +65,10 @@ button {
   min-height: 100vh;
 }
 
+.app-shell-system {
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -462,6 +466,10 @@ button {
   grid-column: span 5;
 }
 
+.span-6 {
+  grid-column: span 6;
+}
+
 .span-7 {
   grid-column: span 7;
 }
@@ -529,6 +537,12 @@ button {
 .worker-run-list {
   display: flex;
   flex-direction: column;
+}
+
+.system-health-list {
+  max-height: 520px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .artifact-registry-grid {
@@ -3380,6 +3394,7 @@ button {
 
   .span-4,
   .span-5,
+  .span-6,
   .span-7,
   .span-8,
   .span-12 {
@@ -3440,6 +3455,10 @@ button {
   .source-check-row {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .system-health-list {
+    max-height: 440px;
   }
 
   .control-head {
