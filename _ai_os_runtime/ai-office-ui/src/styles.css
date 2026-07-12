@@ -577,6 +577,177 @@ button {
   padding-top: 12px;
 }
 
+.portfolio-office-workspace {
+  min-width: 0;
+}
+
+.workspace-filter-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.workspace-filter-bar label,
+.holding-stage-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.workspace-filter-bar label {
+  width: min(460px, 100%);
+}
+
+.workspace-filter-bar label span,
+.holding-stage-form label span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.workspace-filter-bar select,
+.holding-stage-form input,
+.holding-stage-form select {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: none;
+  background: #fbfcfb;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.workspace-filter-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-filter-bar > div > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.scoped-scroll-list {
+  max-height: 520px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.scoped-scroll-list .source-check-row {
+  flex: 0 0 auto;
+}
+
+.portfolio-office-workspace .source-check-row {
+  grid-template-columns: minmax(180px, 1fr) auto minmax(80px, auto) minmax(84px, auto);
+  gap: 8px;
+}
+
+.portfolio-office-workspace .source-check-row > span:not(.status-pill),
+.portfolio-office-workspace .source-check-row time {
+  text-align: right;
+  white-space: normal;
+}
+
+.portfolio-intelligence-row,
+.client-registry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 11px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+}
+
+.portfolio-intelligence-row:last-child,
+.client-registry-row:last-child {
+  border-bottom: 0;
+}
+
+.portfolio-intelligence-row div,
+.client-registry-row div {
+  min-width: 0;
+}
+
+.portfolio-intelligence-row strong,
+.client-registry-row strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.portfolio-intelligence-row p,
+.client-registry-row p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.portfolio-intelligence-row > span,
+.client-registry-row > span,
+.client-registry-row > small {
+  color: var(--neutral);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.client-registry-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.client-registry-row:hover,
+.client-registry-row.selected {
+  background: var(--accent-soft);
+}
+
+.holding-stage-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.holding-stage-form .span-form {
+  grid-column: 1 / -1;
+}
+
+.form-guard {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.success-strip {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 130, 92, 0.22);
+  border-radius: 8px;
+  background: var(--good-bg);
+  color: var(--good);
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .artifact-registry-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
@@ -3497,6 +3668,10 @@ button {
     max-height: 440px;
   }
 
+  .scoped-scroll-list {
+    max-height: 440px;
+  }
+
   .mission-list .source-check-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 7px 10px;
@@ -3518,6 +3693,57 @@ button {
 
   .mission-list .source-check-row time {
     text-align: right;
+  }
+
+  .scoped-scroll-list .source-check-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 7px 10px;
+    min-height: 94px;
+    flex: 0 0 auto;
+    padding: 12px;
+  }
+
+  .scoped-scroll-list .source-check-row > div {
+    grid-column: 1 / -1;
+  }
+
+  .scoped-scroll-list .source-check-row > span:not(.status-pill) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .scoped-scroll-list .source-check-row time {
+    text-align: right;
+  }
+
+  .workspace-filter-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-filter-bar > div {
+    justify-content: space-between;
+  }
+
+  .portfolio-intelligence-row,
+  .client-registry-row {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-intelligence-row > span,
+  .client-registry-row > span,
+  .client-registry-row > small {
+    text-align: left;
+  }
+
+  .holding-stage-form {
+    grid-template-columns: 1fr;
+  }
+
+  .holding-stage-form .span-form {
+    grid-column: 1;
   }
 
   .mission-list .source-check-row strong {

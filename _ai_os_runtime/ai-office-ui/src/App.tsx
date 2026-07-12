@@ -143,6 +143,7 @@ import type { LiveRow, LiveSnapshot, OfficeSnapshot } from "./api/live";
 import { useLiveSnapshot } from "./app/useLiveSnapshot";
 import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
 import MissionControlWorkspace from "./views/MissionControlWorkspace";
+import PortfolioOfficeWorkspace from "./views/PortfolioOfficeWorkspace";
 import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
@@ -965,7 +966,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
     setManualUpdates([]);
   }, []);
   const { liveStatus, refresh: refreshLiveSnapshot, setLiveStatus, setSnapshot, snapshot } = useLiveSnapshot({
-    enabled: !["command", "system"].includes(activeWorkspace),
+    enabled: !["clients", "command", "portfolio", "system"].includes(activeWorkspace),
     onOffline: clearLiveSnapshot,
     onSnapshot: applyLiveSnapshot
   });
@@ -1243,6 +1244,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         window.dispatchEvent(new Event("aios:mission-control-refresh"));
       } else if (activeWorkspace === "system") {
         window.dispatchEvent(new Event("aios:system-health-refresh"));
+      } else if (["clients", "portfolio"].includes(activeWorkspace)) {
+        window.dispatchEvent(new Event("aios:portfolio-office-refresh"));
       } else {
         const nextSnapshot = await fetchLiveSnapshot();
         setSnapshot(nextSnapshot);
@@ -3595,7 +3598,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
   };
 
   return (
-    <div className={["command", "system"].includes(activeWorkspace) ? "app-shell app-shell-focused" : "app-shell"}>
+    <div className={["clients", "command", "portfolio", "system"].includes(activeWorkspace) ? "app-shell app-shell-focused" : "app-shell"}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -3642,8 +3645,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
             <PanelLeft size={18} aria-hidden="true" />
           </button>
           <div className="workspace-title">
-            <span>{activeWorkspaceLabel}</span>
-            <h1>Command Center</h1>
+            <span>AI Office</span>
+            <h1>{activeWorkspaceLabel}</h1>
           </div>
           <div className="topbar-actions">
             <span className={`live-status live-${liveStatus}`}>
@@ -3705,6 +3708,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           <SystemHealthWorkspace onStatusChange={setLiveStatus} />
         ) : activeWorkspace === "command" ? (
           <MissionControlWorkspace onStatusChange={setLiveStatus} />
+        ) : activeWorkspace === "portfolio" || activeWorkspace === "clients" ? (
+          <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />
         ) : (
           <>
         <section className="metric-grid" aria-label="Portfolio operating metrics">
@@ -7962,7 +7967,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         )}
       </main>
 
-      {!["command", "system"].includes(activeWorkspace) ? (
+      {!["clients", "command", "portfolio", "system"].includes(activeWorkspace) ? (
       <aside className="right-rail">
         <section className="rail-panel assistant-panel">
           <div className="rail-heading">

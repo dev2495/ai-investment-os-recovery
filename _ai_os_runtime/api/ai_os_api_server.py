@@ -761,6 +761,163 @@ def build_mission_control_snapshot() -> dict:
     }
 
 
+def build_portfolio_office_snapshot() -> dict:
+    """Return the bounded multi-book and client-folio operating read model."""
+    queries = {
+        "clients": """
+            SELECT client_code, display_name, risk_profile, sensitivity, active,
+                   account_count, latest_position_count, latest_market_value,
+                   latest_position_at, staged_holding_updates, created_at
+            FROM portfolio.v_client_control_plane
+            ORDER BY display_name
+            LIMIT 100
+        """,
+        "client_accounts": """
+            SELECT c.client_code, c.display_name, a.account_code, a.account_name,
+                   a.account_type, a.broker, a.base_currency, a.active
+            FROM portfolio.accounts a
+            JOIN portfolio.clients c ON c.id = a.client_id
+            ORDER BY c.display_name, a.account_code
+            LIMIT 100
+        """,
+        "latest_positions": """
+            WITH latest AS (
+                SELECT DISTINCT ON (a.account_code, p.symbol)
+                    c.display_name, c.client_code, a.account_code, p.symbol,
+                    p.exchange, p.instrument_type, p.quantity, p.average_price,
+                    p.market_price, p.market_value, p.unrealized_pnl, p.as_of
+                FROM portfolio.positions p
+                JOIN portfolio.accounts a ON a.id = p.account_id
+                JOIN portfolio.clients c ON c.id = a.client_id
+                ORDER BY a.account_code, p.symbol, p.as_of DESC
+            )
+            SELECT * FROM latest
+            ORDER BY market_value DESC NULLS LAST
+            LIMIT 250
+        """,
+        "investment_books": """
+            SELECT book_key, book_name, book_type, mandate, default_horizon,
+                   owner_agent, status, priority, objective, position_count,
+                   gross_exposure, net_exposure, client_count,
+                   active_purpose_count, updated_at
+            FROM books.v_investment_books
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                book_key
+        """,
+        "book_positions": """
+            SELECT id, client_code, client_name, account_code, broker, symbol,
+                   exchange, instrument_type, book_key, book_name, purpose_key,
+                   purpose_name, owner_agent, strategy_key, direction, quantity,
+                   market_price, market_value, gross_exposure, net_exposure,
+                   time_horizon, thesis, exit_criteria, status, as_of, updated_at
+            FROM books.v_book_positions
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, symbol
+            LIMIT 200
+        """,
+        "symbol_book_exposure": """
+            SELECT client_code, client_name, symbol, exchange,
+                   long_term_exposure, tactical_exposure, quant_exposure,
+                   active_trading_exposure, hedges_exposure,
+                   cash_treasury_exposure, gross_long, gross_short,
+                   gross_exposure, net_exposure, book_count, active_books,
+                   purposes, offset_ratio, overall_bias, latest_as_of
+            FROM books.v_symbol_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, symbol
+            LIMIT 200
+        """,
+        "client_book_exposure": """
+            SELECT client_code, client_name, book_key, book_name, position_count,
+                   symbol_count, gross_long, gross_short, gross_exposure,
+                   net_exposure, book_bias, latest_as_of
+            FROM books.v_client_book_exposure
+            ORDER BY gross_exposure DESC NULLS LAST, client_name, book_key
+            LIMIT 150
+        """,
+        "cross_book_conflicts": """
+            SELECT synthetic_id, client_code, client_name, symbol, exchange,
+                   conflict_type, severity, description, long_exposure,
+                   short_exposure, net_exposure, affected_books, offset_ratio,
+                   latest_as_of
+            FROM books.v_cross_book_conflicts
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                latest_as_of DESC NULLS LAST
+            LIMIT 100
+        """,
+        "coordination_questions": """
+            SELECT synthetic_id, client_code, client_name, symbol, exchange,
+                   gross_long, gross_short, net_exposure, offset_ratio,
+                   overall_bias, active_books, purposes, offset_intents,
+                   coordination_question, severity, owner_agent, latest_as_of
+            FROM books.v_cross_book_coordination_questions
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                offset_ratio DESC NULLS LAST
+            LIMIT 100
+        """,
+        "position_gap_summary": """
+            SELECT gap_type, position_count, client_count, symbol_count,
+                   avg_completeness_score, severity, owner_agent
+            FROM books.v_position_object_gap_summary
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                position_count DESC
+        """,
+        "remediation_summary": """
+            SELECT metric, value, interpretation
+            FROM books.v_position_object_remediation_summary
+            ORDER BY metric
+        """,
+        "portfolio_intelligence": """
+            SELECT section, item_key, item_name, item_value, interpretation, payload
+            FROM books.v_portfolio_intelligence_v2
+            ORDER BY
+                CASE section WHEN 'risk' THEN 1 WHEN 'portfolio_overview' THEN 2 WHEN 'concentration' THEN 3 ELSE 4 END,
+                item_key, item_name
+            LIMIT 120
+        """,
+        "manual_updates": """
+            SELECT id, client_code, account_code, symbol, exchange,
+                   instrument_type, quantity, average_price, market_price,
+                   effective_market_value, as_of, update_reason, status,
+                   created_by, created_at, applied_at
+            FROM portfolio.v_manual_holding_update_queue
+            ORDER BY created_at DESC
+            LIMIT 100
+        """,
+        "p2cursor_reconciliation": """
+            SELECT id, run_key, run_ts, client_code, client_name,
+                   p2_account_code, comparison_account_code, status,
+                   p2_position_count, comparison_position_count,
+                   matched_symbols, p2_only_symbols, comparison_only_symbols,
+                   quantity_mismatch_symbols, stale_days, notes, created_at
+            FROM portfolio.v_p2cursor_reconciliation_latest
+            ORDER BY run_ts DESC
+            LIMIT 30
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {"seed_data_allowed": False, "source": "scoped_portfolio_office_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
     try:
         run_psql_text(
@@ -7705,6 +7862,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/mission-control/snapshot":
                 self._send_json(build_mission_control_snapshot())
+                return
+            if request_path == "/api/portfolio-office/snapshot":
+                self._send_json(build_portfolio_office_snapshot())
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())
