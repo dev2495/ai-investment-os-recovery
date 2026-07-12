@@ -1378,7 +1378,7 @@ Phase 7: Full agent office.
 
 Phase 8: Command Center and Live AI Office.
 
-Verified foundation (updated 2026-07-13): Live Office and every Command Center workspace now use production-data scoped reads without seed fallback, the 7.40 MB broad poll, or stale right rail. Reports closes the final route with 164 durable outputs, 27 worker runs, 146 raw artifacts, 180 lineage rows, gap/coverage evidence, search/filter, source links, and path copy through a 605 KB/0.23 s read. `/api/snapshot` is compatibility-only and unused by the UI. Trading/Quant/Risk, Research/Ideas, Portfolio/Clients, Mission, and System remain live as previously verified. Phase 8 remains partial until unreachable monolith code is removed, deep decision/source/action drawers are complete, and accessibility/performance gates pass.
+Verified foundation (updated 2026-07-13): Live Office and every Command Center workspace use production-data scoped reads without seed fallback, broad polling, or stale right rail. The production root now mounts a compact scoped-only shell; Vite tree-shakes the unreferenced legacy function and reduced main JS from 464.25 KB to 250.16 KB. The full 18-test workspace matrix passed desktop/mobile with zero broad requests or runtime/layout errors. Reports retains 164 outputs, 146 raw artifacts, 180 lineage rows, and gap/coverage evidence. Phase 8 remains partial until legacy source is physically removed, deep decision/source/action drawers are complete, and remaining accessibility/production gates pass.
 
 - modular Command Center shell and addressable workspaces,
 - snapshot state and evidence drawer,

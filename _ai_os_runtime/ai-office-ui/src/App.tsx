@@ -28,7 +28,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import {
   applyStrategyTemplate,
@@ -810,7 +810,7 @@ function OfficeWorkspace({ activeWorkspace, onExit, onSelectWorkspace }: OfficeW
   );
 }
 
-function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMode }: CommandCenterAppProps) {
+function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMode }: CommandCenterAppProps) {
   const [command, setCommand] = useState("");
   const [items, setItems] = useState<InboxItem[]>([]);
   const [approvalItems, setApprovalItems] = useState<ApprovalItem[]>([]);
@@ -8388,6 +8388,127 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill status-${status}`}>{status.replace("_", " ")}</span>;
 }
 
+function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMode }: CommandCenterAppProps) {
+  const [command, setCommand] = useState("");
+  const [commandBusy, setCommandBusy] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<"loading" | "online" | "offline">("loading");
+  const [uiError, setUiError] = useState("");
+  const activeWorkspaceLabel = baseWorkspaces.find((workspace) => workspace.id === activeWorkspace)?.label ?? "Command Center";
+
+  const refreshScopedWorkspace = () => {
+    const events: Partial<Record<WorkspaceId, string>> = {
+      command: "aios:mission-control-refresh",
+      system: "aios:system-health-refresh",
+      portfolio: "aios:portfolio-office-refresh",
+      clients: "aios:portfolio-office-refresh",
+      research: "aios:research-ideas-refresh",
+      ideas: "aios:research-ideas-refresh",
+      trading: "aios:trading-quant-risk-refresh",
+      quant: "aios:trading-quant-risk-refresh",
+      risk: "aios:trading-quant-risk-refresh",
+      reports: "aios:reports-refresh"
+    };
+    const eventName = events[activeWorkspace];
+    if (eventName) window.dispatchEvent(new Event(eventName));
+  };
+
+  const submitCommand = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const cleanCommand = command.trim();
+    if (!cleanCommand || commandBusy) return;
+    const routed = routeCommand(cleanCommand);
+    const title = cleanCommand.length > 74 ? `${cleanCommand.slice(0, 71)}...` : cleanCommand;
+    setCommand("");
+    setCommandBusy(true);
+    setUiError("");
+    try {
+      if (routed.agent === "Trading Desk") {
+        await createTradingViewTask({
+          task_title: title,
+          task_type: "chart_review",
+          requested_by: "Charlie Munger",
+          owner_agent: "Trading Desk Agent",
+          priority: routed.priority,
+          symbols: extractSymbols(cleanCommand),
+          instruction: cleanCommand,
+          source_ref: "ai_office_scoped_command_bar",
+          evidence: [{ source: "AI Office scoped command bar", workspace: activeWorkspaceLabel }],
+          metadata: { routed_agent: routed.agent }
+        });
+      } else {
+        const handoff = await createAgentMessage({
+          body: cleanCommand,
+          from_agent: "Charlie Munger",
+          metadata: { source_surface: "scoped_command_center", workspace: activeWorkspace },
+          priority: routed.priority,
+          subject: title,
+          thread_key: `command-${Date.now()}`,
+          to_agent: routed.agent
+        });
+        await triageAgentMessage({
+          action: "create_task",
+          actor: "Jarvis",
+          message_id: asText(handoff, "id"),
+          priority: routed.priority,
+          recommended_action: routed.recommendedAction,
+          target_workspace: activeWorkspace,
+          task_objective: cleanCommand,
+          task_title: title
+        });
+      }
+      setLiveStatus("online");
+      refreshScopedWorkspace();
+    } catch (reason) {
+      setUiError(reason instanceof Error ? reason.message : "Command write failed");
+      setLiveStatus("offline");
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+
+  let workspaceContent: ReactNode;
+  if (activeWorkspace === "system") workspaceContent = <SystemHealthWorkspace onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "command") workspaceContent = <MissionControlWorkspace onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "trading" || activeWorkspace === "quant" || activeWorkspace === "risk") workspaceContent = <TradingQuantRiskWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
+  else workspaceContent = <ReportsWorkspace onStatusChange={setLiveStatus} />;
+
+  return (
+    <div className="app-shell app-shell-focused">
+      <aside className="sidebar">
+        <div className="brand"><div className="brand-mark"><CommandIcon size={18} aria-hidden="true" /></div><div><p>AI Office</p><span>Charlie orchestrator</span></div></div>
+        <nav className="workspace-nav" aria-label="AI Office workspaces">
+          {baseWorkspaces.map((workspace) => {
+            const Icon = workspaceIcons[workspace.id];
+            return <button className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"} key={workspace.id} onClick={() => setActiveWorkspace(workspace.id)} type="button" title={workspace.label}><Icon size={17} aria-hidden="true" /><span>{workspace.label}</span></button>;
+          })}
+        </nav>
+        <div className="sidebar-footer"><div><span className="mini-label">Local mode</span><p>{liveStatus === "online" ? "Live DB linked" : liveStatus === "loading" ? "Connecting" : "Warehouse required"}</p></div><ShieldCheck size={18} aria-hidden="true" /></div>
+      </aside>
+      <main className="main">
+        <header className="topbar">
+          <button className="icon-button" type="button" title="Toggle sidebar"><PanelLeft size={18} aria-hidden="true" /></button>
+          <div className="workspace-title"><span>AI Office</span><h1>{activeWorkspaceLabel}</h1></div>
+          <div className="topbar-actions">
+            <span className={`live-status live-${liveStatus}`}>{liveStatus === "online" ? "Live warehouse" : liveStatus === "loading" ? "Connecting" : "Warehouse offline"}</span>
+            <button className="ghost-button" onClick={() => setInterfaceMode("office")} type="button"><Building2 size={16} aria-hidden="true" />Live Office</button>
+            <button className="ghost-button" type="button"><Search size={16} aria-hidden="true" />Search memory</button>
+            <button className="icon-button" type="button" title="Approval queue"><Bell size={18} aria-hidden="true" /></button>
+          </div>
+        </header>
+        <section className="command-panel" aria-label="Charlie Munger command bar">
+          <div className="command-copy"><div className="jarvis-avatar"><Sparkles size={18} aria-hidden="true" /></div><div><p>Charlie Munger</p><span>Routes work through Jarvis runtime, agents, SQL, and Obsidian write-back.</span></div></div>
+          <form className="command-form" onSubmit={submitCommand}><input aria-label="Command Charlie Munger" onChange={(event) => setCommand(event.target.value)} placeholder="Ask Charlie to review portfolios, research holdings, inspect signals, or open a task..." value={command}/><button className="primary-button" disabled={commandBusy} type="submit"><Plus size={16} aria-hidden="true" />{commandBusy ? "Queueing" : "Assign"}</button></form>
+          {uiError ? <div className="error-strip">{uiError}</div> : null}
+          <div className="quick-command-row">{quickCommands.map((quickCommand) => <button key={quickCommand} onClick={() => setCommand(quickCommand)} type="button" title={quickCommand}>{quickCommand}</button>)}</div>
+        </section>
+        {workspaceContent}
+      </main>
+    </div>
+  );
+}
+
 function App() {
   const { activeWorkspace, interfaceMode, openCommandWorkspace, setActiveWorkspace, setInterfaceMode } = useWorkspaceRoute();
 
@@ -8402,7 +8523,7 @@ function App() {
   }
 
   return (
-    <CommandCenterApp
+    <ScopedCommandCenterApp
       activeWorkspace={activeWorkspace}
       setActiveWorkspace={setActiveWorkspace}
       setInterfaceMode={setInterfaceMode}
