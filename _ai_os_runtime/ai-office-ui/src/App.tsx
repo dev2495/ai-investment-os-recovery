@@ -144,6 +144,7 @@ import { useLiveSnapshot } from "./app/useLiveSnapshot";
 import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
 import MissionControlWorkspace from "./views/MissionControlWorkspace";
 import PortfolioOfficeWorkspace from "./views/PortfolioOfficeWorkspace";
+import ResearchIdeasWorkspace from "./views/ResearchIdeasWorkspace";
 import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
@@ -966,7 +967,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
     setManualUpdates([]);
   }, []);
   const { liveStatus, refresh: refreshLiveSnapshot, setLiveStatus, setSnapshot, snapshot } = useLiveSnapshot({
-    enabled: !["clients", "command", "portfolio", "system"].includes(activeWorkspace),
+    enabled: !["clients", "command", "ideas", "portfolio", "research", "system"].includes(activeWorkspace),
     onOffline: clearLiveSnapshot,
     onSnapshot: applyLiveSnapshot
   });
@@ -1246,6 +1247,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         window.dispatchEvent(new Event("aios:system-health-refresh"));
       } else if (["clients", "portfolio"].includes(activeWorkspace)) {
         window.dispatchEvent(new Event("aios:portfolio-office-refresh"));
+      } else if (["ideas", "research"].includes(activeWorkspace)) {
+        window.dispatchEvent(new Event("aios:research-ideas-refresh"));
       } else {
         const nextSnapshot = await fetchLiveSnapshot();
         setSnapshot(nextSnapshot);
@@ -3598,7 +3601,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
   };
 
   return (
-    <div className={["clients", "command", "portfolio", "system"].includes(activeWorkspace) ? "app-shell app-shell-focused" : "app-shell"}>
+    <div className={["clients", "command", "ideas", "portfolio", "research", "system"].includes(activeWorkspace) ? "app-shell app-shell-focused" : "app-shell"}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -3710,6 +3713,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           <MissionControlWorkspace onStatusChange={setLiveStatus} />
         ) : activeWorkspace === "portfolio" || activeWorkspace === "clients" ? (
           <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />
+        ) : activeWorkspace === "research" || activeWorkspace === "ideas" ? (
+          <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />
         ) : (
           <>
         <section className="metric-grid" aria-label="Portfolio operating metrics">
@@ -7967,7 +7972,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         )}
       </main>
 
-      {!["clients", "command", "portfolio", "system"].includes(activeWorkspace) ? (
+      {!["clients", "command", "ideas", "portfolio", "research", "system"].includes(activeWorkspace) ? (
       <aside className="right-rail">
         <section className="rail-panel assistant-panel">
           <div className="rail-heading">

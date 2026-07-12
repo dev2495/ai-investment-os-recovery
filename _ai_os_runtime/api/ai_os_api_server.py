@@ -918,6 +918,187 @@ def build_portfolio_office_snapshot() -> dict:
     }
 
 
+def build_research_ideas_snapshot() -> dict:
+    """Return the bounded research factory, filing, news, and idea read model."""
+    queries = {
+        "research_hub": """
+            SELECT root_label, artifact_family, artifact_count,
+                   latest_captured_at, latest_source_modified_at
+            FROM research.v_research_hub_summary
+            ORDER BY artifact_count DESC, root_label, artifact_family
+        """,
+        "long_term_theses": """
+            SELECT id, symbol, exchange, company_name, thesis_title,
+                   thesis_status, decision_status, primary_owner_agent,
+                   thesis_summary, moat_score, management_score,
+                   governance_score, capital_allocation_score,
+                   financial_quality_score, valuation_status,
+                   base_case_fair_value, expected_cagr_pct, thesis_note_path,
+                   next_review_due_at, position_count, client_count, clients,
+                   long_term_gross_exposure, checklist_count,
+                   checklist_complete_count, valuation_model_count,
+                   valuation_complete_count, thesis_killers, exit_criteria,
+                   updated_at
+            FROM portfolio.v_long_term_thesis_control
+            ORDER BY long_term_gross_exposure DESC NULLS LAST, symbol
+            LIMIT 100
+        """,
+        "coverage_summary": """
+            SELECT metric, value, interpretation
+            FROM portfolio.v_long_term_coverage_summary
+            ORDER BY metric
+        """,
+        "coverage_queue": """
+            SELECT id, coverage_key, symbol, exchange, holding_thesis_id,
+                   company_name, thesis_status, decision_status, gap_type,
+                   severity, priority, priority_score, owner_agent, status,
+                   recommended_action, task_id, task_status, inbox_id,
+                   inbox_status, long_term_gross_exposure, client_count,
+                   clients, checklist_count, checklist_complete_count,
+                   valuation_model_count, valuation_complete_count,
+                   monte_carlo_run_count, latest_monte_carlo_at,
+                   thesis_note_path, next_review_due_at, updated_at
+            FROM portfolio.v_long_term_coverage_queue
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                priority_score DESC, updated_at DESC
+            LIMIT 100
+        """,
+        "committee_queue": """
+            SELECT id, review_key, holding_thesis_id, symbol, exchange,
+                   company_name, thesis_title, thesis_status,
+                   thesis_decision_status, long_term_gross_exposure,
+                   client_count, clients, review_status,
+                   recommended_decision, decision_status, memo_status,
+                   memo_note_path, source_gaps, required_followups,
+                   approval_id, approval_status, task_id, task_status,
+                   final_decision, capital_action_allowed,
+                   live_execution_allowed, created_at, updated_at
+            FROM portfolio.v_long_term_committee_queue
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "latest_news": """
+            SELECT id, source_name, source_url, title, publisher,
+                   published_at, captured_at, symbols, topics, geography,
+                   sentiment, relevance_score
+            FROM market.v_latest_news_items
+            ORDER BY coalesce(published_at, captured_at) DESC, id DESC
+            LIMIT 80
+        """,
+        "corporate_filings": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   filing_type, filing_event_type, title, filed_at,
+                   source_url, attachment_url, local_path, extraction_status,
+                   pdf_page_count, pdf_extracted_at, event_id, event_type,
+                   opportunity_score, risk_score, urgency, event_status,
+                   assigned_agent, event_created_at
+            FROM research.v_corporate_filing_inbox
+            ORDER BY filed_at DESC NULLS LAST, event_created_at DESC
+            LIMIT 100
+        """,
+        "special_situations": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   filing_type, filing_event_type, title, filed_at,
+                   source_url, attachment_url, extraction_status,
+                   pdf_page_count, event_id, event_type, opportunity_score,
+                   risk_score, urgency, event_status, assigned_agent,
+                   event_created_at
+            FROM research.v_special_situation_inbox
+            ORDER BY opportunity_score DESC NULLS LAST, filed_at DESC NULLS LAST
+            LIMIT 60
+        """,
+        "special_memos": """
+            SELECT id, special_terms_id, filing_id, event_type, symbol,
+                   company_name, memo_title, memo_status, note_path, summary,
+                   risk_flags, required_followups, task_id, task_status,
+                   approval_id, approval_status, latest_spread_status,
+                   latest_market_price, latest_target_price,
+                   latest_gross_spread_pct, latest_quote_ts,
+                   latest_decision, latest_decision_at, updated_at
+            FROM research.v_special_situation_memos
+            ORDER BY updated_at DESC
+            LIMIT 50
+        """,
+        "special_spreads": """
+            SELECT id, special_memo_id, filing_id, symbol, event_type,
+                   company_name, memo_title, target_price, market_price,
+                   quote_ts, quote_staleness_minutes, gross_spread_abs,
+                   gross_spread_pct, annualized_spread_pct, days_to_close,
+                   status, data_quality_flags, created_at
+            FROM research.v_special_situation_spread_checks
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "generated_ideas": """
+            SELECT id, idea_key, title, idea_type, symbols, universe,
+                   timeframe, thesis, edge_hypothesis, status,
+                   priority_score, risk_score, owner_agent, intake_key,
+                   intake_strategy_name, created_at
+            FROM strategy.v_generated_ideas
+            ORDER BY created_at DESC
+            LIMIT 80
+        """,
+        "discovery_candidates": """
+            SELECT id, run_key, discovery_key, source_kind, source_ref, title,
+                   symbols, universe, timeframe, template, thesis, catalyst,
+                   priority_score, risk_score, route_to_optimizer,
+                   generated_idea_id, generated_idea_status, optimizer_run_id,
+                   optimizer_status, research_gate, next_required_action,
+                   status, broker_order_allowed,
+                   autonomous_live_execution_allowed, created_at
+            FROM strategy.v_strategy_discovery_candidates
+            ORDER BY created_at DESC, priority_score DESC NULLS LAST
+            LIMIT 100
+        """,
+        "idea_dossiers": """
+            SELECT id, dossier_key, title, source_kind, source_ref, symbols,
+                   universe, timeframe, template, status,
+                   latest_triage_decision, recommended_next_action,
+                   discovery_count, generated_idea_count, optimizer_run_count,
+                   triage_decision_count, committee_review_count,
+                   priority_score, risk_score, summary, note_path,
+                   qdrant_index_status, broker_order_allowed,
+                   autonomous_live_execution_allowed, updated_at
+            FROM strategy.v_idea_dossiers
+            ORDER BY updated_at DESC, priority_score DESC NULLS LAST
+            LIMIT 80
+        """,
+        "output_artifacts": """
+            SELECT artifact_key, artifact_family, artifact_type, title,
+                   summary, owner_agent, department, skill_name, task_id,
+                   approval_id, symbol, company_name, strategy_name, note_path,
+                   local_path, source_url, status, capital_action_allowed,
+                   live_execution_allowed, latest_activity_at,
+                   artifact_location
+            FROM agent.v_output_artifact_registry_v2
+            WHERE artifact_family IN ('research', 'long_term_research', 'special_situation', 'strategy', 'worker_output')
+               OR symbol IS NOT NULL OR strategy_name IS NOT NULL
+            ORDER BY latest_activity_at DESC NULLS LAST
+            LIMIT 100
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {"seed_data_allowed": False, "source": "scoped_research_ideas_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
     try:
         run_psql_text(
@@ -7865,6 +8046,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/portfolio-office/snapshot":
                 self._send_json(build_portfolio_office_snapshot())
+                return
+            if request_path == "/api/research-ideas/snapshot":
+                self._send_json(build_research_ideas_snapshot())
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())

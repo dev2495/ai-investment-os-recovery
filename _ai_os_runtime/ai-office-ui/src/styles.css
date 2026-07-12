@@ -581,6 +581,10 @@ button {
   min-width: 0;
 }
 
+.research-ideas-workspace {
+  min-width: 0;
+}
+
 .workspace-filter-bar {
   display: flex;
   align-items: flex-end;
@@ -612,9 +616,13 @@ button {
   text-transform: uppercase;
 }
 
+.workspace-filter-bar input,
 .workspace-filter-bar select,
 .holding-stage-form input,
-.holding-stage-form select {
+.holding-stage-form select,
+.strategy-intake-form input,
+.strategy-intake-form select,
+.strategy-intake-form textarea {
   width: 100%;
   min-width: 0;
   min-height: 36px;
@@ -658,6 +666,39 @@ button {
 .portfolio-office-workspace .source-check-row time {
   text-align: right;
   white-space: normal;
+}
+
+.research-ideas-workspace .source-check-row {
+  grid-template-columns: minmax(180px, 1fr) auto minmax(80px, auto) minmax(92px, auto);
+  gap: 8px;
+}
+
+.research-ideas-workspace .source-check-row > span:not(.status-pill),
+.research-ideas-workspace .source-check-row time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: normal;
+}
+
+.research-ideas-workspace .status-pill {
+  min-width: 0;
+  max-width: 132px;
+  min-height: 22px;
+  height: auto;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+
+.research-ideas-workspace .span-5 .source-check-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.research-ideas-workspace .span-5 .source-check-row > div {
+  grid-column: 1 / -1;
 }
 
 .portfolio-intelligence-row,
@@ -724,6 +765,37 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   padding: 14px;
+}
+
+.strategy-intake-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.strategy-intake-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.strategy-intake-form label span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.strategy-intake-form textarea {
+  min-height: 118px;
+  padding: 10px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.strategy-intake-form .span-form {
+  grid-column: 1 / -1;
 }
 
 .holding-stage-form .span-form {
@@ -3718,6 +3790,11 @@ button {
     text-align: right;
   }
 
+  .research-ideas-workspace .scoped-scroll-list .source-check-row > span:not(.status-pill) {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .workspace-filter-bar {
     align-items: stretch;
     flex-direction: column;
@@ -3742,7 +3819,12 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .holding-stage-form .span-form {
+  .strategy-intake-form {
+    grid-template-columns: 1fr;
+  }
+
+  .holding-stage-form .span-form,
+  .strategy-intake-form .span-form {
     grid-column: 1;
   }
 
