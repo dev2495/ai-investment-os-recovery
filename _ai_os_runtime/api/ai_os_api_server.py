@@ -349,6 +349,307 @@ def build_agent_message_evidence(message_id: int) -> dict:
     }
 
 
+def _evidence_group(key: str, label: str, records: list[dict]) -> dict:
+    return {"key": key, "label": label, "records": records}
+
+
+def _numeric_evidence_key(entity_key: str, entity_kind: str) -> int:
+    try:
+        return int(entity_key)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{entity_kind} evidence key must be an integer") from exc
+
+
+def build_entity_evidence(entity_kind: str, entity_key: str) -> dict:
+    """Return bounded, whitelisted evidence chains for Command Center drawers."""
+    allowed_kinds = {"agent_message", "task", "approval", "committee", "artifact", "lineage"}
+    if entity_kind not in allowed_kinds:
+        raise ValueError(f"unsupported evidence entity kind: {entity_kind}")
+
+    if entity_kind == "agent_message":
+        message_id = _numeric_evidence_key(entity_key, entity_kind)
+        evidence = build_agent_message_evidence(message_id)
+        return {
+            "entity_kind": entity_kind,
+            "entity_key": str(message_id),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "record": evidence["message"],
+            "groups": [
+                _evidence_group("tasks", "Linked tasks", evidence["tasks"]),
+                _evidence_group("inbox_items", "Inbox items", evidence["inbox_items"]),
+                _evidence_group("approvals", "Approvals", evidence["approvals"]),
+            ],
+        }
+
+    record: dict
+    groups: list[dict] = []
+    if entity_kind == "task":
+        task_id = _numeric_evidence_key(entity_key, entity_kind)
+        rows = run_psql_json(
+            f"""
+            SELECT id, title, objective, owner_agent, status, priority,
+                   approval_required, source_kind, source_ref, output_format,
+                   output_note_path, evidence, created_at, updated_at
+            FROM agent.tasks
+            WHERE id = {task_id}
+            LIMIT 1
+            """
+        )
+        if not rows:
+            raise ValueError(f"task not found: {task_id}")
+        record = rows[0]
+        groups = [
+            _evidence_group("inbox_items", "Inbox items", run_psql_json(
+                f"""
+                SELECT id, task_id, title, owner_agent, status, priority,
+                       recommended_action, evidence, target_workspace,
+                       created_at, updated_at
+                FROM agent.inbox_items
+                WHERE task_id = {task_id}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 20
+                """
+            )),
+            _evidence_group("approvals", "Approvals", run_psql_json(
+                f"""
+                SELECT id, task_id, approval_type, title, owner_agent, risk_level,
+                       status, requested_action, rationale, decided_by, decided_at,
+                       created_at
+                FROM agent.approvals
+                WHERE task_id = {task_id}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 20
+                """
+            )),
+            _evidence_group("messages", "Agent messages", run_psql_json(
+                f"""
+                SELECT id, thread_key, from_agent, to_agent, subject, body,
+                       priority, status, processing_status, created_at, processed_at
+                FROM agent.v_agent_message_threads
+                WHERE related_task_id = {task_id} OR generated_task_id = {task_id}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 20
+                """
+            )),
+            _evidence_group("worker_runs", "Worker runs", run_psql_json(
+                f"""
+                SELECT id, task_id, task_title, agent_name, display_title,
+                       department, skill_key, skill_name, run_mode, status,
+                       output_summary, output_note_path, evidence,
+                       started_at, finished_at, updated_at
+                FROM agent.v_recent_worker_runs
+                WHERE task_id = {task_id}
+                ORDER BY finished_at DESC NULLS LAST, id DESC
+                LIMIT 20
+                """
+            )),
+            _evidence_group("artifacts", "Output artifacts", run_psql_json(
+                f"""
+                SELECT artifact_key, artifact_family, artifact_type, title,
+                       summary, owner_agent, department, skill_name, task_id,
+                       approval_id, note_path, local_path, source_url, status,
+                       content_hash, latest_activity_at
+                FROM agent.v_output_artifact_registry_v2
+                WHERE task_id = {task_id}
+                ORDER BY latest_activity_at DESC NULLS LAST
+                LIMIT 30
+                """
+            )),
+        ]
+    elif entity_kind == "approval":
+        approval_id = _numeric_evidence_key(entity_key, entity_kind)
+        rows = run_psql_json(
+            f"""
+            SELECT id, task_id, approval_type, title, owner_agent, risk_level,
+                   status, requested_action, rationale, decided_by, decided_at,
+                   created_at
+            FROM agent.approvals
+            WHERE id = {approval_id}
+            LIMIT 1
+            """
+        )
+        if not rows:
+            raise ValueError(f"approval not found: {approval_id}")
+        record = rows[0]
+        task_id = record.get("task_id")
+        task_rows = run_psql_json(
+            f"""
+            SELECT id, title, objective, owner_agent, status, priority,
+                   approval_required, source_kind, source_ref, output_note_path,
+                   evidence, created_at, updated_at
+            FROM agent.tasks
+            WHERE id = {int(task_id)}
+            LIMIT 1
+            """
+        ) if task_id not in (None, "") else []
+        groups = [
+            _evidence_group("tasks", "Linked task", task_rows),
+            _evidence_group("committee", "Committee packets", run_psql_json(
+                f"""
+                SELECT committee_item_key, committee_lane, committee_scope,
+                       source_view, source_id, title, review_status,
+                       decision_status, recommended_decision, final_decision,
+                       risk_level, memo_status, memo_note_path, approval_id,
+                       approval_status, evidence, recommended_next_action,
+                       latest_activity_at
+                FROM agent.v_committee_room_items
+                WHERE approval_id = {approval_id}
+                ORDER BY latest_activity_at DESC
+                LIMIT 20
+                """
+            )),
+            _evidence_group("artifacts", "Output artifacts", run_psql_json(
+                f"""
+                SELECT artifact_key, artifact_family, artifact_type, title,
+                       summary, owner_agent, task_id, approval_id, note_path,
+                       local_path, source_url, status, latest_activity_at
+                FROM agent.v_output_artifact_registry_v2
+                WHERE approval_id = {approval_id}
+                ORDER BY latest_activity_at DESC NULLS LAST
+                LIMIT 30
+                """
+            )),
+        ]
+    elif entity_kind == "committee":
+        rows = run_psql_json(
+            f"""
+            SELECT committee_item_key, committee_lane, committee_scope,
+                   source_view, source_id, review_key, strategy_id,
+                   holding_thesis_id, special_memo_id, symbol, exchange,
+                   subject_name, title, review_status, decision_status,
+                   recommended_decision, final_decision, proposed_mode,
+                   risk_level, memo_status, memo_note_path, approval_id,
+                   approval_status, decided_by, decided_at,
+                   paper_monitor_allowed, capital_action_allowed,
+                   live_execution_allowed, member_count, evidence_gap_count,
+                   required_followup_count, created_by, created_at, updated_at,
+                   evidence, decision_pending, approval_pending, memo_missing,
+                   room_state, recommended_next_action, latest_activity_at
+            FROM agent.v_committee_room_items
+            WHERE committee_item_key = {sql_literal(entity_key)}
+            LIMIT 1
+            """
+        )
+        if not rows:
+            raise ValueError(f"committee packet not found: {entity_key}")
+        record = rows[0]
+        approval_id = record.get("approval_id")
+        source_id = record.get("source_id")
+        source_view = str(record.get("source_view") or "")
+        source_rows: list[dict] = []
+        if source_id not in (None, "") and source_view == "strategy.v_strategy_committee_queue":
+            source_rows = run_psql_json(f"SELECT * FROM strategy.v_strategy_committee_queue WHERE id = {int(source_id)} LIMIT 1")
+        elif source_id not in (None, "") and source_view == "portfolio.v_long_term_committee_queue":
+            source_rows = run_psql_json(f"SELECT * FROM portfolio.v_long_term_committee_queue WHERE id = {int(source_id)} LIMIT 1")
+        elif source_id not in (None, "") and source_view == "research.v_special_situation_memos":
+            source_rows = run_psql_json(f"SELECT * FROM research.v_special_situation_memos WHERE id = {int(source_id)} LIMIT 1")
+        approval_rows = run_psql_json(
+            f"""
+            SELECT id, task_id, approval_type, title, owner_agent, risk_level,
+                   status, requested_action, rationale, decided_by, decided_at,
+                   created_at
+            FROM agent.approvals
+            WHERE id = {int(approval_id)}
+            LIMIT 1
+            """
+        ) if approval_id not in (None, "") else []
+        groups = [
+            _evidence_group("source_review", "Source review", source_rows),
+            _evidence_group("approvals", "Approval", approval_rows),
+        ]
+    elif entity_kind == "artifact":
+        rows = run_psql_json(
+            f"""
+            SELECT artifact_key, artifact_family, artifact_type, title,
+                   summary, owner_agent, owner_title, department, skill_key,
+                   skill_name, task_id, approval_id, widget_id, widget_key,
+                   symbol, company_name, strategy_name, note_path, local_path,
+                   source_url, content_hash, sensitivity, status,
+                   capital_action_allowed, live_execution_allowed, created_at,
+                   updated_at, latest_activity_at, artifact_location
+            FROM agent.v_output_artifact_registry_v2
+            WHERE artifact_key = {sql_literal(entity_key)}
+            LIMIT 1
+            """
+        )
+        if not rows:
+            raise ValueError(f"artifact not found: {entity_key}")
+        record = rows[0]
+        task_id = record.get("task_id")
+        approval_id = record.get("approval_id")
+        lineage_conditions = []
+        for column in ("content_hash", "local_path", "source_url"):
+            if record.get(column) not in (None, ""):
+                lineage_conditions.append(f"{column} = {sql_literal(record[column])}")
+        lineage_rows = run_psql_json(
+            f"""
+            SELECT lineage_type, row_ref, source_system, source_type,
+                   source_location, source_sensitivity, artifact_type, title,
+                   source_url, local_path, content_hash, mime_type, sensitivity,
+                   event_at, client_code, account_code, symbol,
+                   reconciliation_status
+            FROM core.v_source_artifact_lineage
+            WHERE {' OR '.join(lineage_conditions)}
+            ORDER BY event_at DESC NULLS LAST
+            LIMIT 40
+            """
+        ) if lineage_conditions else []
+        groups = [
+            _evidence_group("tasks", "Linked task", run_psql_json(
+                f"SELECT id, title, objective, owner_agent, status, priority, source_kind, source_ref, output_note_path, evidence, updated_at FROM agent.tasks WHERE id = {int(task_id)} LIMIT 1"
+            ) if task_id not in (None, "") else []),
+            _evidence_group("approvals", "Linked approval", run_psql_json(
+                f"SELECT id, task_id, approval_type, title, owner_agent, risk_level, status, requested_action, rationale, decided_by, decided_at, created_at FROM agent.approvals WHERE id = {int(approval_id)} LIMIT 1"
+            ) if approval_id not in (None, "") else []),
+            _evidence_group("lineage", "Source lineage", lineage_rows),
+        ]
+    else:
+        rows = run_psql_json(
+            f"""
+            SELECT lineage_type, row_ref, source_system, source_type,
+                   source_location, source_sensitivity, artifact_type, title,
+                   source_url, local_path, content_hash, mime_type, sensitivity,
+                   event_at, client_code, account_code, symbol,
+                   reconciliation_status
+            FROM core.v_source_artifact_lineage
+            WHERE row_ref = {sql_literal(entity_key)}
+            ORDER BY event_at DESC NULLS LAST
+            LIMIT 20
+            """
+        )
+        if not rows:
+            raise ValueError(f"lineage row not found: {entity_key}")
+        record = rows[0]
+        match_conditions = []
+        for column in ("content_hash", "local_path", "source_url"):
+            if record.get(column) not in (None, ""):
+                match_conditions.append(f"{column} = {sql_literal(record[column])}")
+        artifact_rows = run_psql_json(
+            f"""
+            SELECT artifact_key, artifact_family, artifact_type, title,
+                   summary, owner_agent, task_id, approval_id, note_path,
+                   local_path, source_url, content_hash, status,
+                   latest_activity_at
+            FROM agent.v_output_artifact_registry_v2
+            WHERE {' OR '.join(match_conditions)}
+            ORDER BY latest_activity_at DESC NULLS LAST
+            LIMIT 30
+            """
+        ) if match_conditions else []
+        groups = [
+            _evidence_group("lineage_rows", "Matching lineage rows", rows),
+            _evidence_group("artifacts", "Output artifacts", artifact_rows),
+        ]
+
+    return {
+        "entity_kind": entity_kind,
+        "entity_key": entity_key,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "record": record,
+        "groups": groups,
+    }
+
+
 def safe_query(name: str, query: str, issues: list[dict]) -> list[dict]:
     try:
         return run_psql_json(query)
@@ -8388,6 +8689,17 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/evidence/agent-message/"):
                 message_id = int(self.path.rsplit("/", 1)[-1].split("?", 1)[0])
                 self._send_json(build_agent_message_evidence(message_id))
+                return
+            if request_path.startswith("/api/evidence/entity/"):
+                evidence_path = request_path.removeprefix("/api/evidence/entity/")
+                evidence_parts = evidence_path.split("/", 1)
+                if len(evidence_parts) != 2:
+                    raise ValueError("evidence entity path must include kind and key")
+                entity_kind = urllib.parse.unquote(evidence_parts[0]).strip().lower()
+                entity_key = urllib.parse.unquote(evidence_parts[1]).strip()
+                if not entity_key:
+                    raise ValueError("evidence entity key is required")
+                self._send_json(build_entity_evidence(entity_kind, entity_key))
                 return
             if self.path.startswith("/api/tradingview/cdp-status"):
                 self._send_json(probe_tradingview_cdp())

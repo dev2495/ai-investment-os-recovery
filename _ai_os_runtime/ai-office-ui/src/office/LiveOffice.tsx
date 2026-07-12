@@ -6,6 +6,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Group } from "three";
 import { fetchAgentMessageEvidence } from "../api/live";
 import type { AgentMessageEvidence, LiveRow, OfficeSnapshot } from "../api/live";
+import type { EvidenceSelection } from "../api/evidence";
+import EvidenceDrawer from "../components/EvidenceDrawer";
 import type { WorkspaceId } from "../types";
 import { buildOfficeModel, type OfficeAgent, type OfficeRoom } from "./office-model";
 import "./live-office.css";
@@ -314,6 +316,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
   const [messageEvidenceBusyId, setMessageEvidenceBusyId] = useState("");
   const [messageEvidenceError, setMessageEvidenceError] = useState("");
   const [selectedCommitteeItemId, setSelectedCommitteeItemId] = useState("");
+  const [committeeEvidenceSelection, setCommitteeEvidenceSelection] = useState<EvidenceSelection | null>(null);
   const { toggleRenderer, useStaticOffice } = useOfficeRendererMode();
   const rooms = useMemo<RoomPlacement[]>(() => model.rooms.map((room, index) => ({
     room,
@@ -516,7 +519,10 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
         <section className="office-committee-detail" aria-label="Selected committee decision packet">
           <header>
             <div><span>Committee Decision Packet</span><strong>{selectedCommitteeItem.title}</strong></div>
-            <button aria-label="Close committee decision packet" onClick={() => setSelectedCommitteeItemId("")} title="Close committee decision packet" type="button"><X size={15} aria-hidden="true" /></button>
+            <div className="office-committee-detail-actions">
+              <button aria-label="Open deep committee evidence" onClick={() => setCommitteeEvidenceSelection({ kind: "committee", key: selectedCommitteeItem.id, title: selectedCommitteeItem.title, subtitle: `${selectedCommitteeItem.sourceView} / ${selectedCommitteeItem.sourceId}` })} title="Open deep committee evidence" type="button"><FileSearch size={15} aria-hidden="true" /></button>
+              <button aria-label="Close committee decision packet" onClick={() => setSelectedCommitteeItemId("")} title="Close committee decision packet" type="button"><X size={15} aria-hidden="true" /></button>
+            </div>
           </header>
           <dl>
             <div><dt>Source</dt><dd>{selectedCommitteeItem.sourceView || "No source view recorded"}{selectedCommitteeItem.sourceId ? ` / #${selectedCommitteeItem.sourceId}` : ""}</dd></div>
@@ -527,6 +533,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
           {selectedCommitteeItem.evidenceSummary.length ? <ul>{selectedCommitteeItem.evidenceSummary.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="office-empty">No structured evidence summary is attached to this committee item.</p>}
         </section>
       ) : null}
+      <EvidenceDrawer onChanged={onRefresh} onClose={() => setCommitteeEvidenceSelection(null)} selection={committeeEvidenceSelection} />
     </main>
   );
 }

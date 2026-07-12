@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   Workflow
 } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   materializeDashboardWidgets,
@@ -19,6 +19,8 @@ import {
   type LiveRow
 } from "../api/live";
 import { fetchMissionControlSnapshot, type MissionControlSnapshot } from "../api/missionControl";
+import type { EvidenceSelection } from "../api/evidence";
+import EvidenceDrawer from "../components/EvidenceDrawer";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 
@@ -93,6 +95,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
   const [chatBusy, setChatBusy] = useState(false);
   const [widgetBusy, setWidgetBusy] = useState(false);
   const [workerBusy, setWorkerBusy] = useState(false);
+  const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null);
 
   const refresh = useCallback(async () => {
     setStatus("loading");
@@ -184,6 +187,19 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
     [snapshot]
   );
 
+  const evidenceRow = (selection: EvidenceSelection) => ({
+    className: "source-check-row evidence-open-row",
+    onClick: () => setEvidenceSelection(selection),
+    onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setEvidenceSelection(selection);
+      }
+    },
+    role: "button" as const,
+    tabIndex: 0
+  });
+
   return (
     <div className="mission-control-workspace">
       <section className="metric-grid" aria-label="Mission Control operating metrics">
@@ -219,7 +235,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
           <div className="source-check-list mission-list">
             <article className="source-check-row"><div><strong>Global execution</strong><p>{text(execution, "lock_reason", "Safety state unavailable")}</p></div><StatusPill status={text(execution, "global_execution_locked", "true") === "true" ? "locked" : "review"} /><span>{text(execution, "broker_execution_policy", "gated")}</span><time>{date(execution?.updated_at)}</time></article>
             {blockedGates.slice(0, 8).map((gate) => (
-              <article className="source-check-row" key={text(gate, "task_id")}><div><strong>{text(gate, "title")}</strong><p>{text(gate, "owner_agent")} · task {text(gate, "task_id")}</p></div><StatusPill status={text(gate, "provider_gate_status", "needs_review")} /><span>{text(gate, "blocked_provider_gates", "0")} blocked</span><time>{date(gate.latest_provider_gate_at)}</time></article>
+              <article {...evidenceRow({ kind: "task", key: text(gate, "task_id"), title: text(gate, "title"), subtitle: "Provider decision gates", record: gate })} key={text(gate, "task_id")}><div><strong>{text(gate, "title")}</strong><p>{text(gate, "owner_agent")} · task {text(gate, "task_id")}</p></div><StatusPill status={text(gate, "provider_gate_status", "needs_review")} /><span>{text(gate, "blocked_provider_gates", "0")} blocked</span><time>{date(gate.latest_provider_gate_at)}</time></article>
             ))}
           </div>
         </MissionPanel>
@@ -227,7 +243,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         <MissionPanel className="span-6" icon={<Workflow size={17} />} title="Charlie Delegations" action={<span>{snapshot?.agent_messages.length ?? 0} recent</span>}>
           <div className="source-check-list mission-list">
             {snapshot?.agent_messages.map((message) => (
-              <article className="source-check-row" key={text(message, "id")}><div><strong>{text(message, "subject")}</strong><p>{text(message, "from_agent")} → {text(message, "to_agent")} · task {text(message, "generated_task_id", "-")}</p></div><StatusPill status={text(message, "processing_status", text(message, "status", "queued"))} /><span>#{text(message, "id")}</span><time>{date(message.created_at)}</time></article>
+              <article {...evidenceRow({ kind: "agent_message", key: text(message, "id"), title: text(message, "subject"), subtitle: `${text(message, "from_agent")} to ${text(message, "to_agent")}`, record: message })} key={text(message, "id")}><div><strong>{text(message, "subject")}</strong><p>{text(message, "from_agent")} → {text(message, "to_agent")} · task {text(message, "generated_task_id", "-")}</p></div><StatusPill status={text(message, "processing_status", text(message, "status", "queued"))} /><span>#{text(message, "id")}</span><time>{date(message.created_at)}</time></article>
             )) ?? <Empty>No durable agent handoffs recorded.</Empty>}
           </div>
         </MissionPanel>
@@ -244,7 +260,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         <MissionPanel className="span-6" icon={<CheckCircle2 size={17} />} title="Approval Queue" action={<span>{pendingApprovals.length} pending</span>}>
           <div className="source-check-list mission-list">
             {snapshot?.approvals.map((approval) => (
-              <article className="source-check-row" key={text(approval, "id")}><div><strong>{text(approval, "title")}</strong><p>{text(approval, "requested_action", text(approval, "rationale", "Decision required"))}</p></div><StatusPill status={text(approval, "status", "pending")} /><span>{text(approval, "risk_level", "medium")}</span><time>{date(approval.created_at)}</time></article>
+              <article {...evidenceRow({ kind: "approval", key: text(approval, "id"), title: text(approval, "title"), subtitle: `${text(approval, "risk_level", "medium")} risk approval`, record: approval })} key={text(approval, "id")}><div><strong>{text(approval, "title")}</strong><p>{text(approval, "requested_action", text(approval, "rationale", "Decision required"))}</p></div><StatusPill status={text(approval, "status", "pending")} /><span>{text(approval, "risk_level", "medium")}</span><time>{date(approval.created_at)}</time></article>
             )) ?? <Empty>No approval records.</Empty>}
           </div>
         </MissionPanel>
@@ -261,7 +277,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         <MissionPanel className="span-7" icon={<ClipboardList size={17} />} title="Agent Work Queue" action={<button className="mini-action-button" disabled={workerBusy} onClick={() => void runWorkers()} type="button"><Bot size={14} />{workerBusy ? "Running" : "Run workers"}</button>}>
           <div className="source-check-list mission-list">
             {openTasks.slice(0, 16).map((task) => (
-              <article className="source-check-row" key={text(task, "id")}><div><strong>{text(task, "title")}</strong><p>{text(task, "owner_agent")} · {text(task, "source_kind")}</p></div><StatusPill status={text(task, "status", "queued")} /><span>{text(task, "priority", "normal")}</span><time>{date(task.updated_at)}</time></article>
+              <article {...evidenceRow({ kind: "task", key: text(task, "id"), title: text(task, "title"), subtitle: `${text(task, "owner_agent")} work item`, record: task })} key={text(task, "id")}><div><strong>{text(task, "title")}</strong><p>{text(task, "owner_agent")} · {text(task, "source_kind")}</p></div><StatusPill status={text(task, "status", "queued")} /><span>{text(task, "priority", "normal")}</span><time>{date(task.updated_at)}</time></article>
             ))}
             {!openTasks.length ? <Empty>No open agent tasks.</Empty> : null}
           </div>
@@ -276,6 +292,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
           </div>
         </MissionPanel>
       </section>
+      <EvidenceDrawer onChanged={refresh} onClose={() => setEvidenceSelection(null)} selection={evidenceSelection} />
     </div>
   );
 }

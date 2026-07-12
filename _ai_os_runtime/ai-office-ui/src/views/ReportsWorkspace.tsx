@@ -9,10 +9,12 @@ import {
   ScrollText,
   Workflow
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { EvidenceSelection } from "../api/evidence";
 import type { LiveRow } from "../api/live";
 import { fetchReportsSnapshot, type ReportsSnapshot } from "../api/reports";
+import EvidenceDrawer from "../components/EvidenceDrawer";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 interface Props { onStatusChange: (status: ConnectionStatus) => void; }
@@ -52,6 +54,7 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
   const [query, setQuery] = useState("");
   const [family, setFamily] = useState("all");
   const [artifactStatus, setArtifactStatus] = useState("all");
+  const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null);
 
   const refresh = useCallback(async () => {
     setStatus("loading"); onStatusChange("loading");
@@ -84,6 +87,14 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
     catch { setError("Browser clipboard permission denied. The full path remains visible in the artifact row."); }
   };
 
+  const openEvidence = (selection: EvidenceSelection) => setEvidenceSelection(selection);
+  const evidenceKeyDown = (event: ReactKeyboardEvent<HTMLElement>, selection: EvidenceSelection) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openEvidence(selection);
+    }
+  };
+
   return <div className="reports-workspace">
     <div className="workspace-filter-bar reports-filter-bar">
       <label><span>Search artifacts</span><input aria-label="Search artifacts" onChange={(event)=>setQuery(event.target.value)} placeholder="Title, agent, symbol, strategy, note, or path" value={query}/></label>
@@ -100,13 +111,14 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
     </section>
     {error ? <div className="error-strip">{error}</div> : null}{notice ? <div className="success-strip">{notice}</div> : null}
     <section className="dashboard-grid">
-      <Panel className="span-8" icon={<ScrollText size={17}/>} title="Output Registry" action={<span>{artifacts.length} records</span>}><div className="report-artifact-list scoped-scroll-list">{artifacts.map((row)=><article className="report-artifact-row" key={value(row,"artifact_key")}><div><strong>{value(row,"title")}</strong><p>{value(row,"summary")} · {value(row,"owner_agent")} · {value(row,"artifact_family")}</p><small>{value(row,"note_path",value(row,"local_path",value(row,"source_url","No location")))}</small></div><StatusPill status={value(row,"status","stored")}/><div className="artifact-actions">{value(row,"source_url","") ? <a href={value(row,"source_url")} rel="noreferrer" target="_blank" title="Open source"><ExternalLink size={14}/></a> : null}{value(row,"note_path",value(row,"local_path","")) ? <button onClick={()=>void copyPath(row)} title="Copy artifact path" type="button"><Clipboard size={14}/></button> : null}</div><time>{date(row.latest_activity_at)}</time></article>)}{!artifacts.length?<Empty>No artifact matches the current filter.</Empty>:null}</div></Panel>
+      <Panel className="span-8" icon={<ScrollText size={17}/>} title="Output Registry" action={<span>{artifacts.length} records</span>}><div className="report-artifact-list scoped-scroll-list">{artifacts.map((row)=>{const selection: EvidenceSelection={kind:"artifact",key:value(row,"artifact_key"),title:value(row,"title"),subtitle:`${value(row,"artifact_family")} · ${value(row,"owner_agent")}`,record:row};return <article className="report-artifact-row evidence-open-row" key={value(row,"artifact_key")}><div className="evidence-open-cell" onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><strong>{value(row,"title")}</strong><p>{value(row,"summary")} · {value(row,"owner_agent")} · {value(row,"artifact_family")}</p><small>{value(row,"note_path",value(row,"local_path",value(row,"source_url","No location")))}</small></div><StatusPill status={value(row,"status","stored")}/><div className="artifact-actions">{value(row,"source_url","") ? <a href={value(row,"source_url")} rel="noreferrer" target="_blank" title="Open source"><ExternalLink size={14}/></a> : null}{value(row,"note_path",value(row,"local_path","")) ? <button onClick={()=>void copyPath(row)} title="Copy artifact path" type="button"><Clipboard size={14}/></button> : null}</div><time>{date(row.latest_activity_at)}</time></article>;})}{!artifacts.length?<Empty>No artifact matches the current filter.</Empty>:null}</div></Panel>
       <Panel className="span-4" icon={<FileCheck2 size={17}/>} title="Artifact Summary"><div className="portfolio-intelligence-list scoped-scroll-list">{snapshot?.artifact_summary.map((row)=><article className="portfolio-intelligence-row" key={value(row,"metric")}><div><strong>{value(row,"metric").replace(/_/g," ")}</strong><p>{value(row,"interpretation")}</p></div><span>{value(row,"value")}</span></article>)}</div></Panel>
-      <Panel className="span-6" icon={<Workflow size={17}/>} title="Agent Outputs" action={<span>{snapshot?.worker_runs.length ?? 0} runs</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.worker_runs.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"task_title")}</strong><p>{value(row,"output_summary")} · {value(row,"agent_name")}</p></div><StatusPill status={value(row,"status","stored")}/><span>{value(row,"skill_name","-")}</span><time>{date(row.finished_at)}</time></article>)}</div></Panel>
+      <Panel className="span-6" icon={<Workflow size={17}/>} title="Agent Outputs" action={<span>{snapshot?.worker_runs.length ?? 0} runs</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.worker_runs.map((row)=>{const selection:EvidenceSelection={kind:"task",key:value(row,"task_id"),title:value(row,"task_title"),subtitle:`Worker output · ${value(row,"agent_name")}`,record:row};return <article className="source-check-row evidence-open-row" key={value(row,"id")} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row,"task_title")}</strong><p>{value(row,"output_summary")} · {value(row,"agent_name")}</p></div><StatusPill status={value(row,"status","stored")}/><span>{value(row,"skill_name","-")}</span><time>{date(row.finished_at)}</time></article>;})}</div></Panel>
       <Panel className="span-6" icon={<AlertTriangle size={17}/>} title="Artifact Gaps" action={<span>{snapshot?.artifact_gaps.length ?? 0} gaps</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.artifact_gaps.map((row)=><article className="source-check-row" key={`${value(row,"gap_type")}-${value(row,"source_id")}`}><div><strong>{value(row,"title")}</strong><p>{value(row,"gap_reason")} · {value(row,"source_view")}</p></div><StatusPill status={value(row,"status","open")}/><span>{value(row,"owner_agent")}</span><time>{date(row.updated_at)}</time></article>)}{!snapshot?.artifact_gaps.length?<Empty>No artifact gaps.</Empty>:null}</div></Panel>
       <Panel className="span-6" icon={<DatabaseZap size={17}/>} title="Raw Artifact Inventory" action={<span>{snapshot?.raw_artifacts.length ?? 0} rows</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.raw_artifacts.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"title")}</strong><p>{value(row,"source_system")} · {value(row,"artifact_type")} · {value(row,"mime_type")}</p></div><StatusPill status={value(row,"sensitivity","internal")}/><span>{value(row,"content_hash").slice(0,10)}</span><time>{date(row.captured_at)}</time></article>)}</div></Panel>
-      <Panel className="span-6" icon={<FileSearch size={17}/>} title="Source Lineage" action={<span>{snapshot?.artifact_lineage.length ?? 0} rows</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.artifact_lineage.map((row)=><article className="source-check-row" key={`${value(row,"lineage_type")}-${value(row,"row_ref")}`}><div><strong>{value(row,"title",value(row,"row_ref"))}</strong><p>{value(row,"source_system")} · {value(row,"lineage_type")} · {value(row,"symbol","-")}</p></div><StatusPill status={value(row,"reconciliation_status","linked")}/><span>{value(row,"artifact_type")}</span><time>{date(row.event_at)}</time></article>)}</div></Panel>
+      <Panel className="span-6" icon={<FileSearch size={17}/>} title="Source Lineage" action={<span>{snapshot?.artifact_lineage.length ?? 0} rows</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.artifact_lineage.map((row)=>{const selection:EvidenceSelection={kind:"lineage",key:value(row,"row_ref"),title:value(row,"title",value(row,"row_ref")),subtitle:`${value(row,"source_system")} · ${value(row,"lineage_type")}`,record:row};return <article className="source-check-row evidence-open-row" key={`${value(row,"lineage_type")}-${value(row,"row_ref")}`} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row,"title",value(row,"row_ref"))}</strong><p>{value(row,"source_system")} · {value(row,"lineage_type")} · {value(row,"symbol","-")}</p></div><StatusPill status={value(row,"reconciliation_status","linked")}/><span>{value(row,"artifact_type")}</span><time>{date(row.event_at)}</time></article>;})}</div></Panel>
       <Panel className="span-12" icon={<FileCheck2 size={17}/>} title="Import Coverage"><div className="coverage-grid">{snapshot?.import_coverage.map((row)=><article key={value(row,"import_surface")}><strong>{value(row,"import_surface").replace(/_/g," ")}</strong><span>{value(row,"coverage_pct","0")}%</span><p>{value(row,"linked_rows","0")} linked · {value(row,"missing_rows","0")} missing · {value(row,"description")}</p></article>)}</div></Panel>
     </section>
+    <EvidenceDrawer onChanged={refresh} onClose={()=>setEvidenceSelection(null)} selection={evidenceSelection}/>
   </div>;
 }

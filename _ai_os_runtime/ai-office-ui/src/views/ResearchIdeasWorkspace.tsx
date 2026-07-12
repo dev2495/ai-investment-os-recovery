@@ -8,10 +8,12 @@ import {
   ShieldCheck,
   Sparkles
 } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { EvidenceSelection } from "../api/evidence";
 import { createStrategyIntake, type LiveRow } from "../api/live";
 import { fetchResearchIdeasSnapshot, type ResearchIdeasSnapshot } from "../api/researchIdeas";
+import EvidenceDrawer from "../components/EvidenceDrawer";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 type Mode = "research" | "ideas";
@@ -76,6 +78,7 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
   const [query, setQuery] = useState("");
   const [intakeBusy, setIntakeBusy] = useState(false);
   const [intake, setIntake] = useState({ name: "", family: "", timeframe: "daily", text: "" });
+  const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null);
 
   const refresh = useCallback(async () => {
     setStatus("loading");
@@ -141,6 +144,14 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
     }
   };
 
+  const openEvidence = (selection: EvidenceSelection) => setEvidenceSelection(selection);
+  const evidenceKeyDown = (event: ReactKeyboardEvent<HTMLElement>, selection: EvidenceSelection) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openEvidence(selection);
+    }
+  };
+
   return (
     <div className="research-ideas-workspace">
       <div className="workspace-filter-bar">
@@ -162,11 +173,11 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
       {mode === "research" ? (
         <section className="dashboard-grid">
           <Panel className="span-7" icon={<BookOpenText size={17} />} title="Long-Term Thesis Coverage" action={<span>{theses.length} theses</span>}><div className="source-check-list scoped-scroll-list">{theses.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "symbol")} · {value(row, "company_name")}</strong><p>{value(row, "thesis_title")} · {value(row, "checklist_complete_count", "0")}/{value(row, "checklist_count", "0")} checklists</p></div><StatusPill status={value(row, "thesis_status", "review")} /><span>{amount(row.long_term_gross_exposure)}</span><time>{date(row.next_review_due_at)}</time></article>)}{!theses.length ? <Empty>No thesis rows match this filter.</Empty> : null}</div></Panel>
-          <Panel className="span-5" icon={<ShieldCheck size={17} />} title="Investment Committee" action={<span>{snapshot?.committee_queue.length ?? 0} reviews</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.committee_queue.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "symbol")} · {value(row, "company_name")}</strong><p>{value(row, "recommended_decision")} · approval {value(row, "approval_status")}</p></div><StatusPill status={value(row, "review_status", "review")} /><span>{value(row, "memo_status")}</span><time>{date(row.updated_at)}</time></article>)}{!snapshot?.committee_queue.length ? <Empty>No committee reviews.</Empty> : null}</div></Panel>
+          <Panel className="span-5" icon={<ShieldCheck size={17} />} title="Investment Committee" action={<span>{snapshot?.committee_queue.length ?? 0} reviews</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.committee_queue.map((row) => {const selection:EvidenceSelection={kind:"committee",key:`long_term:${value(row,"id")}`,title:`${value(row,"symbol")} · ${value(row,"company_name")}`,subtitle:"Long-Term Investment Committee",record:row};return <article className="source-check-row evidence-open-row" key={value(row, "id")} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row, "symbol")} · {value(row, "company_name")}</strong><p>{value(row, "recommended_decision")} · approval {value(row, "approval_status")}</p></div><StatusPill status={value(row, "review_status", "review")} /><span>{value(row, "memo_status")}</span><time>{date(row.updated_at)}</time></article>;})}{!snapshot?.committee_queue.length ? <Empty>No committee reviews.</Empty> : null}</div></Panel>
           <Panel className="span-7" icon={<FileSearch size={17} />} title="Corporate Filings" action={<span>{filings.length} filings</span>}><div className="source-check-list scoped-scroll-list">{filings.map((row) => <article className="source-check-row" key={value(row, "filing_id")}><div><strong>{value(row, "symbol")} · {value(row, "title")}</strong><p>{value(row, "source_name")} · {value(row, "event_type", value(row, "filing_event_type"))} · {value(row, "pdf_page_count", "0")} pages</p></div><StatusPill status={value(row, "extraction_status", "pending")} /><span>opp {value(row, "opportunity_score", "-")}</span><time>{date(row.filed_at)}</time></article>)}{!filings.length ? <Empty>No filing rows match this filter.</Empty> : null}</div></Panel>
           <Panel className="span-5" icon={<Newspaper size={17} />} title="Curated News" action={<span>{news.length} items</span>}><div className="source-check-list scoped-scroll-list">{news.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "title")}</strong><p>{value(row, "source_name")} · {value(row, "symbols", "broad market")}</p></div><StatusPill status={value(row, "sentiment", "neutral")} /><span>{value(row, "relevance_score", "-")}</span><time>{date(row.published_at ?? row.captured_at)}</time></article>)}{!news.length ? <Empty>No news rows match this filter.</Empty> : null}</div></Panel>
           <Panel className="span-6" icon={<Sparkles size={17} />} title="Special Situations" action={<span>{special.length} events</span>}><div className="source-check-list scoped-scroll-list">{special.map((row) => <article className="source-check-row" key={value(row, "filing_id")}><div><strong>{value(row, "symbol")} · {value(row, "event_type")}</strong><p>{value(row, "title")}</p></div><StatusPill status={value(row, "urgency", "review")} /><span>opp {value(row, "opportunity_score", "-")}</span><time>{date(row.filed_at)}</time></article>)}{!special.length ? <Empty>No special-situation rows.</Empty> : null}</div></Panel>
-          <Panel className="span-6" icon={<BrainCircuit size={17} />} title="Research Outputs" action={<span>{artifacts.length} artifacts</span>}><div className="source-check-list scoped-scroll-list">{artifacts.map((row) => <article className="source-check-row" key={value(row, "artifact_key")}><div><strong>{value(row, "title")}</strong><p>{value(row, "artifact_family")} · {value(row, "owner_agent")}</p></div><StatusPill status={value(row, "status", "stored")} /><span>{value(row, "symbol", value(row, "strategy_name", "-"))}</span><time>{date(row.latest_activity_at)}</time></article>)}{!artifacts.length ? <Empty>No output artifacts match this filter.</Empty> : null}</div></Panel>
+          <Panel className="span-6" icon={<BrainCircuit size={17} />} title="Research Outputs" action={<span>{artifacts.length} artifacts</span>}><div className="source-check-list scoped-scroll-list">{artifacts.map((row) => {const selection:EvidenceSelection={kind:"artifact",key:value(row,"artifact_key"),title:value(row,"title"),subtitle:`${value(row,"artifact_family")} · ${value(row,"owner_agent")}`,record:row};return <article className="source-check-row evidence-open-row" key={value(row, "artifact_key")} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row, "title")}</strong><p>{value(row, "artifact_family")} · {value(row, "owner_agent")}</p></div><StatusPill status={value(row, "status", "stored")} /><span>{value(row, "symbol", value(row, "strategy_name", "-"))}</span><time>{date(row.latest_activity_at)}</time></article>;})}{!artifacts.length ? <Empty>No output artifacts match this filter.</Empty> : null}</div></Panel>
         </section>
       ) : (
         <section className="dashboard-grid">
@@ -175,9 +186,10 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
           <Panel className="span-7" icon={<BrainCircuit size={17} />} title="Discovery Candidates" action={<span>{discoveries.length} candidates</span>}><div className="source-check-list scoped-scroll-list">{discoveries.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "title")}</strong><p>{value(row, "template")} · {value(row, "timeframe")} · {value(row, "next_required_action")}</p></div><StatusPill status={value(row, "research_gate", value(row, "status", "research"))} /><span>score {value(row, "priority_score", "-")}</span><time>{date(row.created_at)}</time></article>)}{!discoveries.length ? <Empty>No discovery candidates match this filter.</Empty> : null}</div></Panel>
           <Panel className="span-5" icon={<Lightbulb size={17} />} title="Generated Ideas" action={<span>{ideas.length} ideas</span>}><div className="source-check-list scoped-scroll-list">{ideas.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "title")}</strong><p>{value(row, "edge_hypothesis")}</p></div><StatusPill status={value(row, "status", "research")} /><span>{value(row, "symbols", value(row, "universe"))}</span><time>{date(row.created_at)}</time></article>)}{!ideas.length ? <Empty>No generated ideas match this filter.</Empty> : null}</div></Panel>
           <Panel className="span-6" icon={<Sparkles size={17} />} title="Special-Situation Memos" action={<span>{snapshot?.special_memos.length ?? 0} memos</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.special_memos.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "symbol")} · {value(row, "memo_title")}</strong><p>{value(row, "summary")} · latest spread {value(row, "latest_gross_spread_pct", "-")}%</p></div><StatusPill status={value(row, "memo_status", "review")} /><span>{value(row, "latest_decision", "pending")}</span><time>{date(row.updated_at)}</time></article>)}{!snapshot?.special_memos.length ? <Empty>No special-situation memos.</Empty> : null}</div></Panel>
-          <Panel className="span-6" icon={<FileSearch size={17} />} title="Research And Strategy Outputs" action={<span>{artifacts.length} artifacts</span>}><div className="source-check-list scoped-scroll-list">{artifacts.map((row) => <article className="source-check-row" key={value(row, "artifact_key")}><div><strong>{value(row, "title")}</strong><p>{value(row, "artifact_family")} · {value(row, "owner_agent")}</p></div><StatusPill status={value(row, "status", "stored")} /><span>{value(row, "strategy_name", value(row, "symbol", "-"))}</span><time>{date(row.latest_activity_at)}</time></article>)}{!artifacts.length ? <Empty>No artifacts match this filter.</Empty> : null}</div></Panel>
+          <Panel className="span-6" icon={<FileSearch size={17} />} title="Research And Strategy Outputs" action={<span>{artifacts.length} artifacts</span>}><div className="source-check-list scoped-scroll-list">{artifacts.map((row) => {const selection:EvidenceSelection={kind:"artifact",key:value(row,"artifact_key"),title:value(row,"title"),subtitle:`${value(row,"artifact_family")} · ${value(row,"owner_agent")}`,record:row};return <article className="source-check-row evidence-open-row" key={value(row, "artifact_key")} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row, "title")}</strong><p>{value(row, "artifact_family")} · {value(row, "owner_agent")}</p></div><StatusPill status={value(row, "status", "stored")} /><span>{value(row, "strategy_name", value(row, "symbol", "-"))}</span><time>{date(row.latest_activity_at)}</time></article>;})}{!artifacts.length ? <Empty>No artifacts match this filter.</Empty> : null}</div></Panel>
         </section>
       )}
+      <EvidenceDrawer onChanged={refresh} onClose={() => setEvidenceSelection(null)} selection={evidenceSelection} />
     </div>
   );
 }

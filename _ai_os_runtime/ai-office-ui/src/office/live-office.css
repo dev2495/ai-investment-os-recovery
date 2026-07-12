@@ -245,6 +245,7 @@
 .office-committee-detail { display: grid; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--office-border); background: #0d1b20; }
 .office-committee-detail header { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
 .office-committee-detail header > div { display: grid; gap: 4px; min-width: 0; }
+.office-committee-detail header > .office-committee-detail-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .office-committee-detail header span { color: var(--office-cyan); font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .office-committee-detail header strong { font-size: 13px; line-height: 1.4; }
 .office-committee-detail header button { display: inline-grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border: 1px solid var(--office-border); border-radius: 4px; padding: 0; background: #112027; color: var(--office-cyan); }
