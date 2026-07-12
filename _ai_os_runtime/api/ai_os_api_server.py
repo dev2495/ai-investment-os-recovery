@@ -1310,6 +1310,118 @@ def build_trading_quant_risk_snapshot() -> dict:
     }
 
 
+def build_reports_snapshot() -> dict:
+    """Return the bounded output, report, artifact, and lineage read model."""
+    queries = {
+        "artifact_summary": """
+            SELECT metric, value, first_seen_at, latest_seen_at,
+                   obsidian_note_rows, local_file_rows, source_url_rows,
+                   interpretation
+            FROM agent.v_output_artifact_summary
+            ORDER BY CASE metric WHEN 'total_artifacts' THEN 0 ELSE 1 END, metric
+        """,
+        "artifacts": """
+            SELECT artifact_key, artifact_family, artifact_type, title,
+                   summary, owner_agent, owner_title, department, skill_key,
+                   skill_name, task_id, approval_id, widget_id, widget_key,
+                   symbol, company_name, strategy_name, note_path, local_path,
+                   source_url, content_hash, sensitivity, status,
+                   capital_action_allowed, live_execution_allowed, created_at,
+                   updated_at, latest_activity_at, artifact_location
+            FROM agent.v_output_artifact_registry_v2
+            ORDER BY latest_activity_at DESC NULLS LAST, artifact_family, title
+            LIMIT 300
+        """,
+        "artifact_gaps": """
+            SELECT gap_type, source_view, source_id, title, owner_agent,
+                   status, created_at, updated_at, gap_reason
+            FROM agent.v_output_artifact_gaps
+            ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+            LIMIT 120
+        """,
+        "worker_runs": """
+            SELECT id, task_id, task_title, widget_title, agent_name,
+                   display_title, department, skill_key, skill_name,
+                   skill_family, run_mode, status, output_summary,
+                   output_note_path, started_at, finished_at, updated_at
+            FROM agent.v_recent_worker_runs
+            ORDER BY finished_at DESC NULLS LAST, id DESC
+            LIMIT 100
+        """,
+        "research_hub": """
+            SELECT root_label, artifact_family, artifact_count,
+                   latest_captured_at, latest_source_modified_at
+            FROM research.v_research_hub_summary
+            ORDER BY artifact_count DESC, root_label, artifact_family
+        """,
+        "raw_artifacts": """
+            SELECT artifact.id, source.name AS source_system,
+                   source.source_type, artifact.artifact_type, artifact.title,
+                   artifact.source_url, artifact.local_path,
+                   artifact.content_hash, artifact.mime_type,
+                   artifact.sensitivity, artifact.captured_at
+            FROM core.raw_artifacts artifact
+            LEFT JOIN core.source_systems source ON source.id = artifact.source_system_id
+            ORDER BY artifact.captured_at DESC, artifact.id DESC
+            LIMIT 150
+        """,
+        "lineage_summary": """
+            SELECT lineage_type, source_system, source_type, sensitivity,
+                   row_count, raw_artifact_rows, source_file_rows,
+                   first_seen_at, latest_seen_at, open_or_staged_rows
+            FROM core.v_source_lineage_summary
+            ORDER BY row_count DESC, source_system, lineage_type
+            LIMIT 100
+        """,
+        "artifact_lineage": """
+            SELECT lineage_type, row_ref, source_system, source_type,
+                   source_location, source_sensitivity, artifact_type, title,
+                   source_url, local_path, content_hash, mime_type,
+                   sensitivity, event_at, client_code, account_code, symbol,
+                   reconciliation_status
+            FROM core.v_source_artifact_lineage
+            ORDER BY event_at DESC NULLS LAST, lineage_type, row_ref
+            LIMIT 180
+        """,
+        "import_coverage": """
+            SELECT import_surface, total_rows, linked_rows, missing_rows,
+                   coverage_pct, description
+            FROM core.v_import_artifact_coverage
+            ORDER BY import_surface
+        """,
+        "chat_turns": """
+            SELECT id, session_key, actor, assistant_name, user_message,
+                   assistant_message, route_name, model_provider, model_name,
+                   model_status, created_at
+            FROM agent.v_recent_chat_turns
+            LIMIT 30
+        """,
+        "blueprint_summary": """
+            SELECT metric, value, interpretation
+            FROM core.v_os_blueprint_summary
+            ORDER BY metric
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   live_broker_writes_allowed, lock_reason, updated_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {"seed_data_allowed": False, "source": "scoped_reports_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
     try:
         run_psql_text(
@@ -8263,6 +8375,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/trading-quant-risk/snapshot":
                 self._send_json(build_trading_quant_risk_snapshot())
+                return
+            if request_path == "/api/reports/snapshot":
+                self._send_json(build_reports_snapshot())
                 return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())

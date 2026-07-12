@@ -1378,7 +1378,7 @@ Phase 7: Full agent office.
 
 Phase 8: Command Center and Live AI Office.
 
-Verified foundation (updated 2026-07-13): Live Office and every Command Center workspace except Reports now use production-data scoped reads without seed fallback, the 7.40 MB broad poll, or stale right rail. Trading/Quant/Risk adds 20 strategy candidates with validation/promotion gates, 108 live risk checks, 14 TradingView tasks, signals, journals, committee/paper/drift state, limited-live/order intent visibility, safe quant/risk/controller actions, and the global execution lock through a 228 KB/0.13 s warm read. No broker-write action is exposed. Research/Ideas, Portfolio/Clients, Mission, and System remain live as previously verified. Phase 8 remains partial until Reports is scoped, deep decision/source/action drawers are complete, and accessibility/performance gates pass.
+Verified foundation (updated 2026-07-13): Live Office and every Command Center workspace now use production-data scoped reads without seed fallback, the 7.40 MB broad poll, or stale right rail. Reports closes the final route with 164 durable outputs, 27 worker runs, 146 raw artifacts, 180 lineage rows, gap/coverage evidence, search/filter, source links, and path copy through a 605 KB/0.23 s read. `/api/snapshot` is compatibility-only and unused by the UI. Trading/Quant/Risk, Research/Ideas, Portfolio/Clients, Mission, and System remain live as previously verified. Phase 8 remains partial until unreachable monolith code is removed, deep decision/source/action drawers are complete, and accessibility/performance gates pass.
 
 - modular Command Center shell and addressable workspaces,
 - snapshot state and evidence drawer,

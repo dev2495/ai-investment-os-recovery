@@ -589,6 +589,10 @@ button {
   min-width: 0;
 }
 
+.reports-workspace {
+  min-width: 0;
+}
+
 .workspace-filter-bar {
   display: flex;
   align-items: flex-end;
@@ -814,6 +818,158 @@ button {
   color: var(--bad);
   font-size: 11px;
   font-weight: 800;
+}
+
+.reports-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  align-items: end;
+}
+
+.reports-filter-bar label {
+  width: auto;
+}
+
+.reports-workspace .source-check-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.reports-workspace .source-check-row > div {
+  grid-column: 1 / -1;
+}
+
+.reports-workspace .source-check-row > span:not(.status-pill),
+.reports-workspace .source-check-row time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: normal;
+}
+
+.reports-workspace .status-pill {
+  min-width: 0;
+  max-width: 132px;
+  height: auto;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+
+.report-artifact-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.report-artifact-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto minmax(108px, auto);
+  align-items: center;
+  gap: 10px;
+  min-height: 72px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.report-artifact-row:last-child {
+  border-bottom: 0;
+}
+
+.report-artifact-row > div:first-child {
+  min-width: 0;
+}
+
+.report-artifact-row strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-artifact-row p,
+.report-artifact-row small {
+  display: block;
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-artifact-row small {
+  color: var(--faint);
+}
+
+.report-artifact-row time {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.artifact-actions a,
+.artifact-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.coverage-grid article {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.coverage-grid strong,
+.coverage-grid span {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.coverage-grid span {
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 18px;
+}
+
+.coverage-grid p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .portfolio-intelligence-row,
@@ -3915,6 +4071,11 @@ button {
     white-space: normal;
   }
 
+  .reports-workspace .scoped-scroll-list .source-check-row > span:not(.status-pill) {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .workspace-filter-bar {
     align-items: stretch;
     flex-direction: column;
@@ -3960,6 +4121,24 @@ button {
   .panel-action-group {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .reports-filter-bar,
+  .coverage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-artifact-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    min-height: 112px;
+  }
+
+  .report-artifact-row > div:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .report-artifact-row time {
+    text-align: right;
   }
 
   .mission-list .source-check-row strong {

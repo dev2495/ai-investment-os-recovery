@@ -64,7 +64,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Paper trade capture foundation.
 - [~] Mark-to-market foundation.
 - [~] Source lineage for portfolio rows.
-- [~] Raw artifact store for imports.
+- [x] Raw artifact store for imports. Verified in scoped Reports with 146 checksum-backed raw artifacts and 180 lineage rows. Evidence: [[2026-07-13-reports-v2]].
 - [x] Legacy source extraction readiness board. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; migration `107_legacy_source_extraction_readiness.sql`, API snapshot keys, POST `/api/legacy-source-readiness/run`, MCP tools `ai_os_legacy_source_readiness` and `ai_os_run_legacy_source_readiness`, and AI Office dashboard panels verified.
 - [~] Full p2cursor extraction for all clients. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; 6 p2cursor files profiled and 139 CSV rows staged, but 5 p2cursor files still need mapping/promotion before full completion.
 - [~] Full buy/sell date extraction from p2cursor and broker reports. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; p2cursor trade CSV rows are staged, but normalized buy/sell-date promotion and broker reconciliation remain open.
@@ -397,7 +397,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Charlie profile.
 - [~] Jarvis profile.
 - [~] Agent comments.
-- [~] Agent output artifact registry.
+- [x] Agent output artifact registry. Scoped Reports exposes 164 durable outputs with search, family/status filters, owner/source/location, path copy, source links, safety flags, worker runs, and gap detection. Evidence: [[2026-07-13-reports-v2]].
 - [~] Per-agent tool permissions UI.
 - [~] Per-agent model route UI.
 - [~] Agent mailbox UI.
@@ -478,12 +478,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Long-Term Office dashboard foundation.
 - [x] Quant Lab dashboard foundation. Scoped validation, promotion, committee, retirement/drift, and safe analytics controls are deployed against live strategy rows. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] AI Office live activity foundation.
-- [~] Live snapshot/API contract for office, committee, chat, message, widget, portfolio, strategy, research, risk, and system surfaces. Scoped contracts now cover Office, System, Mission, Portfolio/Clients, Research/Ideas, and Trading/Quant/Risk. Reports is the only Command Center workspace still using broad `/api/snapshot`. Evidence: [[2026-07-13-trading-quant-risk-v2]].
+- [x] Live snapshot/API contract for every Command Center workspace and Live Office. Reports now uses `/api/reports/snapshot`; no UI route requests broad `/api/snapshot`. Evidence: [[2026-07-13-reports-v2]].
 - [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
-- [~] Command Center shell extraction from monolithic `App.tsx` with no behavior loss. Live Office, System, Mission, Portfolio, Clients, Research, Ideas, Trading, Quant, and Risk now mount independently without broad polling or the stale right rail. Reports remains. Evidence: [[2026-07-13-trading-quant-risk-v2]].
+- [~] Command Center shell extraction from monolithic `App.tsx` with no behavior loss. Every workspace now mounts independently without broad polling or the stale right rail. Removing unreachable legacy JSX/actions from `App.tsx` remains. Evidence: [[2026-07-13-reports-v2]].
 - [~] Addressable Command Center / Live Office world routing with preserved context. Verified 2026-07-10: `?mode=office&workspace=risk` opens the office and the return action lands on `?mode=command&workspace=risk`; per-workspace module extraction remains outstanding.
 - [~] Snapshot/UI/chat state layer. Verified 2026-07-10: `useLiveSnapshot` owns the 30-second warehouse poll, reconnect state, and initial empty/offline behavior; existing focused post-action refresh remains intact. Stale-data state and error boundary remain outstanding.
-- [~] Focused workspace snapshot profile and payload budget. Broad `/api/snapshot` remains about 7.6 MB/9.7 s. `/api/trading-quant-risk/snapshot` is 228 KB/0.13 s warm (5.12 s cold) for 209 rows/18 queries. Reports is the only remaining broad-poll workspace. Evidence: [[2026-07-13-trading-quant-risk-v2]].
+- [x] Focused workspace snapshot profile and payload budget. Reports is 605 KB/0.23 s for 603 rows/12 queries; every UI workspace now uses a scoped contract and broad `/api/snapshot` is never requested by fresh routes. Evidence: [[2026-07-13-reports-v2]].
 - [~] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows. Verified 2026-07-10 for Office mailbox work: `/api/evidence/agent-message/{id}` resolves a durable message with linked task, inbox, and approval records; UI validation for message #61 revealed task #294, inbox #379, and the worker output path. Portfolio, research, committee, and artifact drill-downs remain open.
 - [~] Mission Control v2: scoped live workspace now shows Charlie chat, durable delegations, executive inbox, approval queue, latest brief/chat turn, execution/provider gates, widget materialization, worker launch, and source-freshness alerts. Verified 2026-07-13 with no seed fallback, no broad snapshot request, and clean desktop/mobile checks. Inline approval decisions and scheduled daily-brief generation remain open. Evidence: [[2026-07-13-mission-control-v2-scoped-workspace]].
 - [~] Quant Lab v2: scoped validation, promotion, committee, retirement/drift, allocation/ruin visibility, and safe validation/analytics controls are deployed. Optimizer configuration, paper-monitor lifecycle controls, and evidence drawers remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
@@ -518,6 +518,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 17. Reports And Briefs
 
+- [~] Reports workspace v2. Live output registry, worker outputs, raw imports, source lineage, artifact gaps, import coverage, blueprint progress, search/filter, source links, and path copy are deployed. Scheduled/generative report catalog below remains open. Evidence: [[2026-07-13-reports-v2]].
 - [~] Obsidian report writeback foundation.
 - [~] Strategy Committee memo foundation.
 - [~] Long-Term committee memo foundation.

@@ -145,6 +145,7 @@ import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
 import MissionControlWorkspace from "./views/MissionControlWorkspace";
 import PortfolioOfficeWorkspace from "./views/PortfolioOfficeWorkspace";
 import ResearchIdeasWorkspace from "./views/ResearchIdeasWorkspace";
+import ReportsWorkspace from "./views/ReportsWorkspace";
 import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 import TradingQuantRiskWorkspace from "./views/TradingQuantRiskWorkspace";
 
@@ -968,7 +969,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
     setManualUpdates([]);
   }, []);
   const { liveStatus, refresh: refreshLiveSnapshot, setLiveStatus, setSnapshot, snapshot } = useLiveSnapshot({
-    enabled: !["clients", "command", "ideas", "portfolio", "quant", "research", "risk", "system", "trading"].includes(activeWorkspace),
+    enabled: false,
     onOffline: clearLiveSnapshot,
     onSnapshot: applyLiveSnapshot
   });
@@ -1252,6 +1253,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         window.dispatchEvent(new Event("aios:research-ideas-refresh"));
       } else if (["quant", "risk", "trading"].includes(activeWorkspace)) {
         window.dispatchEvent(new Event("aios:trading-quant-risk-refresh"));
+      } else if (activeWorkspace === "reports") {
+        window.dispatchEvent(new Event("aios:reports-refresh"));
       } else {
         const nextSnapshot = await fetchLiveSnapshot();
         setSnapshot(nextSnapshot);
@@ -3604,7 +3607,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
   };
 
   return (
-    <div className={["clients", "command", "ideas", "portfolio", "quant", "research", "risk", "system", "trading"].includes(activeWorkspace) ? "app-shell app-shell-focused" : "app-shell"}>
+    <div className="app-shell app-shell-focused">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -3720,6 +3723,8 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
           <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />
         ) : activeWorkspace === "trading" || activeWorkspace === "quant" || activeWorkspace === "risk" ? (
           <TradingQuantRiskWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />
+        ) : activeWorkspace === "reports" ? (
+          <ReportsWorkspace onStatusChange={setLiveStatus} />
         ) : (
           <>
         <section className="metric-grid" aria-label="Portfolio operating metrics">
@@ -7977,7 +7982,7 @@ function CommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMod
         )}
       </main>
 
-      {!["clients", "command", "ideas", "portfolio", "quant", "research", "risk", "system", "trading"].includes(activeWorkspace) ? (
+      {false ? (
       <aside className="right-rail">
         <section className="rail-panel assistant-panel">
           <div className="rail-heading">
