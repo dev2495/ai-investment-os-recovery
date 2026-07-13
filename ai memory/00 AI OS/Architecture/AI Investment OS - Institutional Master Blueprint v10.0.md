@@ -1274,6 +1274,8 @@ Required recurring outputs:
 - cost report,
 - system status report.
 
+Verified recurring-report foundation (2026-07-13): all ten outputs above are configured in `ops.report_schedules`, generated from bounded live Command Center APIs, and recorded through `ops.report_runs`. Canonical daily, weekly, and monthly periods completed with atomic task, inbox, worker, source-snapshot, note-hash, and artifact lineage. The immediate second run was idempotent. Monthly client output is draft-only and created a pending human approval; no external-send, capital, or broker authority is granted. Reports exposes schedule and run status from the same warehouse records. Evidence: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
+
 Required investment outputs:
 
 - company research report,
@@ -1389,6 +1391,8 @@ Verified foundation (updated 2026-07-13): Live Office and every Command Center w
 - hover cards, task arrows, risk wall, alert wall, and employee profile/message actions.
 
 Phase 9: Production hardening.
+
+Verified recovery foundation (2026-07-13): format-v2 backup created current/previous generations with a checksum manifest, Git bundle, Timescale/Postgres custom archive, full Qdrant snapshot, and vault copy. An isolated restore reconciled the vault byte-for-byte, 21 database schemas and 457 tables, and six Qdrant collections without modifying live services. System Health exposes this file-backed chain. The signed 03:20 backup and 08:35 report LaunchAgents are installed; final unattended status remains partial until the unlocked Mac records the narrow external-vault security-scoped bookmark and both launchd modes exit zero. Evidence: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
 
 - backups,
 - restore test,

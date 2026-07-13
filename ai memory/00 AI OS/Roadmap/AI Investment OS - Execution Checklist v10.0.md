@@ -49,9 +49,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Blueprint v9 operating-model registry. Evidence: [[2026-07-07-blueprint-v9-operating-model-registry-v1]].
 - [x] Blueprint v10 operating-model registry. Verified 2026-07-11 through `core.v_os_blueprint_summary`, `core.v_os_blueprint_domains`, `core.v_os_blueprint_requirements`, API blueprint routes, and MCP tools `ai_os_blueprint_summary` and `ai_os_blueprint_requirements`.
 - [ ] Worker daemon health monitor.
-- [x] System health dashboard v2. Verified 2026-07-13 through scoped `GET /api/system-health/snapshot` and extracted `SystemHealthWorkspace`: 83 KB/0.12-0.75 s versus the 7.6 MB broad snapshot, 209 live rows across 16 queries, external-storage checks, execution lock state, blueprint v10, 14 assignable model routes, provider readiness, source freshness, connector health, and pipeline inventory. Direct-route browser proof used one scoped API request, no broad snapshot, no console errors, no panel overlap, and no horizontal overflow at 1440x1000 and 390x844. Evidence: [[2026-07-13-system-health-v2-and-docker-runtime-recovery]].
-- [~] Durable backup job. A verified Postgres/Qdrant/vault snapshot exists at `~/AI_OS_CRITICAL_BACKUP/current` from 2026-07-10 and the daily LaunchAgent is installed, but macOS removable-volume privacy blocks unattended vault rsync with exit `23`; explicit Files & Folders/Full Disk Access approval is required before marking complete. Evidence: [[2026-07-11-runtime-command-model-readiness-v2]].
-- [ ] Restore test. Do not mark complete until a fresh post-permission backup is restored into an isolated runtime and reconciled.
+- [x] System health dashboard v2. Verified 2026-07-13 through scoped `GET /api/system-health/snapshot`: 222 live rows across 18 bounded warehouse queries plus file-backed recovery evidence. The deployed UI exposes external storage, execution lock, blueprint v10, model/provider/source/connector state, two critical-backup generations, checksum presence, a 5.9 MB Postgres archive, a 2.11 GB Qdrant full snapshot, 327 copied vault files, both installed schedules, and the passed isolated restore artifact. Desktop/mobile browser checks used one scoped API request, no broad snapshot, no horizontal overflow, and the 23-case WCAG gate passed. Evidence: [[2026-07-13-system-health-v2-and-docker-runtime-recovery]], [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
+- [~] Durable backup job. Format-v2 atomic backup completed at `~/AI_OS_CRITICAL_BACKUP/current` on 2026-07-13 with current/previous rotation, checksum manifest, Git bundle, Timescale/Postgres custom archive, full Qdrant snapshot, and vault copy. The signed helper and 03:20 LaunchAgent are installed without Full Disk Access. Remaining gate: unlock macOS once, open `~/Applications/AI OS Backup.app`, select the external vault, and pass the launchd scoped-access check. Evidence: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
+- [x] Restore test. The current backup was restored into isolated temporary services without modifying production: vault bytes matched, Git bundle verified, Timescale/Postgres row counts reconciled across 21 schemas and 457 tables, and all six Qdrant collections matched point counts. Evidence artifact: `/Volumes/Devarsh SSD/AI OS Data/artifacts/restore-drills/restore-drill-20260713T052952Z-33333.json`; note: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
 - [ ] Remote access plan and security model.
 - [~] Local model daily-driver benchmark. `llama3.2:3b` is selected, installed on the SSD, GPU-loaded, returned `LOCAL MODEL READY`, and completed persisted chat turn `#44` with `model_status=called`; a comparative quality/throughput eval set remains open.
 - [ ] Cloud escalation approval workflow.
@@ -519,18 +519,18 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 17. Reports And Briefs
 
-- [~] Reports workspace v2. Live output registry, worker outputs, raw imports, source lineage, artifact gaps, import coverage, blueprint progress, search/filter, source links, path copy, and artifact/worker/lineage deep evidence are deployed. Scheduled/generative report catalog below remains open. Evidence: [[2026-07-13-reports-v2]], [[2026-07-13-deep-evidence-and-approval-actions-v2]].
-- [~] Obsidian report writeback foundation.
+- [x] Reports workspace v2. Output registry, worker outputs, raw imports, lineage, gaps, import coverage, search/filter, deep evidence, ten live schedule rows, and recent run history are deployed from a 14-query scoped API. Four permanent desktop/mobile scheduler and recovery tests plus the 23-case WCAG gate pass. Evidence: [[2026-07-13-reports-v2]], [[2026-07-13-deep-evidence-and-approval-actions-v2]], [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
+- [x] Obsidian report writeback foundation. The scheduler writes evidence-backed Markdown notes, then atomically registers task, inbox, worker, source-snapshot, output hash, and approval lineage.
 - [~] Strategy Committee memo foundation.
 - [~] Long-Term committee memo foundation.
 - [~] Special situation memo foundation.
 - [~] PDF report capability.
-- [ ] Daily market brief.
-- [ ] Daily portfolio brief.
-- [ ] Daily agent activity brief.
-- [ ] Weekly risk report.
-- [ ] Weekly research digest.
-- [ ] Monthly client report.
+- [x] Daily market brief. Canonical period `2026-07-13` completed as run `#15`.
+- [x] Daily portfolio brief. Canonical period `2026-07-13` completed as run `#16`.
+- [x] Daily agent activity brief. Canonical period `2026-07-13` completed as run `#14`.
+- [x] Weekly risk report. Canonical period `2026-W29` completed as run `#23`.
+- [x] Weekly research digest. Canonical period `2026-W29` completed as run `#22`.
+- [x] Monthly client report. Canonical period `2026-07` completed as draft run `#20`; external delivery remains blocked behind approval `#16`.
 - [ ] Company research report.
 - [ ] Long-term thesis report.
 - [ ] Valuation report.
@@ -541,10 +541,10 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Optimization report.
 - [ ] Model validation report.
 - [ ] Committee minutes report.
-- [ ] Data-source freshness report.
-- [ ] Provider readiness report.
-- [ ] Cost report.
-- [ ] Full system status report.
+- [x] Data-source freshness report. Canonical period run `#17`.
+- [x] Provider readiness report. Canonical period run `#21`.
+- [x] Cost report. Canonical period run `#19`; it states recorded local/cloud usage rather than estimating unlogged spend.
+- [x] Full system status report. Canonical period run `#18`.
 
 ## 18. Model And Cost Controls
 
@@ -574,12 +574,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Kill switch UI.
 - [ ] Kill switch backend enforcement.
 - [ ] Strategy live-enable approval policy.
-- [ ] Client-report send approval policy.
+- [x] Client-report send approval policy. Scheduled client output is draft-only and run `#20` created pending human approval `#16`; no external-send or broker authority is granted.
 - [ ] External-message approval policy.
 - [ ] Data deletion approval policy.
 - [ ] Secrets management policy.
 - [ ] Audit log immutability.
-- [ ] Backup/restore proof.
+- [x] Backup/restore proof. Format-v2 backup and isolated restore drill passed with retained JSON evidence. Evidence: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
 - [ ] Incident response runbook.
 
 ## 20. Immediate Next Implementation Order

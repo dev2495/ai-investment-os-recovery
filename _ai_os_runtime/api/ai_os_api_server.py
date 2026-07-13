@@ -98,6 +98,74 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def load_key_value_manifest(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    result: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        result[key.strip()] = value.strip()
+    return result
+
+
+def build_recovery_status() -> dict[str, Any]:
+    backup_root = Path(os.environ.get("AI_OS_CRITICAL_BACKUP_ROOT", Path.home() / "AI_OS_CRITICAL_BACKUP"))
+    current = backup_root / "current"
+    manifest = load_key_value_manifest(current / "manifest.txt")
+    postgres_dump = current / str(manifest.get("postgres_archive", "postgres/ai_os.dump"))
+    qdrant_snapshot = current / str(manifest.get("qdrant_snapshot", "qdrant/missing.snapshot"))
+    checksum_manifest = current / str(manifest.get("checksums", "integrity/checksums.sha256"))
+    vault_copy = current / str(manifest.get("vault_root", "vault"))
+
+    drill_root = Path(
+        os.environ.get(
+            "AI_OS_RESTORE_DRILL_ROOT",
+            "/Volumes/Devarsh SSD/AI OS Data/artifacts/restore-drills",
+        )
+    )
+    drill_files = sorted(
+        (path for path in drill_root.glob("restore-drill-*.json") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    ) if drill_root.is_dir() else []
+    latest_drill: dict[str, Any] = {}
+    if drill_files:
+        try:
+            latest_drill = json.loads(drill_files[0].read_text(encoding="utf-8"))
+            latest_drill["artifact_path"] = str(drill_files[0])
+        except (OSError, json.JSONDecodeError):
+            latest_drill = {"status": "invalid", "artifact_path": str(drill_files[0])}
+
+    vault_file_count = 0
+    if vault_copy.is_dir():
+        try:
+            vault_file_count = sum(1 for path in vault_copy.rglob("*") if path.is_file())
+        except OSError:
+            vault_file_count = 0
+
+    return {
+        "backup_root": str(backup_root),
+        "current_exists": current.is_dir(),
+        "previous_exists": (backup_root / "previous").is_dir(),
+        "created_at": manifest.get("created_at"),
+        "format_version": manifest.get("format_version"),
+        "repo_commit": manifest.get("repo_commit"),
+        "postgres_dump_exists": postgres_dump.is_file(),
+        "postgres_dump_bytes": postgres_dump.stat().st_size if postgres_dump.is_file() else 0,
+        "qdrant_snapshot_exists": qdrant_snapshot.is_file(),
+        "qdrant_snapshot_bytes": qdrant_snapshot.stat().st_size if qdrant_snapshot.is_file() else 0,
+        "qdrant_snapshot_name": qdrant_snapshot.name if qdrant_snapshot.is_file() else None,
+        "vault_copy_exists": vault_copy.is_dir(),
+        "vault_file_count": vault_file_count,
+        "checksums_exist": checksum_manifest.is_file(),
+        "latest_restore_drill": latest_drill,
+        "backup_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.critical-backup.plist").is_file(),
+        "report_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.scheduled-reports.plist").is_file(),
+    }
+
+
 def psql_command_candidates() -> list[list[str]]:
     return [
         [
@@ -898,6 +966,20 @@ def build_system_health_snapshot() -> dict:
             ORDER BY endpoint_key
             LIMIT 50
         """,
+        "model_cost_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_model_cost_summary
+            ORDER BY metric
+        """,
+        "model_route_costs": """
+            SELECT route_name, task_class, provider, model_name, cost_tier,
+                   usage_events, usage_events_today, total_tokens_est,
+                   cost_usd, latest_event_ts, approval_required_events,
+                   rate_missing_events
+            FROM agent.v_model_route_cost_summary
+            ORDER BY cost_usd DESC, route_name
+            LIMIT 40
+        """,
         "provider_readiness_summary": """
             SELECT metric, value, detail
             FROM core.v_provider_readiness_summary
@@ -957,6 +1039,7 @@ def build_system_health_snapshot() -> dict:
             "docker_raw_external": Path("/Volumes/Devarsh SSD/Docker/DockerDesktop/Docker.raw").is_file(),
             "heavy_state_external": Path("/Volumes/Devarsh SSD/AI OS Data").is_dir(),
         },
+        "recovery": build_recovery_status(),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_system_health_read_model"},
         "payload_profile": {
             "query_count": len(queries),
@@ -1729,6 +1812,26 @@ def build_reports_snapshot() -> dict:
                    coverage_pct, description
             FROM core.v_import_artifact_coverage
             ORDER BY import_surface
+        """,
+        "report_schedules": """
+            SELECT id, report_key, report_name, report_family, cadence,
+                   owner_agent, skill_key, target_folder, approval_required,
+                   enabled, source_views, description, config, latest_run_id,
+                   latest_run_key, latest_period_key, latest_status,
+                   latest_output_note_path, latest_summary,
+                   latest_finished_at, due_now, updated_at
+            FROM ops.v_report_schedule_status
+            ORDER BY cadence, report_name
+        """,
+        "report_runs": """
+            SELECT id, run_key, period_key, report_key, report_name,
+                   report_family, cadence, owner_agent, approval_required,
+                   status, task_id, worker_run_id, output_note_path, summary,
+                   source_snapshot, evidence, error_message, started_at,
+                   finished_at, updated_at
+            FROM ops.v_recent_report_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 60
         """,
         "chat_turns": """
             SELECT id, session_key, actor, assistant_name, user_message,

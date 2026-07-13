@@ -15,6 +15,8 @@ export interface ReportsSnapshot {
   lineage_summary: LiveRow[];
   artifact_lineage: LiveRow[];
   import_coverage: LiveRow[];
+  report_schedules: LiveRow[];
+  report_runs: LiveRow[];
   chat_turns: LiveRow[];
   blueprint_summary: LiveRow[];
   execution_control: LiveRow[];

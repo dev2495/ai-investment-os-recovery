@@ -37,6 +37,13 @@ function date(value: unknown): string {
     : new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
 }
 
+function bytes(value: number | undefined): string {
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
+}
+
 function statusClass(status: string): string {
   const normalized = status.toLowerCase();
   if (["ready", "healthy", "ok", "online", "active", "completed", "fresh", "passed", "green", "configured", "locked"].includes(normalized)) return "active";
@@ -122,6 +129,14 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
   ).length ?? 0;
   const readyProviders = metric(snapshot?.provider_readiness_summary ?? [], "ready_providers");
   const sourceIssues = snapshot?.source_freshness.filter((row) => text(row, "status", "fresh") !== "fresh").length ?? 0;
+  const recoveryReady = Boolean(
+    snapshot?.recovery.current_exists &&
+    snapshot.recovery.postgres_dump_exists &&
+    snapshot.recovery.qdrant_snapshot_exists &&
+    snapshot.recovery.vault_copy_exists &&
+    snapshot.recovery.checksums_exist &&
+    snapshot.recovery.latest_restore_drill.status === "passed"
+  );
 
   return (
     <div className="system-health-workspace">
@@ -150,6 +165,11 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
           <span>Source Issues</span>
           <strong>{sourceIssues}</strong>
           <p className={sourceIssues ? "tone-warn" : "tone-good"}>{snapshot?.data_sources.length ?? 0} sources tracked</p>
+        </div>
+        <div className="metric-tile">
+          <span>Recovery</span>
+          <strong>{recoveryReady ? "Ready" : "Check"}</strong>
+          <p className={recoveryReady ? "tone-good" : "tone-warn"}>backup · checksums · restore drill</p>
         </div>
       </section>
 
@@ -211,6 +231,36 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
             <div><strong>{text(latestSync, "run_key", "No sync run")}</strong><p>{text(latestSync, "source_sha256", "No checklist hash")}</p></div>
             <StatusPill status={text(latestSync, "status", "unknown")} />
             <time>{date(latestSync?.finished_at)}</time>
+          </div>
+        </HealthPanel>
+
+        <HealthPanel className="span-12" icon={<HardDrive size={17} />} title="Backup And Restore" action={<span>{snapshot?.recovery.format_version ? `format v${snapshot.recovery.format_version}` : "not verified"}</span>}>
+          <div className="pipeline-list">
+            <article className="pipeline-row">
+              <div><strong>Critical state generations</strong><p>{snapshot?.recovery.backup_root ?? "Backup root unavailable"} · {snapshot?.recovery.vault_file_count ?? 0} vault files</p></div>
+              <StatusPill status={snapshot?.recovery.current_exists && snapshot.recovery.previous_exists && snapshot.recovery.checksums_exist ? "ready" : "blocked"} />
+              <span>{date(snapshot?.recovery.created_at)}</span>
+            </article>
+            <article className="pipeline-row">
+              <div><strong>Postgres custom archive</strong><p>Timescale-aware logical backup with globals and inventory</p></div>
+              <StatusPill status={snapshot?.recovery.postgres_dump_exists ? "ready" : "blocked"} />
+              <span>{bytes(snapshot?.recovery.postgres_dump_bytes)}</span>
+            </article>
+            <article className="pipeline-row">
+              <div><strong>Qdrant full snapshot</strong><p>{snapshot?.recovery.qdrant_snapshot_name ?? "No full snapshot found"}</p></div>
+              <StatusPill status={snapshot?.recovery.qdrant_snapshot_exists ? "ready" : "blocked"} />
+              <span>{bytes(snapshot?.recovery.qdrant_snapshot_bytes)}</span>
+            </article>
+            <article className="pipeline-row">
+              <div><strong>Isolated restore drill</strong><p>{String(snapshot?.recovery.latest_restore_drill.artifact_path ?? "No restore proof found")}</p></div>
+              <StatusPill status={String(snapshot?.recovery.latest_restore_drill.status ?? "missing")} />
+              <span>{date(snapshot?.recovery.latest_restore_drill.verified_at)}</span>
+            </article>
+            <article className="pipeline-row">
+              <div><strong>Unattended schedules</strong><p>Critical backup 03:20 · source-backed reports 08:35</p></div>
+              <StatusPill status={snapshot?.recovery.backup_schedule_installed && snapshot.recovery.report_schedule_installed ? "configured" : "blocked"} />
+              <span>launchd</span>
+            </article>
           </div>
         </HealthPanel>
 

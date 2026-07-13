@@ -11,6 +11,25 @@ export interface SystemHealthSnapshot {
     docker_raw_external: boolean;
     heavy_state_external: boolean;
   };
+  recovery: {
+    backup_root: string;
+    current_exists: boolean;
+    previous_exists: boolean;
+    created_at?: string;
+    format_version?: string;
+    repo_commit?: string;
+    postgres_dump_exists: boolean;
+    postgres_dump_bytes: number;
+    qdrant_snapshot_exists: boolean;
+    qdrant_snapshot_bytes: number;
+    qdrant_snapshot_name?: string;
+    vault_copy_exists: boolean;
+    vault_file_count: number;
+    checksums_exist: boolean;
+    latest_restore_drill: Record<string, unknown>;
+    backup_schedule_installed: boolean;
+    report_schedule_installed: boolean;
+  };
   data_mode: {
     seed_data_allowed: boolean;
     source: string;
@@ -46,4 +65,3 @@ export async function fetchSystemHealthSnapshot(): Promise<SystemHealthSnapshot>
   }
   return response.json() as Promise<SystemHealthSnapshot>;
 }
-

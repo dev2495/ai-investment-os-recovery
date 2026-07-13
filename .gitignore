@@ -25,6 +25,12 @@ _ai_os_runtime/imports/**/*.xlsx
 _ai_os_runtime/imports/**/*.csv
 _ai_os_runtime/imports/**/*.pdf
 
+# Generated recurring reports can contain client-private portfolio data.
+# They remain in the external Obsidian vault and warehouse lineage, not Git.
+ai memory/00 AI OS/Briefs/
+ai memory/00 AI OS/Reports/Client Drafts/
+ai memory/00 AI OS/Reports/Scheduled/
+
 # Build/dependency caches
 _ai_os_runtime/ai-office-ui/node_modules
 _ai_os_runtime/ai-office-ui/node_modules/

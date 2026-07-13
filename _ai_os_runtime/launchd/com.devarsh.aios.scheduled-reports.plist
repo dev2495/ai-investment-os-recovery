@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.devarsh.aios.critical-backup</string>
+  <string>com.devarsh.aios.scheduled-reports</string>
   <key>ProgramArguments</key>
   <array>
     <string>/Users/devarshthakkar/Applications/AI OS Backup.app/Contents/MacOS/AIOSBackupHelper</string>
-    <string>--backup</string>
+    <string>--scheduled-reports</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>3</integer>
+    <integer>8</integer>
     <key>Minute</key>
-    <integer>20</integer>
+    <integer>35</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/devarshthakkar/Library/Logs/AIOS/critical_backup.launchd.log</string>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/scheduled_reports.launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/devarshthakkar/Library/Logs/AIOS/critical_backup.launchd.err</string>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/scheduled_reports.launchd.err</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -28,8 +28,12 @@
     <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
     <key>AI_OS_VAULT_ROOT</key>
     <string>/Volumes/Devarsh SSD/Obsidian memory </string>
-    <key>AI_OS_CRITICAL_BACKUP_ROOT</key>
-    <string>/Users/devarshthakkar/AI_OS_CRITICAL_BACKUP</string>
+    <key>AI_OS_PYTHON_BIN</key>
+    <string>/opt/homebrew/bin/python3</string>
+    <key>AI_OS_API_URL</key>
+    <string>http://127.0.0.1:8765</string>
+    <key>AI_OS_POSTGRES_PORT</key>
+    <string>54329</string>
   </dict>
 </dict>
 </plist>
