@@ -142,6 +142,8 @@ import type {
 import type { LiveRow, LiveSnapshot, OfficeSnapshot } from "./api/live";
 import { useLiveSnapshot } from "./app/useLiveSnapshot";
 import { useWorkspaceRoute, type InterfaceMode } from "./app/useWorkspaceRoute";
+import WorkspaceErrorBoundary from "./components/WorkspaceErrorBoundary";
+import ScrollableRegionAccessibility from "./components/ScrollableRegionAccessibility";
 import MissionControlWorkspace from "./views/MissionControlWorkspace";
 import PortfolioOfficeWorkspace from "./views/PortfolioOfficeWorkspace";
 import ResearchIdeasWorkspace from "./views/ResearchIdeasWorkspace";
@@ -8473,9 +8475,11 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "trading" || activeWorkspace === "quant" || activeWorkspace === "risk") workspaceContent = <TradingQuantRiskWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else workspaceContent = <ReportsWorkspace onStatusChange={setLiveStatus} />;
+  workspaceContent = <WorkspaceErrorBoundary workspace={activeWorkspaceLabel}>{workspaceContent}</WorkspaceErrorBoundary>;
 
   return (
     <div className="app-shell app-shell-focused">
+      <ScrollableRegionAccessibility />
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><CommandIcon size={18} aria-hidden="true" /></div><div><p>AI Office</p><span>Charlie orchestrator</span></div></div>
         <nav className="workspace-nav" aria-label="AI Office workspaces">
@@ -8514,11 +8518,13 @@ function App() {
 
   if (interfaceMode === "office") {
     return (
-      <OfficeWorkspace
-        activeWorkspace={activeWorkspace}
-        onExit={() => setInterfaceMode("command")}
-        onSelectWorkspace={openCommandWorkspace}
-      />
+      <WorkspaceErrorBoundary workspace="Live AI Office">
+        <OfficeWorkspace
+          activeWorkspace={activeWorkspace}
+          onExit={() => setInterfaceMode("command")}
+          onSelectWorkspace={openCommandWorkspace}
+        />
+      </WorkspaceErrorBoundary>
     );
   }
 

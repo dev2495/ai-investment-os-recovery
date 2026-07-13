@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LiveRow } from "../api/live";
 import { fetchSystemHealthSnapshot, type SystemHealthSnapshot } from "../api/systemHealth";
+import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 
@@ -152,6 +153,7 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
         </div>
       </section>
 
+      <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status} />
       {error ? <div className="error-strip">{error}</div> : null}
 
       <section className="dashboard-grid">

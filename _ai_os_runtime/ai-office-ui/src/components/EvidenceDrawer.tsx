@@ -62,6 +62,10 @@ export default function EvidenceDrawer({ onChanged, onClose, selection }: Props)
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  onCloseRef.current = onClose;
 
   const load = useCallback(async () => {
     if (!selection) return;
@@ -82,18 +86,40 @@ export default function EvidenceDrawer({ onChanged, onClose, selection }: Props)
     setEvidence(null);
     setNotice("");
     void load();
-    closeButtonRef.current?.focus();
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !drawerRef.current) return;
+      const focusable = [...drawerRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), details > summary, input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        closeButtonRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
+      previousFocusRef.current?.focus();
     };
-  }, [load, onClose, selection]);
+  }, [load, selection]);
 
   const record = evidence?.record ?? selection?.record ?? {};
   const path = usefulPath(record);
@@ -134,7 +160,7 @@ export default function EvidenceDrawer({ onChanged, onClose, selection }: Props)
 
   return (
     <div className="evidence-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <aside aria-describedby="evidence-drawer-description" aria-label={`${selection.title} evidence chain`} aria-modal="true" className="evidence-drawer" role="dialog">
+      <aside aria-busy={busy} aria-describedby="evidence-drawer-description" aria-label={`${selection.title} evidence chain`} aria-modal="true" className="evidence-drawer" ref={drawerRef} role="dialog">
         <header className="evidence-drawer-header">
           <div><span><FileSearch size={14} aria-hidden="true" />Evidence chain</span><h2>{selection.title}</h2><p id="evidence-drawer-description">{selection.subtitle || `${label(selection.kind)} ${selection.key}`} · {relationCount} linked records</p></div>
           <button aria-label="Close evidence drawer" onClick={onClose} ref={closeButtonRef} title="Close evidence drawer" type="button"><X size={18} aria-hidden="true" /></button>

@@ -12,6 +12,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { stageHoldingUpdate, syncPositionReadinessRemediation, type LiveRow } from "../api/live";
 import { fetchPortfolioOfficeSnapshot, type PortfolioOfficeSnapshot } from "../api/portfolioOffice";
+import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 type PortfolioMode = "portfolio" | "clients";
@@ -180,6 +181,7 @@ export default function PortfolioOfficeWorkspace({ mode, onStatusChange }: Props
         <div className="metric-tile"><span>Execution</span><strong>{value(execution, "global_execution_locked", "true") === "true" ? "Locked" : "Review"}</strong><p className="tone-good">broker writes disabled</p></div>
       </section>
 
+      <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status} />
       {error ? <div className="error-strip">{error}</div> : null}
       {notice ? <div className="success-strip">{notice}</div> : null}
 

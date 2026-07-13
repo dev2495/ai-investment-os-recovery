@@ -21,6 +21,7 @@ import {
 import { fetchMissionControlSnapshot, type MissionControlSnapshot } from "../api/missionControl";
 import type { EvidenceSelection } from "../api/evidence";
 import EvidenceDrawer from "../components/EvidenceDrawer";
+import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 
@@ -210,6 +211,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         <div className="metric-tile"><span>Execution</span><strong>{text(execution, "global_execution_locked", "true") === "true" ? "Locked" : "Review"}</strong><p className="tone-good">broker writes {text(execution, "live_broker_writes_allowed", "false") === "true" ? "enabled" : "disabled"}</p></div>
       </section>
 
+      <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status} />
       {error ? <div className="error-strip">{error}</div> : null}
 
       <section className="dashboard-grid">

@@ -23,6 +23,7 @@ import {
   type LiveRow
 } from "../api/live";
 import { fetchTradingQuantRiskSnapshot, type TradingQuantRiskSnapshot } from "../api/tradingQuantRisk";
+import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 type Mode = "trading" | "quant" | "risk";
@@ -153,6 +154,7 @@ export default function TradingQuantRiskWorkspace({ mode, onStatusChange }: Prop
       <div className="metric-tile"><span>{mode === "risk" ? "Warnings" : "Paper P&L"}</span><strong>{mode === "risk" ? warnings : amount(realizedPaperPnl)}</strong><p className="tone-neutral">review required</p></div>
       <div className="metric-tile"><span>Execution</span><strong>{value(execution, "global_execution_locked", "true") === "true" ? "Locked" : "Review"}</strong><p className="tone-good">broker writes disabled</p></div>
     </section>
+    <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status} />
     {error ? <div className="error-strip">{error}</div> : null}{notice ? <div className="success-strip">{notice}</div> : null}
 
     {mode === "quant" ? <section className="dashboard-grid">

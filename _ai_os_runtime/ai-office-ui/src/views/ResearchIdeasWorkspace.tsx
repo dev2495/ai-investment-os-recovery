@@ -14,6 +14,7 @@ import type { EvidenceSelection } from "../api/evidence";
 import { createStrategyIntake, type LiveRow } from "../api/live";
 import { fetchResearchIdeasSnapshot, type ResearchIdeasSnapshot } from "../api/researchIdeas";
 import EvidenceDrawer from "../components/EvidenceDrawer";
+import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 type Mode = "research" | "ideas";
@@ -167,6 +168,7 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
         <div className="metric-tile"><span>Execution</span><strong>{value(execution, "global_execution_locked", "true") === "true" ? "Locked" : "Review"}</strong><p className="tone-good">broker writes disabled</p></div>
       </section>
 
+      <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status} />
       {error ? <div className="error-strip">{error}</div> : null}
       {notice ? <div className="success-strip">{notice}</div> : null}
 

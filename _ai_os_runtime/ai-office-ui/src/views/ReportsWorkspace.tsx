@@ -15,6 +15,7 @@ import type { EvidenceSelection } from "../api/evidence";
 import type { LiveRow } from "../api/live";
 import { fetchReportsSnapshot, type ReportsSnapshot } from "../api/reports";
 import EvidenceDrawer from "../components/EvidenceDrawer";
+import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
 interface Props { onStatusChange: (status: ConnectionStatus) => void; }
@@ -109,6 +110,7 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
       <div className="metric-tile"><span>Artifact Gaps</span><strong>{snapshot?.artifact_gaps.length ?? 0}</strong><p className={snapshot?.artifact_gaps.length ? "tone-warn" : "tone-good"}>missing durable outputs</p></div>
       <div className="metric-tile"><span>Blueprint Done</span><strong>{blueprintDone}</strong><p className="tone-good">execution {value(execution,"global_execution_locked","true") === "true" ? "locked" : "review"}</p></div>
     </section>
+    <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status}/>
     {error ? <div className="error-strip">{error}</div> : null}{notice ? <div className="success-strip">{notice}</div> : null}
     <section className="dashboard-grid">
       <Panel className="span-8" icon={<ScrollText size={17}/>} title="Output Registry" action={<span>{artifacts.length} records</span>}><div className="report-artifact-list scoped-scroll-list">{artifacts.map((row)=>{const selection: EvidenceSelection={kind:"artifact",key:value(row,"artifact_key"),title:value(row,"title"),subtitle:`${value(row,"artifact_family")} · ${value(row,"owner_agent")}`,record:row};return <article className="report-artifact-row evidence-open-row" key={value(row,"artifact_key")}><div className="evidence-open-cell" onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><strong>{value(row,"title")}</strong><p>{value(row,"summary")} · {value(row,"owner_agent")} · {value(row,"artifact_family")}</p><small>{value(row,"note_path",value(row,"local_path",value(row,"source_url","No location")))}</small></div><StatusPill status={value(row,"status","stored")}/><div className="artifact-actions">{value(row,"source_url","") ? <a href={value(row,"source_url")} rel="noreferrer" target="_blank" title="Open source"><ExternalLink size={14}/></a> : null}{value(row,"note_path",value(row,"local_path","")) ? <button onClick={()=>void copyPath(row)} title="Copy artifact path" type="button"><Clipboard size={14}/></button> : null}</div><time>{date(row.latest_activity_at)}</time></article>;})}{!artifacts.length?<Empty>No artifact matches the current filter.</Empty>:null}</div></Panel>
