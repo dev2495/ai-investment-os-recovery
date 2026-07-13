@@ -262,6 +262,46 @@ def build_office_snapshot() -> dict:
             ORDER BY priority_rank, risk_rank, latest_activity_at DESC
             LIMIT 50
         """,
+        "priority_tasks": """
+            SELECT id, title, objective, owner_agent, status, priority,
+                   approval_required, source_kind, source_ref,
+                   output_note_path, created_at, updated_at
+            FROM agent.tasks
+            WHERE status IN ('in_progress', 'queued', 'needs_review', 'blocked')
+            ORDER BY
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                CASE status WHEN 'blocked' THEN 1 WHEN 'needs_review' THEN 2 WHEN 'in_progress' THEN 3 ELSE 4 END,
+                updated_at DESC
+            LIMIT 24
+        """,
+        "risk_events": """
+            SELECT id, ts, scope_type, scope_ref, severity, status, title,
+                   message, evidence, approval_id
+            FROM risk.events
+            WHERE status IN ('new', 'acknowledged')
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                ts DESC
+            LIMIT 16
+        """,
+        "source_freshness": """
+            SELECT source_key, source_name, staleness_minutes, status, severity,
+                   rows_seen, risk_event_status, created_at
+            FROM core.v_latest_data_source_freshness
+            WHERE status IN ('stale', 'error', 'missing_check')
+            ORDER BY
+                CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                created_at DESC
+            LIMIT 16
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at,
+                   open_limited_live_requests, blocked_gate_checks
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
     }
     try:
         data = run_psql_json_object(queries, row_limit=50)

@@ -18,6 +18,15 @@ export interface OfficeAgent {
   workload: number;
   model: string;
   updatedAt: string;
+  currentWorkDetail: string;
+  openInboxCount: number;
+  openRiskEventCount: number;
+  openTaskCount: number;
+  blockedTaskCount: number;
+  unreadMessageCount: number;
+  currentTaskPriority: string;
+  workerStatus: string;
+  workerOutputPath: string;
 }
 
 export interface OfficeRoom {
@@ -136,7 +145,16 @@ function toAgent(row: LiveRow): OfficeAgent | null {
     voiceStyle: text(row, "voice_style"),
     workload: number(row, "workload_score", "workload", "priority_score"),
     model: text(row, "model_name", "model", "provider_model", "default_model"),
-    updatedAt: text(row, "latest_activity_at", "updated_at", "last_activity_at", "started_at")
+    updatedAt: text(row, "latest_activity_at", "updated_at", "last_activity_at", "started_at"),
+    currentWorkDetail: text(row, "current_work_detail", "latest_worker_summary"),
+    openInboxCount: number(row, "open_inbox_count"),
+    openRiskEventCount: number(row, "open_risk_event_count"),
+    openTaskCount: number(row, "open_task_count"),
+    blockedTaskCount: number(row, "blocked_task_count"),
+    unreadMessageCount: number(row, "unread_message_count"),
+    currentTaskPriority: text(row, "current_task_priority"),
+    workerStatus: text(row, "latest_worker_status"),
+    workerOutputPath: text(row, "latest_worker_output_note_path")
   };
 }
 
@@ -206,7 +224,16 @@ export function buildOfficeModel(snapshot: OfficeSnapshot | null): OfficeModel {
       updatedAt: existing.updatedAt || agent.updatedAt,
       visualTraits: existing.visualTraits || agent.visualTraits,
       voiceStyle: existing.voiceStyle || agent.voiceStyle,
-      workload: Math.max(existing.workload, agent.workload)
+      workload: Math.max(existing.workload, agent.workload),
+      currentWorkDetail: existing.currentWorkDetail || agent.currentWorkDetail,
+      openInboxCount: Math.max(existing.openInboxCount, agent.openInboxCount),
+      openRiskEventCount: Math.max(existing.openRiskEventCount, agent.openRiskEventCount),
+      openTaskCount: Math.max(existing.openTaskCount, agent.openTaskCount),
+      blockedTaskCount: Math.max(existing.blockedTaskCount, agent.blockedTaskCount),
+      unreadMessageCount: Math.max(existing.unreadMessageCount, agent.unreadMessageCount),
+      currentTaskPriority: existing.currentTaskPriority || agent.currentTaskPriority,
+      workerStatus: existing.workerStatus || agent.workerStatus,
+      workerOutputPath: existing.workerOutputPath || agent.workerOutputPath
     } : agent);
   }
   const agents = [...byAgent.values()].sort((left, right) => right.workload - left.workload || left.name.localeCompare(right.name));

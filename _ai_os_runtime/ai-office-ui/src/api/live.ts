@@ -213,6 +213,7 @@ export interface LiveSnapshot {
   agent_jobs: LiveRow[];
   agent_worker_queue: LiveRow[];
   agent_worker_runs: LiveRow[];
+  priority_tasks: LiveRow[];
   pipeline_readiness: LiveRow[];
   issues: LiveRow[];
 }
@@ -226,6 +227,10 @@ export type OfficeSnapshot = Pick<
   | "issues"
   | "live_office_agent_activity"
   | "live_office_rooms"
+  | "priority_tasks"
+  | "risk_events"
+  | "source_freshness"
+  | "execution_control"
 > & Partial<Pick<LiveSnapshot, "long_term_committee_queue" | "strategy_committee_queue">>;
 
 export interface AgentMessageEvidence {

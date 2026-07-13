@@ -1,9 +1,9 @@
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Line, OrbitControls } from "@react-three/drei";
-import { Accessibility, ArrowLeft, Building2, CircleAlert, FileSearch, RefreshCw, Send, ShieldCheck, UsersRound, X } from "lucide-react";
+import { Accessibility, Activity, ArrowLeft, Building2, CircleAlert, Database, ExternalLink, FileSearch, ListTodo, RefreshCw, Send, ShieldCheck, UsersRound, X } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Group } from "three";
+import { Vector3, type Group } from "three";
 import { fetchAgentMessageEvidence } from "../api/live";
 import type { AgentMessageEvidence, LiveRow, OfficeSnapshot } from "../api/live";
 import type { EvidenceSelection } from "../api/evidence";
@@ -34,6 +34,17 @@ interface OfficeMessageFlow {
 }
 
 const roomTone = ["#2b5a69", "#345843", "#514b73", "#6d4e37", "#33516e", "#4f633d"];
+
+function roomWorkspace(room: OfficeRoom): WorkspaceId {
+  const label = room.label.toLowerCase();
+  if (label.includes("quant")) return "quant";
+  if (label.includes("risk")) return "risk";
+  if (label.includes("trad")) return "trading";
+  if (label.includes("research")) return "research";
+  if (label.includes("portfolio") || label.includes("client")) return "portfolio";
+  if (label.includes("data") || label.includes("runtime") || label.includes("engineer")) return "system";
+  return "command";
+}
 
 function activityTone(state: OfficeAgent["state"]): string {
   if (state === "blocked") return "#ee736c";
@@ -98,7 +109,9 @@ function OfficeScene({
   onHover,
   onSelect,
   rooms,
-  selectedAgentId
+  selectedAgentId,
+  selectedRoomId,
+  onSelectRoom
 }: {
   agents: OfficeAgent[];
   flows: OfficeMessageFlow[];
@@ -106,8 +119,11 @@ function OfficeScene({
   onSelect: (agent: OfficeAgent) => void;
   rooms: RoomPlacement[];
   selectedAgentId: string;
+  selectedRoomId: string;
+  onSelectRoom: (room: OfficeRoom) => void;
 }) {
   const placements = new Map(rooms.map((placement) => [placement.room.id, placement]));
+  const selectedPlacement = rooms.find((placement) => placement.room.id === selectedRoomId) ?? null;
   const perRoom = new Map<string, number>();
   const agentStations = agents.flatMap((agent, index) => {
     const room = placements.get(agent.roomId);
@@ -131,7 +147,7 @@ function OfficeScene({
         <meshStandardMaterial color="#101b21" roughness={0.92} metalness={0.08} />
       </mesh>
       {rooms.map((placement, index) => (
-        <OfficeRoomMesh key={placement.room.id} placement={placement} tone={roomTone[index % roomTone.length]} />
+        <OfficeRoomMesh key={placement.room.id} onSelect={onSelectRoom} placement={placement} selected={selectedRoomId === placement.room.id} tone={roomTone[index % roomTone.length]} />
       ))}
       {flows.map((flow) => {
         const from = stationByAgentId.get(flow.fromAgentId);
@@ -152,18 +168,38 @@ function OfficeScene({
           />
         );
       })}
-      <OrbitControls enableDamping enablePan={false} maxDistance={25} maxPolarAngle={Math.PI / 2.2} minDistance={13} minPolarAngle={0.55} target={[0, 0, 0]} />
+      <CameraFocus placement={selectedPlacement} />
+      <OrbitControls enableDamping enablePan={false} maxDistance={25} maxPolarAngle={Math.PI / 2.2} minDistance={8} minPolarAngle={0.55} target={selectedPlacement ? [selectedPlacement.x, 0, selectedPlacement.z] : [0, 0, 0]} />
     </>
   );
 }
 
-function OfficeRoomMesh({ placement, tone }: { placement: RoomPlacement; tone: string }) {
+function CameraFocus({ placement }: { placement: RoomPlacement | null }) {
+  const { camera } = useThree();
+  const focusStart = useRef(0);
+  const roomId = placement?.room.id ?? "";
+  const target = useMemo(() => new Vector3(placement?.x ?? 0, 0.2, placement?.z ?? 0), [placement?.x, placement?.z]);
+  const desired = useMemo(() => new Vector3((placement?.x ?? 0) + 5.8, 7.2, (placement?.z ?? 0) + 6.6), [placement?.x, placement?.z]);
+
+  useEffect(() => {
+    focusStart.current = performance.now();
+  }, [roomId]);
+
+  useFrame(() => {
+    if (performance.now() - focusStart.current > 900) return;
+    camera.position.lerp(desired, 0.1);
+    camera.lookAt(target);
+  });
+  return null;
+}
+
+function OfficeRoomMesh({ onSelect, placement, selected, tone }: { onSelect: (room: OfficeRoom) => void; placement: RoomPlacement; selected: boolean; tone: string }) {
   const { room, x, z } = placement;
   return (
-    <group position={[x, 0, z]}>
+    <group onClick={(event) => { event.stopPropagation(); onSelect(room); }} position={[x, 0, z]}>
       <mesh position={[0, 0.04, 0]}>
         <boxGeometry args={[3.65, 0.12, 2.85]} />
-        <meshStandardMaterial color="#17252c" roughness={0.84} metalness={0.1} />
+        <meshStandardMaterial color={selected ? "#26444d" : "#17252c"} emissive={selected ? tone : "#000000"} emissiveIntensity={selected ? 0.22 : 0} roughness={0.84} metalness={0.1} />
       </mesh>
       <mesh position={[0, 0.1, -1.31]}>
         <boxGeometry args={[3.62, 0.15, 0.08]} />
@@ -263,18 +299,18 @@ function AgentStation({
   );
 }
 
-function OfficeFallback({ agents, onSelect, rooms }: { agents: OfficeAgent[]; onSelect: (agent: OfficeAgent) => void; rooms: OfficeRoom[] }) {
+function OfficeFallback({ agents, onSelect, onSelectRoom, rooms, selectedRoomId }: { agents: OfficeAgent[]; onSelect: (agent: OfficeAgent) => void; onSelectRoom: (room: OfficeRoom) => void; rooms: OfficeRoom[]; selectedRoomId: string }) {
   return (
     <div className="office-static-floor" aria-label="Live AI Office static view">
       {rooms.map((room) => {
         const roomAgents = agents.filter((agent) => agent.roomId === room.id);
         return (
-          <section className="office-static-room" key={room.id}>
-            <div className="office-static-room-heading">
+          <section className={`office-static-room${selectedRoomId === room.id ? " office-static-room-selected" : ""}`} key={room.id}>
+            <button className="office-static-room-heading" onClick={() => onSelectRoom(room)} type="button">
               <span className={`office-status-dot status-${room.status.toLowerCase().replace(/[^a-z]+/g, "-")}`} />
               <strong>{room.label}</strong>
               <small>{room.activeCount}/{room.agentCount || roomAgents.length}</small>
-            </div>
+            </button>
             <div className="office-static-agents">
               {roomAgents.length ? roomAgents.map((agent) => (
                 <button key={agent.id} onClick={() => onSelect(agent)} type="button">
@@ -317,6 +353,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
   const [messageEvidenceError, setMessageEvidenceError] = useState("");
   const [selectedCommitteeItemId, setSelectedCommitteeItemId] = useState("");
   const [committeeEvidenceSelection, setCommitteeEvidenceSelection] = useState<EvidenceSelection | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState("");
   const { toggleRenderer, useStaticOffice } = useOfficeRendererMode();
   const rooms = useMemo<RoomPlacement[]>(() => model.rooms.map((room, index) => ({
     room,
@@ -324,9 +361,14 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
     z: (Math.floor(index / 3) - 0.5) * 3.55
   })), [model.rooms]);
   const selectedAgent = model.agents.find((agent) => agent.id === selectedAgentId) ?? hoveredAgent ?? model.agents[0] ?? null;
+  const selectedRoom = model.rooms.find((room) => room.id === selectedRoomId) ?? model.rooms[0] ?? null;
   const activeAgents = model.agents.filter((agent) => agent.state !== "idle").length;
   const blockedAgents = model.agents.filter((agent) => agent.state === "blocked").length;
   const selectedCommitteeItem = model.committeeItems.find((item) => item.id === selectedCommitteeItemId) ?? null;
+  const priorityTasks = snapshot?.priority_tasks ?? [];
+  const riskEvents = snapshot?.risk_events ?? [];
+  const freshnessAlerts = snapshot?.source_freshness ?? [];
+  const executionControl = snapshot?.execution_control?.[0] ?? null;
   const selectedMessages = useMemo(() => {
     if (!selectedAgent) return [];
     return (snapshot?.agent_messages ?? []).filter((message) => {
@@ -348,6 +390,21 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
       return [{ fromAgentId, priority, toAgentId }];
     }).slice(0, 16);
   }, [model.agents, snapshot]);
+
+  useEffect(() => {
+    if (!selectedRoomId && model.rooms.length) setSelectedRoomId(model.rooms[0].id);
+  }, [model.rooms, selectedRoomId]);
+
+  const focusAgent = (agent: OfficeAgent) => {
+    setSelectedAgentId(agent.id);
+    setSelectedRoomId(agent.roomId);
+  };
+
+  const focusRoom = (room: OfficeRoom) => {
+    setSelectedRoomId(room.id);
+    const firstRoomAgent = model.agents.find((agent) => agent.roomId === room.id);
+    if (firstRoomAgent) setSelectedAgentId(firstRoomAgent.id);
+  };
 
   const submitHandoff = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -406,10 +463,13 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
           <div className="office-section-title"><UsersRound size={16} aria-hidden="true" /><span>Departments</span></div>
           <div className="office-room-list">
             {model.rooms.length ? model.rooms.map((room) => (
-              <button className="office-room-row" key={room.id} onClick={() => onSelectWorkspace(room.label.toLowerCase().includes("quant") ? "quant" : room.label.toLowerCase().includes("risk") ? "risk" : room.label.toLowerCase().includes("trad") ? "trading" : room.label.toLowerCase().includes("research") ? "research" : "command")} type="button">
-                <span className={`office-status-dot status-${room.status.toLowerCase().replace(/[^a-z]+/g, "-")}`} />
-                <span><strong>{room.label}</strong><small>{room.activeCount}/{room.agentCount || 0} active</small></span>
-              </button>
+              <div className={`office-room-row${selectedRoom?.id === room.id ? " office-room-row-selected" : ""}`} key={room.id}>
+                <button aria-pressed={selectedRoom?.id === room.id} className="office-room-focus" onClick={() => focusRoom(room)} type="button">
+                  <span className={`office-status-dot status-${room.status.toLowerCase().replace(/[^a-z]+/g, "-")}`} />
+                  <span><strong>{room.label}</strong><small>{room.activeCount}/{room.agentCount || 0} active</small></span>
+                </button>
+                <button aria-label={`Open ${room.label} workspace`} className="office-room-open" onClick={() => onSelectWorkspace(roomWorkspace(room))} title={`Open ${room.label} workspace`} type="button"><ExternalLink size={14} aria-hidden="true" /></button>
+              </div>
             )) : <div className="office-empty">No live office room records have been published.</div>}
           </div>
           <div className="office-stat-stack">
@@ -422,10 +482,10 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
         <section className="office-stage" aria-label="Interactive AI office model">
           {rooms.length && model.agents.length && !useStaticOffice ? (
             <Canvas camera={{ fov: 44, position: [11, 13, 15] }} dpr={[1, 2]} gl={{ antialias: true, preserveDrawingBuffer: true }}>
-              <OfficeScene agents={model.agents} flows={messageFlows} onHover={setHoveredAgent} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={rooms} selectedAgentId={selectedAgent?.id ?? ""} />
+              <OfficeScene agents={model.agents} flows={messageFlows} onHover={setHoveredAgent} onSelect={focusAgent} onSelectRoom={focusRoom} rooms={rooms} selectedAgentId={selectedAgent?.id ?? ""} selectedRoomId={selectedRoom?.id ?? ""} />
             </Canvas>
           ) : rooms.length && model.agents.length ? (
-            <OfficeFallback agents={model.agents} onSelect={(agent) => setSelectedAgentId(agent.id)} rooms={model.rooms} />
+            <OfficeFallback agents={model.agents} onSelect={focusAgent} onSelectRoom={focusRoom} rooms={model.rooms} selectedRoomId={selectedRoom?.id ?? ""} />
           ) : (
             <div className="office-stage-empty">
               <Building2 size={30} aria-hidden="true" />
@@ -453,7 +513,7 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
             <>
               <label className="office-agent-picker">
                 <span>Focus employee</span>
-                <select onChange={(event) => setSelectedAgentId(event.target.value)} value={selectedAgent.id}>
+                <select onChange={(event) => { const agent = model.agents.find((candidate) => candidate.id === event.target.value); if (agent) focusAgent(agent); }} value={selectedAgent.id}>
                   {model.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
               </label>
@@ -465,9 +525,16 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
               <article className="office-task-card">
                 <span>Current work</span>
                 <strong>{selectedAgent.task}</strong>
+                {selectedAgent.currentWorkDetail ? <p>{selectedAgent.currentWorkDetail}</p> : null}
                 <p>{selectedAgent.roomLabel} {selectedAgent.model ? ` / ${selectedAgent.model}` : ""}</p>
                 <time>{relativeTime(selectedAgent.updatedAt)}</time>
               </article>
+              <dl className="office-agent-metrics">
+                <div><dt>Open tasks</dt><dd>{selectedAgent.openTaskCount}</dd></div>
+                <div><dt>Inbox</dt><dd>{selectedAgent.openInboxCount}</dd></div>
+                <div><dt>Unread</dt><dd>{selectedAgent.unreadMessageCount}</dd></div>
+                <div className={selectedAgent.openRiskEventCount ? "office-metric-alert" : ""}><dt>Risks</dt><dd>{selectedAgent.openRiskEventCount}</dd></div>
+              </dl>
               <div className="office-message-list">
                 <div className="office-section-title"><CircleAlert size={15} aria-hidden="true" /><span>Recent messages</span></div>
                 {selectedMessages.length ? selectedMessages.map((message) => (
@@ -501,6 +568,54 @@ export default function LiveOffice({ liveStatus, onExit, onRefresh, onSelectWork
             </>
           ) : <div className="office-empty">Select an agent when the runtime publishes activity.</div>}
         </aside>
+      </section>
+
+      <section className="office-operations-wall" aria-label="Live operations walls">
+        <article className="office-wall-panel office-execution-wall">
+          <header><ShieldCheck size={15} aria-hidden="true" /><span>Execution Guard</span></header>
+          {executionControl ? (
+            <div className="office-execution-state">
+              <span className={`office-status-dot ${executionControl.global_execution_locked ? "status-critical" : "status-active"}`} />
+              <div>
+                <strong>{executionControl.global_execution_locked ? "Global execution locked" : "Execution unlocked"}</strong>
+                <p>{rowText(executionControl, "broker_execution_policy", "lock_reason") || "No execution policy detail recorded."}</p>
+              </div>
+            </div>
+          ) : <p className="office-empty">No execution control record is available.</p>}
+        </article>
+        <article className="office-wall-panel">
+          <header><Activity size={15} aria-hidden="true" /><span>Risk Wall</span><strong>{riskEvents.length}</strong></header>
+          <div className="office-wall-list">
+            {riskEvents.length ? riskEvents.slice(0, 4).map((event) => (
+              <div key={`risk-${rowText(event, "id")}`}>
+                <span className={`office-status-dot status-${rowText(event, "severity", "status").toLowerCase().replace(/[^a-z]+/g, "-")}`} />
+                <span><strong>{rowText(event, "title") || "Risk event"}</strong><small>{rowText(event, "scope_ref", "message", "status")}</small></span>
+              </div>
+            )) : <p className="office-empty">No open risk events.</p>}
+          </div>
+        </article>
+        <article className="office-wall-panel">
+          <header><Database size={15} aria-hidden="true" /><span>Data Alerts</span><strong>{freshnessAlerts.length}</strong></header>
+          <div className="office-wall-list">
+            {freshnessAlerts.length ? freshnessAlerts.slice(0, 4).map((source) => (
+              <div key={`source-${rowText(source, "source_key")}`}>
+                <span className={`office-status-dot status-${rowText(source, "status", "severity").toLowerCase().replace(/[^a-z]+/g, "-")}`} />
+                <span><strong>{rowText(source, "source_name", "source_key") || "Data source"}</strong><small>{rowText(source, "status")} / {rowText(source, "staleness_minutes") || "unknown"} min</small></span>
+              </div>
+            )) : <p className="office-empty">No stale or failed data sources.</p>}
+          </div>
+        </article>
+        <article className="office-wall-panel">
+          <header><ListTodo size={15} aria-hidden="true" /><span>Priority Tasks</span><strong>{priorityTasks.length}</strong></header>
+          <div className="office-wall-list">
+            {priorityTasks.length ? priorityTasks.slice(0, 4).map((task) => (
+              <div key={`task-${rowText(task, "id")}`}>
+                <span className={`office-status-dot status-${rowText(task, "status", "priority").toLowerCase().replace(/[^a-z]+/g, "-")}`} />
+                <span><strong>{rowText(task, "title") || "Agent task"}</strong><small>{rowText(task, "owner_agent")} / {rowText(task, "status")}</small></span>
+              </div>
+            )) : <p className="office-empty">No active priority tasks.</p>}
+          </div>
+        </article>
       </section>
 
       <section className="office-committee-strip" aria-label="Committee room">
