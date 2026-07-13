@@ -10,6 +10,10 @@ export interface ResearchIdeasSnapshot {
   long_term_theses: LiveRow[];
   coverage_summary: LiveRow[];
   coverage_queue: LiveRow[];
+  long_term_checklists: LiveRow[];
+  long_term_valuation_models: LiveRow[];
+  long_term_monte_carlo_runs: LiveRow[];
+  long_term_research_updates: LiveRow[];
   committee_queue: LiveRow[];
   latest_news: LiveRow[];
   corporate_filings: LiveRow[];
@@ -29,4 +33,29 @@ export async function fetchResearchIdeasSnapshot(): Promise<ResearchIdeasSnapsho
   const response = await fetch(`${API_URL}/api/research-ideas/snapshot`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Research and Ideas API returned ${response.status}`);
   return response.json() as Promise<ResearchIdeasSnapshot>;
+}
+
+export interface LongTermMonteCarloRequest {
+  holding_thesis_id: number;
+  actor: string;
+  horizon_years: number;
+  simulations: number;
+  seed: number;
+  starting_multiple?: number;
+  starting_multiple_source?: string;
+  terminal_multiple_low: number;
+  terminal_multiple_base: number;
+  terminal_multiple_high: number;
+  annual_volatility: number;
+}
+
+export async function runLongTermMonteCarlo(payload: LongTermMonteCarloRequest): Promise<LiveRow> {
+  const response = await fetch(`${API_URL}/api/portfolio/long-term-thesis/monte-carlo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json() as LiveRow & { error?: string };
+  if (!response.ok) throw new Error(result.error || `Monte Carlo API returned ${response.status}`);
+  return result;
 }

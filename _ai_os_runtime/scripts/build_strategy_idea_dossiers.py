@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -14,8 +15,8 @@ from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
 from run_trade_journal_strategy_mining import sql_numeric, sql_text_array
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-VAULT_ROOT = RUNTIME_ROOT.parent
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
+VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
 DOSSIER_DIR = VAULT_ROOT / "ai memory" / "03 Strategies" / "Dossiers"
 
 

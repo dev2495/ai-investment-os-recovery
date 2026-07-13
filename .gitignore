@@ -30,6 +30,7 @@ _ai_os_runtime/imports/**/*.pdf
 ai memory/00 AI OS/Briefs/
 ai memory/00 AI OS/Reports/Client Drafts/
 ai memory/00 AI OS/Reports/Scheduled/
+ai memory/02 Portfolio/Long-Term Monte Carlo/
 
 # Build/dependency caches
 _ai_os_runtime/ai-office-ui/node_modules

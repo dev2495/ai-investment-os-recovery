@@ -154,9 +154,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Historical valuation module.
 - [ ] Bull/base/bear scenario builder.
 - [ ] Expected CAGR calculator.
-- [ ] Long-term Monte Carlo engine.
-- [ ] Long-term Monte Carlo UI.
-- [ ] Monte Carlo committee integration.
+- [x] Long-term Monte Carlo engine. Deterministic fundamental-driver simulation persists explicit assumptions, seed, distributions, probability summaries, warnings, valuation/thesis updates, audit lineage, and an Obsidian memo; no capital authority. Evidence: [[2026-07-06-long-term-monte-carlo-engine]], [[2026-07-13-long-term-decision-lab-v1]].
+- [x] Long-term Monte Carlo UI. Holdings Research exposes a source-gated Decision Lab, live run evidence, valuation modules, checklists, artifact drill-down, and mobile-safe controls. Live UI run `#5` completed with no warnings and external-vault writeback. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
+- [~] Monte Carlo committee integration. Runs update thesis/valuation/research records and artifact lineage, and the committee queue is visible beside the Decision Lab. Remaining: embed distribution fields and explicit Monte Carlo challenge/follow-up actions in the committee decision packet. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [ ] Sell discipline checklist.
 - [ ] Thesis drift alerts.
 - [ ] Quarterly review automation.
@@ -491,7 +491,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Trading Desk v2: live signals, TradingView controller tasks, manual/paper journal intake, paper-monitor visibility, and execution lock are deployed. OI/intraday workbench, template execution controls, and broker-gated execution workflow remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Portfolio Office v2: scoped production workspace now provides client filtering, books, positions, multi-book exposure, portfolio intelligence, cross-book conflicts, and readiness remediation. Dedicated thesis packets, performance/factor attribution, and decision drill-downs remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
 - [~] Risk Center v2: live limits, breach/warning summary, execution lock, limited-live requests, order intents, drift, risk refresh, and guarded global kill switch are deployed. Stress/Monte Carlo controls, conflict drill-downs, and order-risk evidence remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
-- [~] Research Hub v2: scoped live long-term theses, committee review, filings/news, special situations, and output artifacts are deployed. Long-term committee and output-artifact evidence drawers are live; filing/source-document actions, broader feeds, and complete detector workflows remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]], [[2026-07-13-deep-evidence-and-approval-actions-v2]].
+- [~] Research Hub v2: scoped live long-term theses, committee review, filings/news, special situations, output artifacts, valuation models, checklists, and Long-Term Monte Carlo evidence/action are deployed. Long-term committee and output-artifact evidence drawers are live; filing/source-document actions, broader feeds, complete detectors, and remaining valuation calculators remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]], [[2026-07-13-deep-evidence-and-approval-actions-v2]], [[2026-07-13-long-term-decision-lab-v1]].
 - [x] System Health v2: scoped live MCP, source, worker, provider, model, cost, storage, pipeline, blueprint, execution-safety, and recovery state. Evidence: [[2026-07-13-system-health-v2-and-docker-runtime-recovery]].
 - [~] Portfolio Intelligence dashboard v3. Portfolio overview, concentration rows, gross/net exposure, critical/risk-limit breach counts, books, conflicts, and position readiness are live; complete factor/risk attribution and scenario controls remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
 - [~] Client Folio dashboard. Live client registry, account-filtered holdings, client-book attribution, P2Cursor reconciliation, and approval-gated manual holding staging are deployed. Client onboarding/editing, suitability, cash flows, performance, and report generation remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
@@ -534,7 +534,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Company research report.
 - [ ] Long-term thesis report.
 - [ ] Valuation report.
-- [ ] Monte Carlo report.
+- [x] Monte Carlo report. Deterministic runs write source-backed distribution and guardrail memos to the external Obsidian vault; live UI run `#5` produced a checksum-verified note. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [ ] Special situation report.
 - [ ] Strategy report.
 - [ ] Backtest report v2.
@@ -592,7 +592,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Harden p2cursor and old algo system extraction. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; readiness/run/issues/API/MCP/UI are live, but full mapping/promotion gaps remain.
 - [x] Build Strategy Template Library v1. Evidence: [[2026-07-08-strategy-template-library-v1]]; migration, API route, MCP tools, dashboard panel, live API smoke, and build checks passed.
 - [x] Implement Long-Term checklist tables and UI. Evidence: [[2026-07-08-long-term-coverage-board-v1]] plus existing live `portfolio.v_long_term_thesis_checklists` dashboard rows; table/API/UI are live, while row completion remains tracked by the coverage board.
-- [ ] Implement Long-Term Monte Carlo engine and report.
+- [x] Implement Long-Term Monte Carlo engine and report. Engine/API/MCP/database/report existed and the scoped Decision Lab, source gate, external-vault contract, real UI run, and browser tests are now verified. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [ ] Implement research/news/filing collector expansion.
 - [ ] Harden TradingView controller and straddle workflow.
 - [ ] Build Client Folio dashboard.

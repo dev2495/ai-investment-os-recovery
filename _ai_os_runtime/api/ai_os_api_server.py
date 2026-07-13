@@ -18,7 +18,7 @@ from typing import Any
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
-VAULT_ROOT = RUNTIME_ROOT.parent
+VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 API_HOST = os.environ.get("AI_OS_API_HOST", "127.0.0.1")
@@ -1387,6 +1387,48 @@ def build_research_ideas_snapshot() -> dict:
                 CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
                 priority_score DESC, updated_at DESC
             LIMIT 100
+        """,
+        "long_term_checklists": """
+            SELECT id, holding_thesis_id, symbol, exchange, company_name,
+                   checklist_key, checklist_name, status, score, findings,
+                   owner_agent, updated_at,
+                   long_term_gross_exposure, client_count, clients
+            FROM portfolio.v_long_term_thesis_checklists
+            ORDER BY updated_at DESC, long_term_gross_exposure DESC NULLS LAST,
+                     symbol, checklist_key
+            LIMIT 120
+        """,
+        "long_term_valuation_models": """
+            SELECT id, holding_thesis_id, symbol, exchange, company_name,
+                   model_key, model_name, model_type, status, fair_value_low,
+                   fair_value_base, fair_value_high, expected_cagr_pct,
+                   note_path, owner_agent, updated_at,
+                   long_term_gross_exposure, client_count, clients
+            FROM portfolio.v_long_term_valuation_models
+            ORDER BY updated_at DESC, long_term_gross_exposure DESC NULLS LAST,
+                     symbol, model_key
+            LIMIT 120
+        """,
+        "long_term_monte_carlo_runs": """
+            SELECT id, run_key, holding_thesis_id, valuation_model_id,
+                   symbol, exchange, company_name, run_status,
+                   horizon_years, simulation_count, seed, start_price,
+                   starting_multiple, percentile_summary,
+                   probability_summary, warnings, note_path,
+                   created_by, created_at,
+                   long_term_gross_exposure, client_count, clients
+            FROM portfolio.v_long_term_monte_carlo_runs
+            ORDER BY created_at DESC, id DESC
+            LIMIT 80
+        """,
+        "long_term_research_updates": """
+            SELECT id, holding_thesis_id, symbol, exchange, company_name,
+                   update_kind, checklist_key, model_key, status, score,
+                   fair_value_low, fair_value_base, fair_value_high,
+                   expected_cagr_pct, note_path, created_by, created_at
+            FROM portfolio.v_long_term_research_updates
+            ORDER BY created_at DESC, id DESC
+            LIMIT 80
         """,
         "committee_queue": """
             SELECT id, review_key, holding_thesis_id, symbol, exchange,
@@ -7140,6 +7182,7 @@ def run_long_term_monte_carlo(payload: dict) -> dict:
         "seed": "--seed",
         "start_price": "--start-price",
         "starting_multiple": "--starting-multiple",
+        "starting_multiple_source": "--starting-multiple-source",
         "revenue_growth_low": "--revenue-growth-low",
         "revenue_growth_base": "--revenue-growth-base",
         "revenue_growth_high": "--revenue-growth-high",

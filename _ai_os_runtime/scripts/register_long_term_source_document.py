@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import mimetypes
 import re
 import subprocess
@@ -14,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-VAULT_ROOT = RUNTIME_ROOT.parent
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
+VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
 NOTE_DIR = VAULT_ROOT / "ai memory" / "05 Filings and Transcripts" / "Long-Term Source Documents"
 USER_AGENT = "AI-OS-Research/0.1 (source provenance; contact local user)"
 

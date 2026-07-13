@@ -711,6 +711,8 @@ Outputs:
 - position size recommendation,
 - committee memo section.
 
+Verified engine/UI foundation (2026-07-13): `portfolio.long_term_monte_carlo_runs`, the deterministic runner, API, MCP tool, Obsidian memo, artifact lineage, and the Holdings Research Decision Lab are live. The operator supplies explicit thesis, horizon, simulations, seed, valuation assumptions, source evidence, and volatility. The UI exposes return/loss distributions and blocks an unsourced explicit starting multiple before submission. Live run `#5` completed without warnings, wrote directly to the external Obsidian vault, and retained no capital or broker authority. Remaining blueprint work is position-size recommendation, richer driver distributions, direct committee packet fields/challenge actions, and complete source-backed coverage. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
+
 ### 13.3 Long-Term Agents
 
 - Long-Term Portfolio Manager

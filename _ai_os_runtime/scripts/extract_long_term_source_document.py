@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-VAULT_ROOT = RUNTIME_ROOT.parent
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
+VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
 ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "source_documents" / "long_term"
 USER_AGENT = "AI-OS-Research/0.1 (source document extraction; contact local user)"
 BUNDLED_PYTHON = Path("/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3")

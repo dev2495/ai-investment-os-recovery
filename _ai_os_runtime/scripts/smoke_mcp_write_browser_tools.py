@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-VAULT_ROOT = RUNTIME_ROOT.parent
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
+VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
 SERVER_PATH = RUNTIME_ROOT / "mcp_server" / "ai_os_mcp_server.py"
 MARKER = "CODEX-MCP-SMOKE"
 
