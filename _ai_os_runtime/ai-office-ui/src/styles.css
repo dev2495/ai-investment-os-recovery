@@ -787,9 +787,97 @@
   overflow-wrap: anywhere;
 }
 
+.gateway-market-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+
+.gateway-market-grid article {
+  display: grid;
+  align-content: start;
+  min-width: 190px;
+  min-height: 142px;
+  gap: 9px;
+  padding: 10px;
+  background: var(--panel);
+}
+
+.gateway-market-grid article > div {
+  display: grid;
+  gap: 4px;
+}
+
+.gateway-market-grid article > div > span:first-child {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.gateway-market-grid strong {
+  font-size: 15px;
+}
+
+.gateway-market-grid small,
+.gateway-market-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.gateway-import-ledger {
+  display: grid;
+  margin-top: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+}
+
+.gateway-import-head,
+.gateway-import-ledger article {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.5fr) minmax(140px, 1fr) minmax(190px, 1.2fr) minmax(150px, auto) minmax(170px, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 900px;
+  padding: 8px 10px;
+}
+
+.gateway-import-head {
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.gateway-import-ledger article {
+  border-top: 1px solid var(--border);
+  font-size: 9px;
+}
+
+.gateway-import-ledger article strong,
+.gateway-import-ledger article span,
+.gateway-import-ledger article small {
+  overflow-wrap: anywhere;
+}
+
+.gateway-import-ledger article small {
+  color: var(--muted);
+}
+
 @media (max-width: 980px) {
   .gateway-route-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gateway-market-grid {
+    grid-template-columns: repeat(2, minmax(190px, 1fr));
   }
 }
 
@@ -816,6 +904,11 @@
   .gateway-form,
   .gateway-route-grid {
     grid-template-columns: 1fr;
+  }
+
+
+  .gateway-market-grid {
+    grid-template-columns: minmax(190px, 1fr);
   }
 
   .gateway-form .span-form {

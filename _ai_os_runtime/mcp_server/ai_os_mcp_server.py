@@ -1529,6 +1529,48 @@ def integration_plugin_gateway(arguments: dict) -> dict:
     })
 
 
+def market_data_readiness(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=25, maximum=100)
+    return tool_result({
+        "readiness": run_psql_json("""
+            SELECT dataset_scope, row_count, symbol_count, first_ts, last_ts,
+                   history_days, staleness_days, source_count,
+                   readiness_status, next_required_action
+            FROM market.v_strategy_market_data_readiness
+            ORDER BY dataset_scope
+        """),
+        "contracts": run_psql_json("""
+            SELECT dataset_key, source_key, target_relation, grain,
+                   timezone_assumption, price_adjustment_status,
+                   point_in_time_status, survivorship_status,
+                   execution_allowed, research_allowed, limitations, owner_agent
+            FROM market.dataset_contracts ORDER BY dataset_key
+        """),
+        "imports": run_psql_json(f"""
+            SELECT run_key, batch_key, dataset_key, status, source_hash,
+                   source_rows, valid_rows, rejected_rows, corrected_rows,
+                   deduplicated_rows, rows_touched, rows_inserted,
+                   warehouse_rows_after, quality_status, quality_summary,
+                   started_at, finished_at
+            FROM market.v_market_data_import_runs
+            ORDER BY started_at DESC LIMIT {limit}
+        """),
+        "quality_checks": run_psql_json(f"""
+            SELECT run_key, dataset_key, check_key, check_name, status,
+                   observed_value, threshold_value, details, checked_at
+            FROM market.v_market_data_quality_checks
+            ORDER BY checked_at DESC LIMIT {min(limit * 6, 300)}
+        """),
+    })
+
+
+def run_legacy_market_data_ingestion_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/integrations/jobs/run", {
+        "job_key": "legacy_market_data_manual_ingestion",
+        "actor": arguments.get("actor") or "Jarvis",
+    }))
+
+
 def upsert_integration_schema_mapping_tool(arguments: dict) -> dict:
     payload = {**arguments, "actor": arguments.get("actor") or "Data Steward"}
     return tool_result(post_api_json("/api/integrations/schema-mappings/upsert", payload))
@@ -5858,6 +5900,22 @@ TOOLS = {
         },
         "handler": integration_plugin_gateway,
     },
+    "ai_os_market_data_readiness": {
+        "description": "Read real market-data coverage, immutable import lineage, quality checks, deduplication, staleness, and research-bias contracts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 25}},
+        },
+        "handler": market_data_readiness,
+    },
+    "ai_os_run_legacy_market_data_ingestion": {
+        "description": "Run the fixed checksum-preserved legacy SQLite importer. No arbitrary path, network, broker, or execution authority is accepted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"actor": {"type": "string", "default": "Jarvis"}},
+        },
+        "handler": run_legacy_market_data_ingestion_tool,
+    },
     "ai_os_upsert_integration_schema_mapping": {
         "description": "Create or update a data-source to warehouse mapping. Raw secrets are rejected.",
         "inputSchema": {
@@ -5903,7 +5961,7 @@ TOOLS = {
                 "plugin_key": {"type": "string"},
                 "job_name": {"type": "string"},
                 "job_type": {"type": "string", "enum": ["poll", "import", "stream", "aggregate", "health_check", "provider_probe"]},
-                "executor_key": {"type": "string", "enum": ["market_news_ingestion", "filings_collection", "tick_ohlcv_aggregation", "tradingview_quote_refresh", "public_source_check", "provider_readiness"]},
+                "executor_key": {"type": "string", "enum": ["market_news_ingestion", "filings_collection", "tick_ohlcv_aggregation", "tradingview_quote_refresh", "public_source_check", "provider_readiness", "legacy_market_data_ingestion"]},
                 "schedule_cron": {"type": "string"},
                 "enabled": {"type": "boolean", "default": False},
                 "run_mode": {"type": "string", "enum": ["manual", "schedule", "manual_or_schedule", "daemon"]},

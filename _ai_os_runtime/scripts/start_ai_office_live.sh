@@ -42,6 +42,7 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/scripts/check_tradingview_cdp.py" "${AIOS_SERVICE_DIR}/scripts/check_tradingview_cdp.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_model_endpoint_live.py" "${AIOS_SERVICE_DIR}/scripts/check_model_endpoint_live.py"
   cp -f "${RUNTIME_ROOT}/scripts/aggregate_ticks_to_ohlcv.py" "${AIOS_SERVICE_DIR}/scripts/aggregate_ticks_to_ohlcv.py"
+  cp -f "${RUNTIME_ROOT}/scripts/ingest_algo_sqlite.py" "${AIOS_SERVICE_DIR}/scripts/ingest_algo_sqlite.py"
   cp -f "${RUNTIME_ROOT}/scripts/refresh_event_quotes.py" "${AIOS_SERVICE_DIR}/scripts/refresh_event_quotes.py"
   rsync -a --delete "${RUNTIME_ROOT}/ai-office-ui/dist/" "${AIOS_UI_DIST_DIR}/"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.api.plist" "${LAUNCHD_API_PLIST}"

@@ -267,6 +267,16 @@ export default function IntegrationGatewayWorkspace({ onStatusChange }: Props) {
         </div>
       </Panel>
 
+      <Panel className="span-12" icon={<DatabaseZap size={17}/>} title="Strategy Data Readiness" action={<button className="mini-action-button" disabled={Boolean(busy)} onClick={()=>void act("legacy-market",()=>runGatewayJob("legacy_market_data_manual_ingestion"),"Legacy market data revalidated and imported idempotently.")} type="button"><Play size={13}/>{busy==="legacy-market"?"Importing":"Revalidate sources"}</button>}>
+        <div className="gateway-market-grid" role="region" tabIndex={0} aria-label="Strategy market data readiness">
+          {(snapshot?.market_data_readiness ?? []).map((row)=><article key={value(row,"dataset_scope")}><div><span>{value(row,"dataset_scope")}</span><strong>{Number(value(row,"row_count","0")).toLocaleString()} rows</strong><small>{value(row,"symbol_count","0")} symbols · {value(row,"history_days","0")} days</small></div><div><StatusPill status={value(row,"readiness_status")}/><small>through {value(row,"last_ts")} · stale {value(row,"staleness_days","0")}d</small></div><p>{value(row,"next_required_action")}</p></article>)}
+        </div>
+        <div aria-label="Market data import ledger" className="gateway-import-ledger" role="region" tabIndex={0}>
+          <div className="gateway-import-head"><span>Dataset</span><span>Source / canonical</span><span>Adjustments</span><span>Quality</span><span>Completed</span></div>
+          {(snapshot?.market_data_imports ?? []).slice(0,6).map((row)=><article key={value(row,"run_key")}><strong>{value(row,"dataset_key")}</strong><span>{Number(value(row,"source_rows","0")).toLocaleString()} / {Number(value(row,"rows_touched","0")).toLocaleString()}</span><span>{value(row,"deduplicated_rows","0")} dedup · {value(row,"corrected_rows","0")} corrected</span><StatusPill status={value(row,"quality_status")}/><small>{value(row,"finished_at")}</small></article>)}
+        </div>
+      </Panel>
+
       <Panel className="span-6" icon={<FileJson2 size={17}/>} title="Schema Mapping">
         <form className="gateway-form" onSubmit={submitMapping}>
           <label className="span-form"><span>Data plug-in</span><select required value={mapping.pluginKey} onChange={(event)=>setMapping({...mapping,pluginKey:event.target.value})}><option value="">Select source</option>{dataPlugins.map((row)=><option key={value(row,"plugin_key")} value={value(row,"plugin_key")}>{value(row,"display_name")}</option>)}</select></label>
@@ -284,7 +294,7 @@ export default function IntegrationGatewayWorkspace({ onStatusChange }: Props) {
         <form className="gateway-form" onSubmit={submitJob}>
           <label className="span-form"><span>Plug-in</span><select required value={job.pluginKey} onChange={(event)=>setJob({...job,pluginKey:event.target.value})}><option value="">Select source</option>{dataPlugins.map((row)=><option key={value(row,"plugin_key")} value={value(row,"plugin_key")}>{value(row,"display_name")}</option>)}</select></label>
           <label><span>Job name</span><input required value={job.name} onChange={(event)=>setJob({...job,name:event.target.value})}/></label>
-          <label><span>Executor</span><select value={job.executorKey} onChange={(event)=>setJob({...job,executorKey:event.target.value})}><option value="public_source_check">Public source check</option><option value="market_news_ingestion">Market news ingestion</option><option value="filings_collection">Filings collection</option><option value="tick_ohlcv_aggregation">Tick aggregation</option><option value="tradingview_quote_refresh">TradingView quote refresh</option><option value="provider_readiness">Provider readiness</option></select></label>
+          <label><span>Executor</span><select value={job.executorKey} onChange={(event)=>setJob({...job,executorKey:event.target.value})}><option value="public_source_check">Public source check</option><option value="market_news_ingestion">Market news ingestion</option><option value="filings_collection">Filings collection</option><option value="tick_ohlcv_aggregation">Tick aggregation</option><option value="tradingview_quote_refresh">TradingView quote refresh</option><option value="provider_readiness">Provider readiness</option><option value="legacy_market_data_ingestion">Legacy market data import</option></select></label>
           <label><span>Schedule</span><input placeholder="*/15 * * * *" value={job.cron} onChange={(event)=>setJob({...job,cron:event.target.value})}/></label>
           <label><span>Timeout seconds</span><input min="5" max="3600" type="number" value={job.timeout} onChange={(event)=>setJob({...job,timeout:event.target.value})}/></label>
           <label className="span-form"><span>Parameters JSON</span><textarea rows={3} value={job.parameters} onChange={(event)=>setJob({...job,parameters:event.target.value})}/></label>

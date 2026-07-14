@@ -79,6 +79,8 @@ def main() -> int:
         "ai_os_validate_integration_schema_mapping",
         "ai_os_upsert_integration_job",
         "ai_os_run_integration_job",
+        "ai_os_market_data_readiness",
+        "ai_os_run_legacy_market_data_ingestion",
     }
     missing = sorted(required - tool_names)
     if missing:
@@ -99,6 +101,7 @@ def main() -> int:
         "workspace_terminal": parse_tool_content(call("tools/call", {"name": "ai_os_workspace_terminal_config", "arguments": {}})),
         "strategy_arsenal": parse_tool_content(call("tools/call", {"name": "ai_os_strategy_arsenal_control_board", "arguments": {"limit": 10}})),
         "integration_gateway": parse_tool_content(call("tools/call", {"name": "ai_os_integration_plugin_gateway", "arguments": {"limit": 50}})),
+        "market_data": parse_tool_content(call("tools/call", {"name": "ai_os_market_data_readiness", "arguments": {"limit": 10}})),
     }
 
     process.stdin.close()
@@ -131,6 +134,9 @@ def main() -> int:
         "integration_summary_metrics": len((checks["integration_gateway"] or {}).get("summary", [])),
         "integration_mapping_rows": len((checks["integration_gateway"] or {}).get("schema_mappings", [])),
         "integration_job_rows": len((checks["integration_gateway"] or {}).get("jobs", [])),
+        "market_data_readiness_rows": len((checks["market_data"] or {}).get("readiness", [])),
+        "market_data_contract_rows": len((checks["market_data"] or {}).get("contracts", [])),
+        "market_data_import_rows": len((checks["market_data"] or {}).get("imports", [])),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

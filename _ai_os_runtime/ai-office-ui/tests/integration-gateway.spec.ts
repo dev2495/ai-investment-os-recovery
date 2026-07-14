@@ -17,11 +17,16 @@ test("gateway exposes source, model, mapping, job, readiness, and route controls
   await expect(page.getByRole("heading", { level: 2, name: "Register Data Source" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Register Model Provider" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Plug-in Readiness Board" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Strategy Data Readiness" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Schema Mapping" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Bounded Ingestion Jobs" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Model Route Matrix" })).toBeVisible();
   await expect(page.locator(".gateway-plugin-row")).toHaveCount(39);
   await expect(page.locator(".gateway-route-grid article")).toHaveCount(21);
+  await expect(page.locator(".gateway-market-grid article")).toHaveCount(5);
+  await expect(page.locator(".gateway-import-ledger article")).toHaveCount(6);
+  await expect(page.getByText("1,038,214 rows", { exact: true })).toBeVisible();
+  await expect(page.getByText("research ready with bias audit required", { exact: true })).toBeVisible();
 });
 
 test("gateway readiness filters distinguish sources and models", async ({ page }) => {

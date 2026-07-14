@@ -329,7 +329,12 @@ def run_data_quality_gate(
         f"""
         SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json)::text
         FROM (
-            SELECT symbol.symbol, count(*)::BIGINT AS rows_seen,
+            SELECT CASE
+                       WHEN position(':' IN upper(symbol.symbol)) > 0
+                           THEN split_part(upper(symbol.symbol), ':', 2)
+                       ELSE upper(symbol.symbol)
+                   END AS symbol,
+                   count(*)::BIGINT AS rows_seen,
                    min(ohlcv.ts) AS first_ts,
                    max(ohlcv.ts) AS last_ts
             FROM trading.ohlcv ohlcv
@@ -337,8 +342,8 @@ def run_data_quality_gate(
             WHERE ohlcv.timeframe = {sql_literal(normalized_timeframe)}
               AND ohlcv.close IS NOT NULL
               {symbol_filter}
-            GROUP BY symbol.symbol
-            ORDER BY rows_seen DESC, symbol.symbol
+            GROUP BY 1
+            ORDER BY rows_seen DESC, 1
         ) rows
         """
     )

@@ -2189,6 +2189,39 @@ def build_integration_gateway_snapshot() -> dict:
             FROM trading.v_execution_control_state
             LIMIT 1
         """,
+        "market_data_readiness": """
+            SELECT dataset_scope, row_count, symbol_count, first_ts, last_ts,
+                   history_days, staleness_days, source_count,
+                   readiness_status, next_required_action
+            FROM market.v_strategy_market_data_readiness
+            ORDER BY dataset_scope
+        """,
+        "market_data_contracts": """
+            SELECT dataset_key, source_key, target_relation, grain,
+                   timezone_assumption, price_adjustment_status,
+                   point_in_time_status, survivorship_status,
+                   execution_allowed, research_allowed, limitations,
+                   owner_agent, reviewed_at
+            FROM market.dataset_contracts
+            ORDER BY dataset_key
+        """,
+        "market_data_imports": """
+            SELECT run_key, batch_key, dataset_key, status, source_hash,
+                   source_rows, valid_rows, rejected_rows, corrected_rows,
+                   deduplicated_rows, rows_touched, rows_inserted,
+                   warehouse_rows_after, symbol_count, first_ts, last_ts,
+                   quality_status, quality_summary, started_at, finished_at
+            FROM market.v_market_data_import_runs
+            ORDER BY started_at DESC
+            LIMIT 24
+        """,
+        "market_data_quality": """
+            SELECT import_run_id, run_key, dataset_key, check_key, check_name,
+                   status, observed_value, threshold_value, details, checked_at
+            FROM market.v_market_data_quality_checks
+            ORDER BY checked_at DESC, import_run_id DESC, check_key
+            LIMIT 120
+        """,
     }
     data = run_psql_json_object(queries)
     return {
@@ -5668,6 +5701,7 @@ ALLOWED_INTEGRATION_EXECUTORS = {
     "tradingview_quote_refresh",
     "public_source_check",
     "provider_readiness",
+    "legacy_market_data_ingestion",
 }
 
 
@@ -6152,6 +6186,8 @@ def _integration_executor_command(job: dict) -> list[str]:
             "--actor", "Integration Gateway",
             "--model-limit", "50", "--source-limit", "80",
         ]
+    if executor_key == "legacy_market_data_ingestion":
+        return [sys.executable, str(RUNTIME_ROOT / "scripts" / "ingest_algo_sqlite.py")]
     raise ValueError(f"executor_key is not allowlisted: {executor_key}")
 
 

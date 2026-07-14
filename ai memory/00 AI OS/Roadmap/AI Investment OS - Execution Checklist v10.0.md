@@ -66,9 +66,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Source lineage for portfolio rows.
 - [x] Raw artifact store for imports. Verified in scoped Reports with 146 checksum-backed raw artifacts and 180 lineage rows. Evidence: [[2026-07-13-reports-v2]].
 - [x] Legacy source extraction readiness board. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; migration `107_legacy_source_extraction_readiness.sql`, API snapshot keys, POST `/api/legacy-source-readiness/run`, MCP tools `ai_os_legacy_source_readiness` and `ai_os_run_legacy_source_readiness`, and AI Office dashboard panels verified.
-- [~] Full p2cursor extraction for all clients. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; 6 p2cursor files profiled and 139 CSV rows staged, but 5 p2cursor files still need mapping/promotion before full completion.
+- [x] Full p2cursor archive extraction and explicit resolution for the six available files. Canonical Tushit and Naval trade exports are promoted; the duplicate CARERATING export, frontend sample, empty archived SQLite database, and benchmark reference are explicitly classified rather than silently imported. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
 - [~] Full buy/sell date extraction from p2cursor and broker reports. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; p2cursor trade CSV rows are staged, but normalized buy/sell-date promotion and broker reconciliation remain open.
-- [~] Full old algo trading DB import. Evidence: [[2026-07-07-legacy-source-extraction-readiness-v1]]; 21 old algo tables and 1,361,017 source rows are profiled, with 197,703 promoted rows, but daily bars, straddle snapshots, and partial tick/snapshot/trade/holding coverage remain open.
+- [~] Full old algo trading DB import. The immutable external-SSD databases pass SQLite integrity checks; 1,038,186 daily bars, 197,595 canonical ticks, 4,367 straddle snapshots, and bounded account/trade/holding/signal/idea/backtest tables are imported with hashes and run lineage. Historical equity curves, old strategy artifacts, complete journals, and all remaining low-volume tables still require explicit promotion or exclusion. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
 - [ ] Historical equity curve import.
 - [ ] Old strategy artifact import.
 - [ ] Old trade journal import from 2018-19 onward.
@@ -80,16 +80,16 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Zerodha read-only connector.
 - [ ] Dhan read-only connector.
 - [ ] Crypto exchange read-only connector.
-- [ ] Daily OHLCV ingestion.
-- [ ] Intraday OHLCV ingestion.
-- [ ] Options chain/OI/IV/Greeks ingestion.
+- [~] Daily OHLCV ingestion. Real history now covers 1,038,214 warehouse rows, 516 symbols, and 2016-01-01 through 2026-06-12; a representative 2,000-row strategy gate passed. Corporate-action provenance, point-in-time universe, survivorship, stale-tail refresh, and live recurring ingestion remain open, so execution is blocked. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
+- [~] Intraday OHLCV ingestion. Real 5m/15m/1h bars and 197,595 canonical legacy ticks are live, but coverage is only about two trading days across 14 symbols and remains insufficient for validation. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
+- [~] Options chain/OI/IV/Greeks ingestion. 4,367 real NIFTY straddle snapshots retain strike, call, put, net premium, spot, and average IV, but full chain, OI, Greeks, contract master, broader underlyings, expiries, and history remain open. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
 - [ ] Futures basis ingestion.
 - [ ] VIX/volatility ingestion.
 - [ ] Gold/silver/commodity ingestion.
 - [ ] Corporate action adjustment pipeline.
 - [ ] Full reconciliation dashboard across broker, p2cursor, algo systems, and manual entries.
-- [ ] Data quality score per source.
-- [~] Source freshness SLA per registered source. All 18 current source plug-ins expose freshness targets and the live Gateway had zero SLA-blocked sources at verification; connectors and datasets not yet onboarded remain outside coverage. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
+- [~] Data quality score per source. Legacy algo datasets now persist integrity checks, required-field/price/bounds/volume/future-row tests, canonical deduplication, bounded corrections, staleness, and research-bias contracts. Equivalent scoring remains to be applied to every live/provider dataset. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
+- [~] Source freshness SLA per registered source. All 18 current source plug-ins expose freshness targets. The final legacy-data checkpoint had one active SLA alert: the global market news basket was about 64 minutes stale; connectors and datasets not yet onboarded remain outside coverage. Evidence: [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]].
 
 ## 3. Multi-Book Portfolio Brain
 
@@ -511,7 +511,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] News and Filings dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Special Situations dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Treasury/Hedges/Crypto dashboard. Treasury and Macro terminal is live over source-backed macro/news/market records; dedicated hedge construction, collateral, cash ladder, and crypto execution connectors remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes 39 plug-in readiness rows, validates warehouse mappings, configures/runs six allowlisted executor families, shows 21 routes, and resolves integration evidence. Raw secrets, arbitrary commands, seed fallback, and broker authority are rejected. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
+- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes 39 plug-in readiness rows, validates 12 warehouse mappings, configures/runs seven allowlisted executor families, shows 21 routes, resolves integration evidence, and now includes strategy-data coverage/import/quality ledgers. Raw secrets, arbitrary commands, seed fallback, and broker authority are rejected. Evidence: [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]].
 - [x] Provider Readiness dashboard v2. Model assignment readiness and source health/freshness are unified in the Gateway with filters, per-row checks, full sweeps, missing-credential/model actions, and evidence. Provider policy simulation and final department overrides remain separate open controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [~] Committee Room dashboard v2. Scoped live committee packet, approval state, evidence drawer, workspace customization, and execution lock are deployed; participant discussion, specialized decisions, and follow-up action routes remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] 3D office scene with procedural rooms, stable camera controls, live room placement, room-floor selection, and animated department focus. Directory selection moves the camera without leaving the office; an explicit secondary action opens the mapped Command Center workspace. Evidence: [[2026-07-13-live-office-operations-v3]].

@@ -23,6 +23,10 @@ export interface IntegrationGatewaySnapshot {
   model_routes: LiveRow[];
   provider_readiness: LiveRow[];
   execution_control: LiveRow[];
+  market_data_readiness: LiveRow[];
+  market_data_contracts: LiveRow[];
+  market_data_imports: LiveRow[];
+  market_data_quality: LiveRow[];
 }
 
 export interface UpsertSchemaMappingInput {
@@ -47,7 +51,7 @@ export interface UpsertIntegrationJobInput {
   plugin_key: string;
   job_name: string;
   job_type: "poll" | "import" | "stream" | "aggregate" | "health_check" | "provider_probe";
-  executor_key: "market_news_ingestion" | "filings_collection" | "tick_ohlcv_aggregation" | "tradingview_quote_refresh" | "public_source_check" | "provider_readiness";
+  executor_key: "market_news_ingestion" | "filings_collection" | "tick_ohlcv_aggregation" | "tradingview_quote_refresh" | "public_source_check" | "provider_readiness" | "legacy_market_data_ingestion";
   schedule_cron?: string;
   enabled?: boolean;
   run_mode?: "manual" | "schedule" | "manual_or_schedule" | "daemon";
