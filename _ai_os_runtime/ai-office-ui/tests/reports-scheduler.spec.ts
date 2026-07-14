@@ -46,6 +46,10 @@ test("System Health exposes the verified backup and isolated restore chain", asy
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/?mode=command&workspace=system", { waitUntil: "networkidle" });
+  const daemonPanel = page.locator(".panel").filter({ has: page.getByRole("heading", { level: 2, name: "24/7 Agent Runtime" }) });
+  await expect(daemonPanel).toContainText("agent_message_daemon");
+  await expect(daemonPanel).toContainText(/healthy/i);
+  await expect(daemonPanel).toContainText("Enabled workloads");
   const panel = page.locator(".panel").filter({ has: page.getByRole("heading", { level: 2, name: "Backup And Restore" }) });
   await expect(panel).toContainText("Critical state generations");
   await expect(panel).toContainText("Postgres custom archive");

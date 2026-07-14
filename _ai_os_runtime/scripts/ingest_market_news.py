@@ -427,6 +427,42 @@ def finish_run(run_id: int, status: str, summary: dict[str, Any], error_message:
     )
 
 
+def record_aggregate_news_check(status: str, summary: dict[str, Any], error_message: str | None, duration_ms: int) -> None:
+    check_status = "ok" if status in {"completed", "completed_with_errors"} and int(summary.get("items_upserted") or 0) > 0 else "error"
+    run_psql_json(
+        f"""
+        WITH inserted AS (
+            INSERT INTO core.data_source_checks (
+                source_key, check_name, check_type, target_url, status,
+                latency_ms, rows_seen, sample_payload, error_message
+            )
+            VALUES (
+                'global_news', 'Global market news basket ingestion',
+                'news_ingestion', 'rss://global-market-news-basket',
+                {sql_literal(check_status)}, {int(duration_ms)},
+                {int(summary.get('items_upserted') or 0)},
+                {sql_jsonb(summary)},
+                {sql_literal(error_message) if error_message else 'NULL'}
+            )
+            RETURNING checked_at
+        ), updated AS (
+            UPDATE core.data_source_registry
+            SET last_seen_at = CASE
+                    WHEN {int(summary.get('items_upserted') or 0)} > 0 THEN (SELECT checked_at FROM inserted)
+                    ELSE last_seen_at
+                END,
+                updated_at = now()
+            WHERE source_key = 'global_news'
+            RETURNING source_key
+        )
+        SELECT jsonb_build_array(jsonb_build_object(
+            'checked_at', (SELECT checked_at FROM inserted),
+            'source_key', (SELECT source_key FROM updated)
+        ))::text
+        """
+    )
+
+
 def run_ingestion(args: argparse.Namespace) -> dict[str, Any]:
     feed_keys = [item.strip() for item in str(args.feed_keys or "").split(",") if item.strip()]
     run = start_run(args.run_key, args.actor, feed_keys)
@@ -472,7 +508,9 @@ def run_ingestion(args: argparse.Namespace) -> dict[str, Any]:
         "feed_results": feed_results,
         "seed_data_allowed": False,
     }
-    finish_run(int(run["id"]), status, summary, "; ".join(errors)[:4000] if errors else None, duration_ms)
+    error_message = "; ".join(errors)[:4000] if errors else None
+    finish_run(int(run["id"]), status, summary, error_message, duration_ms)
+    record_aggregate_news_check(status, summary, error_message, duration_ms)
     return {"run_key": args.run_key, "status": status, "summary": summary, "errors": errors}
 
 

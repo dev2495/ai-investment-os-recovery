@@ -1119,6 +1119,14 @@ def build_system_health_snapshot() -> dict:
             FROM core.v_source_freshness_scheduler_runs
             LIMIT 5
         """,
+        "runtime_daemons": """
+            SELECT daemon_key, instance_id, host_name, process_id,
+                   reported_status, health_status, loop_interval_seconds,
+                   enabled_workloads, last_pass_summary, last_error,
+                   started_at, heartbeat_at, heartbeat_age_seconds, updated_at
+            FROM core.v_runtime_daemon_health
+            ORDER BY daemon_key
+        """,
         "model_routes": """
             SELECT route_name, task_class, default_provider, default_model,
                    escalation_provider, escalation_model, max_cost_tier, enabled
@@ -2221,6 +2229,12 @@ def build_integration_gateway_snapshot() -> dict:
             FROM market.v_market_data_quality_checks
             ORDER BY checked_at DESC, import_run_id DESC, check_key
             LIMIT 120
+        """,
+        "market_bias_readiness": """
+            SELECT control_key, observed_rows, mapped_rows, verified_rows,
+                   applied_rows, readiness_status, next_required_action
+            FROM market.v_market_bias_control_readiness
+            ORDER BY control_key
         """,
     }
     data = run_psql_json_object(queries)
@@ -4413,6 +4427,14 @@ def build_snapshot() -> dict:
                    next_run_after, minutes_since_finished, created_by, created_at
             FROM core.v_source_freshness_scheduler_runs
             LIMIT 20
+        """,
+        "runtime_daemons": """
+            SELECT daemon_key, instance_id, host_name, process_id,
+                   reported_status, health_status, loop_interval_seconds,
+                   enabled_workloads, last_pass_summary, last_error,
+                   started_at, heartbeat_at, heartbeat_age_seconds, updated_at
+            FROM core.v_runtime_daemon_health
+            ORDER BY daemon_key
         """,
         "risk_events": """
             SELECT id, ts, scope_type, scope_ref, severity, status, title,

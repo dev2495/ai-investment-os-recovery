@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
+from runtime_storage import artifact_reference, artifact_root
 from run_trade_journal_strategy_mining import sql_text_array
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "user_defined_optimizer"
+ARTIFACT_ROOT = artifact_root("user_defined_optimizer")
 
 
 def parse_symbols(value: str | None) -> list[str]:
@@ -315,7 +316,7 @@ def run_workflow(args: argparse.Namespace) -> dict[str, Any]:
         }
         artifact_path = ARTIFACT_ROOT / f"{args.run_key}.json"
         artifact_path.write_text(json.dumps(artifact, indent=2, sort_keys=True, default=str), encoding="utf-8")
-        artifact_rel = str(artifact_path.relative_to(RUNTIME_ROOT))
+        artifact_rel = artifact_reference(artifact_path)
         update_run(
             run_id,
             status="completed",
@@ -343,7 +344,7 @@ def run_workflow(args: argparse.Namespace) -> dict[str, Any]:
         }
         artifact_path = ARTIFACT_ROOT / f"{args.run_key}.json"
         artifact_path.write_text(json.dumps(artifact, indent=2, sort_keys=True, default=str), encoding="utf-8")
-        artifact_rel = str(artifact_path.relative_to(RUNTIME_ROOT))
+        artifact_rel = artifact_reference(artifact_path)
         update_run(
             run_id,
             status="failed",

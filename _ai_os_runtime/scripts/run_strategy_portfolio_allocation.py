@@ -11,11 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runtime_storage import artifact_reference, artifact_root
+
 from run_strategy_backtest import max_drawdown, run_psql_json, sql_jsonb, sql_literal
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "strategy_allocations"
+ARTIFACT_ROOT = artifact_root("strategy_allocations")
 
 
 def sql_text_array(values: object) -> str:
@@ -279,7 +281,7 @@ def write_artifact(result: dict[str, Any]) -> str:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     path = ARTIFACT_ROOT / f"{result['allocation_key']}.json"
     path.write_text(json.dumps(result, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    return str(path.relative_to(RUNTIME_ROOT.parent))
+    return artifact_reference(path)
 
 
 def update_allocation_run(

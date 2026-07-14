@@ -6,6 +6,8 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+from runtime_storage import artifact_reference, artifact_root
 from typing import Any
 
 from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
@@ -13,7 +15,7 @@ from run_strategy_quant_analytics import sql_text_array
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "model_validation"
+ARTIFACT_ROOT = artifact_root("model_validation")
 
 
 def fetch_rows(sql: str) -> list[dict[str, Any]]:
@@ -174,7 +176,7 @@ def run_sweep(args: argparse.Namespace) -> dict[str, Any]:
     }
     path = ARTIFACT_ROOT / f"{args.validation_key_prefix}.json"
     path.write_text(json.dumps(artifact, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    artifact["artifact_path"] = str(path.relative_to(RUNTIME_ROOT))
+    artifact["artifact_path"] = artifact_reference(path)
     return artifact
 
 

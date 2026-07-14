@@ -27,6 +27,7 @@ export interface IntegrationGatewaySnapshot {
   market_data_contracts: LiveRow[];
   market_data_imports: LiveRow[];
   market_data_quality: LiveRow[];
+  market_bias_readiness: LiveRow[];
 }
 
 export interface UpsertSchemaMappingInput {

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export PATH="/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export AI_OS_RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime}"
+export AI_OS_RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime}"
 export AI_OS_VAULT_ROOT="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memory }"
 export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psql}"
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/usr/local/bin/docker}"
@@ -34,6 +34,9 @@ export AI_OS_STRATEGY_DISCOVERY_FILING_LIMIT="${AI_OS_STRATEGY_DISCOVERY_FILING_
 export AI_OS_STRATEGY_DISCOVERY_FILING_TIMEOUT_SECONDS="${AI_OS_STRATEGY_DISCOVERY_FILING_TIMEOUT_SECONDS:-300}"
 export AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_LIMIT="${AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_LIMIT:-4}"
 export AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_TIMEOUT_SECONDS="${AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_TIMEOUT_SECONDS:-300}"
+export AI_OS_ENABLE_MARKET_NEWS_SCHEDULER="${AI_OS_ENABLE_MARKET_NEWS_SCHEDULER:-1}"
+export AI_OS_MARKET_NEWS_INTERVAL_SECONDS="${AI_OS_MARKET_NEWS_INTERVAL_SECONDS:-900}"
+export AI_OS_MARKET_NEWS_TIMEOUT_SECONDS="${AI_OS_MARKET_NEWS_TIMEOUT_SECONDS:-240}"
 
 cd "/Users/devarshthakkar/Library/Application Support/AIOS/service"
 exec python3 -u scripts/run_agent_message_daemon.py \
@@ -50,5 +53,7 @@ exec python3 -u scripts/run_agent_message_daemon.py \
   --tradingview-quote-refresh-limit "${AI_OS_TRADINGVIEW_QUOTE_REFRESH_LIMIT}" \
   --strategy-discovery-scheduler-interval "${AI_OS_STRATEGY_DISCOVERY_SCHEDULER_INTERVAL_SECONDS}" \
   --strategy-discovery-scheduler-timeout "${AI_OS_STRATEGY_DISCOVERY_SCHEDULER_TIMEOUT_SECONDS}" \
+  --market-news-interval "${AI_OS_MARKET_NEWS_INTERVAL_SECONDS}" \
+  --market-news-timeout "${AI_OS_MARKET_NEWS_TIMEOUT_SECONDS}" \
   --message-limit 10 \
   --worker-limit 5

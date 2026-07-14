@@ -12,11 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runtime_storage import artifact_reference, artifact_root
+
 from strategy_dsl_quality import parse_strategy_dsl, parse_symbols, run_data_quality_gate
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "backtests"
+ARTIFACT_ROOT = artifact_root("backtests")
 
 
 def sql_literal(value: object) -> str:
@@ -348,8 +350,8 @@ def write_artifact(result: dict[str, Any]) -> Path:
         ),
         encoding="utf-8",
     )
-    result["artifact_path"] = str(path.relative_to(RUNTIME_ROOT.parent))
-    result["note_path"] = str(md_path.relative_to(RUNTIME_ROOT.parent))
+    result["artifact_path"] = artifact_reference(path)
+    result["note_path"] = artifact_reference(md_path)
     return path
 
 

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runtime_storage import artifact_reference, artifact_root
+
 from run_strategy_backtest import (
     Bar,
     fetch_bars,
@@ -25,7 +27,7 @@ from run_strategy_backtest import (
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "quant_analytics"
+ARTIFACT_ROOT = artifact_root("quant_analytics")
 
 
 @dataclass
@@ -583,7 +585,7 @@ def write_artifact(result: dict[str, Any]) -> str:
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     path = ARTIFACT_ROOT / f"{result['run_key']}.json"
     path.write_text(json.dumps(result, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    return str(path.relative_to(RUNTIME_ROOT.parent))
+    return artifact_reference(path)
 
 
 def update_run(run_id: int, status: str, metrics: dict[str, Any], diagnostics: dict[str, Any], quality_flags: list[str], artifact_path: str | None) -> None:
@@ -710,4 +712,3 @@ if __name__ == "__main__":
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"error": type(exc).__name__, "message": str(exc)}), flush=True)
         raise SystemExit(1)
-

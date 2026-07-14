@@ -9,11 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runtime_storage import artifact_reference, artifact_root
+
 from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "trade_journal_mining"
+ARTIFACT_ROOT = artifact_root("trade_journal_mining")
 
 
 def sql_text_array(values: Any) -> str:
@@ -469,7 +471,7 @@ def finish_run(run: dict[str, Any], args: argparse.Namespace, status: str, creat
         "live_execution_allowed": False,
         "seed_data_allowed": False,
     }
-    artifact_rel = str(artifact_path.relative_to(RUNTIME_ROOT)) if artifact_path else None
+    artifact_rel = artifact_reference(artifact_path) if artifact_path else None
     rows = run_psql_json(
         f"""
         WITH updated AS (
@@ -519,7 +521,7 @@ def run_mining(args: argparse.Namespace) -> dict[str, Any]:
     artifact_path = ARTIFACT_ROOT / f"{args.run_key}.json"
     artifact_path.write_text(json.dumps(artifact, indent=2, sort_keys=True, default=str), encoding="utf-8")
     finished = finish_run(run, args, status, created, patterns, artifact_path)
-    artifact["artifact_path"] = str(artifact_path.relative_to(RUNTIME_ROOT))
+    artifact["artifact_path"] = artifact_reference(artifact_path)
     artifact["run_id"] = finished["id"]
     artifact["intake_key"] = intake.get("intake_key")
     return artifact

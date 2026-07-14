@@ -177,6 +177,7 @@ export interface LiveSnapshot {
   data_source_checks: LiveRow[];
   source_freshness: LiveRow[];
   source_freshness_scheduler_runs: LiveRow[];
+  runtime_daemons: LiveRow[];
   risk_events: LiveRow[];
   fincept: LiveRow[];
   inbox: LiveRow[];

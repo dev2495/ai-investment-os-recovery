@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runtime_storage import artifact_reference, artifact_root
+
 from run_strategy_backtest import (
     Bar,
     fetch_bars,
@@ -27,7 +29,7 @@ from run_strategy_backtest import (
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "optimizations"
+ARTIFACT_ROOT = artifact_root("optimizations")
 
 
 def parameter_grid(template: str) -> list[dict[str, float | int | str]]:
@@ -392,8 +394,8 @@ def write_artifact(result: dict[str, Any]) -> Path:
         ),
         encoding="utf-8",
     )
-    result["artifact_path"] = str(path.relative_to(RUNTIME_ROOT.parent))
-    result["note_path"] = str(md_path.relative_to(RUNTIME_ROOT.parent))
+    result["artifact_path"] = artifact_reference(path)
+    result["note_path"] = artifact_reference(md_path)
     return path
 
 

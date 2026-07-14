@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -17,6 +18,75 @@ from run_agent_worker_once import psql_json, psql_text, run_once, sql_jsonb, sql
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or SCRIPT_DIR.parent).resolve()
 WORKLOAD_SCRIPT_DIR = RUNTIME_ROOT / "scripts"
+
+
+def record_daemon_heartbeat(
+    *,
+    instance_id: str,
+    started_at: datetime,
+    status: str,
+    loop_interval_seconds: int,
+    enabled_workloads: dict[str, bool],
+    last_pass_summary: dict[str, Any],
+    last_error: str | None = None,
+) -> None:
+    psql_text(
+        f"""
+        INSERT INTO core.runtime_daemon_heartbeats (
+            daemon_key, instance_id, host_name, process_id, status,
+            loop_interval_seconds, enabled_workloads, last_pass_summary,
+            last_error, started_at, heartbeat_at, updated_at
+        )
+        VALUES (
+            'agent_message_daemon', {sql_literal(instance_id)},
+            {sql_literal(socket.gethostname())}, {os.getpid()}, {sql_literal(status)},
+            {max(5, int(loop_interval_seconds))}, {sql_jsonb(enabled_workloads)},
+            {sql_jsonb(last_pass_summary)},
+            {sql_literal(last_error) if last_error else 'NULL'},
+            {sql_literal(started_at.isoformat())}::timestamptz, now(), now()
+        )
+        ON CONFLICT (daemon_key) DO UPDATE SET
+            instance_id = EXCLUDED.instance_id,
+            host_name = EXCLUDED.host_name,
+            process_id = EXCLUDED.process_id,
+            status = EXCLUDED.status,
+            loop_interval_seconds = EXCLUDED.loop_interval_seconds,
+            enabled_workloads = EXCLUDED.enabled_workloads,
+            last_pass_summary = EXCLUDED.last_pass_summary,
+            last_error = EXCLUDED.last_error,
+            started_at = CASE
+                WHEN core.runtime_daemon_heartbeats.instance_id = EXCLUDED.instance_id
+                THEN core.runtime_daemon_heartbeats.started_at
+                ELSE EXCLUDED.started_at
+            END,
+            heartbeat_at = now(),
+            updated_at = now();
+        """
+    )
+
+
+def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "generated_at": result.get("generated_at"),
+        "messages_processed": result.get("messages_processed", 0),
+        "worker_runs": (result.get("worker") or {}).get("count", 0),
+    }
+    for key in (
+        "ohlcv_aggregation",
+        "tradingview_quote_refresh",
+        "tradingview_cdp_check",
+        "source_freshness_scheduler",
+        "strategy_discovery_scheduler",
+        "market_news_ingestion",
+    ):
+        payload = result.get(key)
+        if isinstance(payload, dict):
+            summary[key] = {
+                "status": payload.get("status", "unknown"),
+                "run_key": payload.get("run_key"),
+                "error": str(payload.get("error") or "")[:500] or None,
+            }
+    return summary
 
 
 def sql_text_array(values: list[str]) -> str:
@@ -424,6 +494,44 @@ def run_strategy_discovery_scheduler(interval_seconds: int, timeout_seconds: int
     return payload
 
 
+def run_market_news_ingestion(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "ingest_market_news.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    command = [
+        sys.executable,
+        str(script),
+        "--run-key",
+        f"market_news_daemon_{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S')}",
+        "--actor",
+        "News Analyst",
+        "--feed-limit",
+        os.environ.get("AI_OS_MARKET_NEWS_FEED_LIMIT", "12"),
+        "--per-feed",
+        os.environ.get("AI_OS_MARKET_NEWS_PER_FEED", "6"),
+        "--timeout",
+        os.environ.get("AI_OS_MARKET_NEWS_HTTP_TIMEOUT_SECONDS", "15"),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=max(60, timeout_seconds),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = payload.get("status") or "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "market news ingestion failed").strip()[:4000]
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI OS agent mailbox daemon.")
     parser.add_argument("--once", action="store_true", help="Run one pass and exit.")
@@ -466,6 +574,14 @@ def main() -> int:
     parser.add_argument("--tradingview-quote-refresh-timeout", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_TIMEOUT_SECONDS", "120")))
     parser.add_argument("--tradingview-quote-refresh-limit", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_LIMIT", "100")))
     parser.add_argument("--disable-strategy-discovery-scheduler", action="store_true", help="Disable scheduled external-source strategy discovery.")
+    parser.add_argument("--disable-market-news", action="store_true", help="Disable the dedicated market-news freshness workload.")
+    parser.add_argument(
+        "--market-news-interval",
+        type=int,
+        default=int(os.environ.get("AI_OS_MARKET_NEWS_INTERVAL_SECONDS", "900")),
+        help="Dedicated market-news ingestion interval in seconds.",
+    )
+    parser.add_argument("--market-news-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_NEWS_TIMEOUT_SECONDS", "240")))
     parser.add_argument(
         "--strategy-discovery-scheduler-interval",
         type=int,
@@ -486,14 +602,52 @@ def main() -> int:
     tradingview_quote_refresh_interval = max(300, int(args.tradingview_quote_refresh_interval))
     strategy_discovery_enabled = not args.disable_strategy_discovery_scheduler and os.environ.get("AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER", "1") != "0"
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
+    market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
+    market_news_interval = max(300, int(args.market_news_interval))
     last_source_freshness_run = 0.0
     last_tradingview_cdp_run = 0.0
     last_ohlcv_aggregation_run = 0.0
     last_tradingview_quote_refresh_run = 0.0
     last_strategy_discovery_run = 0.0
+    last_market_news_run = 0.0
+    daemon_started_at = datetime.now().astimezone()
+    daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
+    enabled_workloads = {
+        "mailbox_worker": True,
+        "source_freshness": source_freshness_enabled,
+        "tradingview_cdp": tradingview_cdp_enabled,
+        "ohlcv_aggregation": ohlcv_aggregation_enabled,
+        "tradingview_quote_refresh": tradingview_quote_refresh_enabled,
+        "strategy_discovery": strategy_discovery_enabled,
+        "market_news": market_news_enabled,
+    }
+
+    record_daemon_heartbeat(
+        instance_id=daemon_instance_id,
+        started_at=daemon_started_at,
+        status="starting",
+        loop_interval_seconds=args.interval,
+        enabled_workloads=enabled_workloads,
+        last_pass_summary={"phase": "starting"},
+    )
 
     while True:
-        result = daemon_pass(args.message_limit, args.worker_limit, args.include_completed)
+        try:
+            result = daemon_pass(args.message_limit, args.worker_limit, args.include_completed)
+        except Exception as exc:  # noqa: BLE001
+            result = {
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "messages_processed": 0,
+                "message_results": [],
+                "worker": {"count": 0, "status": "failed"},
+                "daemon_pass": {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)},
+            }
+        if market_news_enabled and (last_market_news_run == 0.0 or time.monotonic() - last_market_news_run >= market_news_interval):
+            try:
+                result["market_news_ingestion"] = run_market_news_ingestion(max(60, int(args.market_news_timeout)))
+            except Exception as exc:  # noqa: BLE001
+                result["market_news_ingestion"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_market_news_run = time.monotonic()
         if ohlcv_aggregation_enabled and (last_ohlcv_aggregation_run == 0.0 or time.monotonic() - last_ohlcv_aggregation_run >= ohlcv_aggregation_interval):
             try:
                 result["ohlcv_aggregation"] = run_ohlcv_aggregation(max(30, int(args.ohlcv_aggregation_timeout)))
@@ -534,6 +688,24 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["strategy_discovery_scheduler"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_strategy_discovery_run = time.monotonic()
+        pass_summary = daemon_pass_summary(result)
+        failures = [
+            str(payload.get("error") or key)
+            for key, payload in result.items()
+            if isinstance(payload, dict) and payload.get("status") == "failed"
+        ]
+        try:
+            record_daemon_heartbeat(
+                instance_id=daemon_instance_id,
+                started_at=daemon_started_at,
+                status="degraded" if failures else "running",
+                loop_interval_seconds=args.interval,
+                enabled_workloads=enabled_workloads,
+                last_pass_summary=pass_summary,
+                last_error="; ".join(failures)[:2000] if failures else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            result["daemon_heartbeat"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
         if args.json:
             print(json.dumps(result, indent=2, default=str), flush=True)
         else:
@@ -542,6 +714,7 @@ def main() -> int:
             ohlcv_aggregation = result.get("ohlcv_aggregation") or {}
             tradingview_quotes = result.get("tradingview_quote_refresh") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
+            market_news = result.get("market_news_ingestion") or {}
             print(
                 f"{result['generated_at']} messages={result['messages_processed']} "
                 f"worker_runs={result['worker']['count']} "
@@ -549,6 +722,7 @@ def main() -> int:
                 f"tradingview_quotes={tradingview_quotes.get('status', 'skipped')} "
                 f"tradingview_cdp={tradingview_cdp.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
+                f"market_news={market_news.get('status', 'skipped')} "
                 f"strategy_discovery={strategy_discovery.get('status', 'skipped')}",
                 flush=True,
             )

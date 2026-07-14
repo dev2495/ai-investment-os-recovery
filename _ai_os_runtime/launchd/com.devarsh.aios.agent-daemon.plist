@@ -24,7 +24,7 @@
     <key>PATH</key>
     <string>/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>AI_OS_RUNTIME_ROOT</key>
-    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
+    <string>/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime</string>
     <key>AI_OS_VAULT_ROOT</key>
     <string>/Volumes/Devarsh SSD/Obsidian memory </string>
     <key>AI_OS_PSQL_BIN</key>
@@ -59,6 +59,12 @@
     <string>120</string>
     <key>AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER</key>
     <string>1</string>
+    <key>AI_OS_ENABLE_MARKET_NEWS_SCHEDULER</key>
+    <string>1</string>
+    <key>AI_OS_MARKET_NEWS_INTERVAL_SECONDS</key>
+    <string>900</string>
+    <key>AI_OS_MARKET_NEWS_TIMEOUT_SECONDS</key>
+    <string>240</string>
     <key>AI_OS_STRATEGY_DISCOVERY_SCHEDULER_INTERVAL_SECONDS</key>
     <string>3600</string>
     <key>AI_OS_STRATEGY_DISCOVERY_SCHEDULER_TIMEOUT_SECONDS</key>

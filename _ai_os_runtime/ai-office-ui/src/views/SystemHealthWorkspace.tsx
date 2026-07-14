@@ -129,6 +129,7 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
   ).length ?? 0;
   const readyProviders = metric(snapshot?.provider_readiness_summary ?? [], "ready_providers");
   const sourceIssues = snapshot?.source_freshness.filter((row) => text(row, "status", "fresh") !== "fresh").length ?? 0;
+  const daemon = snapshot?.runtime_daemons[0];
   const recoveryReady = Boolean(
     snapshot?.recovery.current_exists &&
     snapshot.recovery.postgres_dump_exists &&
@@ -162,6 +163,13 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
           <p className="tone-neutral">{snapshot?.model_endpoints.length ?? 0} endpoints</p>
         </div>
         <div className="metric-tile">
+          <span>Office Daemon</span>
+          <strong>{text(daemon, "health_status", "Missing")}</strong>
+          <p className={text(daemon, "health_status", "stale") === "healthy" ? "tone-good" : "tone-warn"}>
+            heartbeat {text(daemon, "heartbeat_age_seconds", "-")}s ago
+          </p>
+        </div>
+        <div className="metric-tile">
           <span>Source Issues</span>
           <strong>{sourceIssues}</strong>
           <p className={sourceIssues ? "tone-warn" : "tone-good"}>{snapshot?.data_sources.length ?? 0} sources tracked</p>
@@ -177,6 +185,25 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
       {error ? <div className="error-strip">{error}</div> : null}
 
       <section className="dashboard-grid">
+        <HealthPanel className="span-12" icon={<Activity size={17} />} title="24/7 Agent Runtime" action={<StatusPill status={text(daemon, "health_status", "missing")} />}>
+          {daemon ? (
+            <div className="pipeline-list">
+              <article className="pipeline-row">
+                <div><strong>{text(daemon, "daemon_key", "agent daemon")}</strong><p>{text(daemon, "host_name")} · pid {text(daemon, "process_id")} · instance {text(daemon, "instance_id")}</p></div>
+                <StatusPill status={text(daemon, "reported_status", "unknown")} />
+                <span>{text(daemon, "loop_interval_seconds", "-")}s loop</span>
+                <time>{date(daemon.heartbeat_at)}</time>
+              </article>
+              <article className="pipeline-row">
+                <div><strong>Enabled workloads</strong><p>{Object.entries((daemon.enabled_workloads as Record<string, unknown>) ?? {}).filter(([, enabled]) => Boolean(enabled)).map(([name]) => name.replace(/_/g, " ")).join(" · ") || "none"}</p></div>
+                <StatusPill status={text(daemon, "health_status", "unknown")} />
+                <span>{text(daemon, "heartbeat_age_seconds", "-")}s age</span>
+              </article>
+              {text(daemon, "last_error", "") ? <article className="pipeline-row"><div><strong>Last daemon error</strong><p>{text(daemon, "last_error")}</p></div><StatusPill status="degraded" /></article> : null}
+            </div>
+          ) : <Empty>No persisted daemon heartbeat. Start the AI OS agent LaunchAgent.</Empty>}
+        </HealthPanel>
+
         <HealthPanel
           action={
             <button className="mini-action-button" disabled={status === "loading"} onClick={() => void refresh()} type="button" title="Refresh System Health">

@@ -25,7 +25,7 @@
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>AI_OS_RUNTIME_ROOT</key>
-    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
+    <string>/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime</string>
     <key>AI_OS_VAULT_ROOT</key>
     <string>/Volumes/Devarsh SSD/Obsidian memory </string>
     <key>AI_OS_CRITICAL_BACKUP_ROOT</key>

@@ -1561,6 +1561,12 @@ def market_data_readiness(arguments: dict) -> dict:
             FROM market.v_market_data_quality_checks
             ORDER BY checked_at DESC LIMIT {min(limit * 6, 300)}
         """),
+        "bias_controls": run_psql_json("""
+            SELECT control_key, observed_rows, mapped_rows, verified_rows,
+                   applied_rows, readiness_status, next_required_action
+            FROM market.v_market_bias_control_readiness
+            ORDER BY control_key
+        """),
     })
 
 
@@ -4768,6 +4774,23 @@ def strategy_discovery_scheduler_runs(arguments: dict) -> dict:
     )
 
 
+def runtime_daemon_health(arguments: dict) -> dict:
+    return tool_result(
+        {
+            "runtime_daemons": run_psql_json(
+                """
+                SELECT daemon_key, instance_id, host_name, process_id,
+                       reported_status, health_status, loop_interval_seconds,
+                       enabled_workloads, last_pass_summary, last_error,
+                       started_at, heartbeat_at, heartbeat_age_seconds, updated_at
+                FROM core.v_runtime_daemon_health
+                ORDER BY daemon_key
+                """
+            )
+        }
+    )
+
+
 def run_trade_journal_strategy_mining(arguments: dict) -> dict:
     payload = {
         "run_key": arguments.get("run_key") or arguments.get("runKey") or "journal_mining_mcp",
@@ -6849,6 +6872,11 @@ TOOLS = {
             },
         },
         "handler": strategy_discovery_scheduler_runs,
+    },
+    "ai_os_runtime_daemon_health": {
+        "description": "Read the persisted heartbeat, cadence, enabled workloads, and latest pass status for the 24/7 AI OS daemon.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": runtime_daemon_health,
     },
     "ai_os_run_trade_journal_strategy_mining": {
         "description": "Mine real trade journals and trade activity rows into strategy hypotheses. This never approves live execution.",

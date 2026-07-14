@@ -1541,3 +1541,30 @@ Intraday evidence contains 318,066 valid source ticks collapsing to 197,595 cano
 The operating interface is `market.dataset_contracts`, `market.market_data_import_runs`, `market.market_data_quality_checks`, `market.v_strategy_market_data_readiness`, and `trading.option_strategy_snapshots`; the API exposes these through the Data & Model Gateway. MCP tools `ai_os_market_data_readiness` and `ai_os_run_legacy_market_data_ingestion` provide bounded agent access. The Gateway's fixed import action invokes only the checksum-preserved SSD paths and does not grant broker, network, or arbitrary-command authority.
 
 P2Cursor's six available files are fully resolved: canonical Tushit and Naval CSVs are promoted, the duplicate export and frontend sample are excluded, the archived SQLite database is retained as an empty profiled source, and the benchmark JSON remains reference evidence. Full historical buy/sell reconciliation and new-client feeds remain separate ongoing portfolio workflows. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
+
+## 36. Runtime, Source Intelligence, And Market Bias Controls - 2026-07-15
+
+The application code root is the internal Git-backed checkout. The vault, generated research and strategy artifacts, Playwright browser payload, model files, Docker state, logs, and heavy datasets remain on the external SSD. LaunchAgents no longer treat the partial SSD runtime mirror as executable source. This keeps code recoverable through Git while preventing generated state from consuming MacBook storage.
+
+The 24/7 agent daemon has a warehouse heartbeat rather than a process-name assumption. `core.runtime_daemon_heartbeats` records the active instance, host, PID, loop cadence, enabled workloads, last-pass summary, last error, start time, and heartbeat. `core.v_runtime_daemon_health` derives healthy, degraded, stale, or stopped state. Scoped System Health and MCP tool `ai_os_runtime_daemon_health` expose the same contract. A real LaunchAgent pass completed mailbox workers, OHLCV aggregation, TradingView quote/CDP checks, source freshness, market news, filings/PDF extraction, and strategy discovery before reporting healthy.
+
+Source intelligence uses two cadences:
+
+```text
+Every 15 minutes
+  -> ten-source RSS/news basket
+  -> aggregate global_news health check
+  -> market.news_items and source-backed catalyst routing
+
+Every hour
+  -> NSE and BSE filing collection
+  -> material-first filing PDF extraction
+  -> special-situation term classification
+  -> strategy discovery and one bounded optimizer route
+```
+
+The verified source loop returned 56 news items, 200 NSE/BSE filings, two extracted filing PDFs, two structured special-situation records, 12 strategy candidates, and one optimizer route. Generated PDFs and discovery artifacts were written under `/Volumes/Devarsh SSD/AI OS Data/artifacts`. X/Twitter remains blocked on an authenticated source and is not represented as live.
+
+Market-bias controls are explicit. `market.corporate_actions` stores filing-derived action evidence; `market.corporate_action_adjustment_factors` stores separately reviewed factors; `market.v_ohlcv_adjusted` applies only verified/applied factors without mutating raw OHLCV. `market.universe_memberships` stores dated membership evidence and never infers historical membership from the present. The current checkpoint has 127 detected corporate actions, 17 canonical symbol mappings, zero verified/applied factors, and 530 current-snapshot universe rows. Therefore corporate-action readiness is `needs_verification` and point-in-time readiness is `current_snapshot_only`; neither permits strategy promotion or execution.
+
+The Data and Model Gateway shows these controls beside raw market-data readiness. The full MCP surface is 147 tools. Focused Gateway browser regression passed 5/5, System Health/report regression passed 4/4, System Health desktop/mobile WCAG automation passed 2/2, and loaded full-page screenshots showed no overlap or horizontal overflow. Evidence: [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].

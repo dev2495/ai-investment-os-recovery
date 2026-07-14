@@ -14,6 +14,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from runtime_storage import artifact_root
+
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
@@ -22,7 +24,7 @@ USER_AGENT = os.environ.get(
     "AI_OS_PUBLIC_CHECK_USER_AGENT",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AI-OS-Research/0.1",
 )
-ARTIFACT_ROOT = Path(os.environ.get("AI_OS_ARTIFACT_ROOT") or RUNTIME_ROOT / "artifacts") / "filings"
+ARTIFACT_ROOT = artifact_root("filings")
 
 SPECIAL_EVENT_KEYWORDS = [
     ("reverse_merger", ["reverse merger"]),

@@ -23,10 +23,14 @@ test("gateway exposes source, model, mapping, job, readiness, and route controls
   await expect(page.getByRole("heading", { level: 2, name: "Model Route Matrix" })).toBeVisible();
   await expect(page.locator(".gateway-plugin-row")).toHaveCount(39);
   await expect(page.locator(".gateway-route-grid article")).toHaveCount(21);
-  await expect(page.locator(".gateway-market-grid article")).toHaveCount(5);
+  await expect(page.locator(".gateway-market-grid article")).toHaveCount(7);
   await expect(page.locator(".gateway-import-ledger article")).toHaveCount(6);
   await expect(page.getByText("1,038,214 rows", { exact: true })).toBeVisible();
   await expect(page.getByText("research ready with bias audit required", { exact: true })).toBeVisible();
+  await expect(page.getByText("corporate actions", { exact: true })).toBeVisible();
+  await expect(page.getByText("needs verification", { exact: true })).toBeVisible();
+  await expect(page.getByText("point in time universe", { exact: true })).toBeVisible();
+  await expect(page.getByText("current snapshot only", { exact: true })).toBeVisible();
 });
 
 test("gateway readiness filters distinguish sources and models", async ({ page }) => {

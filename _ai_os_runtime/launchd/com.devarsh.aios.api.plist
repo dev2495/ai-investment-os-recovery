@@ -28,7 +28,7 @@
     <key>AI_OS_API_PORT</key>
     <string>8765</string>
     <key>AI_OS_RUNTIME_ROOT</key>
-    <string>/Volumes/Devarsh SSD/Obsidian memory /_ai_os_runtime</string>
+    <string>/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime</string>
     <key>AI_OS_VAULT_ROOT</key>
     <string>/Volumes/Devarsh SSD/Obsidian memory </string>
     <key>AI_OS_WORKER_SCRIPT</key>

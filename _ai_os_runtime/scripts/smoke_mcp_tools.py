@@ -81,6 +81,7 @@ def main() -> int:
         "ai_os_run_integration_job",
         "ai_os_market_data_readiness",
         "ai_os_run_legacy_market_data_ingestion",
+        "ai_os_runtime_daemon_health",
     }
     missing = sorted(required - tool_names)
     if missing:
@@ -102,6 +103,7 @@ def main() -> int:
         "strategy_arsenal": parse_tool_content(call("tools/call", {"name": "ai_os_strategy_arsenal_control_board", "arguments": {"limit": 10}})),
         "integration_gateway": parse_tool_content(call("tools/call", {"name": "ai_os_integration_plugin_gateway", "arguments": {"limit": 50}})),
         "market_data": parse_tool_content(call("tools/call", {"name": "ai_os_market_data_readiness", "arguments": {"limit": 10}})),
+        "runtime_daemons": parse_tool_content(call("tools/call", {"name": "ai_os_runtime_daemon_health", "arguments": {}})),
     }
 
     process.stdin.close()
@@ -137,6 +139,8 @@ def main() -> int:
         "market_data_readiness_rows": len((checks["market_data"] or {}).get("readiness", [])),
         "market_data_contract_rows": len((checks["market_data"] or {}).get("contracts", [])),
         "market_data_import_rows": len((checks["market_data"] or {}).get("imports", [])),
+        "market_bias_control_rows": len((checks["market_data"] or {}).get("bias_controls", [])),
+        "runtime_daemon_rows": len((checks["runtime_daemons"] or {}).get("runtime_daemons", [])),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

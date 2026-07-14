@@ -13,11 +13,12 @@ from typing import Any
 
 from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
 from run_trade_journal_strategy_mining import sql_numeric, sql_text_array
+from runtime_storage import artifact_reference, artifact_root
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "strategy_discovery"
+ARTIFACT_ROOT = artifact_root("strategy_discovery")
 
 
 def slugify(value: str) -> str:
@@ -492,7 +493,7 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
     }
     artifact_path = ARTIFACT_ROOT / f"{args.run_key}.json"
     artifact_path.write_text(json.dumps(artifact, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    artifact_rel = str(artifact_path.relative_to(RUNTIME_ROOT))
+    artifact_rel = artifact_reference(artifact_path)
     finish_run(int(run["id"]), "completed", summary, artifact_rel)
     artifact["artifact_path"] = artifact_rel
     artifact["run_id"] = run["id"]
