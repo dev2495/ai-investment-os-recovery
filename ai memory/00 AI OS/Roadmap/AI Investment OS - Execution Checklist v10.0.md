@@ -236,11 +236,11 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] TradingView CDP connection foundation. Verified 2026-07-10: guarded `_ai_os_runtime/scripts/relaunch_tradingview_cdp.sh` launches TradingView through macOS Launch Services with local-only CDP on `127.0.0.1:9222`; provider readiness marks `tradingview_mcp_connector` `ready`/assignable, and the 60-second daemon heartbeat mirrors CDP into browser-session check #8 and connector check #160. Broker execution remains disabled. Production chart-action hardening remains open.
 - [~] TradingView chart open workflow.
 - [~] TradingView screenshot artifact capture.
-- [~] TradingView action template registry.
+- [x] TradingView action template registry. Six advanced, approval-gated template contracts cover indicator stacks, ratio charts, spread formulas, four-pane straddles, fundamental ratios, and regime layouts. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] Symbol Intelligence chart/snapshot/action buttons. Evidence: [[2026-07-07-symbol-intelligence-action-router-v1]]; Symbol Intelligence v2 now exposes Thesis, Exit, Risk, Research, Quant, Trade, and TV Prep action buttons plus existing TradingView Chart/Snapshot buttons. Actual TradingView execution still depends on CDP availability and remains tracked under controller hardening.
 - [ ] TradingView production controller hardening.
-- [ ] TradingView straddle/strangle action template.
-- [ ] TradingView fundamental ratio chart workflow.
+- [~] TradingView straddle/strangle action template. Four-pane straddle contract and gated task/approval flow are live; deterministic TradingView mutation remains open. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [~] TradingView fundamental ratio chart workflow. Template and gated request contract are live; deterministic chart construction and evidence capture remain open. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Options payoff dashboard.
 - [ ] IV/OI dashboard.
 - [ ] Futures dashboard.
@@ -262,6 +262,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 - [x] NSE/BSE filing collector foundation. Current exchange endpoints, pagination, India-time normalization, source checks, idempotent upserts, and scheduled two-day collection are live. Evidence: [[2026-07-15-research-intelligence-v1]].
 - [x] Filing PDF extraction pipeline. Material-first selection, external artifact storage, bounded retries, extracted-text lineage, and scheduled runs are live. Evidence: [[2026-07-15-research-intelligence-v1]].
+- [x] Research paper ingestion foundation. Public or approved-local PDFs are validated, stored on the external SSD, extracted, hashed, registered as raw artifacts, and routed into one idempotent review task. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Paper-derived strategy hypothesis foundation. Falsifiable hypotheses retain paper/hash/source lineage and cannot self-promote or execute. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [ ] Continuous paper discovery, citation graph, replication checks, and research-quality scoring.
 - [~] Special situation memo workflow.
 - [~] Special situation terms extraction.
 - [~] Special situation spread decision workflow.
@@ -328,9 +331,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Liquidity-aware sizing.
 - [ ] Cash deployment queue.
 - [ ] Opportunity-cost ranking.
-- [ ] Capital Allocation Officer agent.
+- [x] Capital Allocation Officer agent. Active as `Capital Allocation Agent` with Charlie reporting line, approval-only capital authority, mailbox, persona, guardrails, and terminal visibility. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Portfolio Optimizer agent.
-- [ ] Performance Attribution Analyst agent.
+- [x] Performance Attribution Analyst agent. Active as `Performance Attribution Agent` with durable profile and reporting line. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Client Suitability Analyst agent.
 - [ ] Cash/Treasury Analyst agent.
 - [ ] Capital Allocation Committee workflow.
@@ -358,8 +361,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Quant Risk Analyst agent.
 - [ ] Stress Testing Agent.
 - [ ] Model Risk Agent.
-- [ ] Data Quality Risk Agent.
-- [ ] Compliance/Audit Agent.
+- [x] Data Quality Risk Agent. Active as `Data Quality Analyst`, reporting to Data Steward with mandatory escalation of material data failures. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Compliance/Audit Agent. Active as `Compliance Agent`, reporting to Risk Agent with independent exception controls. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Kill Switch Agent.
 
 ## 12. Client Office
@@ -386,9 +389,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 13. Agent Office And Communication
 
-- [~] Agent profiles foundation.
-- [~] Agent departments foundation.
-- [~] Agent skills foundation.
+- [x] Agent profiles foundation. Forty-nine active profiles carry role scope, model policy, tools, permissions, guardrails, outputs, persona, cadence, cost policy, and human interface. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Agent departments foundation. Eleven live departments are exposed in the Agent Office terminal. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Agent skills foundation. Role-scoped tools, decision rights, consultation rules, and approval boundaries are registered for the active team. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [~] Agent task queue foundation.
 - [~] Agent inbox foundation.
 - [~] Agent messages foundation.
@@ -400,10 +403,10 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Agent output artifact registry. Scoped Reports exposes 164 durable outputs with search, family/status filters, owner/source/location, path copy, source links, safety flags, worker runs, and gap detection. Evidence: [[2026-07-13-reports-v2]].
 - [~] Per-agent tool permissions UI.
 - [~] Per-agent model route UI.
-- [~] Agent mailbox UI.
+- [x] Agent mailbox UI. The Agent Office renders durable warehouse mail and the active team has addressable mailboxes; message handoffs remain audited tasks/inbox records. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [~] Committee room view.
 - [~] Approval board view.
-- [~] Character/personality cards.
+- [x] Character/personality cards. All active roles have warehouse-backed persona/operating-style data and office character identity; 3D art refinement remains separate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [~] Agent hover cards.
 - [~] Agent handoff threads.
 - [~] Live AI Office room foundation.
@@ -448,7 +451,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Vibe skill registry added.
 - [~] TradingView CDP/chart-action executor foundation. Verified 2026-07-10: local Desktop CDP is available and provider-gated ready through the guarded relaunch script; native executor remains the runtime controller while the missing third-party candidate checkout is treated as optional, not a dependency.
 - [~] TradingView screenshot artifact API.
-- [~] TradingView action template registry/API/MCP.
+- [x] TradingView action template registry/API/MCP. Six advanced chart contracts and approval-gated request flow are live; deterministic multi-pane mutation remains tracked under controller hardening. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Research paper ingestion/hypothesis MCP tools. Both source ingestion and source-linked hypothesis creation are registered in the permanent 138-tool MCP smoke gate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Browser research runner hardening.
 - [ ] Web/document scraper MCP.
 - [ ] PDF/doc extraction MCP.
@@ -461,14 +465,14 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] OpenAlgo read-only bridge.
 - [ ] Broker read-only MCP connector.
 - [ ] Crypto/commodity read-only MCP connector.
-- [ ] TradingView straddle/strangle action template.
-- [ ] TradingView fundamental ratio chart workflow.
+- [~] TradingView straddle/strangle action template. Contract and human gate are live; executor automation remains open. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [~] TradingView fundamental ratio chart workflow. Contract and human gate are live; executor automation remains open. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Provider policy editor UI.
 - [ ] Provider policy simulator.
 
 ## 16. Dashboards And Live Office
 
-- [x] Canonical frontend delivery plan linked to blueprint and checklist. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]]; the live 36-agent registry overrides the historical 16-agent count in the supplied proposal.
+- [x] Canonical frontend delivery plan linked to blueprint and checklist. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]]; the live 49-agent registry overrides historical proposal counts.
 - [x] Command Center foundation with durable delegation. Verified 2026-07-11 through the deployed UI: Charlie message `#94` routed to Research Analyst, created task `#327`, task inbox `#412`, and provider-policy inbox `#413`; no investment or trading action was requested or executed.
 - [x] Portfolio widget foundation. Verified 2026-07-13 in the scoped Portfolio Office with production holdings, market value, gross/net exposure, investment books, position objects, conflicts, and readiness gaps. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
 - [x] Book exposure widget. Verified 2026-07-13 for symbol-level multi-book and client-book exposure with client filtering. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
@@ -500,14 +504,14 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Tactical Office dashboard.
 - [~] Trading Desk dashboard. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Risk Center dashboard. Evidence: [[2026-07-13-trading-quant-risk-v2]].
-- [ ] Capital Allocation dashboard.
+- [~] Capital Allocation dashboard. Scoped live terminal, book exposure, portfolio intelligence, cross-book conflicts, evidence, freshness, customization, and execution lock are deployed; allocation proposal/committee/rebalance actions remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [~] Research Factory dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] News and Filings dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Special Situations dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
-- [ ] Treasury/Hedges/Crypto dashboard.
-- [ ] Model Runtime dashboard.
+- [~] Treasury/Hedges/Crypto dashboard. Treasury and Macro terminal is live over source-backed macro/news/market records; dedicated hedge construction, collateral, cash ladder, and crypto execution connectors remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [~] Model Runtime dashboard. Live endpoint, routing, readiness, usage, and cost rows are exposed; model evaluation, cache, escalation, privacy, and final per-department policy remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Provider Readiness dashboard v2.
-- [ ] Committee Room dashboard v2.
+- [~] Committee Room dashboard v2. Scoped live committee packet, approval state, evidence drawer, workspace customization, and execution lock are deployed; participant discussion, specialized decisions, and follow-up action routes remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] 3D office scene with procedural rooms, stable camera controls, live room placement, room-floor selection, and animated department focus. Directory selection moves the camera without leaving the office; an explicit secondary action opens the mapped Command Center workspace. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [~] Data-backed agent avatars: live status, current task, activity pulse, live character name/color/visual traits, employee profile inspector, keyboard employee selector, and durable mailbox handoff. Verified 2026-07-10: Live Office message #61 created task #294 and inbox #379 for Risk Agent; profile pages and direct canvas hit testing remain outstanding.
 - [~] Data-backed committee room: live agenda, decision state, source row, approval state, memo reference, structured evidence packet, and deep source-review/approval drill-down from committee queues. Verified with the TATASTEEL strategy review (`strategy.v_strategy_committee_queue #3`, pending approval #14, `reject_or_retest`); participant discussion and specialized committee decision/follow-up actions remain outstanding. Evidence: [[2026-07-13-deep-evidence-and-approval-actions-v2]].
@@ -585,7 +589,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 ## 20. Immediate Next Implementation Order
 
 - [x] Update top-level AI OS index to v10. Evidence: [[AI OS Master Blueprint]].
-- [ ] Convert v10 blueprint into database-backed operating-model metadata.
+- [x] Convert v10 blueprint into database-backed operating-model metadata. Canonical registry exposes 21 domains and machine-readable requirements through API and MCP. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] Finish position readiness remediation queue and verify API/MCP/UI. Evidence: [[2026-07-07-position-readiness-remediation-queue-v1]].
 - [x] Build Symbol Intelligence v2 around multi-book exposure. Evidence: [[2026-07-07-symbol-intelligence-v2]].
 - [x] Add Symbol Intelligence action router into agent tasks/inbox. Evidence: [[2026-07-07-symbol-intelligence-action-router-v1]].
@@ -594,7 +598,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Implement Long-Term checklist tables and UI. Evidence: [[2026-07-08-long-term-coverage-board-v1]] plus existing live `portfolio.v_long_term_thesis_checklists` dashboard rows; table/API/UI are live, while row completion remains tracked by the coverage board.
 - [x] Implement Long-Term Monte Carlo engine and report. Engine/API/MCP/database/report existed and the scoped Decision Lab, source gate, external-vault contract, real UI run, and browser tests are now verified. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [x] Implement research/news/filing collector expansion. Hourly RSS, NSE/BSE, material-first PDF extraction, strategy discovery, health evidence, UI control, and agent routing are live. Evidence: [[2026-07-15-research-intelligence-v1]].
-- [ ] Harden TradingView controller and straddle workflow.
+- [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy and six advanced chart-template contracts are registered with approval-gated requests; deterministic execution and verification of every multi-pane/indicator/formula mutation remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Build Client Folio dashboard.
 - [ ] Build Risk Office v2 with stress tests and portfolio Monte Carlo.
 - [ ] Build Animated AI Office v1 after core room grid and task arrows are data-backed.

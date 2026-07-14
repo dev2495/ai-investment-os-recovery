@@ -17,6 +17,15 @@ _ai_os_runtime/docker_data
 _ai_os_runtime/browser_profiles/
 _ai_os_runtime/obsidian_writeback/tmp/
 
+# Runtime-generated analytical artifacts belong on the external SSD and in
+# warehouse lineage. Previously tracked fixtures remain tracked, while new
+# scheduler/backtest output stays out of the code repository.
+_ai_os_runtime/artifacts/backtests/
+_ai_os_runtime/artifacts/optimizations/
+_ai_os_runtime/artifacts/strategy_discovery/
+_ai_os_runtime/artifacts/user_defined_optimizer/
+_ai_os_runtime/artifacts/research_papers/
+
 # Raw imports can contain client statements and broker exports.
 _ai_os_runtime/imports/quarantine/
 _ai_os_runtime/imports/raw/

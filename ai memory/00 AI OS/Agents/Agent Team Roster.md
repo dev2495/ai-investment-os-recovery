@@ -216,3 +216,30 @@ Activation rule:
 - These agents can own tasks and inbox items now.
 - They read through controlled tools by default.
 - Any write-back, client record change, live strategy enablement, broker action, or external posting requires approval.
+
+## Verified Warehouse Roster - 2026-07-15
+
+The active roster is now 49 agents across 11 departments. The live `agent.profiles`, `agent.org_hierarchy`, `agent.mailboxes`, and office-character records are authoritative; the shorter list above is retained as the original activation cohort.
+
+Newly activated roles:
+
+- Automation: Automation Engineer; MCP Integration Engineer.
+- Data: Data Engineer; Data Quality Analyst.
+- News: Macro Researcher; News Editor; Alternative Data Analyst.
+- Portfolio: Capital Allocation Agent; Performance Attribution Agent; Client Reporting Agent.
+- Risk: Portfolio Risk Analyst; Compliance Agent.
+- Runtime: AI Runtime Engineer.
+
+Every new profile includes role scope, reporting line, model route policy, allowed tools, permission level, guardrails, output targets, persona, operating style, mental models, escalation rules, cadence, cost policy, human interface, durable mailbox, and office visual identity.
+
+Authority structure:
+
+- Devarsh retains human decision authority.
+- Charlie Munger owns orchestration, truth-testing, and final recommendation synthesis.
+- Jarvis owns runtime dispatch, work tracking, widget updates, and service continuity.
+- Department leads own scoped delegation and evidence completeness.
+- Specialists own analysis and artifacts for their mandate.
+- Risk and Compliance remain independent challengers.
+- No agent may independently allocate capital, send a client report, enable live execution, or approve its own policy exception.
+
+Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].

@@ -8,7 +8,7 @@ interface WorkspaceRoute {
   workspace: WorkspaceId;
 }
 
-const workspaceIds: WorkspaceId[] = ["command", "portfolio", "clients", "research", "ideas", "trading", "quant", "risk", "reports", "system"];
+const workspaceIds: WorkspaceId[] = ["command", "approvals", "agents", "committees", "portfolio", "clients", "research", "ideas", "trading", "quant", "risk", "capital", "treasury", "models", "reports", "system"];
 
 function readRoute(): WorkspaceRoute {
   const params = new URLSearchParams(window.location.search);

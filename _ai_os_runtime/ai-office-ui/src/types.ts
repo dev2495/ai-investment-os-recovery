@@ -4,6 +4,9 @@ export type Status = "queued" | "running" | "needs_review" | "approved" | "block
 
 export type WorkspaceId =
   | "command"
+  | "approvals"
+  | "agents"
+  | "committees"
   | "portfolio"
   | "clients"
   | "research"
@@ -11,6 +14,9 @@ export type WorkspaceId =
   | "trading"
   | "quant"
   | "risk"
+  | "capital"
+  | "treasury"
+  | "models"
   | "reports"
   | "system";
 

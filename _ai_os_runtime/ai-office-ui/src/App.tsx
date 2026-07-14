@@ -7,13 +7,16 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  CircleDollarSign,
   ClipboardList,
   Clock3,
   Command as CommandIcon,
   DatabaseZap,
+  Cpu,
   FileText,
   FlaskConical,
   Gauge,
+  Globe2,
   GitBranch,
   Inbox,
   Landmark,
@@ -25,11 +28,14 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
+  Scale,
+  UsersRound,
   X
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { lazy, Suspense, useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   applyStrategyTemplate,
   calculateSpecialSituationSpread,
@@ -150,6 +156,9 @@ import ResearchIdeasWorkspace from "./views/ResearchIdeasWorkspace";
 import ReportsWorkspace from "./views/ReportsWorkspace";
 import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 import TradingQuantRiskWorkspace from "./views/TradingQuantRiskWorkspace";
+import DepartmentTerminalWorkspace from "./views/DepartmentTerminalWorkspace";
+import WorkspaceManager from "./components/WorkspaceManager";
+import { fetchWorkspaceConfig, type TerminalWorkspace, type WorkspaceConfig } from "./api/terminal";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
@@ -162,6 +171,9 @@ interface ChatMessage {
 
 const baseWorkspaces: Workspace[] = [
   { id: "command", label: "Command Center" },
+  { id: "approvals", label: "Approval Board" },
+  { id: "agents", label: "Agent Office" },
+  { id: "committees", label: "Committee Rooms" },
   { id: "portfolio", label: "Portfolio Office" },
   { id: "clients", label: "Client Folios" },
   { id: "research", label: "Holdings Research" },
@@ -169,12 +181,18 @@ const baseWorkspaces: Workspace[] = [
   { id: "trading", label: "Trading Desk" },
   { id: "quant", label: "Quant Lab" },
   { id: "risk", label: "Risk Center" },
+  { id: "capital", label: "Capital Allocation" },
+  { id: "treasury", label: "Treasury & Macro" },
+  { id: "models", label: "Model Runtime" },
   { id: "reports", label: "Reports" },
   { id: "system", label: "System Health" }
 ];
 
 const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   command: CommandIcon,
+  approvals: ListChecks,
+  agents: UsersRound,
+  committees: Scale,
   portfolio: BriefcaseBusiness,
   clients: Building2,
   research: Landmark,
@@ -182,6 +200,9 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   trading: LineChart,
   quant: FlaskConical,
   risk: ShieldCheck,
+  capital: CircleDollarSign,
+  treasury: Globe2,
+  models: Cpu,
   reports: FileText,
   system: DatabaseZap
 };
@@ -748,6 +769,10 @@ function liveWorkflowRuns(snapshot: LiveSnapshot | null): LiveRow[] {
 
 function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, number> {
   return {
+    agents: snapshot?.agents.length ?? 0,
+    approvals: snapshot?.approvals.length ?? 0,
+    committees: snapshot?.approvals.length ?? 0,
+    capital: (snapshot?.book_positions.length ?? 0) + (snapshot?.cross_book_conflicts.length ?? 0),
     clients: snapshot?.clients.length ?? 0,
     command: (snapshot?.inbox.length ?? 0) + (snapshot?.agent_jobs.length ?? 0) + (snapshot?.agent_worker_queue.length ?? 0),
     ideas: snapshot?.approvals.length ?? 0,
@@ -757,6 +782,8 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
     research: Number(metricValue(snapshot, "research_hub_artifacts", "0")),
     risk: (snapshot?.approvals.length ?? 0) + (snapshot?.alerts.length ?? 0) + (snapshot?.cross_book_conflicts.length ?? 0) + (snapshot?.book_assignment_gaps.length ?? 0),
     system: (snapshot?.mcp_candidates.length ?? 0) + (snapshot?.data_source_checks.length ?? 0) + (snapshot?.dashboard_widgets.length ?? 0) + (snapshot?.agent_skills.length ?? 0),
+    treasury: snapshot?.data_source_checks.length ?? 0,
+    models: snapshot?.model_routes.length ?? 0,
     trading: (snapshot?.signals.length ?? 0) + (snapshot?.tradingview_tasks.length ?? 0)
   };
 }
@@ -8395,7 +8422,19 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   const [commandBusy, setCommandBusy] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"loading" | "online" | "offline">("loading");
   const [uiError, setUiError] = useState("");
+  const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
+  const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
   const activeWorkspaceLabel = baseWorkspaces.find((workspace) => workspace.id === activeWorkspace)?.label ?? "Command Center";
+
+  useEffect(() => {
+    void fetchWorkspaceConfig().then(setWorkspaceConfig).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = workspaceConfig?.profile.theme ?? "terminal_dark";
+    root.dataset.density = workspaceConfig?.profile.density ?? "compact";
+  }, [workspaceConfig]);
 
   const refreshScopedWorkspace = () => {
     const events: Partial<Record<WorkspaceId, string>> = {
@@ -8410,6 +8449,10 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       risk: "aios:trading-quant-risk-refresh",
       reports: "aios:reports-refresh"
     };
+    if (["approvals", "agents", "committees", "capital", "treasury", "models"].includes(activeWorkspace)) {
+      window.dispatchEvent(new Event("aios:department-terminal-refresh"));
+      return;
+    }
     const eventName = events[activeWorkspace];
     if (eventName) window.dispatchEvent(new Event(eventName));
   };
@@ -8471,6 +8514,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   let workspaceContent: ReactNode;
   if (activeWorkspace === "system") workspaceContent = <SystemHealthWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "command") workspaceContent = <MissionControlWorkspace onStatusChange={setLiveStatus} />;
+  else if (["approvals", "agents", "committees", "capital", "treasury", "models"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "trading" || activeWorkspace === "quant" || activeWorkspace === "risk") workspaceContent = <TradingQuantRiskWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
@@ -8498,6 +8542,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
             <span className={`live-status live-${liveStatus}`}>{liveStatus === "online" ? "Live warehouse" : liveStatus === "loading" ? "Connecting" : "Warehouse offline"}</span>
             <button className="ghost-button" onClick={() => setInterfaceMode("office")} type="button"><Building2 size={16} aria-hidden="true" />Live Office</button>
             <button className="ghost-button" type="button"><Search size={16} aria-hidden="true" />Search memory</button>
+            <button className="icon-button" onClick={() => setWorkspaceManagerOpen(true)} type="button" title="Customize workspace"><SlidersHorizontal size={18} aria-hidden="true" /></button>
             <button className="icon-button" type="button" title="Approval queue"><Bell size={18} aria-hidden="true" /></button>
           </div>
         </header>
@@ -8509,6 +8554,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
         </section>
         {workspaceContent}
       </main>
+      {workspaceManagerOpen && workspaceConfig ? <WorkspaceManager config={workspaceConfig} onChanged={setWorkspaceConfig} onClose={() => setWorkspaceManagerOpen(false)} workspace={activeWorkspace} /> : null}
     </div>
   );
 }

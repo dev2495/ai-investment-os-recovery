@@ -26,6 +26,8 @@ export interface ResearchIdeasSnapshot {
   special_memos: LiveRow[];
   special_spreads: LiveRow[];
   generated_ideas: LiveRow[];
+  research_papers: LiveRow[];
+  paper_strategy_hypotheses: LiveRow[];
   discovery_candidates: LiveRow[];
   idea_dossiers: LiveRow[];
   output_artifacts: LiveRow[];

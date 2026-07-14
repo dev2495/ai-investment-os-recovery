@@ -68,6 +68,11 @@ def main() -> int:
         "ai_os_research_output_detail",
         "ai_os_fincept_component_review",
         "ai_os_fincept_install_status",
+        "ai_os_ingest_research_paper",
+        "ai_os_create_paper_strategy_hypotheses",
+        "ai_os_workspace_terminal_config",
+        "ai_os_update_workspace_terminal",
+        "ai_os_update_workspace_widget",
     }
     missing = sorted(required - tool_names)
     if missing:
@@ -85,6 +90,7 @@ def main() -> int:
         "research_sjs": parse_tool_content(call("tools/call", {"name": "ai_os_research_outputs", "arguments": {"query": "SJS", "limit": 3}})),
         "fincept": parse_tool_content(call("tools/call", {"name": "ai_os_fincept_component_review", "arguments": {}})),
         "fincept_install": parse_tool_content(call("tools/call", {"name": "ai_os_fincept_install_status", "arguments": {}})),
+        "workspace_terminal": parse_tool_content(call("tools/call", {"name": "ai_os_workspace_terminal_config", "arguments": {}})),
     }
 
     process.stdin.close()
@@ -109,6 +115,8 @@ def main() -> int:
         "fincept_components": len((checks["fincept"] or {}).get("components", [])),
         "fincept_install_rows": len((checks["fincept_install"] or {}).get("install", [])),
         "fincept_installed_components": len((checks["fincept_install"] or {}).get("installed_components", [])),
+        "workspace_layouts": len((checks["workspace_terminal"] or {}).get("config", [])),
+        "workspace_widgets": len((checks["workspace_terminal"] or {}).get("widgets", [])),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

@@ -4895,7 +4895,150 @@ def data_source_checks(arguments: dict) -> dict:
     )
 
 
+def workspace_terminal_config(arguments: dict) -> dict:
+    profile_key = str(arguments.get("profile_key") or "devarsh").strip().lower()
+    return tool_result(
+        {
+            "config": run_psql_json(
+                f"""
+                SELECT profile_id, profile_key, profile_name, owner_name, is_active,
+                       default_workspace, theme, density, navigation, preferences,
+                       version, layout_id, workspace_key, module_order, hidden_modules,
+                       column_count, settings, updated_by, updated_at
+                FROM ops.v_workspace_terminal_config
+                WHERE profile_key = {sql_literal(profile_key)}
+                ORDER BY workspace_key NULLS LAST
+                """
+            ),
+            "widgets": run_psql_json(
+                """
+                SELECT id, widget_key, widget_title, widget_type, workspace, status,
+                       priority, owner_agent, query_ref, layout, data_binding,
+                       last_refreshed_at, updated_at
+                FROM ops.v_dashboard_widgets
+                ORDER BY workspace, coalesce((layout ->> 'order')::integer, 100), updated_at DESC
+                LIMIT 120
+                """
+            ),
+        }
+    )
+
+
+def update_workspace_terminal(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/workspaces/config/update", arguments))
+
+
+def update_workspace_widget(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/dashboard/widgets/update", arguments))
+
+
+def ingest_research_paper(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/research/papers/ingest", arguments, timeout=180.0))
+
+
+def create_paper_strategy_hypotheses(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/research/papers/hypotheses", arguments, timeout=120.0))
+
+
 TOOLS = {
+    "ai_os_ingest_research_paper": {
+        "description": "Register and extract a source-backed research paper from a public HTTPS PDF or an allowed local path. Creates a human research-review task and never promotes a strategy automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "source_key": {"type": "string", "default": "local"},
+                "source_url": {"type": "string"},
+                "pdf_url": {"type": "string"},
+                "local_path": {"type": "string"},
+                "authors": {"type": "array", "items": {"type": "string"}},
+                "published_date": {"type": "string"},
+                "doi": {"type": "string"},
+                "abstract": {"type": "string"},
+                "topics": {"type": "array", "items": {"type": "string"}},
+                "asset_classes": {"type": "array", "items": {"type": "string"}},
+                "markets": {"type": "array", "items": {"type": "string"}},
+                "methodology_tags": {"type": "array", "items": {"type": "string"}},
+                "actor": {"type": "string", "default": "Research Librarian"},
+            },
+            "required": ["title"],
+        },
+        "handler": ingest_research_paper,
+    },
+    "ai_os_create_paper_strategy_hypotheses": {
+        "description": "Persist falsifiable, source-linked strategy hypotheses from an extracted paper. Hypotheses remain in research queue until separately reviewed and promoted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "integer"},
+                "actor": {"type": "string", "default": "Strategy Research Agent"},
+                "hypotheses": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "edge_hypothesis": {"type": "string"},
+                            "market_scope": {"type": "array", "items": {"type": "string"}},
+                            "asset_classes": {"type": "array", "items": {"type": "string"}},
+                            "timeframe": {"type": "string"},
+                            "signal_definition": {"type": "object"},
+                            "data_requirements": {"type": "object"},
+                            "implementation_notes": {"type": "string"},
+                            "invalidation_tests": {"type": "array", "items": {"type": "object"}},
+                            "limitations": {"type": "array", "items": {"type": "object"}},
+                        },
+                        "required": ["title", "edge_hypothesis"],
+                    },
+                },
+            },
+            "required": ["paper_id", "hypotheses"],
+        },
+        "handler": create_paper_strategy_hypotheses,
+    },
+    "ai_os_workspace_terminal_config": {
+        "description": "Read the active operator workspace profile, department layouts, and live widget configuration.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"profile_key": {"type": "string", "default": "devarsh"}},
+        },
+        "handler": workspace_terminal_config,
+    },
+    "ai_os_update_workspace_terminal": {
+        "description": "Apply an audited, reversible operator workspace update for theme, density, navigation, or department layout. Does not alter market evidence or execution state.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "profile_key": {"type": "string", "default": "devarsh"},
+                "actor": {"type": "string", "default": "Charlie Munger"},
+                "theme": {"type": "string", "enum": ["terminal_dark", "terminal_light"]},
+                "density": {"type": "string", "enum": ["compact", "standard"]},
+                "default_workspace": {"type": "string"},
+                "navigation": {"type": "object"},
+                "preferences": {"type": "object"},
+                "workspace_key": {"type": "string", "enum": ["approvals", "agents", "committees", "capital", "treasury", "models"]},
+                "module_order": {"type": "array", "items": {"type": "string"}},
+                "hidden_modules": {"type": "array", "items": {"type": "string"}},
+                "column_count": {"type": "integer", "minimum": 1, "maximum": 4},
+            },
+        },
+        "handler": update_workspace_terminal,
+    },
+    "ai_os_update_workspace_widget": {
+        "description": "Update one dashboard widget's visibility, order, or size while preserving its live data binding and evidence lineage.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "widget_id": {"type": "integer"},
+                "actor": {"type": "string", "default": "Charlie Munger"},
+                "status": {"type": "string", "enum": ["active", "hidden", "archived"]},
+                "size": {"type": "string", "enum": ["standard", "wide", "full"]},
+                "order": {"type": "integer"},
+            },
+            "required": ["widget_id"],
+        },
+        "handler": update_workspace_widget,
+    },
     "ai_os_mcp_capabilities": {
         "description": "List MCP tools registered in the warehouse with owners, permission levels, and guardrails.",
         "inputSchema": {"type": "object", "properties": {}},

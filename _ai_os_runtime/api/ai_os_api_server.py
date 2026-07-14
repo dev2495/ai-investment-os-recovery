@@ -1552,6 +1552,24 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY created_at DESC
             LIMIT 80
         """,
+        "research_papers": """
+            SELECT id, paper_key, source_key, source_name, title, authors,
+                   published_date, doi, source_url, pdf_url, abstract,
+                   page_count, topics, asset_classes, markets, methodology_tags,
+                   extraction_status, review_status, owner_agent,
+                   hypothesis_count, latest_ingestion_at, evidence, updated_at
+            FROM research.v_research_paper_queue
+            LIMIT 80
+        """,
+        "paper_strategy_hypotheses": """
+            SELECT id, hypothesis_key, paper_id, paper_key, paper_title,
+                   title, edge_hypothesis, market_scope, asset_classes,
+                   timeframe, signal_definition, data_requirements,
+                   invalidation_tests, limitations, status, owner_agent,
+                   promoted_idea_id, evidence, updated_at
+            FROM research.v_paper_strategy_hypotheses
+            LIMIT 100
+        """,
         "discovery_candidates": """
             SELECT id, run_key, discovery_key, source_kind, source_ref, title,
                    symbols, universe, timeframe, template, thesis, catalyst,
@@ -1976,6 +1994,274 @@ def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: 
         )
     except Exception:
         pass
+
+
+TERMINAL_WORKSPACES = {
+    "approvals",
+    "agents",
+    "committees",
+    "capital",
+    "treasury",
+    "models",
+}
+
+WORKSPACE_KEYS = {
+    "command", "approvals", "agents", "committees", "portfolio", "clients",
+    "research", "ideas", "trading", "quant", "risk", "capital", "treasury",
+    "models", "reports", "system",
+}
+
+
+def build_workspace_config(profile_key: str = "devarsh") -> dict:
+    profile_key = (profile_key or "devarsh").strip().lower()
+    rows = run_psql_json(
+        f"""
+        SELECT profile_id, profile_key, profile_name, owner_name, is_active,
+               default_workspace, theme, density, navigation, preferences,
+               version, layout_id, workspace_key, module_order, hidden_modules,
+               column_count, settings, updated_by, updated_at
+        FROM ops.v_workspace_terminal_config
+        WHERE profile_key = {sql_literal(profile_key)}
+        ORDER BY workspace_key NULLS LAST
+        """
+    )
+    if not rows:
+        raise ValueError(f"workspace profile not found: {profile_key}")
+    first = rows[0]
+    return {
+        "profile": {
+            key: first.get(key)
+            for key in (
+                "profile_id", "profile_key", "profile_name", "owner_name",
+                "is_active", "default_workspace", "theme", "density",
+                "navigation", "preferences", "version", "updated_at",
+            )
+        },
+        "layouts": [
+            {
+                key: row.get(key)
+                for key in (
+                    "layout_id", "workspace_key", "module_order", "hidden_modules",
+                    "column_count", "settings", "updated_by", "updated_at",
+                )
+            }
+            for row in rows
+            if row.get("workspace_key")
+        ],
+        "widgets": run_psql_json(
+            f"""
+            SELECT id, widget_key, widget_title, widget_type, workspace, status,
+                   priority, owner_agent, query_ref, linked_task_id, task_status,
+                   config, layout, data_binding, evidence, last_refreshed_at, updated_at
+            FROM ops.v_dashboard_widgets
+            WHERE workspace IN (
+                SELECT jsonb_array_elements_text(coalesce(
+                    (SELECT navigation -> 'visible' FROM ops.workspace_profiles
+                     WHERE profile_key = {sql_literal(profile_key)}),
+                    '[]'::jsonb
+                ))
+            )
+            ORDER BY workspace, coalesce((layout ->> 'order')::integer, 100), updated_at DESC
+            LIMIT 120
+            """
+        ),
+        "data_mode": {"seed_data_allowed": False, "source": "workspace_operator_configuration"},
+    }
+
+
+def update_workspace_config(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    profile_key = str(payload.get("profile_key") or payload.get("profileKey") or "devarsh").strip().lower()
+    theme = str(payload.get("theme") or "").strip()
+    density = str(payload.get("density") or "").strip()
+    default_workspace = str(payload.get("default_workspace") or payload.get("defaultWorkspace") or "").strip()
+    navigation = payload.get("navigation")
+    preferences = payload.get("preferences")
+    workspace_key = str(payload.get("workspace_key") or payload.get("workspaceKey") or "").strip().lower()
+    module_order = payload.get("module_order") if "module_order" in payload else payload.get("moduleOrder")
+    hidden_modules = payload.get("hidden_modules") if "hidden_modules" in payload else payload.get("hiddenModules")
+    column_count = payload.get("column_count") if "column_count" in payload else payload.get("columnCount")
+
+    if theme and theme not in {"terminal_dark", "terminal_light"}:
+        raise ValueError("theme must be terminal_dark or terminal_light")
+    if density and density not in {"compact", "standard"}:
+        raise ValueError("density must be compact or standard")
+    if default_workspace and default_workspace not in WORKSPACE_KEYS:
+        raise ValueError(f"default_workspace must be one of {sorted(WORKSPACE_KEYS)}")
+    if navigation is not None and not isinstance(navigation, dict):
+        raise ValueError("navigation must be an object")
+    if isinstance(navigation, dict) and "visible" in navigation:
+        visible = navigation.get("visible")
+        if not isinstance(visible, list) or any(str(item) not in WORKSPACE_KEYS for item in visible):
+            raise ValueError("navigation.visible must contain only supported workspace keys")
+    if preferences is not None and not isinstance(preferences, dict):
+        raise ValueError("preferences must be an object")
+    if workspace_key and workspace_key not in TERMINAL_WORKSPACES:
+        raise ValueError(f"workspace_key must be one of {sorted(TERMINAL_WORKSPACES)}")
+    if module_order is not None and not isinstance(module_order, list):
+        raise ValueError("module_order must be an array")
+    if hidden_modules is not None and not isinstance(hidden_modules, list):
+        raise ValueError("hidden_modules must be an array")
+    for field_name, values in (("module_order", module_order), ("hidden_modules", hidden_modules)):
+        if isinstance(values, list):
+            if len(values) > 40 or any(not isinstance(item, str) or not item.strip() or len(item) > 80 for item in values):
+                raise ValueError(f"{field_name} must contain at most 40 non-empty string keys of 80 characters or fewer")
+    if column_count is not None:
+        try:
+            column_count = int(column_count)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("column_count must be an integer") from exc
+        if column_count < 1 or column_count > 4:
+            raise ValueError("column_count must be between 1 and 4")
+
+    profile_sets = ["version = version + 1", "updated_at = now()"]
+    if theme:
+        profile_sets.append(f"theme = {sql_literal(theme)}")
+    if density:
+        profile_sets.append(f"density = {sql_literal(density)}")
+    if default_workspace:
+        profile_sets.append(f"default_workspace = {sql_literal(default_workspace)}")
+    if isinstance(navigation, dict):
+        profile_sets.append(f"navigation = navigation || {sql_jsonb(navigation)}")
+    if isinstance(preferences, dict):
+        profile_sets.append(f"preferences = preferences || {sql_jsonb(preferences)}")
+
+    run_psql_text(
+        f"""
+        UPDATE ops.workspace_profiles
+        SET {', '.join(profile_sets)}
+        WHERE profile_key = {sql_literal(profile_key)}
+        RETURNING id
+        """
+    )
+    if workspace_key:
+        layout_sets = ["updated_at = now()", f"updated_by = {sql_literal(actor)}"]
+        if module_order is not None:
+            layout_sets.append(f"module_order = {sql_jsonb(module_order)}")
+        if hidden_modules is not None:
+            layout_sets.append(f"hidden_modules = {sql_jsonb(hidden_modules)}")
+        if column_count is not None:
+            layout_sets.append(f"column_count = {column_count}")
+        run_psql_text(
+            f"""
+            INSERT INTO ops.workspace_layouts (profile_id, workspace_key, updated_by)
+            SELECT id, {sql_literal(workspace_key)}, {sql_literal(actor)}
+            FROM ops.workspace_profiles
+            WHERE profile_key = {sql_literal(profile_key)}
+            ON CONFLICT (profile_id, workspace_key) DO UPDATE
+            SET {', '.join(layout_sets)}
+            """
+        )
+    result = build_workspace_config(profile_key)
+    audit_api_write(
+        "ai_os_api_update_workspace_config",
+        "update_workspace_config",
+        actor,
+        "ops.workspace_profiles/ops.workspace_layouts",
+        result,
+        payload,
+    )
+    return result
+
+
+def update_dashboard_widget(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    widget_id = payload.get("widget_id") or payload.get("widgetId")
+    if not widget_id:
+        raise ValueError("widget_id is required")
+    try:
+        widget_id = int(widget_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("widget_id must be an integer") from exc
+    status = str(payload.get("status") or "").strip()
+    size = str(payload.get("size") or "").strip()
+    order = payload.get("order")
+    if status and status not in {"active", "hidden", "archived"}:
+        raise ValueError("status must be active, hidden, or archived")
+    if size and size not in {"standard", "wide", "full"}:
+        raise ValueError("size must be standard, wide, or full")
+    layout_patch: dict[str, object] = {}
+    if size:
+        layout_patch["size"] = size
+    if order is not None:
+        try:
+            layout_patch["order"] = int(order)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("order must be an integer") from exc
+    sets = ["updated_at = now()"]
+    if status:
+        sets.append(f"status = {sql_literal(status)}")
+    if layout_patch:
+        sets.append(f"layout = layout || {sql_jsonb(layout_patch)}")
+    rows = run_psql_json_statement(
+        f"""
+        WITH updated AS (
+            UPDATE ops.dashboard_widgets
+            SET {', '.join(sets)}
+            WHERE id = {widget_id}
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
+        """
+    )
+    if not rows:
+        raise ValueError(f"dashboard widget not found: {widget_id}")
+    result = rows[0]
+    audit_api_write("ai_os_api_update_dashboard_widget", "update_dashboard_widget", actor, "ops.dashboard_widgets", result, payload)
+    return result
+
+
+def build_department_terminal_snapshot(workspace: str) -> dict:
+    workspace = (workspace or "").strip().lower()
+    if workspace not in TERMINAL_WORKSPACES:
+        raise ValueError(f"workspace must be one of {sorted(TERMINAL_WORKSPACES)}")
+    shared = {
+        "execution_control": "SELECT * FROM trading.v_execution_control_state LIMIT 1",
+        "widgets": f"SELECT * FROM ops.v_dashboard_widgets WHERE workspace = {sql_literal(workspace)} ORDER BY coalesce((layout ->> 'order')::integer, 100), updated_at DESC LIMIT 30",
+    }
+    queries_by_workspace = {
+        "approvals": {
+            "summary": "SELECT * FROM agent.v_approval_board_summary ORDER BY metric",
+            "primary": "SELECT * FROM agent.v_approval_board_items ORDER BY status_rank, risk_rank, latest_activity_at DESC NULLS LAST LIMIT 120",
+            "secondary": "SELECT * FROM trading.v_execution_gate_checks ORDER BY checked_at DESC NULLS LAST LIMIT 60",
+        },
+        "agents": {
+            "summary": "SELECT * FROM agent.v_agent_departments ORDER BY priority, department_name",
+            "primary": "SELECT * FROM agent.v_active_agents ORDER BY department_name, agent_name",
+            "secondary": "SELECT * FROM agent.v_live_agent_worker_queue ORDER BY updated_at DESC LIMIT 100",
+            "tertiary": "SELECT * FROM agent.v_agent_message_threads ORDER BY created_at DESC NULLS LAST LIMIT 80",
+        },
+        "committees": {
+            "summary": "SELECT * FROM agent.v_committee_room_summary ORDER BY metric",
+            "primary": "SELECT * FROM agent.v_committee_room_items ORDER BY priority_rank, latest_activity_at DESC NULLS LAST LIMIT 120",
+        },
+        "capital": {
+            "summary": "SELECT * FROM books.v_portfolio_intelligence_summary ORDER BY metric",
+            "primary": "SELECT * FROM books.v_investment_books ORDER BY gross_exposure DESC NULLS LAST, book_name",
+            "secondary": "SELECT * FROM books.v_symbol_book_exposure ORDER BY gross_exposure DESC NULLS LAST LIMIT 120",
+            "tertiary": "SELECT * FROM books.v_cross_book_coordination_questions ORDER BY latest_as_of DESC NULLS LAST LIMIT 80",
+        },
+        "treasury": {
+            "summary": "SELECT * FROM core.v_latest_data_source_freshness ORDER BY severity, staleness_minutes DESC NULLS LAST LIMIT 80",
+            "primary": "SELECT * FROM trading.v_crypto_commodity_watchlist ORDER BY normalized_symbol LIMIT 80",
+            "secondary": "SELECT * FROM market.v_latest_news_items ORDER BY published_at DESC NULLS LAST LIMIT 100",
+        },
+        "models": {
+            "summary": "SELECT * FROM core.v_provider_readiness_summary ORDER BY metric",
+            "primary": "SELECT * FROM core.v_provider_readiness_board ORDER BY readiness_status, subject_name LIMIT 120",
+            "secondary": "SELECT * FROM agent.model_routes ORDER BY route_name",
+            "tertiary": "SELECT * FROM core.v_provider_assignment_gate_checks ORDER BY created_at DESC NULLS LAST LIMIT 80",
+        },
+    }
+    queries = {**shared, **queries_by_workspace[workspace]}
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "workspace": workspace,
+        "data_mode": {"seed_data_allowed": False, "source": "department_terminal_live_read_model"},
+        "payload_profile": {"query_count": len(queries), "row_count": sum(len(rows) for rows in data.values())},
+        **data,
+    }
 
 
 def build_blueprint_registry(
@@ -5561,6 +5847,158 @@ def run_filing_pdf_extractor(payload: dict) -> dict:
     return result
 
 
+def ingest_research_paper(payload: dict) -> dict:
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    actor = str(payload.get("actor") or "Research Librarian").strip() or "Research Librarian"
+    command = [
+        PDF_PYTHON,
+        str(RUNTIME_ROOT / "scripts" / "ingest_research_paper.py"),
+        "--title", title,
+        "--source-key", str(payload.get("source_key") or payload.get("sourceKey") or "local"),
+        "--actor", actor,
+    ]
+    scalar_args = {
+        "source_url": "--source-url",
+        "pdf_url": "--pdf-url",
+        "local_path": "--local-path",
+        "published_date": "--published-date",
+        "doi": "--doi",
+        "abstract": "--abstract",
+    }
+    for key, flag in scalar_args.items():
+        value = payload.get(key)
+        if value not in (None, ""):
+            command.extend([flag, str(value)])
+    list_args = {
+        "authors": "--authors",
+        "topics": "--topics",
+        "asset_classes": "--asset-classes",
+        "markets": "--markets",
+        "methodology_tags": "--methodology-tags",
+    }
+    for key, flag in list_args.items():
+        value = payload.get(key)
+        if isinstance(value, list):
+            value = ",".join(str(item) for item in value if str(item).strip())
+        if value not in (None, ""):
+            command.extend([flag, str(value)])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        raise ValueError((completed.stderr or completed.stdout or "research paper ingestion failed").strip())
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("research paper ingestor returned invalid JSON") from exc
+    paper = result.get("paper") or {}
+    paper_id = paper.get("id")
+    if paper_id:
+        run_psql_text(
+            f"""
+            WITH task AS (
+                INSERT INTO agent.tasks (
+                    title, objective, owner_agent, status, priority,
+                    approval_required, source_kind, source_ref, output_format, evidence
+                ) VALUES (
+                    {sql_literal('Review research paper: ' + title)},
+                    {sql_literal('Validate methodology, assumptions, data leakage, market applicability, and whether testable strategy hypotheses should be created.')},
+                    'Research Librarian', 'queued', 'medium', false,
+                    'research.research_papers', {sql_literal(str(paper_id))},
+                    'Obsidian research note plus hypothesis queue',
+                    {sql_jsonb([{"table": "research.research_papers", "id": paper_id}])}
+                )
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            )
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            ) SELECT id, {sql_literal('Research paper ready for review: ' + title)},
+                     'Research Librarian', 'queued', 'medium',
+                     'Review extraction evidence and dispatch Strategy Research Agent only if the paper yields a falsifiable hypothesis.',
+                     {sql_jsonb([{"table": "research.research_papers", "id": paper_id}])}, 'research'
+              FROM task
+             WHERE NOT EXISTS (
+                SELECT 1
+                  FROM agent.inbox_items existing
+                 WHERE existing.owner_agent = 'Research Librarian'
+                   AND existing.title = {sql_literal('Research paper ready for review: ' + title)}
+                   AND existing.status IN ('queued', 'running', 'needs_review')
+             )
+            """
+        )
+    audit_api_write("ai_os_api_ingest_research_paper", "ingest_research_paper", actor, "research.research_papers", result, payload)
+    return result
+
+
+def create_paper_strategy_hypotheses(payload: dict) -> dict:
+    try:
+        paper_id = int(payload.get("paper_id") or payload.get("paperId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("paper_id is required and must be an integer") from exc
+    hypotheses = payload.get("hypotheses")
+    if not isinstance(hypotheses, list) or not hypotheses:
+        raise ValueError("hypotheses must be a non-empty array of source-backed, testable hypothesis objects")
+    if len(hypotheses) > 12:
+        raise ValueError("at most 12 hypotheses may be created per request")
+    actor = str(payload.get("actor") or "Strategy Research Agent").strip() or "Strategy Research Agent"
+    paper_rows = run_psql_json(
+        f"SELECT id, paper_key, title, source_url, pdf_url, content_hash, extraction_status FROM research.research_papers WHERE id = {paper_id} LIMIT 1"
+    )
+    if not paper_rows:
+        raise ValueError(f"research paper not found: {paper_id}")
+    paper = paper_rows[0]
+    created: list[dict] = []
+    for index, hypothesis in enumerate(hypotheses):
+        if not isinstance(hypothesis, dict):
+            raise ValueError("each hypothesis must be an object")
+        title = str(hypothesis.get("title") or "").strip()
+        edge = str(hypothesis.get("edge_hypothesis") or hypothesis.get("edgeHypothesis") or "").strip()
+        if not title or not edge:
+            raise ValueError("each hypothesis requires title and edge_hypothesis")
+        key_material = f"{paper.get('paper_key')}|{title}|{edge}|{index}"
+        hypothesis_key = "paper-hypothesis-" + hashlib.sha256(key_material.encode()).hexdigest()[:20]
+        rows = run_psql_json_statement(
+            f"""
+            WITH hypothesis AS (
+                INSERT INTO research.paper_strategy_hypotheses (
+                    hypothesis_key, paper_id, title, edge_hypothesis,
+                    market_scope, asset_classes, timeframe, signal_definition,
+                    data_requirements, implementation_notes, invalidation_tests,
+                    limitations, evidence, status, owner_agent
+                ) VALUES (
+                    {sql_literal(hypothesis_key)}, {paper_id}, {sql_literal(title)}, {sql_literal(edge)},
+                    {sql_text_array(hypothesis.get('market_scope') or hypothesis.get('markets') or [])},
+                    {sql_text_array(hypothesis.get('asset_classes') or [])},
+                    {sql_literal(hypothesis.get('timeframe'))},
+                    {sql_jsonb(hypothesis.get('signal_definition') or {})},
+                    {sql_jsonb(hypothesis.get('data_requirements') or {})},
+                    {sql_literal(hypothesis.get('implementation_notes'))},
+                    {sql_jsonb(hypothesis.get('invalidation_tests') or [])},
+                    {sql_jsonb(hypothesis.get('limitations') or [])},
+                    {sql_jsonb([{"table": "research.research_papers", "id": paper_id, "content_hash": paper.get('content_hash'), "source_url": paper.get('source_url') or paper.get('pdf_url')}])},
+                    'research_queue', {sql_literal(actor)}
+                )
+                ON CONFLICT (hypothesis_key) DO UPDATE SET
+                    signal_definition=EXCLUDED.signal_definition,
+                    data_requirements=EXCLUDED.data_requirements,
+                    invalidation_tests=EXCLUDED.invalidation_tests,
+                    limitations=EXCLUDED.limitations,
+                    evidence=EXCLUDED.evidence,
+                    updated_at=now()
+                RETURNING *
+            )
+            SELECT coalesce(json_agg(row_to_json(hypothesis)), '[]'::json)::text FROM hypothesis
+            """
+        )
+        if rows:
+            created.append(rows[0])
+    result = {"paper": paper, "count": len(created), "hypotheses": created, "auto_promoted": False, "live_execution_allowed": False}
+    audit_api_write("ai_os_api_create_paper_strategy_hypotheses", "create_paper_strategy_hypotheses", actor, "research.paper_strategy_hypotheses", result, payload)
+    return result
+
+
 def resolve_approval(payload: dict) -> dict:
     try:
         approval_id = int(payload.get("approval_id") or payload.get("id"))
@@ -8166,7 +8604,7 @@ def upsert_dashboard_widget(intent: dict) -> dict:
                 source_intent_id = EXCLUDED.source_intent_id,
                 source_chat_turn_id = EXCLUDED.source_chat_turn_id,
                 config = EXCLUDED.config,
-                layout = EXCLUDED.layout,
+                layout = EXCLUDED.layout || ops.dashboard_widgets.layout,
                 data_binding = EXCLUDED.data_binding,
                 evidence = EXCLUDED.evidence,
                 last_materialized_at = now(),
@@ -8925,6 +9363,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/reports/snapshot":
                 self._send_json(build_reports_snapshot())
                 return
+            if request_path == "/api/workspaces/config":
+                self._send_json(build_workspace_config(str(query.get("profile_key", ["devarsh"])[0])))
+                return
+            if request_path == "/api/department-terminal/snapshot":
+                self._send_json(build_department_terminal_snapshot(str(query.get("workspace", [""])[0])))
+                return
             if self.path.startswith("/api/snapshot"):
                 self._send_json(build_snapshot())
                 return
@@ -9024,6 +9468,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/filings/extract-pdfs":
                 self._send_json(run_filing_pdf_extractor(payload), 201)
+                return
+            if self.path == "/api/research/papers/ingest":
+                self._send_json(ingest_research_paper(payload), 201)
+                return
+            if self.path == "/api/research/papers/hypotheses":
+                self._send_json(create_paper_strategy_hypotheses(payload), 201)
                 return
             if self.path == "/api/research/special-situations/memo":
                 self._send_json(generate_special_situation_memo(payload), 201)
@@ -9222,6 +9672,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/dashboard/widgets/materialize":
                 self._send_json(materialize_widget_intents(payload), 201)
+                return
+            if self.path == "/api/dashboard/widgets/update":
+                self._send_json(update_dashboard_widget(payload), 200)
+                return
+            if self.path == "/api/workspaces/config/update":
+                self._send_json(update_workspace_config(payload), 200)
                 return
             if self.path == "/api/agents/worker/run":
                 self._send_json(run_agent_worker(payload), 201)

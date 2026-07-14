@@ -14,7 +14,7 @@ Queue/cache: Redis
 Runtime location: external SSD
 Primary operating surface: AI Office GUI plus Charlie chat
 End goal: complete AI hedge fund and investment office OS
-Status: canonical master specification before next implementation phase
+Status: canonical active-build specification; verified checkpoints are appended with evidence and open gates remain explicit
 
 ## 1. Vision
 
@@ -1452,3 +1452,26 @@ The system is not "complete" until:
 13. Build Command Center foundation by extracting the monolithic AI Office UI into live-data modules without behavior loss.
 14. Build Animated AI Office v1 only after real task arrows and agent work states are data-backed.
 15. Complete the Command Center and 3D Office gates in [[AI OS Command Center and 3D Office Frontend Plan]] before calling the operating interface complete.
+
+## 32. Verified Terminal, Agent, And Research Foundation - 2026-07-15
+
+The operating interface now includes scoped Approval Board, Agent Office, Committee Rooms, Capital Allocation, Treasury and Macro, and Model Runtime terminals. The operator can persist theme, density, columns, module order, hidden modules, and dashboard widget layout through audited API and MCP actions. Charlie may propose and apply workspace changes, but a layout change cannot alter evidence, approval, capital, or execution records.
+
+The live organization contains 49 active role-scoped agents across automation, data, executive, knowledge, news, portfolio, quant, research, risk, runtime, and trading. The hierarchy follows this control path:
+
+```text
+Devarsh
+  -> Charlie Munger, chief orchestrator and decision partner
+      -> Jarvis, runtime operator and dispatcher
+      -> Portfolio Manager / Capital Allocation Agent
+      -> Research Analyst / Strategy Generator / Risk Agent / Trading Desk Agent
+          -> role-scoped specialists with durable mailboxes, tasks, evidence, and escalation
+```
+
+Agents may prepare evidence, recommend actions, create tasks, and communicate through durable warehouse records. Human approval remains mandatory for capital actions, live execution, external communication, and policy exceptions. Agent personalities are operating constraints, not fictional authority.
+
+The Research Factory now accepts source-backed paper metadata and public or approved-local PDFs, retains PDF/text on the external SSD, hashes and registers the artifact, extracts full text, creates an idempotent review task, and stores falsifiable paper-linked strategy hypotheses. A hypothesis cannot promote itself into a strategy or broker action.
+
+The Trading Desk contains six advanced TradingView template contracts for indicator stacks, ratio charts, spread formulas, four-pane straddles, fundamental ratios, and market-regime analysis. Template requests remain approval-gated; full deterministic multi-pane UI execution is still an open production gate.
+
+Verification: 14 functional browser cases, 23 WCAG A/AA cases, production build, Python compile, MCP smoke with 138 tools, source-backed PDF extraction, idempotency proof, and desktop/mobile screenshots passed. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
