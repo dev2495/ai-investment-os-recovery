@@ -7,6 +7,7 @@ const workspaces = [
   ["clients", "Client Folios"],
   ["research", "Holdings Research"],
   ["ideas", "Idea Pipeline"],
+  ["arsenal", "Strategy Arsenal"],
   ["trading", "Trading Desk"],
   ["quant", "Quant Lab"],
   ["risk", "Risk Center"],

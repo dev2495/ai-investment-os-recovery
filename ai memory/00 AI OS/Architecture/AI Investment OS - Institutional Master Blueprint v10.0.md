@@ -1475,3 +1475,31 @@ The Research Factory now accepts source-backed paper metadata and public or appr
 The Trading Desk contains six advanced TradingView template contracts for indicator stacks, ratio charts, spread formulas, four-pane straddles, fundamental ratios, and market-regime analysis. Template requests remain approval-gated; full deterministic multi-pane UI execution is still an open production gate.
 
 Verification: 14 functional browser cases, 23 WCAG A/AA cases, production build, Python compile, MCP smoke with 138 tools, source-backed PDF extraction, idempotency proof, and desktop/mobile screenshots passed. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+
+## 33. Strategy Arsenal Operating Contract - 2026-07-15
+
+The Quantitative Strategies Office now has a unified operating surface rather than disconnected intake, discovery, optimizer, validation, and committee panels. Every strategy candidate enters the Strategy Arsenal with explicit provenance: operator submitted, system discovery, template library, research sourced, or imported/other. A source may propose a candidate but cannot bypass the canonical lifecycle.
+
+The lifecycle is:
+
+```text
+Operator idea / source-backed discovery / approved template
+  -> structured intake and falsifiable hypothesis
+  -> machine-testable DSL parse
+  -> point-in-time data-quality gate
+  -> deterministic baseline backtest with cost and slippage evidence
+  -> bounded optimization and diagnostics
+  -> independent model-validation review
+  -> Strategy Committee decision
+  -> paper monitor
+  -> separately approved limited-live request
+  -> broker adapter only after future production authorization
+```
+
+The terminal exposes eight independent gate states, the next required safe action, responsible agent, source lineage, and linked evidence. The evidence chain resolves intake, generated idea, backtest runs, optimization runs, model validation, committee records, paper and limited-live gates, and open work. Discovery triage supports Quant Lab routing, more-evidence requests, and rejection. Validation and discovery controls do not receive execution authority.
+
+The canonical database contract is `strategy.v_strategy_arsenal_control_board` plus `strategy.v_strategy_arsenal_control_summary`. The scoped API is `GET /api/strategy-arsenal/snapshot`; the MCP contract is `ai_os_strategy_arsenal_control_board`. Workspace layout is operator configurable, while evidence, approval, capital, risk, and execution records are not layout configuration.
+
+Verified live state at the checkpoint contained 47 candidates: 3 operator submissions, 34 system discoveries, and 10 imported/other records. All 47 had baseline backtests; 38 passed DSL and data-quality gates and had optimization evidence; 1 passed independent validation and awaited committee review; none had a paper monitor; none had limited-live approval; broker orders allowed remained 0. These counts are dynamic because the discovery scheduler remains active.
+
+This is not production execution readiness. Remaining gates include richer historical and intraday/options datasets, optimizer configuration and portfolio analytics, paper-monitor operations, drift/capacity/correlation controls, committee decisions, limited-live policy, broker adapters, and security/compliance authorization. Evidence: [[2026-07-15-strategy-arsenal-v1]].

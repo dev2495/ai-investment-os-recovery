@@ -5,7 +5,7 @@ import {
   fetchWorkspaceConfig,
   updateDashboardWidget,
   updateWorkspaceConfig,
-  type TerminalWorkspace,
+  type CustomizableWorkspace,
   type WorkspaceConfig
 } from "../api/terminal";
 
@@ -79,7 +79,7 @@ export default function WorkspaceManager({ config, onChanged, onClose, workspace
                 {(["compact", "standard"] as const).map((density) => <button className={config.profile.density === density ? "active" : ""} disabled={busy === "profile"} key={density} onClick={() => void saveProfile({ density })} type="button">{density}</button>)}
               </div>
             </div>
-            {layout ? <div className="workspace-segment-row"><span>Columns</span><div className="segmented-control">{[1, 2, 3].map((count) => <button className={layout.column_count === count ? "active" : ""} disabled={busy === "profile"} key={count} onClick={() => void saveProfile({ column_count: count, workspace_key: workspace as TerminalWorkspace })} type="button">{count}</button>)}</div></div> : null}
+            {layout ? <div className="workspace-segment-row"><span>Columns</span><div className="segmented-control">{[1, 2, 3].map((count) => <button className={layout.column_count === count ? "active" : ""} disabled={busy === "profile"} key={count} onClick={() => void saveProfile({ column_count: count, workspace_key: workspace as CustomizableWorkspace })} type="button">{count}</button>)}</div></div> : null}
           </section>
 
           <section>

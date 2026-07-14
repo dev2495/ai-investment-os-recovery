@@ -190,8 +190,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 6. Quantitative Strategies Office
 
-- [~] Strategy intake workflow.
-- [~] Strategy candidate creation.
+- [x] Strategy intake workflow. The Strategy Arsenal provides an operator intake with hypothesis, family, asset class, symbols, universe, timeframe, constraints, and risk/invalidation fields; writes remain paper-first. Verified through the scoped API, live UI, database, MCP, and [[2026-07-15-strategy-arsenal-v1]].
+- [x] Strategy candidate creation. Operator submissions, templates, and system discovery converge into the canonical candidate and promotion records; the control board currently covers every candidate without enabling broker orders. Evidence: [[2026-07-15-strategy-arsenal-v1]].
 - [~] Paper-first activation gate.
 - [~] Deterministic OHLCV backtest runner.
 - [~] Cost/slippage model foundation.
@@ -209,7 +209,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Strategy kill-switch enforcement.
 - [~] Limited-live approval workflow.
 - [~] Strategy idea generator from trade journals.
-- [~] Automatic strategy discovery engine.
+- [x] Automatic strategy discovery engine. Research, journal, signal, and component discovery runs create source-linked candidates and route only bounded top candidates into the paper-first optimizer path. Evidence: [[2026-07-07-strategy-discovery-engine-v1]], [[2026-07-07-strategy-discovery-scheduler-external-sources-v1]], and [[2026-07-15-strategy-arsenal-v1]].
 - [~] Strategy idea dossiers.
 - [~] Dossier semantic search.
 - [~] Dossier-to-workflow action bridge.
@@ -225,6 +225,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Strategy capacity dashboard.
 - [ ] Strategy retirement dashboard v2.
 - [ ] Strategy paper/live promotion board v2.
+- [x] Unified Strategy Arsenal lifecycle board v1. Provenance, DSL, data, baseline backtest, optimization, model validation, committee, paper-monitor, and limited-live gates are visible in one scoped terminal with evidence drill-down and an immutable broker-order false contract. Evidence: [[2026-07-15-strategy-arsenal-v1]].
 - [ ] Quant Lab committee room v2.
 
 ## 7. Active Trading Desk
@@ -481,13 +482,14 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Agent task/inbox panels. Mission Control and Live Office expose durable priority tasks, current work, inbox, unread-message, blocked-work, and risk counts. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [~] Long-Term Office dashboard foundation.
 - [x] Quant Lab dashboard foundation. Scoped validation, promotion, committee, retirement/drift, and safe analytics controls are deployed against live strategy rows. Evidence: [[2026-07-13-trading-quant-risk-v2]].
+- [x] Strategy Arsenal terminal v1. Operator intake, ten templates, source-backed discovery triage, validation sweep, origin/stage filters, eight promotion gates, next-required actions, and strategy evidence chains are deployed through a scoped endpoint. Broker orders remain zero and globally locked. Evidence: [[2026-07-15-strategy-arsenal-v1]].
 - [x] AI Office live activity foundation. The office maps 36 employee records, 24 live activity rows, 10 rooms, mailbox handoffs, committee matters, priority work, risk events, freshness alerts, and execution control from the warehouse with no seed fallback. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [x] Live snapshot/API contract for every Command Center workspace and Live Office. Reports now uses `/api/reports/snapshot`; no UI route requests broad `/api/snapshot`. Evidence: [[2026-07-13-reports-v2]].
 - [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
 - [~] Command Center shell extraction from monolithic `App.tsx` with no behavior loss. The production root now uses a compact scoped-only shell; the legacy function is unreferenced and tree-shaken. Main JS fell from 464.25 KB to 250.16 KB (46.1%), and the 18-test full workspace matrix passed. Physical removal of the legacy source function remains. Evidence: [[2026-07-13-scoped-command-shell-v2]].
 - [x] Addressable Command Center / Live Office world routing with preserved context. All ten workspaces are independently mounted from scoped contracts. Office department rows now separate camera focus from an explicit mapped workspace action; `Runtime Operations` opens System Health in the verified browser flow. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [x] Snapshot/UI/chat state and containment layer. Every scoped workspace shows its live generated-at age, fresh/stale/loading/offline state, and retains focused refresh after writes. Workspace and Live Office render failures are contained by reloadable error boundaries; stale age updates locally without adding API requests. Evidence: [[2026-07-13-frontend-production-hardening-v2]].
-- [x] Automated accessibility and keyboard gate. Checked-in Playwright plus axe covers all ten workspaces at 1440 x 1000 and 390 x 844, approval-dialog focus trap/restoration, and Live Office static desktop/mobile fallbacks. All 23 WCAG A/AA cases pass; actual overflow regions receive keyboard access and labels, AA palette contrast is enforced, and reduced-motion animation is bounded. Evidence: [[2026-07-13-frontend-production-hardening-v2]].
+- [x] Automated accessibility and keyboard gate. Checked-in Playwright plus axe covers all eleven workspaces at 1440 x 1000 and 390 x 844, approval-dialog focus trap/restoration, and Live Office static desktop/mobile fallbacks. All 25 WCAG A/AA cases pass; actual overflow regions receive keyboard access and labels, AA palette contrast is enforced, and reduced-motion animation is bounded. Evidence: [[2026-07-13-frontend-production-hardening-v2]] and [[2026-07-15-strategy-arsenal-v1]].
 - [x] Focused workspace snapshot profile and payload budget. Reports is 605 KB/0.23 s for 603 rows/12 queries; every UI workspace now uses a scoped contract and broad `/api/snapshot` is never requested by fresh routes. Evidence: [[2026-07-13-reports-v2]].
 - [~] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows. The reusable v2 drawer and bounded `/api/evidence/entity/{kind}/{key}` contract now cover agent messages, tasks/provider gates, approvals, long-term/strategy committee packets, output artifacts, worker tasks, and source lineage. The live warehouse smoke covered all six whitelisted entity kinds; desktop/mobile approval/artifact/lineage workflows passed inside the 22-test matrix. Portfolio position/conflict and trading/quant/risk-specific drill-downs remain open. Evidence: [[2026-07-13-deep-evidence-and-approval-actions-v2]].
 - [~] Mission Control v2: scoped live workspace now shows Charlie chat, durable delegations, executive inbox, approval queue, latest brief/chat turn, execution/provider gates, widget materialization, worker launch, source-freshness alerts, and task/message/approval evidence drawers. Pending approval decisions are live and explicitly do not grant broker authority. Scheduled daily-brief generation remains open. Evidence: [[2026-07-13-mission-control-v2-scoped-workspace]], [[2026-07-13-deep-evidence-and-approval-actions-v2]].

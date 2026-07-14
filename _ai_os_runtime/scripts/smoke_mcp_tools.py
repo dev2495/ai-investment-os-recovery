@@ -73,6 +73,7 @@ def main() -> int:
         "ai_os_workspace_terminal_config",
         "ai_os_update_workspace_terminal",
         "ai_os_update_workspace_widget",
+        "ai_os_strategy_arsenal_control_board",
     }
     missing = sorted(required - tool_names)
     if missing:
@@ -91,6 +92,7 @@ def main() -> int:
         "fincept": parse_tool_content(call("tools/call", {"name": "ai_os_fincept_component_review", "arguments": {}})),
         "fincept_install": parse_tool_content(call("tools/call", {"name": "ai_os_fincept_install_status", "arguments": {}})),
         "workspace_terminal": parse_tool_content(call("tools/call", {"name": "ai_os_workspace_terminal_config", "arguments": {}})),
+        "strategy_arsenal": parse_tool_content(call("tools/call", {"name": "ai_os_strategy_arsenal_control_board", "arguments": {"limit": 10}})),
     }
 
     process.stdin.close()
@@ -117,6 +119,8 @@ def main() -> int:
         "fincept_installed_components": len((checks["fincept_install"] or {}).get("installed_components", [])),
         "workspace_layouts": len((checks["workspace_terminal"] or {}).get("config", [])),
         "workspace_widgets": len((checks["workspace_terminal"] or {}).get("widgets", [])),
+        "strategy_arsenal_rows": len((checks["strategy_arsenal"] or {}).get("control_board", [])),
+        "strategy_arsenal_summary_metrics": len((checks["strategy_arsenal"] or {}).get("summary", [])),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

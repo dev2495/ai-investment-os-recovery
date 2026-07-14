@@ -11,6 +11,7 @@ export type WorkspaceId =
   | "clients"
   | "research"
   | "ideas"
+  | "arsenal"
   | "trading"
   | "quant"
   | "risk"

@@ -157,6 +157,7 @@ import ReportsWorkspace from "./views/ReportsWorkspace";
 import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 import TradingQuantRiskWorkspace from "./views/TradingQuantRiskWorkspace";
 import DepartmentTerminalWorkspace from "./views/DepartmentTerminalWorkspace";
+import StrategyArsenalWorkspace from "./views/StrategyArsenalWorkspace";
 import WorkspaceManager from "./components/WorkspaceManager";
 import { fetchWorkspaceConfig, type TerminalWorkspace, type WorkspaceConfig } from "./api/terminal";
 
@@ -178,6 +179,7 @@ const baseWorkspaces: Workspace[] = [
   { id: "clients", label: "Client Folios" },
   { id: "research", label: "Holdings Research" },
   { id: "ideas", label: "Idea Pipeline" },
+  { id: "arsenal", label: "Strategy Arsenal" },
   { id: "trading", label: "Trading Desk" },
   { id: "quant", label: "Quant Lab" },
   { id: "risk", label: "Risk Center" },
@@ -197,6 +199,7 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   clients: Building2,
   research: Landmark,
   ideas: Sparkles,
+  arsenal: GitBranch,
   trading: LineChart,
   quant: FlaskConical,
   risk: ShieldCheck,
@@ -781,6 +784,7 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
     reports: snapshot?.research_hub.length ?? 0,
     research: Number(metricValue(snapshot, "research_hub_artifacts", "0")),
     risk: (snapshot?.approvals.length ?? 0) + (snapshot?.alerts.length ?? 0) + (snapshot?.cross_book_conflicts.length ?? 0) + (snapshot?.book_assignment_gaps.length ?? 0),
+    arsenal: snapshot?.strategies.length ?? 0,
     system: (snapshot?.mcp_candidates.length ?? 0) + (snapshot?.data_source_checks.length ?? 0) + (snapshot?.dashboard_widgets.length ?? 0) + (snapshot?.agent_skills.length ?? 0),
     treasury: snapshot?.data_source_checks.length ?? 0,
     models: snapshot?.model_routes.length ?? 0,
@@ -8444,6 +8448,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       clients: "aios:portfolio-office-refresh",
       research: "aios:research-ideas-refresh",
       ideas: "aios:research-ideas-refresh",
+      arsenal: "aios:strategy-arsenal-refresh",
       trading: "aios:trading-quant-risk-refresh",
       quant: "aios:trading-quant-risk-refresh",
       risk: "aios:trading-quant-risk-refresh",
@@ -8517,6 +8522,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   else if (["approvals", "agents", "committees", "capital", "treasury", "models"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "arsenal") workspaceContent = <StrategyArsenalWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "trading" || activeWorkspace === "quant" || activeWorkspace === "risk") workspaceContent = <TradingQuantRiskWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else workspaceContent = <ReportsWorkspace onStatusChange={setLiveStatus} />;
   workspaceContent = <WorkspaceErrorBoundary workspace={activeWorkspaceLabel}>{workspaceContent}</WorkspaceErrorBoundary>;

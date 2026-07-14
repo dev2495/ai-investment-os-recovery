@@ -4219,6 +4219,63 @@ def strategy_promotion_board(arguments: dict) -> dict:
     )
 
 
+def strategy_arsenal_control_board(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=80, maximum=200)
+    origin = str(arguments.get("origin_type") or arguments.get("originType") or "").strip()
+    stage = str(arguments.get("promotion_stage") or arguments.get("promotionStage") or "").strip()
+    query = str(arguments.get("query") or "").strip()
+    clauses: list[str] = []
+    if origin:
+        clauses.append(f"origin_type = {sql_literal(origin)}")
+    if stage:
+        clauses.append(f"promotion_stage = {sql_literal(stage)}")
+    if query:
+        clauses.append(
+            "(strategy_name ILIKE " + sql_literal(f"%{query}%")
+            + " OR candidate_key ILIKE " + sql_literal(f"%{query}%")
+            + " OR array_to_string(symbols, ',') ILIKE " + sql_literal(f"%{query}%") + ")"
+        )
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                "SELECT metric, value, interpretation FROM strategy.v_strategy_arsenal_control_summary ORDER BY metric"
+            ),
+            "control_board": run_psql_json(
+                f"""
+                SELECT candidate_id, candidate_key, strategy_name, candidate_status,
+                       owner_agent, universe, timeframe, strategy_family,
+                       asset_class, symbols, edge_hypothesis, origin_type,
+                       source_kind, source_ref, discovery_candidate_id,
+                       triage_decision, triage_status, parse_status,
+                       data_quality_status, backtest_runs, optimization_runs,
+                       validation_reviews, validation_gate_status,
+                       validation_gate_reason, required_fixes,
+                       committee_decision_status, paper_monitor_status,
+                       limited_live_request_status, promotion_stage,
+                       next_required_action, gates_passed, gates_total,
+                       gate_flags, broker_order_allowed,
+                       autonomous_live_execution_allowed, open_tasks,
+                       evidence, updated_at
+                FROM strategy.v_strategy_arsenal_control_board
+                {where}
+                ORDER BY updated_at DESC NULLS LAST, candidate_id DESC
+                LIMIT {limit}
+                """
+            ),
+            "execution_control": run_psql_json(
+                """
+                SELECT global_execution_locked, broker_execution_policy,
+                       paper_trading_allowed, limited_live_allowed,
+                       live_broker_writes_allowed, lock_reason, updated_at
+                FROM trading.v_execution_control_state
+                LIMIT 1
+                """
+            ),
+        }
+    )
+
+
 def run_user_defined_strategy_optimizer(arguments: dict) -> dict:
     payload = {
         "run_key": arguments.get("run_key") or arguments.get("runKey") or "user_strategy_optimizer_mcp",
@@ -5016,7 +5073,7 @@ TOOLS = {
                 "default_workspace": {"type": "string"},
                 "navigation": {"type": "object"},
                 "preferences": {"type": "object"},
-                "workspace_key": {"type": "string", "enum": ["approvals", "agents", "committees", "capital", "treasury", "models"]},
+                "workspace_key": {"type": "string", "enum": ["approvals", "agents", "committees", "capital", "treasury", "models", "arsenal"]},
                 "module_order": {"type": "array", "items": {"type": "string"}},
                 "hidden_modules": {"type": "array", "items": {"type": "string"}},
                 "column_count": {"type": "integer", "minimum": 1, "maximum": 4},
@@ -6339,6 +6396,19 @@ TOOLS = {
             },
         },
         "handler": strategy_promotion_board,
+    },
+    "ai_os_strategy_arsenal_control_board": {
+        "description": "Read the unified Strategy Arsenal with candidate provenance, eight independent gates, next safe action, and execution-lock evidence.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "origin_type": {"type": "string", "enum": ["operator_submitted", "system_discovery", "template_library", "research_sourced", "imported_or_other"]},
+                "promotion_stage": {"type": "string"},
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 80},
+            },
+        },
+        "handler": strategy_arsenal_control_board,
     },
     "ai_os_run_user_defined_strategy_optimizer": {
         "description": "Create a strategy from user input and run parser, data gate, baseline backtest, and optimizer using real OHLCV. This never enables live execution.",

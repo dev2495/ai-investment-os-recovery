@@ -470,7 +470,7 @@ def _numeric_evidence_key(entity_key: str, entity_kind: str) -> int:
 
 def build_entity_evidence(entity_kind: str, entity_key: str) -> dict:
     """Return bounded, whitelisted evidence chains for Command Center drawers."""
-    allowed_kinds = {"agent_message", "task", "approval", "committee", "artifact", "lineage"}
+    allowed_kinds = {"agent_message", "task", "approval", "committee", "strategy", "artifact", "lineage"}
     if entity_kind not in allowed_kinds:
         raise ValueError(f"unsupported evidence entity kind: {entity_kind}")
 
@@ -664,6 +664,110 @@ def build_entity_evidence(entity_kind: str, entity_key: str) -> dict:
         groups = [
             _evidence_group("source_review", "Source review", source_rows),
             _evidence_group("approvals", "Approval", approval_rows),
+        ]
+    elif entity_kind == "strategy":
+        strategy_id = _numeric_evidence_key(entity_key, entity_kind)
+        rows = run_psql_json(
+            f"SELECT * FROM strategy.v_strategy_arsenal_control_board WHERE candidate_id = {strategy_id} LIMIT 1"
+        )
+        if not rows:
+            raise ValueError(f"strategy candidate not found: {strategy_id}")
+        record = rows[0]
+        intake_id = record.get("intake_id")
+        groups = [
+            _evidence_group("intake", "Intake and hypothesis", run_psql_json(
+                f"""
+                SELECT intake.id, intake.intake_key, intake.created_by, intake.intake_text,
+                       intake.strategy_name, intake.strategy_family, intake.asset_class,
+                       intake.symbols, intake.universe, intake.timeframe, intake.intent_tags,
+                       intake.constraints_text, intake.risk_notes, intake.source_kind,
+                       intake.source_ref, intake.status, intake.evidence, intake.created_at,
+                       idea.id AS idea_id, idea.idea_key, idea.title AS idea_title,
+                       idea.edge_hypothesis, idea.entry_rules, idea.exit_rules,
+                       idea.risk_rules, idea.data_requirements, idea.invalidation_tests,
+                       idea.priority_score, idea.risk_score, idea.status AS idea_status
+                FROM strategy.strategy_intakes intake
+                LEFT JOIN strategy.generated_ideas idea ON idea.intake_id = intake.id
+                WHERE intake.id = {int(intake_id) if intake_id not in (None, '') else 'NULL'}
+                LIMIT 5
+                """
+            )),
+            _evidence_group("backtests", "Backtest runs", run_psql_json(
+                f"""
+                SELECT id, strategy_id, run_status, data_start, data_end, universe,
+                       timeframe, metrics, diagnostics, artifact_path, started_at, finished_at
+                FROM strategy.backtest_runs
+                WHERE strategy_id = {strategy_id}
+                ORDER BY finished_at DESC NULLS LAST, id DESC
+                LIMIT 10
+                """
+            )),
+            _evidence_group("optimizations", "Optimization runs", run_psql_json(
+                f"""
+                SELECT id, strategy_id, backtest_run_id, run_name, optimizer_type,
+                       status, objective, parameter_space, constraints, metrics,
+                       diagnostics, artifact_path, owner_agent, started_at, finished_at
+                FROM strategy.optimization_runs
+                WHERE strategy_id = {strategy_id}
+                ORDER BY finished_at DESC NULLS LAST, id DESC
+                LIMIT 10
+                """
+            )),
+            _evidence_group("validation", "Model validation", run_psql_json(
+                f"""
+                SELECT id, strategy_id, reviewer_agent, review_status, decision,
+                       leakage_risk, overfit_risk, issues, required_fixes, evidence,
+                       created_at, updated_at
+                FROM strategy.validation_reviews
+                WHERE strategy_id = {strategy_id}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 10
+                """
+            )),
+            _evidence_group("committee", "Strategy Committee", run_psql_json(
+                f"""
+                SELECT id, review_key, strategy_id, strategy_name, review_status,
+                       recommended_decision, proposed_mode, risk_level, final_decision,
+                       decision_status, paper_monitor_allowed, live_execution_allowed,
+                       memo_note_path, approval_status, decided_by, decided_at,
+                       created_at, updated_at
+                FROM strategy.v_strategy_committee_queue
+                WHERE strategy_id = {strategy_id}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 10
+                """
+            )),
+            _evidence_group("paper_and_limited_live", "Paper and limited-live gates", run_psql_json(
+                f"""
+                SELECT 'paper_monitor' AS record_type, id, session_key AS record_key,
+                       status, live_execution_allowed, started_at AS created_at,
+                       updated_at, metrics AS details
+                FROM strategy.v_paper_monitor_sessions
+                WHERE strategy_id = {strategy_id}
+                UNION ALL
+                SELECT 'limited_live', id, request_key, request_status,
+                       live_execution_allowed, created_at, updated_at,
+                       jsonb_build_object('approval_status', approval_status,
+                                          'max_notional', max_notional,
+                                          'max_daily_loss', max_daily_loss)
+                FROM trading.v_limited_live_requests
+                WHERE strategy_id = {strategy_id}
+                ORDER BY updated_at DESC
+                LIMIT 20
+                """
+            )),
+            _evidence_group("tasks", "Open work", run_psql_json(
+                f"""
+                SELECT id, title, objective, owner_agent, status, priority,
+                       approval_required, source_kind, source_ref, evidence,
+                       created_at, updated_at
+                FROM agent.tasks
+                WHERE source_ref IN ({sql_literal(str(strategy_id))}, {sql_literal(record.get('candidate_key'))})
+                   OR evidence @> {sql_jsonb([{'table': 'strategy.strategy_candidates', 'id': strategy_id}])}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 20
+                """
+            )),
         ]
     elif entity_kind == "artifact":
         rows = run_psql_json(
@@ -1841,6 +1945,112 @@ def build_trading_quant_risk_snapshot() -> dict:
     }
 
 
+def build_strategy_arsenal_snapshot() -> dict:
+    """Return the bounded, provenance-aware strategy lifecycle control plane."""
+    queries = {
+        "summary": """
+            SELECT metric, value, interpretation
+            FROM strategy.v_strategy_arsenal_control_summary
+            ORDER BY metric
+        """,
+        "control_board": """
+            SELECT candidate_id, candidate_key, strategy_name, candidate_status,
+                   validation_status, activation_gate, owner_agent, universe,
+                   timeframe, strategy_family, asset_class, symbols,
+                   edge_hypothesis, intake_id, intake_key, created_by,
+                   source_kind, source_ref, origin_type,
+                   discovery_candidate_id, discovery_key,
+                   discovery_source_kind, discovery_source_ref,
+                   triage_decision, triage_status, parse_status,
+                   data_quality_status, backtest_runs, optimization_runs,
+                   validation_reviews, latest_backtest_run_id,
+                   latest_optimization_run_id, validation_review_id,
+                   validation_gate_status, validation_gate_reason,
+                   validation_decision, required_fixes, committee_review_id,
+                   committee_review_status, committee_decision_status,
+                   paper_monitor_allowed, paper_monitor_session_id,
+                   paper_monitor_status, paper_heartbeat_status,
+                   limited_live_request_id, limited_live_request_status,
+                   limited_live_approval_status, promotion_stage,
+                   next_required_action, gates_passed, gates_total, gate_flags,
+                   broker_order_allowed, autonomous_live_execution_allowed,
+                   open_tasks, latest_task_at, evidence, updated_at
+            FROM strategy.v_strategy_arsenal_control_board
+            ORDER BY updated_at DESC NULLS LAST, candidate_id DESC
+            LIMIT 160
+        """,
+        "intakes": """
+            SELECT id, intake_key, created_by, strategy_name, strategy_family,
+                   asset_class, symbols, universe, timeframe, intent_tags,
+                   status, owner_agent, assigned_agents, source_kind, source_ref,
+                   generated_ideas, strategy_candidates, created_at, updated_at
+            FROM strategy.v_strategy_intake_queue
+            ORDER BY created_at DESC
+            LIMIT 80
+        """,
+        "discovery_triage": """
+            SELECT id, run_key, discovery_key, source_kind, source_ref, title,
+                   symbols, universe, timeframe, template, thesis, catalyst,
+                   priority_score, risk_score, route_to_optimizer,
+                   generated_idea_id, idea_key, optimizer_run_id,
+                   optimizer_status, optimizer_candidate_id, backtest_run_id,
+                   optimization_run_id, research_gate, next_required_action,
+                   discovery_status, triage_decision, triage_status,
+                   routed_to_agent, inbox_item_id, approval_id,
+                   committee_review_id, decision_notes, recommended_triage_action,
+                   broker_order_allowed, autonomous_live_execution_allowed,
+                   created_at
+            FROM strategy.v_strategy_discovery_triage_queue
+            ORDER BY
+                CASE triage_status WHEN 'pending' THEN 1 ELSE 2 END,
+                priority_score DESC NULLS LAST, created_at DESC
+            LIMIT 120
+        """,
+        "templates": """
+            SELECT id, template_key, template_name, template_family, asset_class,
+                   default_timeframe, engine_template, default_symbols,
+                   default_universe, description, entry_rule, exit_rule, risk_rule,
+                   data_requirements, required_gates, risk_controls,
+                   supported_assets, source_component, execution_readiness,
+                   owner_agent, status, display_rank, application_count,
+                   applications_7d, latest_application_at, updated_at
+            FROM strategy.v_strategy_template_library
+            WHERE status = 'active'
+            ORDER BY display_rank, template_name
+            LIMIT 80
+        """,
+        "discovery_runs": """
+            SELECT id, run_key, status, source_scope, discovered_count,
+                   generated_idea_count, optimizer_routed_count, summary,
+                   artifact_path, created_by, started_at, finished_at, created_at
+            FROM strategy.v_strategy_discovery_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "execution_control": """
+            SELECT state_key, global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_by,
+                   updated_at, open_limited_live_requests, blocked_gate_checks,
+                   latest_global_kill_switch_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {"seed_data_allowed": False, "source": "strategy_arsenal_control_board"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
 def build_reports_snapshot() -> dict:
     """Return the bounded output, report, artifact, and lineage read model."""
     queries = {
@@ -2005,9 +2215,11 @@ TERMINAL_WORKSPACES = {
     "models",
 }
 
+CUSTOMIZABLE_WORKSPACES = TERMINAL_WORKSPACES | {"arsenal"}
+
 WORKSPACE_KEYS = {
     "command", "approvals", "agents", "committees", "portfolio", "clients",
-    "research", "ideas", "trading", "quant", "risk", "capital", "treasury",
+    "research", "ideas", "arsenal", "trading", "quant", "risk", "capital", "treasury",
     "models", "reports", "system",
 }
 
@@ -2096,8 +2308,8 @@ def update_workspace_config(payload: dict) -> dict:
             raise ValueError("navigation.visible must contain only supported workspace keys")
     if preferences is not None and not isinstance(preferences, dict):
         raise ValueError("preferences must be an object")
-    if workspace_key and workspace_key not in TERMINAL_WORKSPACES:
-        raise ValueError(f"workspace_key must be one of {sorted(TERMINAL_WORKSPACES)}")
+    if workspace_key and workspace_key not in CUSTOMIZABLE_WORKSPACES:
+        raise ValueError(f"workspace_key must be one of {sorted(CUSTOMIZABLE_WORKSPACES)}")
     if module_order is not None and not isinstance(module_order, list):
         raise ValueError("module_order must be an array")
     if hidden_modules is not None and not isinstance(hidden_modules, list):
@@ -9359,6 +9571,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/trading-quant-risk/snapshot":
                 self._send_json(build_trading_quant_risk_snapshot())
+                return
+            if request_path == "/api/strategy-arsenal/snapshot":
+                self._send_json(build_strategy_arsenal_snapshot())
                 return
             if request_path == "/api/reports/snapshot":
                 self._send_json(build_reports_snapshot())

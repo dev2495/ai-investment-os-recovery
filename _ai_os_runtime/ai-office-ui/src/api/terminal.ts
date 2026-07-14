@@ -1,6 +1,7 @@
 import type { LiveRow } from "./live";
 
 export type TerminalWorkspace = "approvals" | "agents" | "committees" | "capital" | "treasury" | "models";
+export type CustomizableWorkspace = TerminalWorkspace | "arsenal";
 
 export interface DepartmentTerminalSnapshot {
   generated_at: string;
@@ -32,7 +33,7 @@ export interface WorkspaceProfile {
 
 export interface WorkspaceLayout {
   layout_id: number;
-  workspace_key: TerminalWorkspace;
+  workspace_key: CustomizableWorkspace;
   module_order: string[];
   hidden_modules: string[];
   column_count: number;

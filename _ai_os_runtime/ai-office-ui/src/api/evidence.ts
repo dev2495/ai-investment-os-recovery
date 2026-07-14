@@ -1,6 +1,6 @@
 import type { LiveRow } from "./live";
 
-export type EvidenceEntityKind = "agent_message" | "task" | "approval" | "committee" | "artifact" | "lineage";
+export type EvidenceEntityKind = "agent_message" | "task" | "approval" | "committee" | "strategy" | "artifact" | "lineage";
 
 export interface EvidenceSelection {
   kind: EvidenceEntityKind;
