@@ -74,6 +74,11 @@ def main() -> int:
         "ai_os_update_workspace_terminal",
         "ai_os_update_workspace_widget",
         "ai_os_strategy_arsenal_control_board",
+        "ai_os_integration_plugin_gateway",
+        "ai_os_upsert_integration_schema_mapping",
+        "ai_os_validate_integration_schema_mapping",
+        "ai_os_upsert_integration_job",
+        "ai_os_run_integration_job",
     }
     missing = sorted(required - tool_names)
     if missing:
@@ -93,6 +98,7 @@ def main() -> int:
         "fincept_install": parse_tool_content(call("tools/call", {"name": "ai_os_fincept_install_status", "arguments": {}})),
         "workspace_terminal": parse_tool_content(call("tools/call", {"name": "ai_os_workspace_terminal_config", "arguments": {}})),
         "strategy_arsenal": parse_tool_content(call("tools/call", {"name": "ai_os_strategy_arsenal_control_board", "arguments": {"limit": 10}})),
+        "integration_gateway": parse_tool_content(call("tools/call", {"name": "ai_os_integration_plugin_gateway", "arguments": {"limit": 50}})),
     }
 
     process.stdin.close()
@@ -121,6 +127,10 @@ def main() -> int:
         "workspace_widgets": len((checks["workspace_terminal"] or {}).get("widgets", [])),
         "strategy_arsenal_rows": len((checks["strategy_arsenal"] or {}).get("control_board", [])),
         "strategy_arsenal_summary_metrics": len((checks["strategy_arsenal"] or {}).get("summary", [])),
+        "integration_plugin_rows": len((checks["integration_gateway"] or {}).get("plugins", [])),
+        "integration_summary_metrics": len((checks["integration_gateway"] or {}).get("summary", [])),
+        "integration_mapping_rows": len((checks["integration_gateway"] or {}).get("schema_mappings", [])),
+        "integration_job_rows": len((checks["integration_gateway"] or {}).get("jobs", [])),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

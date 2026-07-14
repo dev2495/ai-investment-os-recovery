@@ -470,7 +470,7 @@ def _numeric_evidence_key(entity_key: str, entity_kind: str) -> int:
 
 def build_entity_evidence(entity_kind: str, entity_key: str) -> dict:
     """Return bounded, whitelisted evidence chains for Command Center drawers."""
-    allowed_kinds = {"agent_message", "task", "approval", "committee", "strategy", "artifact", "lineage"}
+    allowed_kinds = {"agent_message", "task", "approval", "committee", "strategy", "integration", "artifact", "lineage"}
     if entity_kind not in allowed_kinds:
         raise ValueError(f"unsupported evidence entity kind: {entity_kind}")
 
@@ -768,6 +768,70 @@ def build_entity_evidence(entity_kind: str, entity_key: str) -> dict:
                 LIMIT 20
                 """
             )),
+        ]
+    elif entity_kind == "integration":
+        rows = run_psql_json(
+            f"SELECT * FROM core.v_integration_plugin_gateway WHERE plugin_key = {sql_literal(entity_key)} LIMIT 1"
+        )
+        if not rows:
+            raise ValueError(f"integration plugin not found: {entity_key}")
+        record = rows[0]
+        target_key = str(record.get("target_key") or "")
+        route_name = str(record.get("route_name") or "")
+        groups = [
+            _evidence_group("health", "Health and configuration checks", run_psql_json(f"""
+                SELECT id, target_kind, target_key, check_name, check_type,
+                       status, latency_ms, rows_seen, error_message,
+                       sample_payload, checked_by, checked_at
+                FROM core.connector_health_checks
+                WHERE target_key = {sql_literal(target_key)}
+                ORDER BY checked_at DESC, id DESC LIMIT 30
+            """)),
+            _evidence_group("mappings", "Warehouse schema mappings", run_psql_json(f"""
+                SELECT id, mapping_key, dataset_key, target_relation,
+                       field_mappings, primary_key_fields, timestamp_field,
+                       status, validation_status, validation_errors,
+                       last_validated_at, owner_agent, updated_at
+                FROM core.v_integration_schema_mapping_board
+                WHERE plugin_key = {sql_literal(entity_key)}
+                ORDER BY updated_at DESC LIMIT 30
+            """)),
+            _evidence_group("jobs", "Ingestion and provider jobs", run_psql_json(f"""
+                SELECT id, job_key, job_name, job_type, executor_key,
+                       schedule_cron, enabled, run_mode, approval_required,
+                       last_run_status, last_started_at, last_finished_at,
+                       last_rows_written, last_error, owner_agent, updated_at
+                FROM core.v_integration_job_board
+                WHERE plugin_key = {sql_literal(entity_key)}
+                ORDER BY updated_at DESC LIMIT 30
+            """)),
+            _evidence_group("job_runs", "Job run ledger", run_psql_json(f"""
+                SELECT run.id, run.run_key, run.job_key, run.status,
+                       run.trigger_kind, run.rows_read, run.rows_written,
+                       run.result_summary, run.error_message, run.artifact_path,
+                       run.started_at, run.finished_at, run.requested_by
+                FROM core.integration_job_runs run
+                JOIN core.integration_jobs job ON job.job_key = run.job_key
+                WHERE job.plugin_key = {sql_literal(entity_key)}
+                ORDER BY run.created_at DESC LIMIT 30
+            """)),
+            _evidence_group("provider_readiness", "Provider readiness", run_psql_json(f"""
+                SELECT provider_kind, provider_key, provider_name, provider,
+                       status, health_status, requires_api_key, has_secret_ref,
+                       browser_ready, readiness_status, next_action, assignable,
+                       owner_agent, last_checked_at, last_error, updated_at
+                FROM core.v_provider_readiness_board
+                WHERE provider_key = {sql_literal(target_key)}
+                LIMIT 5
+            """)),
+            _evidence_group("model_route", "Model route", run_psql_json(f"""
+                SELECT route_name, task_class, default_provider, default_model,
+                       escalation_provider, escalation_model, max_cost_tier,
+                       enabled, notes
+                FROM agent.model_routes
+                WHERE route_name = {sql_literal(route_name)}
+                LIMIT 5
+            """) if route_name else []),
         ]
     elif entity_kind == "artifact":
         rows = run_psql_json(
@@ -2043,6 +2107,100 @@ def build_strategy_arsenal_snapshot() -> dict:
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
         "data_mode": {"seed_data_allowed": False, "source": "strategy_arsenal_control_board"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
+def build_integration_gateway_snapshot() -> dict:
+    """Return the bounded source/model plug-in configuration and readiness surface."""
+    queries = {
+        "summary": """
+            SELECT metric, value, interpretation
+            FROM core.v_integration_plugin_summary
+            ORDER BY metric
+        """,
+        "plugins": """
+            SELECT id, plugin_key, plugin_kind, target_key, display_name,
+                   adapter_key, adapter_version, lifecycle_status, access_mode,
+                   capabilities, config_schema, credential_contract,
+                   operational_contract, enabled, approval_required, owner_agent,
+                   provider, source_key, source_name, source_type, connector_type,
+                   model_name, route_name, endpoint_type, health_status,
+                   last_checked_at, last_error, freshness_status,
+                   freshness_severity, staleness_minutes, freshness_rows_seen,
+                   provider_readiness_status, provider_assignable,
+                   provider_next_action, mapping_count, valid_mapping_count,
+                   job_count, enabled_job_count, route_count, gateway_status,
+                   next_required_action, updated_at
+            FROM core.v_integration_plugin_gateway
+            ORDER BY plugin_kind, gateway_status, display_name
+            LIMIT 200
+        """,
+        "schema_mappings": """
+            SELECT id, mapping_key, plugin_key, plugin_name, target_key,
+                   dataset_key, target_relation, target_relation_exists,
+                   source_schema, field_mappings, transformations,
+                   primary_key_fields, timestamp_field, schema_version,
+                   status, validation_status, validation_errors,
+                   last_validated_at, owner_agent, notes, updated_at
+            FROM core.v_integration_schema_mapping_board
+            ORDER BY validation_status, updated_at DESC
+            LIMIT 120
+        """,
+        "jobs": """
+            SELECT id, job_key, plugin_key, plugin_name, plugin_kind,
+                   job_name, job_type, executor_key, schedule_cron, timezone,
+                   enabled, run_mode, overlap_policy, timeout_seconds,
+                   parameters, approval_required, last_run_status,
+                   last_started_at, last_finished_at, last_rows_written,
+                   last_error, owner_agent, latest_run_key, latest_run_status,
+                   latest_run_rows_written, latest_run_error,
+                   latest_run_started_at, latest_run_finished_at, updated_at
+            FROM core.v_integration_job_board
+            ORDER BY enabled DESC, plugin_name, job_name
+            LIMIT 120
+        """,
+        "model_routes": """
+            SELECT route_name, task_class, default_provider, default_model,
+                   escalation_provider, escalation_model, max_cost_tier,
+                   enabled, notes
+            FROM agent.model_routes
+            ORDER BY route_name
+        """,
+        "provider_readiness": """
+            SELECT provider_kind, provider_key, provider_name, provider,
+                   subject_name, route_or_source, provider_type, status,
+                   health_status, requires_api_key, has_secret_ref,
+                   requires_browser_session, browser_ready, cost_tier,
+                   owner_agent, last_checked_at, last_error,
+                   readiness_status, next_action, assignable
+            FROM core.v_provider_readiness_board
+            ORDER BY readiness_status, subject_name
+            LIMIT 160
+        """,
+        "execution_control": """
+            SELECT state_key, global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {
+            "seed_data_allowed": False,
+            "raw_secrets_allowed": False,
+            "arbitrary_commands_allowed": False,
+            "source": "integration_plugin_gateway_live_read_model",
+        },
         "payload_profile": {
             "query_count": len(queries),
             "row_count": sum(len(rows) for rows in data.values()),
@@ -5498,7 +5656,42 @@ def refresh_portfolio_risk_events(payload: dict) -> dict:
     return result
 
 
+RAW_SECRET_KEYS = {
+    "api_key", "access_token", "refresh_token", "password",
+    "secret", "client_secret", "private_key", "auth_token",
+}
+ALLOWED_SECRET_REF_PREFIXES = ("env:", "keychain:", "vault:", "1password:", "op:")
+ALLOWED_INTEGRATION_EXECUTORS = {
+    "market_news_ingestion",
+    "filings_collection",
+    "tick_ohlcv_aggregation",
+    "tradingview_quote_refresh",
+    "public_source_check",
+    "provider_readiness",
+}
+
+
+def _validate_secret_safe_payload(payload: object, path: str = "payload") -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+            if normalized in RAW_SECRET_KEYS:
+                raise ValueError(f"raw secret field is forbidden at {path}.{key}; store only secret_ref")
+            _validate_secret_safe_payload(value, f"{path}.{key}")
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            _validate_secret_safe_payload(value, f"{path}[{index}]")
+
+
+def _validate_secret_ref(payload: dict) -> None:
+    secret_ref = str(payload.get("secret_ref") or payload.get("secretRef") or "").strip()
+    if secret_ref and not secret_ref.startswith(ALLOWED_SECRET_REF_PREFIXES):
+        raise ValueError("secret_ref must use env:, keychain:, vault:, 1password:, or op:; raw credentials are forbidden")
+
+
 def register_model_endpoint(payload: dict) -> dict:
+    _validate_secret_safe_payload(payload)
+    _validate_secret_ref(payload)
     endpoint_key = str(payload.get("endpoint_key") or payload.get("endpointKey") or "").strip()
     route_name = str(payload.get("route_name") or payload.get("routeName") or "").strip()
     model_name = str(payload.get("model_name") or payload.get("modelName") or "").strip()
@@ -5744,6 +5937,8 @@ def record_model_usage(payload: dict) -> dict:
 
 
 def register_source_connector(payload: dict) -> dict:
+    _validate_secret_safe_payload(payload)
+    _validate_secret_ref(payload)
     connector_key = str(payload.get("connector_key") or payload.get("connectorKey") or "").strip()
     source_key = str(payload.get("source_key") or payload.get("sourceKey") or "").strip()
     connector_name = str(payload.get("connector_name") or payload.get("connectorName") or "").strip()
@@ -5756,6 +5951,39 @@ def register_source_connector(payload: dict) -> dict:
         "source_key": source_key or payload.get("source_key") or payload.get("sourceKey"),
         "connector_name": connector_name or payload.get("connector_name") or payload.get("connectorName"),
     }
+    if source_key:
+        source_name = str(payload.get("source_name") or payload.get("sourceName") or connector_name or source_key).strip()
+        source_type = str(payload.get("source_type") or payload.get("sourceType") or "custom_data_source").strip()
+        connection_mode = str(payload.get("connection_mode") or payload.get("connectionMode") or payload.get("connector_type") or "custom_adapter").strip()
+        source_status = str(payload.get("source_status") or payload.get("sourceStatus") or payload.get("status") or "configured").strip()
+        run_psql_text(f"""
+            INSERT INTO core.data_source_registry (
+                source_key, source_name, source_type, provider,
+                connection_mode, status, freshness_target_minutes,
+                owner_agent, sensitivity, notes, metadata, updated_at
+            ) VALUES (
+                {sql_literal(source_key)}, {sql_literal(source_name)}, {sql_literal(source_type)},
+                {sql_literal(payload.get('provider'))}, {sql_literal(connection_mode)},
+                {sql_literal(source_status)},
+                {sql_numeric(payload.get('freshness_target_minutes') or payload.get('freshnessTargetMinutes'), field_name='freshness_target_minutes')},
+                {sql_literal(payload.get('owner_agent') or payload.get('ownerAgent') or 'Data Steward')},
+                {sql_literal(payload.get('sensitivity') or 'private')},
+                {sql_literal(payload.get('notes'))},
+                {sql_jsonb({'registered_by': actor, 'registration_source': 'integration_gateway'})}, now()
+            )
+            ON CONFLICT (source_key) DO UPDATE SET
+                source_name = EXCLUDED.source_name,
+                source_type = EXCLUDED.source_type,
+                provider = EXCLUDED.provider,
+                connection_mode = EXCLUDED.connection_mode,
+                status = EXCLUDED.status,
+                freshness_target_minutes = EXCLUDED.freshness_target_minutes,
+                owner_agent = EXCLUDED.owner_agent,
+                sensitivity = EXCLUDED.sensitivity,
+                notes = EXCLUDED.notes,
+                metadata = core.data_source_registry.metadata || EXCLUDED.metadata,
+                updated_at = now();
+        """)
     rows = run_psql_json_statement(
         f"""
         SELECT jsonb_build_array(core.register_source_connector({sql_jsonb(normalized)}))::text
@@ -5808,6 +6036,262 @@ def run_provider_readiness_sweep(payload: dict) -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError("provider readiness sweep returned invalid JSON") from exc
     audit_api_write("ai_os_api_run_provider_readiness_sweep", "run_provider_readiness_sweep", actor, "core.provider_readiness_runs", result, payload)
+    return result
+
+
+def upsert_integration_schema_mapping(payload: dict) -> dict:
+    _validate_secret_safe_payload(payload)
+    actor = str(payload.get("actor") or payload.get("created_by") or "Data Steward").strip() or "Data Steward"
+    normalized = {**payload, "created_by": actor}
+    rows = run_psql_json_statement(
+        f"SELECT jsonb_build_array(core.upsert_integration_schema_mapping({sql_jsonb(normalized)}))::text"
+    )
+    result = rows[0] if rows else {}
+    audit_api_write(
+        "ai_os_api_upsert_integration_schema_mapping",
+        "upsert_integration_schema_mapping",
+        actor,
+        "core.integration_schema_mappings",
+        result,
+        normalized,
+    )
+    return result
+
+
+def validate_integration_schema_mapping(payload: dict) -> dict:
+    mapping_key = str(payload.get("mapping_key") or payload.get("mappingKey") or "").strip()
+    if not mapping_key:
+        raise ValueError("mapping_key is required")
+    actor = str(payload.get("actor") or "Data Quality Agent").strip() or "Data Quality Agent"
+    rows = run_psql_json_statement(
+        f"SELECT jsonb_build_array(core.validate_integration_schema_mapping({sql_literal(mapping_key)}, {sql_literal(actor)}))::text"
+    )
+    result = rows[0] if rows else {}
+    audit_api_write(
+        "ai_os_api_validate_integration_schema_mapping",
+        "validate_integration_schema_mapping",
+        actor,
+        "core.integration_schema_mappings",
+        result,
+        payload,
+    )
+    return result
+
+
+def upsert_integration_job(payload: dict) -> dict:
+    _validate_secret_safe_payload(payload)
+    executor_key = str(payload.get("executor_key") or payload.get("executorKey") or "").strip()
+    if executor_key not in ALLOWED_INTEGRATION_EXECUTORS:
+        raise ValueError(f"executor_key is not allowlisted: {executor_key or '<missing>'}")
+    actor = str(payload.get("actor") or payload.get("created_by") or "Data Engineering Agent").strip() or "Data Engineering Agent"
+    normalized = {**payload, "created_by": actor}
+    rows = run_psql_json_statement(
+        f"SELECT jsonb_build_array(core.upsert_integration_job({sql_jsonb(normalized)}))::text"
+    )
+    result = rows[0] if rows else {}
+    audit_api_write(
+        "ai_os_api_upsert_integration_job",
+        "upsert_integration_job",
+        actor,
+        "core.integration_jobs",
+        result,
+        normalized,
+    )
+    return result
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value if value is not None else default)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("integration job numeric parameter is invalid") from exc
+    return max(minimum, min(maximum, parsed))
+
+
+def _integration_executor_command(job: dict) -> list[str]:
+    executor_key = str(job.get("executor_key") or "")
+    parameters = job.get("parameters") if isinstance(job.get("parameters"), dict) else {}
+    if executor_key == "market_news_ingestion":
+        return [
+            sys.executable,
+            str(RUNTIME_ROOT / "scripts" / "ingest_market_news.py"),
+            "--actor", "Integration Gateway",
+            "--feed-limit", str(_bounded_int(parameters.get("feed_limit"), default=12, minimum=1, maximum=40)),
+            "--per-feed", str(_bounded_int(parameters.get("per_feed"), default=8, minimum=1, maximum=25)),
+            "--timeout", str(_bounded_int(parameters.get("timeout"), default=12, minimum=3, maximum=30)),
+        ]
+    if executor_key == "filings_collection":
+        source = str(parameters.get("source") or "all").lower()
+        if source not in {"nse", "bse", "all"}:
+            raise ValueError("filings_collection source must be nse, bse, or all")
+        today = datetime.now(timezone.utc).date().isoformat()
+        return [
+            sys.executable,
+            str(RUNTIME_ROOT / "scripts" / "collect_nse_bse_filings.py"),
+            "--source", source,
+            "--from-date", str(parameters.get("from_date") or today),
+            "--to-date", str(parameters.get("to_date") or today),
+            "--limit", str(_bounded_int(parameters.get("limit"), default=100, minimum=1, maximum=500)),
+            "--actor", "Integration Gateway",
+        ]
+    if executor_key == "tick_ohlcv_aggregation":
+        return [sys.executable, str(RUNTIME_ROOT / "scripts" / "aggregate_ticks_to_ohlcv.py")]
+    if executor_key == "tradingview_quote_refresh":
+        return [
+            sys.executable,
+            str(RUNTIME_ROOT / "scripts" / "refresh_event_quotes.py"),
+            "--limit", str(_bounded_int(parameters.get("limit"), default=100, minimum=1, maximum=200)),
+        ]
+    if executor_key == "public_source_check":
+        return [sys.executable, str(RUNTIME_ROOT / "scripts" / "check_public_data_sources.py")]
+    if executor_key == "provider_readiness":
+        return [
+            sys.executable,
+            str(RUNTIME_ROOT / "scripts" / "run_provider_readiness_sweep.py"),
+            "--run-key", f"integration_gateway_{int(datetime.now(timezone.utc).timestamp())}",
+            "--actor", "Integration Gateway",
+            "--model-limit", "50", "--source-limit", "80",
+        ]
+    raise ValueError(f"executor_key is not allowlisted: {executor_key}")
+
+
+def run_integration_job(payload: dict) -> dict:
+    job_key = str(payload.get("job_key") or payload.get("jobKey") or "").strip()
+    if not job_key:
+        raise ValueError("job_key is required")
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    rows = run_psql_json(
+        f"""
+        SELECT job.*, plugin.target_key, source.source_key
+        FROM core.integration_jobs job
+        JOIN core.integration_plugins plugin ON plugin.plugin_key = job.plugin_key
+        LEFT JOIN core.source_connector_profiles source
+          ON plugin.plugin_kind = 'data_source' AND source.connector_key = plugin.target_key
+        WHERE job.job_key = {sql_literal(job_key)}
+        LIMIT 1
+        """
+    )
+    if not rows:
+        raise ValueError(f"integration job not found: {job_key}")
+    job = rows[0]
+    if job.get("approval_required"):
+        raise ValueError("integration job requires approval and cannot run from this endpoint")
+    if not job.get("enabled") and not payload.get("allow_disabled"):
+        raise ValueError("integration job is disabled")
+    command = _integration_executor_command(job)
+    run_key = f"integration_{job_key}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+    run_psql_text(
+        f"""
+        INSERT INTO core.integration_job_runs (
+            run_key, job_key, status, trigger_kind, checkpoint_before,
+            started_at, requested_by
+        ) VALUES (
+            {sql_literal(run_key)}, {sql_literal(job_key)}, 'running', 'api',
+            {sql_jsonb(job.get('checkpoint') or {})}, now(), {sql_literal(actor)}
+        );
+        UPDATE core.integration_jobs
+        SET last_run_status = 'running', last_started_at = now(), last_error = NULL, updated_at = now()
+        WHERE job_key = {sql_literal(job_key)};
+        """
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(RUNTIME_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=_bounded_int(job.get("timeout_seconds"), default=300, minimum=5, maximum=3600),
+            check=False,
+        )
+        output_text = (completed.stdout or "").strip()
+        error_text = (completed.stderr or "").strip()
+        try:
+            result_summary = json.loads(output_text) if output_text else {}
+        except json.JSONDecodeError:
+            result_summary = {"stdout_tail": output_text[-4000:]}
+        if not isinstance(result_summary, dict):
+            result_summary = {"result": result_summary}
+        if completed.returncode != 0:
+            raise ValueError(error_text or output_text or f"executor exited {completed.returncode}")
+        nested_summary = result_summary.get("summary") if isinstance(result_summary.get("summary"), dict) else {}
+        rows_written = first_present(
+            result_summary.get("rows_written"),
+            result_summary.get("inserted_count"),
+            result_summary.get("inserted"),
+            result_summary.get("discovered_count"),
+            result_summary.get("quotes_imported"),
+            nested_summary.get("items_upserted"),
+            nested_summary.get("rows_written"),
+        )
+        rows_read = first_present(
+            result_summary.get("rows_read"),
+            result_summary.get("items_seen"),
+            nested_summary.get("items_seen"),
+            nested_summary.get("rows_read"),
+        )
+        rows_written_sql = sql_numeric(rows_written, field_name="rows_written") if rows_written is not None else "NULL"
+        rows_read_sql = sql_numeric(rows_read, field_name="rows_read") if rows_read is not None else "NULL"
+        run_psql_text(
+            f"""
+            UPDATE core.integration_job_runs
+            SET status = 'completed', rows_read = {rows_read_sql}, rows_written = {rows_written_sql},
+                result_summary = {sql_jsonb(result_summary)}, finished_at = now()
+            WHERE run_key = {sql_literal(run_key)};
+            UPDATE core.integration_jobs
+            SET last_run_status = 'completed', last_finished_at = now(),
+                last_rows_written = {rows_written_sql}, last_error = NULL, updated_at = now()
+            WHERE job_key = {sql_literal(job_key)};
+            """
+        )
+        source_key = str(job.get("source_key") or "").strip()
+        if source_key:
+            check_rows = rows_written if rows_written is not None else rows_read
+            check_rows_sql = sql_numeric(check_rows, field_name="rows_seen") if check_rows is not None else "NULL"
+            run_psql_text(f"""
+                INSERT INTO core.data_source_checks (
+                    source_key, check_name, check_type, status,
+                    rows_seen, sample_payload, checked_at
+                ) VALUES (
+                    {sql_literal(source_key)},
+                    {sql_literal('integration job ' + job_key)},
+                    'integration_job', 'ok', {check_rows_sql},
+                    {sql_jsonb({'run_key': run_key, 'job_key': job_key, 'executor_key': job.get('executor_key'), 'result': result_summary})},
+                    now()
+                );
+                UPDATE core.data_source_registry
+                SET last_seen_at = now(), updated_at = now()
+                WHERE source_key = {sql_literal(source_key)};
+                UPDATE core.source_connector_profiles
+                SET last_rows_seen = {check_rows_sql}, last_checked_at = now(),
+                    health_status = 'configured', last_error = NULL, updated_at = now()
+                WHERE connector_key = {sql_literal(job.get('target_key'))};
+            """)
+    except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}"
+        run_psql_text(
+            f"""
+            UPDATE core.integration_job_runs
+            SET status = 'failed', error_message = {sql_literal(message)}, finished_at = now()
+            WHERE run_key = {sql_literal(run_key)};
+            UPDATE core.integration_jobs
+            SET last_run_status = 'failed', last_finished_at = now(),
+                last_error = {sql_literal(message)}, updated_at = now()
+            WHERE job_key = {sql_literal(job_key)};
+            """
+        )
+        raise
+    result_rows = run_psql_json(
+        f"SELECT * FROM core.v_integration_job_board WHERE job_key = {sql_literal(job_key)} LIMIT 1"
+    )
+    result = result_rows[0] if result_rows else {"run_key": run_key, "status": "completed"}
+    audit_api_write(
+        "ai_os_api_run_integration_job",
+        "run_integration_job",
+        actor,
+        "core.integration_job_runs",
+        result,
+        {"job_key": job_key, "executor_key": job.get("executor_key")},
+    )
     return result
 
 
@@ -9575,6 +10059,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/strategy-arsenal/snapshot":
                 self._send_json(build_strategy_arsenal_snapshot())
                 return
+            if request_path == "/api/integration-gateway/snapshot":
+                self._send_json(build_integration_gateway_snapshot())
+                return
             if request_path == "/api/reports/snapshot":
                 self._send_json(build_reports_snapshot())
                 return
@@ -9662,6 +10149,18 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/providers/readiness/run":
                 self._send_json(run_provider_readiness_sweep(payload), 201)
+                return
+            if self.path == "/api/integrations/schema-mappings/upsert":
+                self._send_json(upsert_integration_schema_mapping(payload), 201)
+                return
+            if self.path == "/api/integrations/schema-mappings/validate":
+                self._send_json(validate_integration_schema_mapping(payload), 200)
+                return
+            if self.path == "/api/integrations/jobs/upsert":
+                self._send_json(upsert_integration_job(payload), 201)
+                return
+            if self.path == "/api/integrations/jobs/run":
+                self._send_json(run_integration_job(payload), 201)
                 return
             if self.path == "/api/providers/assignment-gate/evaluate":
                 self._send_json(evaluate_provider_assignment_gate(payload), 201)

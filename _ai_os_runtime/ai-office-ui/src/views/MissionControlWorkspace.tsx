@@ -234,7 +234,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-5" icon={<ShieldCheck size={17} />} title="Decision Gates">
-          <div className="source-check-list mission-list">
+          <div aria-label="Decision gates" className="source-check-list mission-list" tabIndex={0}>
             <article className="source-check-row"><div><strong>Global execution</strong><p>{text(execution, "lock_reason", "Safety state unavailable")}</p></div><StatusPill status={text(execution, "global_execution_locked", "true") === "true" ? "locked" : "review"} /><span>{text(execution, "broker_execution_policy", "gated")}</span><time>{date(execution?.updated_at)}</time></article>
             {blockedGates.slice(0, 8).map((gate) => (
               <article {...evidenceRow({ kind: "task", key: text(gate, "task_id"), title: text(gate, "title"), subtitle: "Provider decision gates", record: gate })} key={text(gate, "task_id")}><div><strong>{text(gate, "title")}</strong><p>{text(gate, "owner_agent")} · task {text(gate, "task_id")}</p></div><StatusPill status={text(gate, "provider_gate_status", "needs_review")} /><span>{text(gate, "blocked_provider_gates", "0")} blocked</span><time>{date(gate.latest_provider_gate_at)}</time></article>
@@ -243,7 +243,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-6" icon={<Workflow size={17} />} title="Charlie Delegations" action={<span>{snapshot?.agent_messages.length ?? 0} recent</span>}>
-          <div className="source-check-list mission-list">
+          <div aria-label="Charlie delegations" className="source-check-list mission-list" tabIndex={0}>
             {snapshot?.agent_messages.map((message) => (
               <article {...evidenceRow({ kind: "agent_message", key: text(message, "id"), title: text(message, "subject"), subtitle: `${text(message, "from_agent")} to ${text(message, "to_agent")}`, record: message })} key={text(message, "id")}><div><strong>{text(message, "subject")}</strong><p>{text(message, "from_agent")} → {text(message, "to_agent")} · task {text(message, "generated_task_id", "-")}</p></div><StatusPill status={text(message, "processing_status", text(message, "status", "queued"))} /><span>#{text(message, "id")}</span><time>{date(message.created_at)}</time></article>
             )) ?? <Empty>No durable agent handoffs recorded.</Empty>}
@@ -251,7 +251,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-6" icon={<Inbox size={17} />} title="Executive Inbox" action={<span>{openInbox.length} open</span>}>
-          <div className="source-check-list mission-list">
+          <div aria-label="Executive inbox" className="source-check-list mission-list" tabIndex={0}>
             {openInbox.map((item) => (
               <article className="source-check-row" key={text(item, "id")}><div><strong>{text(item, "title")}</strong><p>{text(item, "recommended_action", "No next action")}</p></div><StatusPill status={text(item, "status", "open")} /><span>{text(item, "owner_agent")}</span><time>{date(item.updated_at)}</time></article>
             ))}
@@ -260,7 +260,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-6" icon={<CheckCircle2 size={17} />} title="Approval Queue" action={<span>{pendingApprovals.length} pending</span>}>
-          <div className="source-check-list mission-list">
+          <div aria-label="Approval queue" className="source-check-list mission-list" tabIndex={0}>
             {snapshot?.approvals.map((approval) => (
               <article {...evidenceRow({ kind: "approval", key: text(approval, "id"), title: text(approval, "title"), subtitle: `${text(approval, "risk_level", "medium")} risk approval`, record: approval })} key={text(approval, "id")}><div><strong>{text(approval, "title")}</strong><p>{text(approval, "requested_action", text(approval, "rationale", "Decision required"))}</p></div><StatusPill status={text(approval, "status", "pending")} /><span>{text(approval, "risk_level", "medium")}</span><time>{date(approval.created_at)}</time></article>
             )) ?? <Empty>No approval records.</Empty>}
@@ -268,7 +268,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-6" icon={<BarChart3 size={17} />} title="Live Widgets" action={<button className="mini-action-button" disabled={widgetBusy} onClick={() => void materializeWidgets()} type="button">{widgetBusy ? "Working" : "Materialize"}</button>}>
-          <div className="source-check-list mission-list">
+          <div aria-label="Live widgets" className="source-check-list mission-list" tabIndex={0}>
             {snapshot?.dashboard_widgets.map((widget) => (
               <article className="source-check-row" key={text(widget, "id")}><div><strong>{text(widget, "widget_title")}</strong><p>{text(widget, "widget_type")} · {text(widget, "query_ref")}</p></div><StatusPill status={text(widget, "status", "active")} /><span>{text(widget, "task_status", "-")}</span><time>{date(widget.updated_at)}</time></article>
             ))}
@@ -277,7 +277,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-7" icon={<ClipboardList size={17} />} title="Agent Work Queue" action={<button className="mini-action-button" disabled={workerBusy} onClick={() => void runWorkers()} type="button"><Bot size={14} />{workerBusy ? "Running" : "Run workers"}</button>}>
-          <div className="source-check-list mission-list">
+          <div aria-label="Agent work queue" className="source-check-list mission-list" tabIndex={0}>
             {openTasks.slice(0, 16).map((task) => (
               <article {...evidenceRow({ kind: "task", key: text(task, "id"), title: text(task, "title"), subtitle: `${text(task, "owner_agent")} work item`, record: task })} key={text(task, "id")}><div><strong>{text(task, "title")}</strong><p>{text(task, "owner_agent")} · {text(task, "source_kind")}</p></div><StatusPill status={text(task, "status", "queued")} /><span>{text(task, "priority", "normal")}</span><time>{date(task.updated_at)}</time></article>
             ))}
@@ -286,7 +286,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         </MissionPanel>
 
         <MissionPanel className="span-5" icon={<Activity size={17} />} title="Freshness Alerts" action={<span>{sourceIssues.length} issues</span>}>
-          <div className="source-check-list mission-list">
+          <div aria-label="Freshness alerts" className="source-check-list mission-list" tabIndex={0}>
             {sourceIssues.map((source) => (
               <article className="source-check-row" key={text(source, "source_key")}><div><strong>{text(source, "source_name", text(source, "source_key"))}</strong><p>{text(source, "staleness_minutes", "-")} minutes stale</p></div><StatusPill status={text(source, "status", "unknown")} /><span>{text(source, "severity", "medium")}</span><time>{date(source.created_at)}</time></article>
             ))}

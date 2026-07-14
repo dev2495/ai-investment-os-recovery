@@ -8,7 +8,8 @@
     "build": "tsc && vite build --configLoader runner",
     "preview": "vite preview",
     "test:e2e": "bash scripts/run-a11y.sh",
-    "test:a11y": "bash scripts/run-a11y.sh"
+    "test:a11y": "bash scripts/run-a11y.sh",
+    "test:gateway": "bash scripts/run-playwright.sh tests/integration-gateway.spec.ts --reporter=line"
   },
   "dependencies": {
     "@react-three/drei": "^9.122.0",

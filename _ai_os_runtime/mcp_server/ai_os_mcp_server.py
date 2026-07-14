@@ -1469,6 +1469,92 @@ def provider_readiness_board(arguments: dict) -> dict:
     )
 
 
+def integration_plugin_gateway(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=100, maximum=200)
+    plugin_kind = str(arguments.get("plugin_kind") or arguments.get("pluginKind") or "").strip()
+    gateway_status = str(arguments.get("gateway_status") or arguments.get("gatewayStatus") or "").strip()
+    query = str(arguments.get("query") or "").strip()
+    clauses: list[str] = []
+    if plugin_kind:
+        clauses.append(f"plugin_kind = {sql_literal(plugin_kind)}")
+    if gateway_status:
+        clauses.append(f"gateway_status = {sql_literal(gateway_status)}")
+    if query:
+        clauses.append(
+            "(display_name ILIKE " + sql_literal(f"%{query}%")
+            + " OR plugin_key ILIKE " + sql_literal(f"%{query}%")
+            + " OR provider ILIKE " + sql_literal(f"%{query}%") + ")"
+        )
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    return tool_result({
+        "summary": run_psql_json(
+            "SELECT metric, value, interpretation FROM core.v_integration_plugin_summary ORDER BY metric"
+        ),
+        "plugins": run_psql_json(f"""
+            SELECT plugin_key, plugin_kind, target_key, display_name,
+                   adapter_key, lifecycle_status, access_mode, capabilities,
+                   enabled, approval_required, owner_agent, provider,
+                   source_key, source_type, connector_type, model_name,
+                   route_name, endpoint_type, health_status, freshness_status,
+                   freshness_severity, provider_readiness_status,
+                   provider_assignable, mapping_count, valid_mapping_count,
+                   job_count, enabled_job_count, route_count, gateway_status,
+                   next_required_action, last_checked_at, last_error, updated_at
+            FROM core.v_integration_plugin_gateway
+            {where}
+            ORDER BY plugin_kind, gateway_status, display_name
+            LIMIT {limit}
+        """),
+        "schema_mappings": run_psql_json(f"""
+            SELECT mapping_key, plugin_key, plugin_name, dataset_key,
+                   target_relation, target_relation_exists, primary_key_fields,
+                   timestamp_field, status, validation_status,
+                   validation_errors, last_validated_at, owner_agent, updated_at
+            FROM core.v_integration_schema_mapping_board
+            ORDER BY updated_at DESC LIMIT {min(limit, 120)}
+        """),
+        "jobs": run_psql_json(f"""
+            SELECT job_key, plugin_key, plugin_name, job_name, job_type,
+                   executor_key, schedule_cron, enabled, run_mode,
+                   approval_required, last_run_status, last_started_at,
+                   last_finished_at, last_rows_written, last_error, owner_agent
+            FROM core.v_integration_job_board
+            ORDER BY enabled DESC, plugin_name LIMIT {min(limit, 120)}
+        """),
+        "execution_control": run_psql_json("""
+            SELECT global_execution_locked, broker_execution_policy,
+                   limited_live_allowed, live_broker_writes_allowed, lock_reason
+            FROM trading.v_execution_control_state LIMIT 1
+        """),
+    })
+
+
+def upsert_integration_schema_mapping_tool(arguments: dict) -> dict:
+    payload = {**arguments, "actor": arguments.get("actor") or "Data Steward"}
+    return tool_result(post_api_json("/api/integrations/schema-mappings/upsert", payload))
+
+
+def validate_integration_schema_mapping_tool(arguments: dict) -> dict:
+    payload = {
+        "mapping_key": required_text(arguments, "mapping_key"),
+        "actor": arguments.get("actor") or "Data Quality Agent",
+    }
+    return tool_result(post_api_json("/api/integrations/schema-mappings/validate", payload))
+
+
+def upsert_integration_job_tool(arguments: dict) -> dict:
+    payload = {**arguments, "actor": arguments.get("actor") or "Data Engineering Agent"}
+    return tool_result(post_api_json("/api/integrations/jobs/upsert", payload))
+
+
+def run_integration_job_tool(arguments: dict) -> dict:
+    payload = {
+        "job_key": required_text(arguments, "job_key"),
+        "actor": arguments.get("actor") or "Jarvis",
+    }
+    return tool_result(post_api_json("/api/integrations/jobs/run", payload, timeout=370))
+
+
 def evaluate_provider_assignment_gate(arguments: dict) -> dict:
     payload = {
         "provider_key": required_text(arguments, "provider_key"),
@@ -5758,6 +5844,91 @@ TOOLS = {
             },
         },
         "handler": provider_readiness_board,
+    },
+    "ai_os_integration_plugin_gateway": {
+        "description": "Read the unified source/model plug-in gateway with credentials, health, freshness, schema, schedule, route, and execution-lock gates.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plugin_kind": {"type": "string", "enum": ["data_source", "model_provider"]},
+                "gateway_status": {"type": "string"},
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 100},
+            },
+        },
+        "handler": integration_plugin_gateway,
+    },
+    "ai_os_upsert_integration_schema_mapping": {
+        "description": "Create or update a data-source to warehouse mapping. Raw secrets are rejected.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mapping_key": {"type": "string"},
+                "plugin_key": {"type": "string"},
+                "dataset_key": {"type": "string"},
+                "target_relation": {"type": "string"},
+                "source_schema": {"type": "object"},
+                "field_mappings": {"type": "object"},
+                "transformations": {"type": "array"},
+                "primary_key_fields": {"type": "array", "items": {"type": "string"}},
+                "timestamp_field": {"type": "string"},
+                "schema_version": {"type": "string", "default": "1"},
+                "status": {"type": "string", "default": "configured"},
+                "owner_agent": {"type": "string", "default": "Data Steward"},
+                "notes": {"type": "string"},
+                "actor": {"type": "string", "default": "Data Steward"},
+            },
+            "required": ["plugin_key", "dataset_key", "target_relation", "field_mappings", "primary_key_fields"],
+        },
+        "handler": upsert_integration_schema_mapping_tool,
+    },
+    "ai_os_validate_integration_schema_mapping": {
+        "description": "Validate a plug-in mapping against the live target relation and idempotency contract.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mapping_key": {"type": "string"},
+                "actor": {"type": "string", "default": "Data Quality Agent"},
+            },
+            "required": ["mapping_key"],
+        },
+        "handler": validate_integration_schema_mapping_tool,
+    },
+    "ai_os_upsert_integration_job": {
+        "description": "Configure an allowlisted bounded ingestion or provider job. Arbitrary commands and raw secrets are rejected.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_key": {"type": "string"},
+                "plugin_key": {"type": "string"},
+                "job_name": {"type": "string"},
+                "job_type": {"type": "string", "enum": ["poll", "import", "stream", "aggregate", "health_check", "provider_probe"]},
+                "executor_key": {"type": "string", "enum": ["market_news_ingestion", "filings_collection", "tick_ohlcv_aggregation", "tradingview_quote_refresh", "public_source_check", "provider_readiness"]},
+                "schedule_cron": {"type": "string"},
+                "enabled": {"type": "boolean", "default": False},
+                "run_mode": {"type": "string", "enum": ["manual", "schedule", "manual_or_schedule", "daemon"]},
+                "timeout_seconds": {"type": "integer", "default": 300},
+                "parameters": {"type": "object"},
+                "approval_required": {"type": "boolean", "default": False},
+                "owner_agent": {"type": "string", "default": "Data Engineering Agent"},
+                "notes": {"type": "string"},
+                "actor": {"type": "string", "default": "Data Engineering Agent"},
+            },
+            "required": ["plugin_key", "job_name", "job_type", "executor_key"],
+        },
+        "handler": upsert_integration_job_tool,
+    },
+    "ai_os_run_integration_job": {
+        "description": "Run an enabled allowlisted integration job and persist the result. Approval-required jobs are refused.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_key": {"type": "string"},
+                "actor": {"type": "string", "default": "Jarvis"},
+            },
+            "required": ["job_key"],
+        },
+        "handler": run_integration_job_tool,
     },
     "ai_os_evaluate_provider_assignment_gate": {
         "description": "Evaluate whether a model endpoint or data-source connector can be assigned to an agent task. Creates an inbox block for non-ready providers.",

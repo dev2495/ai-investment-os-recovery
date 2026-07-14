@@ -40,9 +40,9 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] API server foundation. Verified 2026-07-11 at `http://127.0.0.1:8765/api/health` with Postgres and TradingView CDP checks passing.
 - [x] AI Office dashboard shell. Verified 2026-07-11 at `http://127.0.0.1:5177/` through the deployed LaunchAgent build.
 - [x] Obsidian vault memory surface. Verified 2026-07-11 at `/Volumes/Devarsh SSD/Obsidian memory ` with the runtime symlink preserved.
-- [~] MCP server foundation. Evidence includes strategy template tools in [[2026-07-08-strategy-template-library-v1]]; `ai_os_strategy_template_library` and `ai_os_create_strategy_from_template` are registered and import-verified.
-- [~] Model endpoint registry.
-- [~] Data-source connector registry.
+- [x] MCP server foundation. Verified 2026-07-15 with 144 importable tools, including scoped integration Gateway, strategy Arsenal, evidence, provider, source, portfolio, research, task, approval, browser, and workspace controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
+- [x] Model endpoint registry. Twenty-one synchronized model-provider plug-ins retain route, endpoint, readiness, cost, capability, and credential-reference contracts; absent models remain non-assignable. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
+- [x] Data-source connector registry. Eighteen source plug-ins synchronize from the connector registry into one readiness contract with health, freshness, mapping, schedule, access, and evidence gates. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Provider readiness board foundation with live model availability checks. Verified 2026-07-11 by readiness run `live-model-readiness-v2-20260711`; installed models are assignable and five absent Qwen routes are degraded/non-assignable.
 - [x] Provider assignment gate foundation. Verified 2026-07-11 by Command Center task `#327` and provider gate inbox `#413`; approval policy held the task at `needs_review`.
 - [~] Department-level provider policy controls.
@@ -89,7 +89,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Corporate action adjustment pipeline.
 - [ ] Full reconciliation dashboard across broker, p2cursor, algo systems, and manual entries.
 - [ ] Data quality score per source.
-- [ ] Source freshness SLA per source.
+- [~] Source freshness SLA per registered source. All 18 current source plug-ins expose freshness targets and the live Gateway had zero SLA-blocked sources at verification; connectors and datasets not yet onboarded remain outside coverage. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 
 ## 3. Multi-Book Portfolio Brain
 
@@ -443,7 +443,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 15. MCP And External Adapters
 
-- [~] MCP server foundation. Evidence includes [[2026-07-08-strategy-template-library-v1]]; strategy template read/create tools are registered in API, MCP server, and `config/mcp_tools.yml`.
+- [x] MCP server foundation. The importable 144-tool server now includes strategy, integration Gateway, provider, source, evidence, task, approval, browser, portfolio, research, and workspace contracts; smoke verification passed. Evidence: [[2026-07-08-strategy-template-library-v1]], [[2026-07-15-data-model-integration-gateway-v1]].
 - [~] Obsidian/vault read-write path.
 - [~] Postgres API tool path.
 - [~] Browser profile registry.
@@ -489,7 +489,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Command Center shell extraction from monolithic `App.tsx` with no behavior loss. The production root now uses a compact scoped-only shell; the legacy function is unreferenced and tree-shaken. Main JS fell from 464.25 KB to 250.16 KB (46.1%), and the 18-test full workspace matrix passed. Physical removal of the legacy source function remains. Evidence: [[2026-07-13-scoped-command-shell-v2]].
 - [x] Addressable Command Center / Live Office world routing with preserved context. All ten workspaces are independently mounted from scoped contracts. Office department rows now separate camera focus from an explicit mapped workspace action; `Runtime Operations` opens System Health in the verified browser flow. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [x] Snapshot/UI/chat state and containment layer. Every scoped workspace shows its live generated-at age, fresh/stale/loading/offline state, and retains focused refresh after writes. Workspace and Live Office render failures are contained by reloadable error boundaries; stale age updates locally without adding API requests. Evidence: [[2026-07-13-frontend-production-hardening-v2]].
-- [x] Automated accessibility and keyboard gate. Checked-in Playwright plus axe covers all eleven workspaces at 1440 x 1000 and 390 x 844, approval-dialog focus trap/restoration, and Live Office static desktop/mobile fallbacks. All 25 WCAG A/AA cases pass; actual overflow regions receive keyboard access and labels, AA palette contrast is enforced, and reduced-motion animation is bounded. Evidence: [[2026-07-13-frontend-production-hardening-v2]] and [[2026-07-15-strategy-arsenal-v1]].
+- [x] Automated accessibility and keyboard gate. Checked-in Playwright plus axe covers all 17 Command Center workspaces at 1440 x 1000 and 390 x 844, approval-dialog focus trap/restoration, and Live Office static desktop/mobile fallbacks. All 37 WCAG A/AA cases pass, including keyboard access for shared terminal and Gateway overflow regions; the complete browser regression is 71/71. Playwright's version-matched browser payload is stored on the external SSD. Evidence: [[2026-07-13-frontend-production-hardening-v2]], [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Focused workspace snapshot profile and payload budget. Reports is 605 KB/0.23 s for 603 rows/12 queries; every UI workspace now uses a scoped contract and broad `/api/snapshot` is never requested by fresh routes. Evidence: [[2026-07-13-reports-v2]].
 - [~] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows. The reusable v2 drawer and bounded `/api/evidence/entity/{kind}/{key}` contract now cover agent messages, tasks/provider gates, approvals, long-term/strategy committee packets, output artifacts, worker tasks, and source lineage. The live warehouse smoke covered all six whitelisted entity kinds; desktop/mobile approval/artifact/lineage workflows passed inside the 22-test matrix. Portfolio position/conflict and trading/quant/risk-specific drill-downs remain open. Evidence: [[2026-07-13-deep-evidence-and-approval-actions-v2]].
 - [~] Mission Control v2: scoped live workspace now shows Charlie chat, durable delegations, executive inbox, approval queue, latest brief/chat turn, execution/provider gates, widget materialization, worker launch, source-freshness alerts, and task/message/approval evidence drawers. Pending approval decisions are live and explicitly do not grant broker authority. Scheduled daily-brief generation remains open. Evidence: [[2026-07-13-mission-control-v2-scoped-workspace]], [[2026-07-13-deep-evidence-and-approval-actions-v2]].
@@ -511,8 +511,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] News and Filings dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Special Situations dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Treasury/Hedges/Crypto dashboard. Treasury and Macro terminal is live over source-backed macro/news/market records; dedicated hedge construction, collateral, cash ladder, and crypto execution connectors remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [~] Model Runtime dashboard. Live endpoint, routing, readiness, usage, and cost rows are exposed; model evaluation, cache, escalation, privacy, and final per-department policy remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [ ] Provider Readiness dashboard v2.
+- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes 39 plug-in readiness rows, validates warehouse mappings, configures/runs six allowlisted executor families, shows 21 routes, and resolves integration evidence. Raw secrets, arbitrary commands, seed fallback, and broker authority are rejected. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
+- [x] Provider Readiness dashboard v2. Model assignment readiness and source health/freshness are unified in the Gateway with filters, per-row checks, full sweeps, missing-credential/model actions, and evidence. Provider policy simulation and final department overrides remain separate open controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [~] Committee Room dashboard v2. Scoped live committee packet, approval state, evidence drawer, workspace customization, and execution lock are deployed; participant discussion, specialized decisions, and follow-up action routes remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] 3D office scene with procedural rooms, stable camera controls, live room placement, room-floor selection, and animated department focus. Directory selection moves the camera without leaving the office; an explicit secondary action opens the mapped Command Center workspace. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [~] Data-backed agent avatars: live status, current task, activity pulse, live character name/color/visual traits, employee profile inspector, keyboard employee selector, and durable mailbox handoff. Verified 2026-07-10: Live Office message #61 created task #294 and inbox #379 for Risk Agent; profile pages and direct canvas hit testing remain outstanding.
@@ -554,7 +554,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 18. Model And Cost Controls
 
-- [~] Model endpoint registry foundation.
+- [x] Model endpoint registry foundation. Twenty-one endpoints are synchronized into the canonical integration plug-in manifest and exposed through API, MCP, and the Gateway terminal. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Local model route foundation. `always_on_daily_driver`, `jarvis_intake`, `jarvis_runtime`, daily brief, research, news, strategy intake, and trade-journal routes can use installed `llama3.2:3b`.
 - [x] Ollama/local model runtime foundation. LaunchAgent startup is enabled by default, bound to `127.0.0.1:11434`, and model files remain under `/Volumes/Devarsh SSD/OllamaModels`.
 - [~] Per-agent model route table.

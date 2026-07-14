@@ -3,6 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 
 const workspaces = [
   ["command", "Command Center"],
+  ["approvals", "Approval Board"],
+  ["agents", "Agent Office"],
+  ["committees", "Committee Rooms"],
   ["portfolio", "Portfolio Office"],
   ["clients", "Client Folios"],
   ["research", "Holdings Research"],
@@ -11,6 +14,9 @@ const workspaces = [
   ["trading", "Trading Desk"],
   ["quant", "Quant Lab"],
   ["risk", "Risk Center"],
+  ["capital", "Capital Allocation"],
+  ["treasury", "Treasury & Macro"],
+  ["models", "Data & Model Gateway"],
   ["reports", "Reports"],
   ["system", "System Health"]
 ] as const;

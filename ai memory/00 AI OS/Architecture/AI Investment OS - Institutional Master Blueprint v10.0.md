@@ -1503,3 +1503,29 @@ The canonical database contract is `strategy.v_strategy_arsenal_control_board` p
 Verified live state at the checkpoint contained 47 candidates: 3 operator submissions, 34 system discoveries, and 10 imported/other records. All 47 had baseline backtests; 38 passed DSL and data-quality gates and had optimization evidence; 1 passed independent validation and awaited committee review; none had a paper monitor; none had limited-live approval; broker orders allowed remained 0. These counts are dynamic because the discovery scheduler remains active.
 
 This is not production execution readiness. Remaining gates include richer historical and intraday/options datasets, optimizer configuration and portfolio analytics, paper-monitor operations, drift/capacity/correlation controls, committee decisions, limited-live policy, broker adapters, and security/compliance authorization. Evidence: [[2026-07-15-strategy-arsenal-v1]].
+
+## 34. Data And Model Plug-In Gateway Operating Contract - 2026-07-15
+
+Every model provider and data source must enter through one canonical plug-in contract before an agent may use it. The contract separates identity, capabilities, credential references, warehouse mapping, bounded ingestion or health jobs, provider readiness, model routing, source freshness, and evidence. Registering a connector does not make it trusted, assignable, or executable.
+
+```text
+Data source / model provider
+  -> canonical plug-in manifest
+  -> secret-reference and access-mode validation
+  -> connector or endpoint health check
+  -> warehouse schema mapping for data sources
+  -> allowlisted bounded job for recurring sources
+  -> model route and provider-readiness gate for models
+  -> evidence ledger
+  -> specialist-agent assignment only when ready
+```
+
+The database contract is `core.integration_plugins`, `core.integration_schema_mappings`, `core.integration_jobs`, and `core.integration_job_runs`, with `core.v_integration_plugin_gateway` as the operating read model. Source-connector and model-endpoint triggers synchronize the canonical manifest, so the Gateway does not become a second registry. Schema mappings require an existing target relation and retain field, key, timestamp, transformation, validation, and owner evidence.
+
+Execution is deliberately narrow. Jobs may invoke only six code-owned executor keys: market-news ingestion, filing collection, tick-to-OHLCV aggregation, TradingView quote refresh, public-source checks, and provider-readiness checks. The API and Postgres both reject unknown executors. Recursive payload checks reject raw API keys, tokens, passwords, client secrets, and private keys; configuration may retain only approved `env:`, `keychain:`, `vault:`, `1password:`, or `op:` references. The global broker lock remains independent and closed.
+
+The Data & Model Gateway terminal is the operator surface for source registration, model registration, readiness filtering, mapping creation/validation, bounded job configuration/runs, model-route inspection, and linked integration evidence. It is a scoped live workspace, not a seed-backed catalog. Charlie and Jarvis may prepare or run these bounded controls, but cannot turn a connector into broker authority or bypass approval policy.
+
+Verified live state at this checkpoint: 39 synchronized plug-ins, 18 data sources, 21 model endpoints, five validated mappings, five enabled bounded jobs, 21 model routes, zero freshness-SLA failures, four missing credential references, five unmapped legacy/import sources, and five unavailable model endpoints. A real TradingView portfolio refresh persisted 44 quotes through the job ledger. The full MCP surface exposes 144 tools, including the Gateway read/write/run controls.
+
+The UI production build, Python compilation, idempotent migration application, database and API executor-rejection probes, real TradingView run, MCP smoke, external-storage verification, 37-case WCAG A/AA gate, and complete 71-case Playwright regression passed. Browser binaries and dependency caches remain on the external SSD. This contract does not close historical daily/intraday/options data depth, broker and crypto connectors, cloud credentials, missing local models, or full legacy-source mappings. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].

@@ -158,6 +158,7 @@ import SystemHealthWorkspace from "./views/SystemHealthWorkspace";
 import TradingQuantRiskWorkspace from "./views/TradingQuantRiskWorkspace";
 import DepartmentTerminalWorkspace from "./views/DepartmentTerminalWorkspace";
 import StrategyArsenalWorkspace from "./views/StrategyArsenalWorkspace";
+import IntegrationGatewayWorkspace from "./views/IntegrationGatewayWorkspace";
 import WorkspaceManager from "./components/WorkspaceManager";
 import { fetchWorkspaceConfig, type TerminalWorkspace, type WorkspaceConfig } from "./api/terminal";
 
@@ -185,7 +186,7 @@ const baseWorkspaces: Workspace[] = [
   { id: "risk", label: "Risk Center" },
   { id: "capital", label: "Capital Allocation" },
   { id: "treasury", label: "Treasury & Macro" },
-  { id: "models", label: "Model Runtime" },
+  { id: "models", label: "Data & Model Gateway" },
   { id: "reports", label: "Reports" },
   { id: "system", label: "System Health" }
 ];
@@ -8449,12 +8450,13 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       research: "aios:research-ideas-refresh",
       ideas: "aios:research-ideas-refresh",
       arsenal: "aios:strategy-arsenal-refresh",
+      models: "aios:integration-gateway-refresh",
       trading: "aios:trading-quant-risk-refresh",
       quant: "aios:trading-quant-risk-refresh",
       risk: "aios:trading-quant-risk-refresh",
       reports: "aios:reports-refresh"
     };
-    if (["approvals", "agents", "committees", "capital", "treasury", "models"].includes(activeWorkspace)) {
+    if (["approvals", "agents", "committees", "capital", "treasury"].includes(activeWorkspace)) {
       window.dispatchEvent(new Event("aios:department-terminal-refresh"));
       return;
     }
@@ -8519,7 +8521,8 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   let workspaceContent: ReactNode;
   if (activeWorkspace === "system") workspaceContent = <SystemHealthWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "command") workspaceContent = <MissionControlWorkspace onStatusChange={setLiveStatus} />;
-  else if (["approvals", "agents", "committees", "capital", "treasury", "models"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "models") workspaceContent = <IntegrationGatewayWorkspace onStatusChange={setLiveStatus} />;
+  else if (["approvals", "agents", "committees", "capital", "treasury"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "arsenal") workspaceContent = <StrategyArsenalWorkspace onStatusChange={setLiveStatus} />;

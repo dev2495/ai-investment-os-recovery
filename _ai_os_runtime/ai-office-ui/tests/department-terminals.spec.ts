@@ -5,8 +5,7 @@ const terminals = [
   ["agents", "Agent Office"],
   ["committees", "Committee Rooms"],
   ["capital", "Capital Allocation"],
-  ["treasury", "Treasury & Macro"],
-  ["models", "Model Runtime"]
+  ["treasury", "Treasury & Macro"]
 ] as const;
 
 for (const [workspace, heading] of terminals) {

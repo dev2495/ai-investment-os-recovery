@@ -77,12 +77,12 @@ function evidenceFor(mode: TerminalWorkspace, row: LiveRow): EvidenceSelection |
 
 function TerminalRows({ mode, rows, onEvidence }: { mode: TerminalWorkspace; rows: LiveRow[]; onEvidence: (selection: EvidenceSelection) => void }) {
   return (
-    <div className="terminal-table" role="table">
-      <div className="terminal-table-head" role="row"><span>Subject</span><span>Owner / scope</span><span>Status</span><span>Updated</span><span>Evidence</span></div>
+    <div aria-label={`${mode} records`} className="terminal-table" role="region" tabIndex={0}>
+      <div className="terminal-table-head"><span>Subject</span><span>Owner / scope</span><span>Status</span><span>Updated</span><span>Evidence</span></div>
       {rows.map((row, index) => {
         const selection = evidenceFor(mode, row);
         return (
-          <article className="terminal-table-row" key={`${rowTitle(row)}-${first(row, ["id", "source_id", "book_key", "provider_key", "route_name"], String(index))}`} role="row">
+          <article className="terminal-table-row" key={`${rowTitle(row)}-${first(row, ["id", "source_id", "book_key", "provider_key", "route_name"], String(index))}`}>
             <div><strong>{rowTitle(row)}</strong><p>{rowDetail(row)}</p></div>
             <span>{rowOwner(row)}</span>
             <span className={`status-pill status-${tone(status(row))}`}>{status(row).replace(/_/g, " ")}</span>
@@ -145,7 +145,7 @@ export default function DepartmentTerminalWorkspace({ mode, onStatusChange }: Pr
       </section>
       <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={connection} />
       {error ? <div className="error-strip">{error}</div> : null}
-      <section className="terminal-metric-strip" aria-label={`${definition.title} metrics`}>
+      <section className="terminal-metric-strip" aria-label={`${definition.title} metrics`} tabIndex={0}>
         <div><span>Live rows</span><strong>{snapshot?.payload_profile.row_count ?? 0}</strong><small>no seed data</small></div>
         {metrics.map((item) => <div key={item.label}><span>{item.label.replace(/_/g, " ")}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}
       </section>

@@ -76,11 +76,20 @@ def active_event_symbols(limit: int) -> list[str]:
         f"""
         SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json)::text
         FROM (
-            SELECT DISTINCT upper(symbol) AS symbol
-            FROM research.v_special_situation_memos
-            WHERE symbol IS NOT NULL
-              AND coalesce(memo_status, '') NOT IN ('rejected')
-            ORDER BY upper(symbol)
+            SELECT symbol
+            FROM (
+                SELECT upper(symbol) AS symbol, max(gross_exposure) AS priority_value
+                FROM books.v_symbol_book_exposure
+                WHERE symbol IS NOT NULL
+                GROUP BY upper(symbol)
+                UNION ALL
+                SELECT upper(symbol) AS symbol, 0::NUMERIC AS priority_value
+                FROM research.v_special_situation_memos
+                WHERE symbol IS NOT NULL
+                  AND coalesce(memo_status, '') NOT IN ('rejected')
+            ) candidates
+            GROUP BY symbol
+            ORDER BY max(priority_value) DESC NULLS LAST, symbol
             LIMIT {limit}
         ) rows
         """
