@@ -4475,7 +4475,7 @@ def ingest_market_news(arguments: dict) -> dict:
     payload = {
         "run_key": arguments.get("run_key") or arguments.get("runKey") or "market_news_mcp",
         "actor": arguments.get("actor") or "News Analyst",
-        "feed_limit": arguments.get("feed_limit") or arguments.get("feedLimit") or 8,
+        "feed_limit": arguments.get("feed_limit") or arguments.get("feedLimit") or 12,
         "per_feed": arguments.get("per_feed") or arguments.get("perFeed") or 8,
         "timeout": arguments.get("timeout") or 12,
     }
@@ -4494,9 +4494,15 @@ def run_strategy_discovery_scheduler(arguments: dict) -> dict:
         "per_source_limit": arguments.get("per_source_limit") or arguments.get("perSourceLimit") or 8,
         "max_candidates": arguments.get("max_candidates") or arguments.get("maxCandidates") or 16,
         "route_top": arguments.get("route_top") or arguments.get("routeTop") or 1,
-        "news_feed_limit": arguments.get("news_feed_limit") or arguments.get("newsFeedLimit") or 8,
+        "news_feed_limit": arguments.get("news_feed_limit") or arguments.get("newsFeedLimit") or 12,
         "news_per_feed": arguments.get("news_per_feed") or arguments.get("newsPerFeed") or 6,
         "enable_filings": bool(arguments.get("enable_filings") or arguments.get("enableFilings") or False),
+        "filing_lookback_days": arguments.get("filing_lookback_days") or arguments.get("filingLookbackDays") or 2,
+        "filing_limit": arguments.get("filing_limit") or arguments.get("filingLimit") or 250,
+        "filing_timeout": arguments.get("filing_timeout") or arguments.get("filingTimeout") or 300,
+        "enable_filing_extraction": bool(arguments.get("enable_filing_extraction") or arguments.get("enableFilingExtraction") or False),
+        "filing_extraction_limit": arguments.get("filing_extraction_limit") or arguments.get("filingExtractionLimit") or 4,
+        "filing_extraction_timeout": arguments.get("filing_extraction_timeout") or arguments.get("filingExtractionTimeout") or 300,
         "disable_news": bool(arguments.get("disable_news") or arguments.get("disableNews") or False),
     }
     if arguments.get("news_feed_keys") or arguments.get("newsFeedKeys"):
@@ -4538,6 +4544,38 @@ def strategy_discovery_scheduler_runs(arguments: dict) -> dict:
                        symbols, topics, relevance_score, captured_at
                 FROM market.v_latest_news_items
                 ORDER BY coalesce(published_at, captured_at) DESC, id DESC
+                LIMIT {limit}
+                """
+            ),
+            "filing_collector_runs": run_psql_json(
+                f"""
+                SELECT run_key, source_key, exchange, status, http_status,
+                       rows_seen, rows_upserted, events_upserted,
+                       inbox_items_created, error_message, started_at, finished_at
+                FROM research.v_filing_collector_runs
+                ORDER BY started_at DESC, id DESC
+                LIMIT {limit}
+                """
+            ),
+            "filing_pdf_extraction_runs": run_psql_json(
+                f"""
+                SELECT filing_id, source_name, exchange, symbol, status,
+                       parser_name, bytes_downloaded, page_count, extracted_chars,
+                       event_type_before, event_type_after, error_message,
+                       started_at, finished_at
+                FROM research.v_filing_pdf_extraction_runs
+                ORDER BY started_at DESC, id DESC
+                LIMIT {limit}
+                """
+            ),
+            "news_source_checks": run_psql_json(
+                f"""
+                SELECT DISTINCT ON (source_key)
+                       source_key, status, http_status, latency_ms, rows_seen,
+                       error_message, checked_at
+                FROM core.data_source_checks
+                WHERE check_type = 'rss_http'
+                ORDER BY source_key, checked_at DESC, id DESC
                 LIMIT {limit}
                 """
             ),
@@ -6326,7 +6364,7 @@ TOOLS = {
                 "run_key": {"type": "string"},
                 "actor": {"type": "string", "default": "News Analyst"},
                 "feed_keys": {"type": "string"},
-                "feed_limit": {"type": "integer", "default": 8},
+                "feed_limit": {"type": "integer", "default": 12},
                 "per_feed": {"type": "integer", "default": 8},
                 "timeout": {"type": "integer", "default": 12},
             },
@@ -6334,7 +6372,7 @@ TOOLS = {
         "handler": ingest_market_news,
     },
     "ai_os_run_strategy_discovery_scheduler": {
-        "description": "Run news/source adapters and automatic strategy discovery as one auditable scheduler job. Broker and autonomous live execution stay disabled.",
+        "description": "Run news, NSE/BSE filings, bounded filing extraction, and automatic strategy discovery as one auditable scheduler job. Broker and autonomous live execution stay disabled.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -6346,16 +6384,22 @@ TOOLS = {
                 "max_candidates": {"type": "integer", "default": 16},
                 "route_top": {"type": "integer", "default": 1},
                 "news_feed_keys": {"type": "string"},
-                "news_feed_limit": {"type": "integer", "default": 8},
+                "news_feed_limit": {"type": "integer", "default": 12},
                 "news_per_feed": {"type": "integer", "default": 6},
                 "enable_filings": {"type": "boolean", "default": False},
+                "filing_lookback_days": {"type": "integer", "default": 2},
+                "filing_limit": {"type": "integer", "default": 250},
+                "filing_timeout": {"type": "integer", "default": 300},
+                "enable_filing_extraction": {"type": "boolean", "default": False},
+                "filing_extraction_limit": {"type": "integer", "default": 4},
+                "filing_extraction_timeout": {"type": "integer", "default": 300},
                 "disable_news": {"type": "boolean", "default": False},
             },
         },
         "handler": run_strategy_discovery_scheduler,
     },
     "ai_os_strategy_discovery_scheduler_runs": {
-        "description": "Read strategy discovery scheduler, news ingestion, and latest news evidence.",
+        "description": "Read strategy discovery scheduler, news ingestion, RSS health, filing collection, extraction, and latest news evidence.",
         "inputSchema": {
             "type": "object",
             "properties": {

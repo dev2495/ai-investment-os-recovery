@@ -16,6 +16,7 @@ from run_agent_worker_once import psql_json, psql_text, run_once, sql_jsonb, sql
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or SCRIPT_DIR.parent).resolve()
+WORKLOAD_SCRIPT_DIR = RUNTIME_ROOT / "scripts"
 
 
 def sql_text_array(values: list[str]) -> str:
@@ -339,9 +340,15 @@ def run_ohlcv_aggregation(timeout_seconds: int) -> dict[str, Any]:
 
 
 def run_strategy_discovery_scheduler(interval_seconds: int, timeout_seconds: int) -> dict[str, Any]:
+    scheduler_script = WORKLOAD_SCRIPT_DIR / "run_strategy_discovery_scheduler.py"
+    if not scheduler_script.is_file():
+        return {
+            "status": "failed",
+            "error": f"required workload script is missing: {scheduler_script}",
+        }
     command = [
         sys.executable,
-        str(SCRIPT_DIR / "run_strategy_discovery_scheduler.py"),
+        str(scheduler_script),
         "--interval-seconds",
         str(max(300, interval_seconds)),
         "--max-candidates",
@@ -349,12 +356,24 @@ def run_strategy_discovery_scheduler(interval_seconds: int, timeout_seconds: int
         "--route-top",
         os.environ.get("AI_OS_STRATEGY_DISCOVERY_ROUTE_TOP", "1"),
         "--news-feed-limit",
-        os.environ.get("AI_OS_STRATEGY_DISCOVERY_NEWS_FEED_LIMIT", "8"),
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_NEWS_FEED_LIMIT", "12"),
         "--news-per-feed",
         os.environ.get("AI_OS_STRATEGY_DISCOVERY_NEWS_PER_FEED", "5"),
+        "--filing-lookback-days",
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_LOOKBACK_DAYS", "2"),
+        "--filing-limit",
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_LIMIT", "250"),
+        "--filing-timeout",
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_TIMEOUT_SECONDS", "300"),
+        "--filing-extraction-limit",
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_LIMIT", "4"),
+        "--filing-extraction-timeout",
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_TIMEOUT_SECONDS", "300"),
     ]
     if os.environ.get("AI_OS_STRATEGY_DISCOVERY_ENABLE_FILINGS", "0") == "1":
         command.append("--enable-filings")
+    if os.environ.get("AI_OS_STRATEGY_DISCOVERY_ENABLE_FILING_EXTRACTION", "0") == "1":
+        command.append("--enable-filing-extraction")
     completed = subprocess.run(
         command,
         cwd=str(RUNTIME_ROOT),

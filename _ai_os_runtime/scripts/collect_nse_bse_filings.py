@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 USER_AGENT = os.environ.get(
@@ -26,6 +26,8 @@ USER_AGENT = os.environ.get(
 
 NSE_PAGE_URL = "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
 BSE_PAGE_URL = "https://www.bseindia.com/corporates/ann.html"
+BSE_API_URL = "https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w"
+INDIA_TZ = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 SPECIAL_EVENT_KEYWORDS = [
     ("reverse_merger", ["reverse merger"]),
@@ -124,6 +126,13 @@ def parse_datetime(value: object) -> str | None:
     text = str(value or "").strip()
     if not text:
         return None
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=INDIA_TZ)
+        return parsed.astimezone(dt.timezone.utc).isoformat()
+    except ValueError:
+        pass
     formats = [
         "%d-%b-%Y %H:%M:%S",
         "%Y-%m-%d %H:%M:%S",
@@ -133,7 +142,7 @@ def parse_datetime(value: object) -> str | None:
     ]
     for fmt in formats:
         try:
-            return dt.datetime.strptime(text, fmt).replace(tzinfo=dt.timezone.utc).isoformat()
+            return dt.datetime.strptime(text, fmt).replace(tzinfo=INDIA_TZ).astimezone(dt.timezone.utc).isoformat()
         except ValueError:
             continue
     return None
@@ -205,30 +214,48 @@ def fetch_bse(date_from: dt.date, date_to: dt.date, limit: int) -> tuple[int, st
         "Referer": BSE_PAGE_URL,
         "Origin": "https://www.bseindia.com",
     }
-    query = urllib.parse.urlencode(
-        {
-            "strCat": "-1",
-            "strPrevDate": bse_date(date_from),
-            "strScrip": "",
-            "strSearch": "P",
-            "strToDate": bse_date(date_to),
-            "strType": "C",
-        }
-    )
-    target_url = f"https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?{query}"
-    with urllib.request.urlopen(urllib.request.Request(target_url, headers=headers), timeout=30) as response:
-        raw = response.read().decode("utf-8", errors="ignore")
-        payload = json.loads(raw)
-        rows: list[dict[str, Any]] = []
-        if isinstance(payload, list):
-            rows = [row for row in payload if isinstance(row, dict)]
-        elif isinstance(payload, dict):
-            for key in ("Table", "Data", "data"):
-                value = payload.get(key)
-                if isinstance(value, list):
-                    rows = [row for row in value if isinstance(row, dict)]
-                    break
-        return response.status, target_url, rows[:limit]
+    rows: list[dict[str, Any]] = []
+    http_status = 200
+    target_url = BSE_API_URL
+    current_date = date_to
+    first_request = True
+    while current_date >= date_from and len(rows) < limit:
+        page = 1
+        while len(rows) < limit:
+            query = urllib.parse.urlencode(
+                {
+                    "pageno": page,
+                    "strCat": "-1",
+                    "strPrevDate": bse_date(current_date),
+                    "strScrip": "",
+                    "strSearch": "P",
+                    "strToDate": bse_date(current_date),
+                    "strType": "C",
+                    "subcategory": "",
+                }
+            )
+            page_url = f"{BSE_API_URL}?{query}"
+            if first_request:
+                target_url = page_url
+                first_request = False
+            with urllib.request.urlopen(urllib.request.Request(page_url, headers=headers), timeout=30) as response:
+                http_status = response.status
+                raw = response.read().decode("utf-8", errors="ignore")
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                break
+            page_rows = payload.get("Table")
+            if not isinstance(page_rows, list) or not page_rows:
+                break
+            normalized_page = [row for row in page_rows if isinstance(row, dict)]
+            rows.extend(normalized_page)
+            total_pages = int(normalized_page[0].get("TotalPageCnt") or 0) if normalized_page else 0
+            if not normalized_page or (total_pages and page >= total_pages):
+                break
+            page += 1
+            time.sleep(0.15)
+        current_date -= dt.timedelta(days=1)
+    return http_status, target_url, rows[:limit]
 
 
 def normalize_nse(row: dict[str, Any]) -> dict[str, Any]:
@@ -254,18 +281,23 @@ def normalize_bse(row: dict[str, Any]) -> dict[str, Any]:
     if attachment:
         attachment_text = str(attachment)
         attachment_url = attachment_text if attachment_text.startswith("http") else f"https://www.bseindia.com/xml-data/corpfiling/AttachLive/{attachment_text}"
-    title = str(row.get("HEADLINE") or row.get("NewsSub") or row.get("SUBCATNAME") or "BSE corporate announcement").strip()
+    title = str(row.get("NEWSSUB") or row.get("NewsSub") or row.get("HEADLINE") or row.get("SUBCATNAME") or "BSE corporate announcement").strip()
+    body = " ".join(
+        str(value).strip()
+        for value in [row.get("HEADLINE"), row.get("MORE")]
+        if value not in (None, "")
+    )
     return {
         "source_name": "BSE",
         "exchange": "BSE",
         "symbol": row.get("SCRIP_CD") or row.get("SCRIPCODE") or row.get("SecurityCode"),
         "company_name": row.get("SLONGNAME") or row.get("Company") or row.get("scripname"),
-        "filing_type": row.get("CATEGORYNAME") or row.get("SUBCATNAME"),
+        "filing_type": row.get("SUBCATNAME") or row.get("CATEGORYNAME"),
         "title": title[:900],
         "filed_at": parse_datetime(row.get("NEWS_DT") or row.get("DissemDT") or row.get("DT_TM")),
         "source_url": attachment_url or BSE_PAGE_URL,
         "attachment_url": attachment_url,
-        "text": title,
+        "text": f"{title} {body}".strip(),
         "payload": row,
     }
 

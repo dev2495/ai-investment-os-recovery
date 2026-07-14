@@ -17,6 +17,8 @@ from run_trade_journal_strategy_mining import sql_text_array
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
+DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
+PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
 
 
 def fetch_json(sql: str) -> list[dict[str, Any]]:
@@ -59,14 +61,30 @@ def start_run(args: argparse.Namespace, command: list[str]) -> dict[str, Any]:
 
 
 def run_command(command: list[str], timeout: int) -> dict[str, Any]:
-    completed = subprocess.run(
-        command,
-        cwd=VAULT_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=max(30, timeout),
-    )
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=VAULT_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=max(30, timeout),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "failed",
+            "error": f"TimeoutExpired after {max(30, timeout)} seconds",
+            "stdout": str(exc.stdout or "")[:2000],
+            "stderr": str(exc.stderr or "")[:2000],
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        }
+    except OSError as exc:
+        return {
+            "status": "failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        }
     payload: dict[str, Any] = {}
     if completed.stdout.strip():
         try:
@@ -76,6 +94,7 @@ def run_command(command: list[str], timeout: int) -> dict[str, Any]:
     if completed.returncode != 0:
         payload["status"] = payload.get("status") or "failed"
         payload["error"] = (completed.stderr or completed.stdout or "command failed").strip()[:4000]
+    payload["duration_ms"] = int((time.monotonic() - started) * 1000)
     return payload
 
 
@@ -119,6 +138,20 @@ def run_filings_adapter(args: argparse.Namespace) -> dict[str, Any]:
         "News Analyst",
     ]
     result = run_command(command, max(60, args.filing_timeout))
+    result["command"] = command
+    return result
+
+
+def run_filing_extraction_adapter(args: argparse.Namespace) -> dict[str, Any]:
+    command = [
+        PDF_PYTHON,
+        str(RUNTIME_ROOT / "scripts" / "extract_filing_pdfs.py"),
+        "--limit",
+        str(args.filing_extraction_limit),
+        "--actor",
+        "Filings Analyst",
+    ]
+    result = run_command(command, max(60, args.filing_extraction_timeout))
     result["command"] = command
     return result
 
@@ -198,6 +231,7 @@ def run_scheduler(args: argparse.Namespace) -> dict[str, Any]:
     adapters: dict[str, Any] = {
         "news": {"status": "skipped"},
         "filings": {"status": "skipped"},
+        "filing_extraction": {"status": "skipped"},
         "x_twitter": {
             "status": "blocked_credentials",
             "next_action": "Connect authenticated browser/API credentials before social ingestion.",
@@ -207,15 +241,19 @@ def run_scheduler(args: argparse.Namespace) -> dict[str, Any]:
         adapters["news"] = run_news_adapter(args)
     if args.enable_filings:
         adapters["filings"] = run_filings_adapter(args)
+    if args.enable_filing_extraction and adapters["filings"].get("status") != "failed":
+        adapters["filing_extraction"] = run_filing_extraction_adapter(args)
     discovery = run_discovery(args)
     duration_ms = int((time.monotonic() - started) * 1000)
     errors: list[str] = []
     for name, payload in adapters.items():
-        if payload.get("status") == "failed":
-            errors.append(f"{name}: {payload.get('error')}")
+        if payload.get("status") in {"failed", "completed_with_errors"}:
+            detail = payload.get("error") or "; ".join(payload.get("errors") or []) or payload.get("status")
+            errors.append(f"{name}: {detail}")
     if discovery.get("status") == "failed" or discovery.get("error"):
         errors.append(f"discovery: {discovery.get('error')}")
-    status = "completed" if not errors and (discovery.get("summary") or {}).get("generated_idea_count") is not None else "failed"
+    discovery_completed = (discovery.get("summary") or {}).get("generated_idea_count") is not None
+    status = "completed" if not errors and discovery_completed else ("completed_with_errors" if discovery_completed else "failed")
     finish_run(int(run["id"]), args, status, adapters, discovery, "; ".join(errors)[:4000] if errors else None, duration_ms)
     return {
         "run_key": args.run_key,
@@ -240,14 +278,17 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=int, default=3600)
     parser.add_argument("--disable-news", action="store_true")
     parser.add_argument("--news-feed-keys", default="")
-    parser.add_argument("--news-feed-limit", type=int, default=8)
+    parser.add_argument("--news-feed-limit", type=int, default=12)
     parser.add_argument("--news-per-feed", type=int, default=6)
     parser.add_argument("--news-timeout", type=int, default=12)
     parser.add_argument("--enable-filings", action="store_true")
     parser.add_argument("--filing-source", default="all")
     parser.add_argument("--filing-lookback-days", type=int, default=1)
-    parser.add_argument("--filing-limit", type=int, default=20)
+    parser.add_argument("--filing-limit", type=int, default=250)
     parser.add_argument("--filing-timeout", type=int, default=180)
+    parser.add_argument("--enable-filing-extraction", action="store_true")
+    parser.add_argument("--filing-extraction-limit", type=int, default=4)
+    parser.add_argument("--filing-extraction-timeout", type=int, default=300)
     parser.add_argument("--sources", default="research,journals,signals,components")
     parser.add_argument("--per-source-limit", type=int, default=8)
     parser.add_argument("--max-candidates", type=int, default=16)

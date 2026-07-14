@@ -15,14 +15,14 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 USER_AGENT = os.environ.get(
     "AI_OS_PUBLIC_CHECK_USER_AGENT",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AI-OS-Research/0.1",
 )
-ARTIFACT_ROOT = RUNTIME_ROOT / "artifacts" / "filings"
+ARTIFACT_ROOT = Path(os.environ.get("AI_OS_ARTIFACT_ROOT") or RUNTIME_ROOT / "artifacts") / "filings"
 
 SPECIAL_EVENT_KEYWORDS = [
     ("reverse_merger", ["reverse merger"]),
@@ -121,6 +121,13 @@ def clean_text(value: str) -> str:
     return text.strip()
 
 
+def storage_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(RUNTIME_ROOT.parent))
+    except ValueError:
+        return str(path)
+
+
 def classify_event(title: str, filing_type: str, text: str) -> dict[str, Any]:
     haystack = f"{title} {filing_type} {text[:20000]}".lower()
     if any(phrase in haystack for phrase in ["employee stock option", "stock option scheme", "esop", "exercise of stock options"]):
@@ -190,8 +197,14 @@ def extract_special_terms(event: dict[str, Any], text: str) -> dict[str, Any]:
         "offer_price": first_match(compact_text, [rf"(?:offer price|buyback price|exit price|price of|at a price of)(?:[^\n.]{{0,180}}?){money_pattern}"]),
         "issue_price": first_match(compact_text, [rf"(?:issue price|subscription price|exercise price|warrant price)(?:[^\n.]{{0,180}}?){money_pattern}"]),
         "cash_consideration": first_match(compact_text, [rf"(?:cash consideration|consideration payable|cash payment)(?:[^\n.]{{0,180}}?){money_pattern}"]),
-        "swap_ratio": first_match(compact_text, [r"((?:[0-9]+(?:\.[0-9]+)?\s*(?:equity\s+)?shares?[^\n.]{0,80}?for\s+every\s+[0-9]+(?:\.[0-9]+)?[^\n.]{0,80}?shares?)|(?:[0-9]+(?:\.[0-9]+)?\s*:\s*[0-9]+(?:\.[0-9]+)?))"]),
-        "entitlement_ratio": first_match(compact_text, [r"((?:[0-9]+\s*(?:rights|right|bonus)?\s*(?:equity\s+)?shares?[^\n.]{0,80}?for\s+every\s+[0-9]+[^\n.]{0,80}?shares?)|(?:[0-9]+\s*:\s*[0-9]+))"]),
+        "swap_ratio": first_match(compact_text, [
+            r"([0-9]+(?:\.[0-9]+)?\s*(?:equity\s+)?shares?[^\n.]{0,80}?for\s+every\s+[0-9]+(?:\.[0-9]+)?[^\n.]{0,80}?shares?)",
+            r"((?:swap ratio|share exchange ratio|in the ratio of)[^\n.]{0,120}?[0-9]+(?:\.[0-9]+)?\s*:\s*[0-9]+(?:\.[0-9]+)?)",
+        ]),
+        "entitlement_ratio": first_match(compact_text, [
+            r"([0-9]+\s*(?:rights|right|bonus)?\s*(?:equity\s+)?shares?[^\n.]{0,80}?for\s+every\s+[0-9]+[^\n.]{0,80}?shares?)",
+            r"((?:entitlement ratio|rights ratio|bonus ratio|in the ratio of)[^\n.]{0,120}?[0-9]+\s*:\s*[0-9]+)",
+        ]),
         "buyback_size": first_match(compact_text, [rf"(?:buyback size|maximum buyback size|aggregate amount of the buyback|buyback offer size)(?:[^\n.]{{0,200}}?){money_pattern}"]),
         "aggregate_amount": first_match(compact_text, [rf"(?:aggregate amount|maximum amount|issue size|offer size)(?:[^\n.]{{0,200}}?){money_pattern}"]),
         "dates_found": all_matches(compact_text, date_pattern, limit=12),
@@ -238,23 +251,71 @@ def extract_special_terms(event: dict[str, Any], text: str) -> dict[str, Any]:
 
 def select_filings(limit: int, filing_id: int | None, force: bool) -> list[dict[str, Any]]:
     where = [
-        "coalesce(attachment_url, source_url) IS NOT NULL",
-        "lower(coalesce(attachment_url, source_url)) LIKE '%.pdf%'",
+        "coalesce(cf.attachment_url, cf.source_url) IS NOT NULL",
+        "lower(coalesce(cf.attachment_url, cf.source_url)) LIKE '%.pdf%'",
     ]
     if filing_id is not None:
-        where.append(f"id = {filing_id}")
+        where.append(f"cf.id = {filing_id}")
     elif not force:
-        where.append("extraction_status IN ('captured', 'extraction_failed')")
+        where.append(
+            """(
+                cf.extraction_status = 'captured'
+                OR (
+                    cf.extraction_status = 'extraction_failed'
+                    AND (
+                        SELECT count(*)
+                        FROM research.filing_pdf_extraction_runs attempts
+                        WHERE attempts.filing_id = cf.id
+                    ) < 3
+                    AND coalesce((
+                        SELECT max(attempts.started_at)
+                        FROM research.filing_pdf_extraction_runs attempts
+                        WHERE attempts.filing_id = cf.id
+                    ), '-infinity'::timestamptz) < now() - interval '6 hours'
+                )
+            )"""
+        )
     rows = run_psql_json(
         f"""
         SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
         FROM (
-            SELECT id, source_system_id, source_name, exchange, symbol, company_name,
-                   filing_type, event_type, title, source_url, attachment_url,
-                   local_path, extraction_status
-            FROM research.corporate_filings
+            SELECT cf.id, cf.source_system_id, cf.source_name, cf.exchange, cf.symbol, cf.company_name,
+                   cf.filing_type, cf.event_type, cf.title, cf.source_url, cf.attachment_url,
+                   cf.local_path, cf.extraction_status,
+                   EXISTS (
+                       SELECT 1
+                       FROM portfolio.positions p
+                       WHERE upper(p.symbol) = upper(cf.symbol)
+                         AND coalesce(p.quantity, 0) <> 0
+                   ) AS is_held,
+                   EXISTS (
+                       SELECT 1
+                       FROM trading.instrument_watchlist w
+                       WHERE upper(coalesce(w.normalized_symbol, w.base_asset, '')) = upper(cf.symbol)
+                   ) AS is_watched,
+                   (
+                       SELECT count(*)
+                       FROM research.filing_pdf_extraction_runs attempts
+                       WHERE attempts.filing_id = cf.id
+                   ) AS extraction_attempt_count
+            FROM research.corporate_filings cf
             WHERE {' AND '.join(where)}
-            ORDER BY coalesce(filed_at, created_at) DESC, id DESC
+            ORDER BY
+                CASE
+                    WHEN coalesce(cf.event_type, 'routine_filing') <> 'routine_filing' THEN 0
+                    WHEN EXISTS (
+                        SELECT 1 FROM portfolio.positions p
+                        WHERE upper(p.symbol) = upper(cf.symbol)
+                          AND coalesce(p.quantity, 0) <> 0
+                    ) THEN 1
+                    WHEN EXISTS (
+                        SELECT 1 FROM trading.instrument_watchlist w
+                        WHERE upper(coalesce(w.normalized_symbol, w.base_asset, '')) = upper(cf.symbol)
+                    ) THEN 2
+                    ELSE 3
+                END,
+                coalesce(cf.filed_at, cf.created_at) DESC,
+                cf.id DESC
             LIMIT {max(1, limit)}
         ) result_rows
         """
@@ -355,7 +416,7 @@ def upsert_text_artifact(filing: dict[str, Any], local_pdf_path: Path, extracted
                 {int(filing["source_system_id"]) if filing.get("source_system_id") is not None else 'NULL'},
                 'filing_pdf_text', {sql_literal(filing.get("title"))},
                 {sql_literal(filing.get("attachment_url") or filing.get("source_url"))},
-                {sql_literal(str(local_pdf_path.relative_to(RUNTIME_ROOT.parent)))},
+                {sql_literal(storage_path(local_pdf_path))},
                 {sql_literal(hash_value)}, 'text/plain', 'public',
                 {sql_jsonb({"filing_id": filing.get("id"), "event_type": event.get("event_type"), "parser": "pypdf"})}
             )
@@ -533,7 +594,7 @@ def upsert_special_terms(filing: dict[str, Any], run_id: int, event: dict[str, A
 
 
 def update_filing(filing: dict[str, Any], run_id: int, local_pdf_path: Path, extracted_text: str, page_count: int, text_artifact_id: int | None, event: dict[str, Any]) -> None:
-    relative_path = str(local_pdf_path.relative_to(RUNTIME_ROOT.parent))
+    relative_path = storage_path(local_pdf_path)
     run_psql_text(
         f"""
         UPDATE research.corporate_filings
@@ -606,7 +667,7 @@ def extract_one(filing: dict[str, Any], actor: str, dry_run: bool) -> dict[str, 
         finish_run(
             run_id,
             status,
-            str(local_pdf_path.relative_to(RUNTIME_ROOT.parent)) if local_pdf_path else None,
+            storage_path(local_pdf_path) if local_pdf_path else None,
             parser_name,
             local_pdf_path.stat().st_size if local_pdf_path and local_pdf_path.exists() else 0,
             page_count,
@@ -621,7 +682,7 @@ def extract_one(filing: dict[str, Any], actor: str, dry_run: bool) -> dict[str, 
         "run_id": run_id or None,
         "status": status,
         "source_url": filing.get("attachment_url") or filing.get("source_url"),
-        "local_pdf_path": str(local_pdf_path.relative_to(RUNTIME_ROOT.parent)) if local_pdf_path else None,
+        "local_pdf_path": storage_path(local_pdf_path) if local_pdf_path else None,
         "parser_name": parser_name,
         "page_count": page_count,
         "extracted_chars": len(extracted_text),

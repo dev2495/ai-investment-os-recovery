@@ -954,6 +954,17 @@ Outputs:
 - dashboard alert,
 - Obsidian writeback.
 
+Operating implementation checkpoint:
+
+- The hourly source-intelligence loop runs curated news ingestion, NSE/BSE announcement collection, material-first filing PDF extraction, strategy discovery, and role-scoped agent routing as one auditable scheduler workflow.
+- Ten RSS sources currently pass live health checks, including official RBI, Federal Reserve, and ECB feeds; each check records HTTP state, latency, rows seen, sample titles, and error evidence.
+- NSE and BSE collectors use current exchange endpoints, bounded pagination, per-day BSE requests, India-time normalization, idempotent upserts, and a two-day operating lookback.
+- Filing extraction prioritizes special situations, held companies, and watched symbols; stores PDFs and extracted text under the external artifact root; limits failed retries; and requires human review before promotion.
+- Holdings Research exposes feed registry, source health, collector history, filing extraction, filings, news, special situations, generated ideas, and outputs through a bounded scoped API and terminal workspace.
+- Twitter/X remains explicitly blocked until authenticated credentials and an approved collection policy are supplied.
+- No source pipeline can allocate capital, enable a strategy, or place an order. Execution remains locked and committee approval remains mandatory.
+- Evidence: [[2026-07-15-research-intelligence-v1]].
+
 ## 18. Treasury, Hedges, Crypto, Commodities
 
 Treasury checks:

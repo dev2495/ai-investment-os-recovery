@@ -2,9 +2,11 @@ import {
   BookOpenText,
   BrainCircuit,
   Dices,
+  ExternalLink,
   FileSearch,
   Lightbulb,
   Newspaper,
+  RadioTower,
   RefreshCw,
   ShieldCheck,
   Sparkles
@@ -12,7 +14,7 @@ import {
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EvidenceSelection } from "../api/evidence";
-import { createStrategyIntake, type LiveRow } from "../api/live";
+import { createStrategyIntake, runStrategyDiscoveryScheduler, type LiveRow } from "../api/live";
 import { fetchResearchIdeasSnapshot, runLongTermMonteCarlo, type ResearchIdeasSnapshot } from "../api/researchIdeas";
 import EvidenceDrawer from "../components/EvidenceDrawer";
 import WorkspaceFreshness from "../components/WorkspaceFreshness";
@@ -71,7 +73,7 @@ function date(raw: unknown): string {
 
 function statusClass(status: string): string {
   const normalized = status.toLowerCase();
-  if (["active", "approved", "complete", "completed", "extracted", "indexed", "ready"].includes(normalized)) return "active";
+  if (["active", "approved", "complete", "completed", "extracted", "indexed", "ok", "ready"].includes(normalized)) return "active";
   if (["blocked", "critical", "error", "failed", "rejected", "source_required"].includes(normalized)) return "blocked";
   return "waiting";
 }
@@ -101,6 +103,7 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [intakeBusy, setIntakeBusy] = useState(false);
+  const [intelligenceBusy, setIntelligenceBusy] = useState(false);
   const [intake, setIntake] = useState({ name: "", family: "", timeframe: "daily", text: "" });
   const [monteCarloBusy, setMonteCarloBusy] = useState(false);
   const [monteCarlo, setMonteCarlo] = useState({
@@ -156,6 +159,14 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
   const checklists = (snapshot?.long_term_checklists ?? []).filter((row) => matches(row, normalizedQuery));
   const valuations = (snapshot?.long_term_valuation_models ?? []).filter((row) => matches(row, normalizedQuery));
   const monteCarloRuns = (snapshot?.long_term_monte_carlo_runs ?? []).filter((row) => matches(row, normalizedQuery));
+  const feedChecks = snapshot?.news_source_checks ?? [];
+  const activeFeedCount = (snapshot?.feed_registry ?? []).filter((row) => value(row, "status", "") === "active").length;
+  const healthyFeedCount = feedChecks.filter((row) => value(row, "status", "") === "ok").length;
+  const pipelineRuns = useMemo<LiveRow[]>(() => [
+    ...(snapshot?.news_ingestion_runs ?? []).map((row): LiveRow => ({ ...row, pipeline_kind: "news" })),
+    ...(snapshot?.filing_collector_runs ?? []).map((row): LiveRow => ({ ...row, pipeline_kind: `filings ${value(row, "exchange", "")}`.trim() })),
+    ...(snapshot?.filing_pdf_extraction_runs ?? []).map((row): LiveRow => ({ ...row, pipeline_kind: "pdf extraction" }))
+  ].sort((left, right) => new Date(String(right.started_at ?? 0)).getTime() - new Date(String(left.started_at ?? 0)).getTime()).slice(0, 12), [snapshot]);
   const execution = snapshot?.execution_control[0];
   const thesisExposure = useMemo(() => theses.reduce((sum, row) => sum + Number(row.long_term_gross_exposure ?? 0), 0), [theses]);
   const sourceRequired = theses.filter((row) => value(row, "thesis_status", "") === "source_required").length;
@@ -216,6 +227,39 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
     }
   };
 
+  const runIntelligenceLoop = async () => {
+    if (intelligenceBusy) return;
+    setIntelligenceBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+      const result = await runStrategyDiscoveryScheduler({
+        run_key: `research_intelligence_ui_${stamp}`,
+        actor: "Jarvis",
+        interval_seconds: 3600,
+        sources: "research,journals,signals,components",
+        news_feed_limit: 12,
+        news_per_feed: 6,
+        enable_filings: true,
+        filing_lookback_days: 2,
+        filing_limit: 250,
+        filing_timeout: 300,
+        enable_filing_extraction: true,
+        filing_extraction_limit: 4,
+        filing_extraction_timeout: 300,
+        max_candidates: 16,
+        route_top: 1
+      });
+      setNotice(`Source intelligence loop completed with status ${value(result, "status", "review")}. News, filing, extraction, discovery, and agent-routing evidence were refreshed; trading remains locked.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Source intelligence loop failed");
+    } finally {
+      setIntelligenceBusy(false);
+    }
+  };
+
   const openEvidence = (selection: EvidenceSelection) => setEvidenceSelection(selection);
   const evidenceKeyDown = (event: ReactKeyboardEvent<HTMLElement>, selection: EvidenceSelection) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -252,6 +296,8 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
           <Panel className="span-7" icon={<BrainCircuit size={17} />} title="Monte Carlo Evidence" action={<span>{monteCarloRuns.length} runs</span>}><div className="source-check-list scoped-scroll-list">{monteCarloRuns.map((row)=>{const selection:EvidenceSelection={kind:"artifact",key:`long_term_monte_carlo:${value(row,"id")}`,title:`${value(row,"symbol")} Monte Carlo`,subtitle:`${value(row,"simulation_count")} simulations · seed ${value(row,"seed")}`,record:row};return <article className="source-check-row evidence-open-row" key={value(row,"id")} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row,"symbol")} · {value(row,"company_name")}</strong><p>P50 CAGR {percent(nested(row,"percentile_summary","cagr","p50"))} · negative CAGR {percent(nested(row,"probability_summary","negative_cagr_probability"))} · permanent loss {percent(nested(row,"probability_summary","permanent_loss_30pct_probability"))}</p><small>{value(row,"note_path")} · {value(row,"warnings","No warnings")}</small></div><StatusPill status={value(row,"run_status","review")}/><span>{value(row,"simulation_count")} sims</span><time>{date(row.created_at)}</time></article>;})}{!monteCarloRuns.length?<Empty>No Monte Carlo evidence matches this filter.</Empty>:null}</div></Panel>
           <Panel className="span-6" icon={<BrainCircuit size={17} />} title="Valuation Modules" action={<span>{valuations.length} models</span>}><div className="source-check-list scoped-scroll-list">{valuations.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"symbol")} · {value(row,"model_name")}</strong><p>Fair value {value(row,"fair_value_low","-")} / {value(row,"fair_value_base","-")} / {value(row,"fair_value_high","-")} · expected CAGR {value(row,"expected_cagr_pct","-")}</p></div><StatusPill status={value(row,"status","review")}/><span>{value(row,"owner_agent")}</span><time>{date(row.updated_at)}</time></article>)}{!valuations.length?<Empty>No valuation modules match this filter.</Empty>:null}</div></Panel>
           <Panel className="span-6" icon={<ShieldCheck size={17} />} title="Thesis Checklists" action={<span>{checklists.length} checks · {snapshot?.long_term_research_updates.length ?? 0} updates</span>}><div className="source-check-list scoped-scroll-list">{checklists.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"symbol")} · {value(row,"checklist_name")}</strong><p>{value(row,"findings","Evidence not yet recorded")}</p></div><StatusPill status={value(row,"status","review")}/><span>score {value(row,"score","-")}</span><time>{date(row.updated_at)}</time></article>)}{!checklists.length?<Empty>No checklist rows match this filter.</Empty>:null}</div></Panel>
+          <Panel className="span-7" icon={<RadioTower size={17} />} title="Source Intelligence" action={<button className="mini-action-button" disabled={intelligenceBusy} onClick={() => void runIntelligenceLoop()} type="button"><RefreshCw size={14} />{intelligenceBusy ? "Running" : "Run source loop"}</button>}><div className="panel-action-row compact"><span>{activeFeedCount} active feeds</span><span>{healthyFeedCount}/{feedChecks.length} healthy checks</span><small>Hourly daemon · two-day filing lookback · four material-first PDF parses</small></div><div className="source-check-list scoped-scroll-list">{snapshot?.feed_registry.map((feed)=>{const check=feedChecks.find((row)=>value(row,"source_key","")===value(feed,"feed_key",""));const href=value(feed,"url","");return <article className="source-check-row" key={value(feed,"feed_key")}><div><strong>{value(feed,"feed_name")}</strong><p>{value(feed,"provider","source")} · {value(feed,"topics","unclassified")} · {value(check,"latency_ms","-")} ms</p></div><StatusPill status={value(check,"status",value(feed,"status","planned"))}/><span>{value(check,"rows_seen","0")} items</span>{href&&href!=="-"?<a aria-label={`Open ${value(feed,"feed_name")} source`} className="icon-button" href={href} rel="noreferrer" target="_blank" title="Open source"><ExternalLink size={14}/></a>:<time>{date(check?.checked_at ?? feed.updated_at)}</time>}</article>;})}{!snapshot?.feed_registry.length?<Empty>No source feeds registered.</Empty>:null}</div></Panel>
+          <Panel className="span-5" icon={<BrainCircuit size={17} />} title="Collector Runs" action={<span>{pipelineRuns.length} recent</span>}><div className="source-check-list scoped-scroll-list">{pipelineRuns.map((row,index)=><article className="source-check-row" key={`${value(row,"pipeline_kind")}-${value(row,"id")}-${index}`}><div><strong>{value(row,"pipeline_kind")}</strong><p>{value(row,"run_key",`filing ${value(row,"filing_id","-")}`)} · {value(row,"rows_seen",value(row,"items_seen",value(row,"extracted_chars","0")))} processed</p></div><StatusPill status={value(row,"status","review")}/><span>{value(row,"event_type_after",value(row,"research_ideas_created","-"))}</span><time>{date(row.finished_at ?? row.started_at)}</time></article>)}{!pipelineRuns.length?<Empty>No collector runs recorded.</Empty>:null}</div></Panel>
           <Panel className="span-7" icon={<FileSearch size={17} />} title="Corporate Filings" action={<span>{filings.length} filings</span>}><div className="source-check-list scoped-scroll-list">{filings.map((row) => <article className="source-check-row" key={value(row, "filing_id")}><div><strong>{value(row, "symbol")} · {value(row, "title")}</strong><p>{value(row, "source_name")} · {value(row, "event_type", value(row, "filing_event_type"))} · {value(row, "pdf_page_count", "0")} pages</p></div><StatusPill status={value(row, "extraction_status", "pending")} /><span>opp {value(row, "opportunity_score", "-")}</span><time>{date(row.filed_at)}</time></article>)}{!filings.length ? <Empty>No filing rows match this filter.</Empty> : null}</div></Panel>
           <Panel className="span-5" icon={<Newspaper size={17} />} title="Curated News" action={<span>{news.length} items</span>}><div className="source-check-list scoped-scroll-list">{news.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "title")}</strong><p>{value(row, "source_name")} · {value(row, "symbols", "broad market")}</p></div><StatusPill status={value(row, "sentiment", "neutral")} /><span>{value(row, "relevance_score", "-")}</span><time>{date(row.published_at ?? row.captured_at)}</time></article>)}{!news.length ? <Empty>No news rows match this filter.</Empty> : null}</div></Panel>
           <Panel className="span-6" icon={<Sparkles size={17} />} title="Special Situations" action={<span>{special.length} events</span>}><div className="source-check-list scoped-scroll-list">{special.map((row) => <article className="source-check-row" key={value(row, "filing_id")}><div><strong>{value(row, "symbol")} · {value(row, "event_type")}</strong><p>{value(row, "title")}</p></div><StatusPill status={value(row, "urgency", "review")} /><span>opp {value(row, "opportunity_score", "-")}</span><time>{date(row.filed_at)}</time></article>)}{!special.length ? <Empty>No special-situation rows.</Empty> : null}</div></Panel>

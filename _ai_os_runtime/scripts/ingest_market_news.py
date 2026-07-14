@@ -20,7 +20,7 @@ from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
 from run_trade_journal_strategy_mining import sql_numeric, sql_text_array
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 USER_AGENT = os.environ.get(
     "AI_OS_PUBLIC_CHECK_USER_AGENT",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AI-OS-Research/0.1",
@@ -163,18 +163,19 @@ def materiality(text: str) -> tuple[float, float, list[str], str]:
     return best_relevance, best_risk, topics, label
 
 
-def read_feed(url: str, per_feed: int, timeout: int) -> tuple[int | None, list[dict[str, Any]], str | None]:
+def read_feed(url: str, per_feed: int, timeout: int) -> tuple[int | None, list[dict[str, Any]], str | None, int]:
+    started = time.monotonic()
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml, text/xml, */*"})
     try:
         with urllib.request.urlopen(request, timeout=max(5, timeout)) as response:
             status = int(getattr(response, "status", 200))
             body = response.read(2_000_000)
     except Exception as exc:  # noqa: BLE001
-        return None, [], f"{type(exc).__name__}: {exc}"
+        return None, [], f"{type(exc).__name__}: {exc}", int((time.monotonic() - started) * 1000)
     try:
         root = ET.fromstring(body)
     except ET.ParseError as exc:
-        return status, [], f"ParseError: {exc}"
+        return status, [], f"ParseError: {exc}", int((time.monotonic() - started) * 1000)
 
     items: list[dict[str, Any]] = []
     rss_items = root.findall(".//item")
@@ -198,7 +199,56 @@ def read_feed(url: str, per_feed: int, timeout: int) -> tuple[int | None, list[d
         summary = strip_html(entry.findtext("{http://www.w3.org/2005/Atom}summary") or "")
         if title:
             items.append({"title": title, "link": link, "published_at": parse_ts(published), "summary": summary})
-    return status, items[:per_feed], None
+    return status, items[:per_feed], None, int((time.monotonic() - started) * 1000)
+
+
+def record_feed_check(feed: dict[str, Any], http_status: int | None, items: list[dict[str, Any]], error: str | None, latency_ms: int) -> None:
+    status = "ok" if not error and items else ("empty" if not error else "error")
+    sample = {
+        "feed_key": feed.get("feed_key"),
+        "feed_type": feed.get("feed_type"),
+        "provider": feed.get("provider"),
+        "sample_titles": [str(item.get("title") or "")[:240] for item in items[:3]],
+    }
+    run_psql_json(
+        f"""
+        WITH inserted AS (
+            INSERT INTO core.data_source_checks (
+                source_key, check_name, check_type, target_url, status,
+                http_status, latency_ms, rows_seen, sample_payload, error_message
+            )
+            VALUES (
+                {sql_literal(feed.get("feed_key"))},
+                {sql_literal(str(feed.get("feed_name") or feed.get("feed_key")) + " RSS ingestion")},
+                'rss_http',
+                {sql_literal(feed.get("url"))},
+                {sql_literal(status)},
+                {int(http_status) if http_status is not None else 'NULL'},
+                {int(latency_ms)},
+                {len(items)},
+                {sql_jsonb(sample)},
+                {sql_literal(error) if error else 'NULL'}
+            )
+            RETURNING id
+        ), updated AS (
+            UPDATE research.feed_registry
+            SET metadata = metadata || {sql_jsonb({
+                "last_check_status": status,
+                "last_http_status": http_status,
+                "last_rows_seen": len(items),
+                "last_latency_ms": latency_ms,
+                "last_error": error,
+            })},
+                updated_at = now()
+            WHERE id = {int(feed["id"])}
+            RETURNING id
+        )
+        SELECT jsonb_build_array(jsonb_build_object(
+            'check_id', (SELECT id FROM inserted),
+            'feed_id', (SELECT id FROM updated)
+        ))::text
+        """
+    )
 
 
 def start_run(run_key: str, actor: str, feed_keys: list[str]) -> dict[str, Any]:
@@ -390,7 +440,8 @@ def run_ingestion(args: argparse.Namespace) -> dict[str, Any]:
     inbox_created = 0
     errors: list[str] = []
     for feed in feeds:
-        status, items, error = read_feed(str(feed.get("url")), args.per_feed, args.timeout)
+        status, items, error, latency_ms = read_feed(str(feed.get("url")), args.per_feed, args.timeout)
+        record_feed_check(feed, status, items, error, latency_ms)
         if error:
             errors.append(f"{feed.get('feed_key')}: {error}")
         feed_seen = 0
@@ -409,9 +460,9 @@ def run_ingestion(args: argparse.Namespace) -> dict[str, Any]:
                 inbox_created += 1
         items_seen += feed_seen
         items_upserted += feed_upserted
-        feed_results.append({"feed_key": feed.get("feed_key"), "http_status": status, "items_seen": feed_seen, "items_upserted": feed_upserted, "error": error})
+        feed_results.append({"feed_key": feed.get("feed_key"), "http_status": status, "latency_ms": latency_ms, "items_seen": feed_seen, "items_upserted": feed_upserted, "error": error})
     duration_ms = int((time.monotonic() - started) * 1000)
-    status = "completed" if not errors or items_upserted > 0 else "failed"
+    status = "completed" if not errors else ("completed_with_errors" if items_upserted > 0 else "failed")
     summary = {
         "feeds_checked": len(feeds),
         "items_seen": items_seen,
@@ -430,7 +481,7 @@ def main() -> int:
     parser.add_argument("--run-key", default=f"market_news_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
     parser.add_argument("--actor", default="News Analyst")
     parser.add_argument("--feed-keys", default="")
-    parser.add_argument("--feed-limit", type=int, default=8)
+    parser.add_argument("--feed-limit", type=int, default=12)
     parser.add_argument("--per-feed", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=12)
     args = parser.parse_args()

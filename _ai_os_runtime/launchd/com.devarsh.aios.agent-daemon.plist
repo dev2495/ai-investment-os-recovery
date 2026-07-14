@@ -31,6 +31,10 @@
     <string>/opt/homebrew/opt/postgresql@15/bin/psql</string>
     <key>AI_OS_DOCKER_BIN</key>
     <string>/usr/local/bin/docker</string>
+    <key>AI_OS_ARTIFACT_ROOT</key>
+    <string>/Volumes/Devarsh SSD/AI OS Data/artifacts</string>
+    <key>AI_OS_PDF_PYTHON</key>
+    <string>/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3</string>
     <key>AI_OS_AGENT_DAEMON_INTERVAL</key>
     <string>45</string>
     <key>AI_OS_ENABLE_SOURCE_FRESHNESS_SCHEDULER</key>
@@ -53,6 +57,28 @@
     <string>300</string>
     <key>AI_OS_OHLCV_AGGREGATION_TIMEOUT_SECONDS</key>
     <string>120</string>
+    <key>AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER</key>
+    <string>1</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_SCHEDULER_INTERVAL_SECONDS</key>
+    <string>3600</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_SCHEDULER_TIMEOUT_SECONDS</key>
+    <string>900</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_NEWS_FEED_LIMIT</key>
+    <string>12</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_ENABLE_FILINGS</key>
+    <string>1</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_ENABLE_FILING_EXTRACTION</key>
+    <string>1</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_FILING_LOOKBACK_DAYS</key>
+    <string>2</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_FILING_LIMIT</key>
+    <string>250</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_FILING_TIMEOUT_SECONDS</key>
+    <string>300</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_LIMIT</key>
+    <string>4</string>
+    <key>AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_TIMEOUT_SECONDS</key>
+    <string>300</string>
   </dict>
 </dict>
 </plist>

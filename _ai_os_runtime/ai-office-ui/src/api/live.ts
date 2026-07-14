@@ -794,6 +794,12 @@ export interface RunStrategyDiscoverySchedulerInput {
   news_feed_limit?: string | number;
   news_per_feed?: string | number;
   enable_filings?: boolean;
+  filing_lookback_days?: string | number;
+  filing_limit?: string | number;
+  filing_timeout?: string | number;
+  enable_filing_extraction?: boolean;
+  filing_extraction_limit?: string | number;
+  filing_extraction_timeout?: string | number;
   disable_news?: boolean;
 }
 

@@ -260,13 +260,13 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 8. Research Factory And Special Situations
 
-- [~] NSE/BSE filing collector foundation.
-- [~] Filing PDF extraction pipeline.
+- [x] NSE/BSE filing collector foundation. Current exchange endpoints, pagination, India-time normalization, source checks, idempotent upserts, and scheduled two-day collection are live. Evidence: [[2026-07-15-research-intelligence-v1]].
+- [x] Filing PDF extraction pipeline. Material-first selection, external artifact storage, bounded retries, extracted-text lineage, and scheduled runs are live. Evidence: [[2026-07-15-research-intelligence-v1]].
 - [~] Special situation memo workflow.
 - [~] Special situation terms extraction.
 - [~] Special situation spread decision workflow.
 - [~] Event-symbol quote refresh from TradingView scanner.
-- [ ] News collector.
+- [x] News collector. Ten RSS feeds pass current health checks, including official RBI, Federal Reserve, and ECB sources; partial failures are recorded rather than hidden. Evidence: [[2026-07-15-research-intelligence-v1]].
 - [ ] Twitter/X triage collector.
 - [ ] Annual report pipeline for watchlist.
 - [ ] Concall transcript pipeline.
@@ -283,16 +283,16 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Auditor resignation detector.
 - [ ] Rating change detector.
 - [ ] Arbitrage spread monitor.
-- [~] Research Factory dashboard. Scoped thesis coverage, committee queue, outputs, filings, news, and special situations are live; detailed packet actions and source-document workflow remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
-- [~] News and Filings dashboard. Live curated news and 28 filing rows with extraction/event metadata are deployed; broader sources, drill-down, and collector controls remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
+- [~] Research Factory dashboard. Scoped thesis coverage, committee queue, outputs, filings, news, special situations, source health, and collector controls are live; detailed packet actions and the broader document-ingestion workflow remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]], [[2026-07-15-research-intelligence-v1]].
+- [~] News and Filings dashboard. Source Intelligence and Collector Runs expose feed health, scheduled runs, 100 bounded filings, 80 current news rows, extraction state, and a guarded source-loop action; source-document drill-down and additional credentialed feeds remain open. Evidence: [[2026-07-15-research-intelligence-v1]].
 - [~] Special Situations dashboard. Live event inbox and memo visibility are deployed; full detector catalog, terms/spread actions, and arbitrage decisions remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [ ] Research Director agent.
 - [ ] Corporate Actions Analyst agent.
 - [ ] Arbitrage Analyst agent.
-- [ ] News Analyst agent.
+- [~] News Analyst agent. The role owns scheduled RSS ingestion, health evidence, materiality scoring, research inbox routing, and dashboard alerts; quality evaluation and broader source coverage remain open. Evidence: [[2026-07-15-research-intelligence-v1]].
 - [ ] Social/Twitter Triage Agent.
 - [ ] Research Librarian agent.
-- [ ] Document Extraction Agent.
+- [~] Document Extraction Agent. Material-first filing PDF extraction is scheduled with external artifact lineage and bounded retries; general research-paper, annual-report, transcript, and OCR intake remains open. Evidence: [[2026-07-15-research-intelligence-v1]].
 
 ## 9. Treasury, Hedges, Crypto, Commodities
 
@@ -593,7 +593,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Build Strategy Template Library v1. Evidence: [[2026-07-08-strategy-template-library-v1]]; migration, API route, MCP tools, dashboard panel, live API smoke, and build checks passed.
 - [x] Implement Long-Term checklist tables and UI. Evidence: [[2026-07-08-long-term-coverage-board-v1]] plus existing live `portfolio.v_long_term_thesis_checklists` dashboard rows; table/API/UI are live, while row completion remains tracked by the coverage board.
 - [x] Implement Long-Term Monte Carlo engine and report. Engine/API/MCP/database/report existed and the scoped Decision Lab, source gate, external-vault contract, real UI run, and browser tests are now verified. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
-- [ ] Implement research/news/filing collector expansion.
+- [x] Implement research/news/filing collector expansion. Hourly RSS, NSE/BSE, material-first PDF extraction, strategy discovery, health evidence, UI control, and agent routing are live. Evidence: [[2026-07-15-research-intelligence-v1]].
 - [ ] Harden TradingView controller and straddle workflow.
 - [ ] Build Client Folio dashboard.
 - [ ] Build Risk Office v2 with stress tests and portfolio Monte Carlo.

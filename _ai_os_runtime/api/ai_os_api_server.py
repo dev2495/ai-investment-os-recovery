@@ -1452,6 +1452,53 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY coalesce(published_at, captured_at) DESC, id DESC
             LIMIT 80
         """,
+        "feed_registry": """
+            SELECT feed_key, feed_name, feed_type, provider, url, geography,
+                   symbols, topics, status, owner_agent, metadata, updated_at
+            FROM research.feed_registry
+            ORDER BY
+                CASE status WHEN 'active' THEN 0 WHEN 'blocked_credentials' THEN 1 ELSE 2 END,
+                feed_name
+            LIMIT 40
+        """,
+        "news_ingestion_runs": """
+            SELECT id, run_key, status, feed_keys, feeds_checked, items_seen,
+                   items_upserted, research_ideas_created, inbox_items_created,
+                   sample_payload, error_message, started_at, finished_at,
+                   duration_ms, created_by
+            FROM market.v_news_ingestion_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 16
+        """,
+        "filing_collector_runs": """
+            SELECT id, run_key, source_key, connector_key, exchange, status,
+                   date_from, date_to, target_url, http_status, rows_seen,
+                   rows_upserted, events_upserted, inbox_items_created,
+                   error_message, started_at, finished_at, created_by
+            FROM research.v_filing_collector_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 20
+        """,
+        "filing_pdf_extraction_runs": """
+            SELECT id, filing_id, source_name, exchange, symbol, company_name,
+                   title, status, source_url, local_pdf_path, parser_name,
+                   bytes_downloaded, page_count, extracted_chars,
+                   event_type_before, event_type_after, classifier_payload,
+                   started_at, finished_at, error_message, created_by
+            FROM research.v_filing_pdf_extraction_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 24
+        """,
+        "news_source_checks": """
+            SELECT DISTINCT ON (source_key)
+                   source_key, check_name, check_type, target_url, status,
+                   http_status, latency_ms, rows_seen, sample_payload,
+                   error_message, checked_at
+            FROM core.data_source_checks
+            WHERE check_type = 'rss_http'
+            ORDER BY source_key, checked_at DESC, id DESC
+            LIMIT 40
+        """,
         "corporate_filings": """
             SELECT filing_id, source_name, exchange, symbol, company_name,
                    filing_type, filing_event_type, title, filed_at,
@@ -5447,7 +5494,7 @@ def run_filing_collector(payload: dict) -> dict:
         limit = int(payload.get("limit") or 25)
     except (TypeError, ValueError) as exc:
         raise ValueError("limit must be an integer") from exc
-    limit = max(1, min(limit, 100))
+    limit = max(1, min(limit, 500))
     actor = str(payload.get("actor") or "News Analyst").strip() or "News Analyst"
     command = [
         sys.executable,
@@ -6414,7 +6461,7 @@ def ingest_market_news(payload: dict) -> dict:
         "--actor",
         str(payload.get("actor") or "News Analyst"),
         "--feed-limit",
-        str(payload.get("feed_limit") or payload.get("feedLimit") or 8),
+        str(payload.get("feed_limit") or payload.get("feedLimit") or 12),
         "--per-feed",
         str(payload.get("per_feed") or payload.get("perFeed") or 8),
         "--timeout",
@@ -6454,14 +6501,26 @@ def run_strategy_discovery_scheduler(payload: dict) -> dict:
         "--route-top",
         str(payload.get("route_top") or payload.get("routeTop") or 1),
         "--news-feed-limit",
-        str(payload.get("news_feed_limit") or payload.get("newsFeedLimit") or 8),
+        str(payload.get("news_feed_limit") or payload.get("newsFeedLimit") or 12),
         "--news-per-feed",
         str(payload.get("news_per_feed") or payload.get("newsPerFeed") or 6),
+        "--filing-lookback-days",
+        str(payload.get("filing_lookback_days") or payload.get("filingLookbackDays") or 2),
+        "--filing-limit",
+        str(payload.get("filing_limit") or payload.get("filingLimit") or 250),
+        "--filing-timeout",
+        str(payload.get("filing_timeout") or payload.get("filingTimeout") or 300),
+        "--filing-extraction-limit",
+        str(payload.get("filing_extraction_limit") or payload.get("filingExtractionLimit") or 4),
+        "--filing-extraction-timeout",
+        str(payload.get("filing_extraction_timeout") or payload.get("filingExtractionTimeout") or 300),
     ]
     if payload.get("disable_news") or payload.get("disableNews"):
         command.append("--disable-news")
     if payload.get("enable_filings") or payload.get("enableFilings"):
         command.append("--enable-filings")
+    if payload.get("enable_filing_extraction") or payload.get("enableFilingExtraction"):
+        command.append("--enable-filing-extraction")
     if payload.get("news_feed_keys") or payload.get("newsFeedKeys"):
         command.extend(["--news-feed-keys", str(payload.get("news_feed_keys") or payload.get("newsFeedKeys"))])
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=900)
