@@ -2445,6 +2445,18 @@ button {
   opacity: 0.55;
 }
 
+:root[data-theme="terminal_dark"] .inline-decision-actions button {
+  border-color: #426157;
+  background: #101b17;
+  color: #8ce2c0;
+}
+
+:root[data-theme="terminal_dark"] .inline-decision-actions button:last-child {
+  border-color: #75403c;
+  background: #2d1514;
+  color: #ffaaa3;
+}
+
 .success-strip {
   margin: 12px 0;
   padding: 10px 12px;

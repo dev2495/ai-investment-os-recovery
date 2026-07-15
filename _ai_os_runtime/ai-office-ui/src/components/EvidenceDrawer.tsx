@@ -1,7 +1,8 @@
 import { Ban, Check, Clipboard, ExternalLink, FileSearch, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchEntityEvidence, type EntityEvidence, type EvidenceSelection } from "../api/evidence";
-import { resolveApproval, type LiveRow } from "../api/live";
+import { resolveAccountChange, resolveApproval, resolveClientOnboarding, resolveHoldingUpdate, type LiveRow } from "../api/live";
+import { resolveClientCashEntry, resolveClientReportDelivery } from "../api/portfolioOffice";
 
 interface Props {
   onClose: () => void;
@@ -147,7 +148,14 @@ export default function EvidenceDrawer({ onChanged, onClose, selection }: Props)
     setError("");
     setNotice("");
     try {
-      await resolveApproval({ approval_id: selection.key, decided_by: "Devarsh", status });
+      const approvalType = String(record.approval_type ?? "");
+      const common = { approval_id: selection.key, decision: status, decided_by: "Devarsh", actor: "Devarsh", decision_notes: `Decision recorded from the central Approval Board for ${approvalType || "approval"}.` };
+      if (approvalType === "client_onboarding") await resolveClientOnboarding(common);
+      else if (approvalType === "account_change") await resolveAccountChange(common);
+      else if (approvalType === "holding_update") await resolveHoldingUpdate({ ...common, evidence: [{ table: "agent.approvals", id: selection.key, reviewed_in: "Approval Board" }] });
+      else if (approvalType === "client_cash_entry") await resolveClientCashEntry(common);
+      else if (approvalType === "client_report_send") await resolveClientReportDelivery(common);
+      else await resolveApproval({ approval_id: selection.key, decided_by: "Devarsh", status });
       setNotice(`Approval #${selection.key} ${status}. Broker execution remains governed by separate risk gates.`);
       await load();
       await onChanged?.();

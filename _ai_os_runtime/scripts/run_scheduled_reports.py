@@ -9,14 +9,15 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
-VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
+DEFAULT_EXTERNAL_VAULT = Path("/Volumes/Devarsh SSD/Obsidian memory ")
+VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or (DEFAULT_EXTERNAL_VAULT if DEFAULT_EXTERNAL_VAULT.is_dir() else RUNTIME_ROOT.parent))
 API_URL = os.environ.get("AI_OS_API_URL", "http://127.0.0.1:8765").rstrip("/")
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
@@ -242,8 +243,9 @@ def fail_run(run_id: int, error: Exception) -> None:
 
 
 def complete_run(schedule: dict[str, Any], run: dict[str, Any], note_path: str, source_snapshot: dict[str, Any], summary: str, content_hash: str) -> dict[str, Any]:
-    approval_required = bool(schedule.get("approval_required"))
-    task_status = "needs_review" if approval_required else "completed"
+    task_needs_review = bool(schedule.get("approval_required"))
+    approval_required = task_needs_review and schedule.get("report_key") != "monthly_client_report"
+    task_status = "needs_review" if task_needs_review else "completed"
     approval_cte = """
         , approval AS (
             INSERT INTO agent.approvals (task_id, approval_type, title, owner_agent, risk_level, status, requested_action, rationale)
@@ -266,7 +268,7 @@ def complete_run(schedule: dict[str, Any], run: dict[str, Any], note_path: str, 
             ) RETURNING id, title, owner_agent
         ), inbox AS (
             INSERT INTO agent.inbox_items (task_id, title, owner_agent, status, priority, recommended_action, evidence, target_workspace)
-            SELECT id, 'Review ' || title, {sql_literal(schedule['owner_agent'])}, {sql_literal('needs_review' if approval_required else 'new')}, 'medium',
+            SELECT id, 'Review ' || title, {sql_literal(schedule['owner_agent'])}, {sql_literal('needs_review' if task_needs_review else 'new')}, 'medium',
                    'Review source freshness, exceptions, and evidence gaps before acting on this report.',
                    {sql_jsonb([{'source': 'ops.report_runs', 'run_id': run['id']}, {'source': 'obsidian_note', 'path': note_path}])}, 'reports'
             FROM task RETURNING id
@@ -296,6 +298,129 @@ def complete_run(schedule: dict[str, Any], run: dict[str, Any], note_path: str, 
     return json.loads(result)
 
 
+def client_rows(snapshot: dict[str, Any], key: str, client_code: str) -> list[dict[str, Any]]:
+    rows = snapshot.get(key) or []
+    return [row for row in rows if str(row.get("client_code") or "") == client_code]
+
+
+def build_client_report(client: dict[str, Any], snapshot: dict[str, Any], now: datetime) -> tuple[str, dict[str, Any]]:
+    client_code = str(client["client_code"])
+    sections = [
+        ("client_accounts", "Accounts"),
+        ("client_nav", "NAV And Cash Evidence"),
+        ("client_performance", "Performance And Benchmark"),
+        ("performance_attribution", "Performance Attribution"),
+        ("tax_lot_summary", "FIFO Tax-Lot Coverage"),
+        ("latest_positions", "Current Holdings"),
+        ("client_book_exposure", "Book Attribution"),
+        ("holding_reconciliation", "Holding Reconciliation"),
+    ]
+    lines = [
+        f"# Monthly Client Report Draft - {client['display_name']}", "",
+        f"Client code: {client_code}",
+        f"Report month: {now.strftime('%Y-%m')}",
+        f"Generated: {now.isoformat(timespec='seconds')}",
+        "Status: Draft for human review. No recommendation or external delivery is authorized.", "",
+        "## Evidence Contract", "",
+        "Every value below comes from the live warehouse read model. Missing cash, transaction history, prices, or benchmark observations remain visible as incomplete evidence and are not estimated.", "",
+    ]
+    counts: dict[str, int] = {}
+    incomplete: list[str] = []
+    for key, title in sections:
+        rows = client_rows(snapshot, key, client_code)
+        counts[key] = len(rows)
+        lines.extend([f"## {title}", "", *render_rows(rows), ""])
+        for row in rows:
+            status = str(row.get("calculation_status") or row.get("status") or "").lower()
+            if status in {"incomplete", "failed", "breaks_found", "blocked"}:
+                gaps = row.get("missing_inputs") or []
+                detail = ", ".join(str(item) for item in gaps) if gaps else status
+                incomplete.append(f"{title}: {detail}")
+    lines.extend(["## Accounting Completeness", ""])
+    if incomplete:
+        lines.extend([f"- {item}" for item in sorted(set(incomplete))])
+    else:
+        lines.append("- No incomplete accounting status was returned by the scoped client read model.")
+    lines.extend([
+        "", "## Approval And Delivery", "",
+        "This draft has a client-specific approval gate. Approval records governance only; the system does not email, message, or otherwise deliver the report automatically.", "",
+    ])
+    return "\n".join(lines), {"client_code": client_code, "section_counts": counts, "incomplete_items": sorted(set(incomplete))}
+
+
+def create_client_delivery_queue(run: dict[str, Any], task_id: int, client: dict[str, Any], report_period: date, note_path: str, content_hash: str) -> dict[str, Any]:
+    result = psql_text(
+        f"""
+        WITH approval AS (
+            INSERT INTO agent.approvals(task_id,approval_type,title,owner_agent,risk_level,status,requested_action,rationale)
+            VALUES({task_id},'client_report_send',{sql_literal('Review client report: ' + str(client['display_name']))},
+                   'Client Reporting Agent','high','pending',
+                   jsonb_build_object('client_code',{sql_literal(client['client_code'])},'output_note_path',{sql_literal(note_path)},
+                                      'content_hash',{sql_literal(content_hash)},'external_send_allowed',false),
+                   'Client report delivery and recommendations require explicit human approval. Automated sending remains disabled.')
+            RETURNING id
+        ), queued AS (
+            INSERT INTO ops.client_report_delivery_queue(report_run_id,client_id,report_period,output_note_path,
+                content_hash,delivery_channel,status,approval_id,evidence)
+            SELECT {int(run['id'])},c.id,{sql_literal(report_period)}::date,{sql_literal(note_path)},
+                   {sql_literal(content_hash)},'manual_review','pending_approval',(SELECT id FROM approval),
+                   {sql_jsonb([{'source':'ops.report_runs','run_id':run['id']},{'source':'obsidian_note','path':note_path,'sha256':content_hash}])}
+            FROM portfolio.clients c WHERE c.client_code={sql_literal(client['client_code'])}
+            RETURNING id,approval_id,status
+        ) SELECT json_build_object('queue_id',(SELECT id FROM queued),'approval_id',(SELECT approval_id FROM queued),'status',(SELECT status FROM queued))::text;
+        """
+    )
+    return json.loads(result)
+
+
+def run_monthly_client_report(schedule: dict[str, Any], run: dict[str, Any], now: datetime) -> dict[str, Any]:
+    accounting = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "run_client_accounting.py")],
+        cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=300,
+    )
+    if accounting.returncode != 0:
+        raise RuntimeError((accounting.stderr or accounting.stdout).strip() or "client accounting refresh failed")
+    accounting_result = json.loads(accounting.stdout)
+    snapshot = api_snapshot("portfolio-office", {})
+    clients = [row for row in (snapshot.get("clients") or []) if str(row.get("active", "true")).lower() == "true"]
+    folder = VAULT_ROOT / str(schedule["target_folder"]) / now.strftime("%Y-%m")
+    folder.mkdir(parents=True, exist_ok=True)
+    generated: list[dict[str, Any]] = []
+    for client in clients:
+        content, profile = build_client_report(client, snapshot, now)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        safe_code = "".join(character if character.isalnum() or character in "-_" else "-" for character in str(client["client_code"]))
+        output = folder / f"{now.strftime('%Y-%m')} Client Report {safe_code}.md"
+        temporary = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, output)
+        generated.append({**profile, "display_name": client["display_name"], "note_path": str(output.relative_to(VAULT_ROOT)), "content_hash": content_hash})
+    index_lines = [
+        f"# {schedule['report_name']} - {now.strftime('%Y-%m')}", "",
+        f"Generated: {now.isoformat(timespec='seconds')}",
+        "Status: Client-specific drafts created; every delivery remains approval-gated and manual.", "",
+        "## Drafts", "",
+        *[f"- [[{row['note_path']}|{row['display_name']}]] - {len(row['incomplete_items'])} accounting gap(s)" for row in generated], "",
+    ]
+    index_content = "\n".join(index_lines)
+    index_hash = hashlib.sha256(index_content.encode("utf-8")).hexdigest()
+    index_path = folder / f"{now.strftime('%Y-%m')} Client Report Draft Index.md"
+    index_path.write_text(index_content, encoding="utf-8")
+    relative_index = str(index_path.relative_to(VAULT_ROOT))
+    source_snapshot = {
+        "accounting_refresh": accounting_result,
+        "portfolio_generated_at": snapshot.get("generated_at"),
+        "clients": generated,
+        "data_mode": snapshot.get("data_mode"),
+    }
+    summary = f"Generated {len(generated)} client-specific monthly drafts with independent approval gates; external sending remains disabled."
+    completed = complete_run(schedule, run, relative_index, source_snapshot, summary, index_hash)
+    task_id = int(completed["run"]["task_id"])
+    report_period = now.date().replace(day=1)
+    queues = [create_client_delivery_queue(run, task_id, client, report_period, client["note_path"], client["content_hash"]) for client in generated]
+    return {"report_key": schedule["report_key"], "status": "completed", **completed, "client_drafts": generated, "delivery_queues": queues}
+
+
 def run_report(schedule: dict[str, Any], force: bool, now: datetime) -> dict[str, Any]:
     period = period_key(str(schedule["cadence"]), now)
     if not force and not schedule.get("due_now"):
@@ -303,6 +428,12 @@ def run_report(schedule: dict[str, Any], force: bool, now: datetime) -> dict[str
     run = claim_run(schedule, period, force, now)
     if not run:
         return {"report_key": schedule["report_key"], "status": "already_claimed", "period_key": period}
+    if schedule["report_key"] == "monthly_client_report":
+        try:
+            return run_monthly_client_report(schedule, run, now)
+        except Exception as error:
+            fail_run(int(run["id"]), error)
+            raise
     output: Path | None = None
     temporary_output: Path | None = None
     try:

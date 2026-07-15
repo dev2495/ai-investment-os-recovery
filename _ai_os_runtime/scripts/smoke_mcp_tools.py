@@ -82,6 +82,9 @@ def main() -> int:
         "ai_os_market_data_readiness",
         "ai_os_run_legacy_market_data_ingestion",
         "ai_os_runtime_daemon_health",
+        "ai_os_client_cash_ledger_control",
+        "ai_os_client_accounting_run",
+        "ai_os_client_report_delivery_control",
     }
     missing = sorted(required - tool_names)
     if missing:
@@ -104,6 +107,7 @@ def main() -> int:
         "integration_gateway": parse_tool_content(call("tools/call", {"name": "ai_os_integration_plugin_gateway", "arguments": {"limit": 50}})),
         "market_data": parse_tool_content(call("tools/call", {"name": "ai_os_market_data_readiness", "arguments": {"limit": 10}})),
         "runtime_daemons": parse_tool_content(call("tools/call", {"name": "ai_os_runtime_daemon_health", "arguments": {}})),
+        "client_accounting": parse_tool_content(call("tools/call", {"name": "ai_os_client_accounting_run", "arguments": {"account_code": "p2cursor_account_2", "actor": "MCP smoke validation"}})),
     }
 
     process.stdin.close()
@@ -141,6 +145,7 @@ def main() -> int:
         "market_data_import_rows": len((checks["market_data"] or {}).get("imports", [])),
         "market_bias_control_rows": len((checks["market_data"] or {}).get("bias_controls", [])),
         "runtime_daemon_rows": len((checks["runtime_daemons"] or {}).get("runtime_daemons", [])),
+        "client_accounting_status": (checks["client_accounting"] or {}).get("status"),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

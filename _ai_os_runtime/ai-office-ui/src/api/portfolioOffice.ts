@@ -23,6 +23,12 @@ export interface PortfolioOfficeSnapshot {
   client_suitability: LiveRow[];
   account_changes: LiveRow[];
   holding_reconciliation: LiveRow[];
+  cash_ledger: LiveRow[];
+  tax_lot_summary: LiveRow[];
+  client_nav: LiveRow[];
+  client_performance: LiveRow[];
+  performance_attribution: LiveRow[];
+  client_report_delivery: LiveRow[];
   p2cursor_reconciliation: LiveRow[];
   execution_control: LiveRow[];
 }
@@ -33,4 +39,31 @@ export async function fetchPortfolioOfficeSnapshot(): Promise<PortfolioOfficeSna
   const response = await fetch(`${API_URL}/api/portfolio-office/snapshot`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Portfolio Office API returned ${response.status}`);
   return response.json() as Promise<PortfolioOfficeSnapshot>;
+}
+
+async function post(path: string, body: Record<string, unknown>): Promise<LiveRow> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json() as LiveRow;
+  if (!response.ok) throw new Error(String(payload.error || `Portfolio Office API returned ${response.status}`));
+  return payload;
+}
+
+export function stageClientCashEntry(body: Record<string, unknown>): Promise<LiveRow> {
+  return post("/api/client-office/cash/stage", body);
+}
+
+export function resolveClientCashEntry(body: Record<string, unknown>): Promise<LiveRow> {
+  return post("/api/client-office/cash/resolve", body);
+}
+
+export function runClientAccounting(body: Record<string, unknown>): Promise<LiveRow> {
+  return post("/api/client-office/accounting/run", body);
+}
+
+export function resolveClientReportDelivery(body: Record<string, unknown>): Promise<LiveRow> {
+  return post("/api/client-office/report-delivery/resolve", body);
 }

@@ -1705,4 +1705,35 @@ The production Client Folios terminal now exposes client scope, real holdings, o
 
 Release evidence passed: idempotent migration replay; Python syntax; 161-tool MCP protocol listing; seven-case lifecycle validator; generic-approval bypass rejection; atomic onboarding/account/holding application; source-only break detection; validation-row cleanup; production UI build; live API/TradingView health; 83/83 full-office Playwright checks including 39 WCAG A/AA desktop/mobile cases and WebGL canvas verification; and desktop/mobile visual inspection. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 
-This does not complete all Client Office work. The three imported clients still require retrospective suitability, restrictions, communication, and mandate reviews. Remaining product gates are complete NAV/cash/liability/tax-lot and realized-P&L accounting, cash flows and fees, client concentration policies, performance attribution, monthly report approval/delivery, consolidated action timeline, recurring Zerodha/Dhan/algo observation feeds, and resolution of real multi-source break queues.
+This does not complete all Client Office work. The imported clients still require retrospective suitability, restrictions, communication, and mandate reviews. The accounting control plane in section 42 now covers deterministic FIFO, sourced cash, NAV, benchmark performance, attribution controls, and approval-gated monthly drafts, but missing opening cash and pre-period transaction history remain visible for affected accounts. Remaining product gates include complete source evidence for every account, liabilities and accrued fees beyond explicit source rows, client concentration policies, richer factor attribution, client-ready report presentation and authorized delivery adapters, a consolidated action timeline, recurring Zerodha/Dhan/algo observation feeds, and resolution of real multi-source break queues.
+
+## 42. Client Accounting, Performance, And Reporting Control Plane - 2026-07-15
+
+Client accounting is now a deterministic warehouse service rather than an LLM calculation. It operates on the four real imported client accounts with transaction evidence and never fabricates an opening balance, missing lot, market price, fee, tax, or benchmark observation. The production run processed 848 trades, linked 2,572 real NIFTY 50 benchmark observations, and posted 744 non-zero broker-statement settlement rows from exact source amounts.
+
+```text
+Imported transactions and source holdings
+  -> immutable cash and fee evidence
+  -> instrument-specific FIFO lot engine
+  -> realized matches, open lots, and explicit position breaks
+  -> broker-snapshot or calculated NAV with completeness gates
+  -> Modified Dietz account performance and NIFTY 50 comparison
+  -> realized attribution by instrument and account
+  -> per-client monthly draft in Obsidian
+  -> independent delivery approval per client
+  -> no external send adapter and no execution authority
+```
+
+The database contract is `portfolio.cash_ledger_entries`, `portfolio.fee_ledger`, `portfolio.tax_lot_runs`, `portfolio.tax_lots`, `portfolio.tax_lot_matches`, `portfolio.nav_snapshots`, `portfolio.benchmark_observations`, `portfolio.performance_periods`, `portfolio.performance_attribution`, and `ops.client_report_delivery_queue`. Read models are `portfolio.v_cash_ledger_control`, `portfolio.v_tax_lot_summary`, `portfolio.v_client_nav_control`, `portfolio.v_client_performance_control`, `portfolio.v_performance_attribution_control`, and `ops.v_client_report_delivery_control`.
+
+FIFO supports both long and short inventory. Derivative lot identity includes symbol, exchange, instrument type, expiry, strike, and option type, preventing matches across contracts that share a display symbol. NAV uses broker snapshots when supplied; calculated NAV requires complete opening cash and price evidence. Performance uses Modified Dietz and remains incomplete when opening or closing NAV is unavailable. Missing transaction history for a current position creates an explicit position break rather than an invented opening lot.
+
+Cash changes and client-report delivery are dedicated approval transactions. Generic approval resolution rejects `client_cash_entry` and `client_report_send`; the dedicated resolver locks the proposal, resolves its approval, applies or rejects the linked state atomically, and retains audit evidence. Delivery approval does not send a report: `external_send_executed` remains false until a separately governed channel adapter exists.
+
+The Client Folios terminal exposes NAV and cash evidence, performance and benchmark comparison, FIFO coverage, realized attribution, staged cash entries, cash approvals, report-delivery approvals, and accounting recalculation. MCP tools `ai_os_client_cash_ledger_control`, `ai_os_client_accounting_run`, and `ai_os_client_report_delivery_control` bring the server to 164 tools. The central Approval Board routes client lifecycle, holding, cash, and report decisions through their dedicated atomic resolvers.
+
+Production evidence currently shows two complete FIFO accounts and two incomplete accounts. P2Cursor Account 2 completed 12 trades with two matches and realized P&L of INR -89,384.58; Naval completed 61 trades with 19 matches and realized P&L of INR 724,046.27. Sanjana has one source-history position break, and the Tushit broker statement has 27, so neither is represented as complete. The Tushit broker statement provides source-snapshot NAV of INR 10,766,939.34; the other current-holding accounts remain incomplete until opening cash evidence is provided.
+
+Release evidence passed an eight-case numerical validator, including FIFO realized P&L of 560, remaining quantity of three, open cost basis of 360, and Modified Dietz return of 60 percent; production accounting and report validation left zero validation clients, accounts, cash rows, or report rows. Migration replay, Python compilation, 164-tool MCP protocol/read smoke, production UI build, desktop/mobile visual checks, dedicated approval bypass tests, and approval-id routing also passed. The July monthly run created three client-specific Obsidian drafts and three independent pending delivery approvals without external delivery. Evidence: [[2026-07-15-client-accounting-performance-reporting-v1]].
+
+This is an accounting foundation, not a completeness claim. Open gates are source-backed opening cash and liabilities, missing historical transactions and lots, explicit fee/tax ingestion from every broker, recurring NAV snapshots, meaningful multi-period return history, richer factor/sector attribution, reconciled portfolio-change narratives, formatted client-ready report exports, approved delivery channels, and retrospective suitability and mandate evidence.

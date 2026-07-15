@@ -1531,6 +1531,57 @@ def build_portfolio_office_snapshot() -> dict:
             FROM portfolio.v_holding_reconciliation_control
             LIMIT 100
         """,
+        "cash_ledger": """
+            SELECT id,entry_key,client_code,display_name,account_code,entry_ts,
+                   entry_type,flow_class,amount,currency,description,source_ref,
+                   status,approval_id,approval_status,created_by,decided_by,
+                   decision_notes,decided_at,posted_at,source_evidence,created_at
+            FROM portfolio.v_cash_ledger_control
+            LIMIT 150
+        """,
+        "tax_lot_summary": """
+            SELECT run_id,run_key,client_code,display_name,account_code,method,status,
+                   trade_count,open_lot_count,match_count,realized_pnl,
+                   position_break_count,missing_inputs,error_message,started_at,
+                   completed_at,open_cost_basis,open_lots
+            FROM portfolio.v_tax_lot_summary
+            LIMIT 100
+        """,
+        "client_nav": """
+            SELECT id,client_code,display_name,account_code,nav_date,
+                   securities_market_value,cash_balance,accrued_income,liabilities,
+                   fees_payable,nav,external_flow,income_flow,expense_flow,
+                   realized_pnl,unrealized_pnl,calculation_status,missing_inputs,
+                   source_snapshot_id,evidence,calculated_at
+            FROM portfolio.v_client_nav_control
+            LIMIT 150
+        """,
+        "client_performance": """
+            SELECT id,client_code,display_name,account_code,period_type,period_start,
+                   period_end,opening_nav,closing_nav,external_flows,income,expenses,
+                   realized_pnl,unrealized_pnl_change,twr_return_pct,
+                   money_weighted_return_pct,benchmark_key,benchmark_return_pct,
+                   active_return_pct,calculation_status,missing_inputs,methodology,
+                   evidence,calculated_at
+            FROM portfolio.v_client_performance_control
+            LIMIT 150
+        """,
+        "performance_attribution": """
+            SELECT id,client_code,display_name,account_code,period_type,period_start,
+                   period_end,attribution_type,attribution_key,opening_exposure,
+                   average_exposure,realized_pnl,unrealized_pnl_change,income,fees,
+                   contribution_amount,contribution_pct,calculation_status,evidence
+            FROM portfolio.v_performance_attribution_control
+            LIMIT 200
+        """,
+        "client_report_delivery": """
+            SELECT id,report_run_id,run_key,client_code,display_name,report_period,
+                   output_note_path,content_hash,delivery_channel,recipient_ref,
+                   status,approval_id,approval_status,approved_by,decision_notes,
+                   decided_at,delivered_at,evidence,created_at,updated_at
+            FROM ops.v_client_report_delivery_control
+            LIMIT 100
+        """,
         "p2cursor_reconciliation": """
             SELECT id, run_key, run_ts, client_code, client_name,
                    p2_account_code, comparison_account_code, status,
@@ -7003,7 +7054,10 @@ def resolve_approval(payload: dict) -> dict:
     guarded = run_psql_json(
         f"SELECT approval_type FROM agent.approvals WHERE id={approval_id} AND status='pending' LIMIT 1"
     )
-    if guarded and guarded[0].get("approval_type") in {"client_onboarding", "account_change", "holding_update"}:
+    if guarded and guarded[0].get("approval_type") in {
+        "client_onboarding", "account_change", "holding_update",
+        "client_cash_entry", "client_report_send",
+    }:
         raise ValueError("Client Office approvals must use their dedicated resolve endpoint so the governed state change is atomic")
     rows = run_psql_json_statement(
         f"""
@@ -7265,8 +7319,12 @@ def stage_client_onboarding(payload: dict) -> dict:
 
 
 def resolve_client_onboarding(payload: dict) -> dict:
+    case_ref = payload.get("case_id") or payload.get("id")
+    if case_ref is None and payload.get("approval_id") is not None:
+        linked = run_psql_json(f"SELECT id FROM portfolio.client_onboarding_cases WHERE approval_id={int(payload['approval_id'])} LIMIT 1")
+        case_ref = linked[0]["id"] if linked else None
     try:
-        case_id = int(payload.get("case_id") or payload.get("id"))
+        case_id = int(case_ref)
     except (TypeError, ValueError) as exc:
         raise ValueError("case_id is required and must be an integer") from exc
     decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
@@ -7443,8 +7501,12 @@ def stage_account_change(payload: dict) -> dict:
 
 
 def resolve_account_change(payload: dict) -> dict:
+    request_ref = payload.get("request_id") or payload.get("id")
+    if request_ref is None and payload.get("approval_id") is not None:
+        linked = run_psql_json(f"SELECT id FROM portfolio.account_change_requests WHERE approval_id={int(payload['approval_id'])} LIMIT 1")
+        request_ref = linked[0]["id"] if linked else None
     try:
-        request_id = int(payload.get("request_id") or payload.get("id"))
+        request_id = int(request_ref)
     except (TypeError, ValueError) as exc:
         raise ValueError("request_id is required and must be an integer") from exc
     decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
@@ -7606,8 +7668,12 @@ def stage_holding_update(payload: dict) -> dict:
 
 
 def resolve_holding_update(payload: dict) -> dict:
+    update_ref = payload.get("update_id") or payload.get("id")
+    if update_ref is None and payload.get("approval_id") is not None:
+        linked = run_psql_json(f"SELECT id FROM portfolio.manual_holding_updates WHERE approval_id={int(payload['approval_id'])} LIMIT 1")
+        update_ref = linked[0]["id"] if linked else None
     try:
-        update_id = int(payload.get("update_id") or payload.get("id"))
+        update_id = int(update_ref)
     except (TypeError, ValueError) as exc:
         raise ValueError("update_id is required and must be an integer") from exc
     decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
@@ -7761,6 +7827,160 @@ def run_holding_reconciliation(payload: dict) -> dict:
         raise ValueError("reconciliation did not produce a run")
     result = rows[0]
     audit_api_write("ai_os_api_run_holding_reconciliation", "run_holding_reconciliation", actor, "portfolio.holding_reconciliation_runs", result, payload)
+    return result
+
+
+def stage_client_cash_entry(payload: dict) -> dict:
+    client_code = str(payload.get("client_code") or payload.get("clientCode") or "").strip()
+    account_code = str(payload.get("account_code") or payload.get("accountCode") or "").strip()
+    entry_type = str(payload.get("entry_type") or payload.get("entryType") or "").strip().lower()
+    description = str(payload.get("description") or "").strip()
+    evidence = payload.get("source_evidence") or payload.get("evidence") or []
+    if not client_code or not account_code or not entry_type or not description:
+        raise ValueError("client_code, account_code, entry_type, and description are required")
+    allowed_types = {
+        "opening_balance", "contribution", "withdrawal", "dividend", "interest",
+        "fee", "tax", "broker_charge", "cash_adjustment", "transfer",
+    }
+    if entry_type not in allowed_types:
+        raise ValueError("entry_type is not allowed for a manual cash entry")
+    if not isinstance(evidence, list) or not evidence:
+        raise ValueError("source_evidence must contain at least one traceable item")
+    amount = sql_numeric(payload.get("amount"), required=True, field_name="amount")
+    actor = str(payload.get("actor") or payload.get("created_by") or "Devarsh").strip()
+    flow_class = str(payload.get("flow_class") or payload.get("flowClass") or "").strip().lower()
+    default_classes = {
+        "opening_balance": "balance", "contribution": "external", "withdrawal": "external",
+        "dividend": "income", "interest": "income", "fee": "expense", "tax": "expense",
+        "broker_charge": "expense", "cash_adjustment": "balance", "transfer": "internal",
+    }
+    flow_class = flow_class or default_classes[entry_type]
+    if flow_class not in {"external", "income", "expense", "internal", "balance"}:
+        raise ValueError("invalid flow_class")
+    key_material = json.dumps(payload, sort_keys=True, default=str) + datetime.now(timezone.utc).isoformat()
+    entry_key = "manual-cash-" + hashlib.sha256(key_material.encode()).hexdigest()[:20]
+    rows = run_psql_json_statement(
+        f"""
+        WITH resolved AS (
+            SELECT c.id client_id,a.id account_id,c.client_code,a.account_code
+            FROM portfolio.clients c JOIN portfolio.accounts a ON a.client_id=c.id
+            WHERE c.client_code={sql_literal(client_code)} AND a.account_code={sql_literal(account_code)} LIMIT 1
+        ), approval AS (
+            INSERT INTO agent.approvals(approval_type,title,owner_agent,risk_level,status,requested_action,rationale)
+            SELECT 'client_cash_entry','Approve cash entry: '||{sql_literal(entry_type)}||' for '||account_code,
+                   'Portfolio Manager','high','pending',
+                   jsonb_build_object('entry_key',{sql_literal(entry_key)},'account_code',account_code,
+                                      'entry_type',{sql_literal(entry_type)},'amount',{amount},'broker_write',false),
+                   'Cash and NAV facts require traceable evidence and human approval before posting.'
+            FROM resolved RETURNING id
+        ), inserted AS (
+            INSERT INTO portfolio.cash_ledger_entries(entry_key,client_id,account_id,entry_ts,entry_type,
+                flow_class,amount,currency,description,source_ref,source_evidence,status,approval_id,created_by)
+            SELECT {sql_literal(entry_key)},client_id,account_id,
+                   coalesce({sql_literal(payload.get('entry_ts') or payload.get('entryTs'))}::timestamptz,now()),
+                   {sql_literal(entry_type)},{sql_literal(flow_class)},{amount},
+                   {sql_literal(payload.get('currency') or 'INR')},{sql_literal(description)},
+                   {sql_literal(payload.get('source_ref') or payload.get('sourceRef'))},{sql_jsonb(evidence)},
+                   'pending_approval',(SELECT id FROM approval),{sql_literal(actor)} FROM resolved
+            RETURNING id,entry_key,status,approval_id,account_id,entry_type,flow_class,amount,entry_ts
+        ) SELECT coalesce(json_agg(row_to_json(inserted)),'[]'::json)::text FROM inserted
+        """
+    )
+    if not rows:
+        raise ValueError("client/account not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_stage_client_cash_entry", "stage_client_cash_entry", actor, "portfolio.cash_ledger_entries", result, payload)
+    return result
+
+
+def resolve_client_cash_entry(payload: dict) -> dict:
+    entry_ref = payload.get("entry_id") or payload.get("entryId") or payload.get("id")
+    if entry_ref is None and payload.get("approval_id") is not None:
+        linked = run_psql_json(f"SELECT id FROM portfolio.cash_ledger_entries WHERE approval_id={int(payload['approval_id'])} LIMIT 1")
+        entry_ref = linked[0]["id"] if linked else None
+    try:
+        entry_id = int(entry_ref)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("entry_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    actor = str(payload.get("actor") or payload.get("decided_by") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("notes") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH target AS (
+            SELECT * FROM portfolio.cash_ledger_entries WHERE id={entry_id} AND status='pending_approval' LIMIT 1
+        ), approval_update AS (
+            UPDATE agent.approvals a SET status={sql_literal(decision)},decided_by={sql_literal(actor)},decided_at=now()
+            WHERE a.id=(SELECT approval_id FROM target) AND a.status='pending' AND a.approval_type='client_cash_entry'
+            RETURNING id,status
+        ), entry_update AS (
+            UPDATE portfolio.cash_ledger_entries e
+            SET status=CASE WHEN {sql_literal(decision)}='approved' THEN 'posted' ELSE 'rejected' END,
+                decided_by={sql_literal(actor)},decision_notes={sql_literal(notes)},decided_at=now(),
+                posted_at=CASE WHEN {sql_literal(decision)}='approved' THEN now() ELSE NULL END,updated_at=now()
+            WHERE e.id=(SELECT id FROM target) AND EXISTS(SELECT 1 FROM approval_update)
+            RETURNING id,entry_key,status,approval_id,account_id,entry_type,flow_class,amount,entry_ts,posted_at
+        ) SELECT coalesce(json_agg(row_to_json(entry_update)),'[]'::json)::text FROM entry_update
+        """
+    )
+    if not rows:
+        raise ValueError("pending cash entry or approval not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_client_cash_entry", "resolve_client_cash_entry", actor, "portfolio.cash_ledger_entries", result, payload)
+    return result
+
+
+def run_client_accounting(payload: dict) -> dict:
+    command = [sys.executable, str(RUNTIME_ROOT / "scripts" / "run_client_accounting.py"), "--actor", str(payload.get("actor") or "Performance Attribution Agent")]
+    account_code = str(payload.get("account_code") or payload.get("accountCode") or "").strip()
+    if account_code:
+        command.extend(["--account-code", account_code])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=300)
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout).strip() or "client accounting run failed")
+    result = json.loads(completed.stdout)
+    audit_api_write("ai_os_api_run_client_accounting", "run_client_accounting", str(payload.get("actor") or "Performance Attribution Agent"), "portfolio.tax_lot_runs", result, payload)
+    return result
+
+
+def resolve_client_report_delivery(payload: dict) -> dict:
+    queue_ref = payload.get("queue_id") or payload.get("queueId") or payload.get("id")
+    if queue_ref is None and payload.get("approval_id") is not None:
+        linked = run_psql_json(f"SELECT id FROM ops.client_report_delivery_queue WHERE approval_id={int(payload['approval_id'])} LIMIT 1")
+        queue_ref = linked[0]["id"] if linked else None
+    try:
+        queue_id = int(queue_ref)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("queue_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    actor = str(payload.get("actor") or payload.get("decided_by") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("notes") or "").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH target AS (
+            SELECT * FROM ops.client_report_delivery_queue WHERE id={queue_id} AND status='pending_approval' LIMIT 1
+        ), approval_update AS (
+            UPDATE agent.approvals a SET status={sql_literal(decision)},decided_by={sql_literal(actor)},decided_at=now()
+            WHERE a.id=(SELECT approval_id FROM target) AND a.status='pending' AND a.approval_type='client_report_send'
+            RETURNING id,status
+        ), queue_update AS (
+            UPDATE ops.client_report_delivery_queue q SET status={sql_literal(decision)},approved_by={sql_literal(actor)},
+                decision_notes={sql_literal(notes)},decided_at=now(),updated_at=now()
+            WHERE q.id=(SELECT id FROM target) AND EXISTS(SELECT 1 FROM approval_update)
+            RETURNING id,report_run_id,client_id,report_period,output_note_path,status,approval_id,approved_by,decided_at
+        ) SELECT coalesce(json_agg(row_to_json(queue_update)),'[]'::json)::text FROM queue_update
+        """
+    )
+    if not rows:
+        raise ValueError("pending client report delivery or approval not found")
+    result = rows[0]
+    result["external_send_executed"] = False
+    result["next_action"] = "Manual delivery remains an operator action; no email or messaging connector was called."
+    audit_api_write("ai_os_api_resolve_client_report_delivery", "resolve_client_report_delivery", actor, "ops.client_report_delivery_queue", result, payload)
     return result
 
 
@@ -11789,6 +12009,18 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/client-office/reconciliation/run":
                 self._send_json(run_holding_reconciliation(payload), 201)
+                return
+            if self.path == "/api/client-office/cash/stage":
+                self._send_json(stage_client_cash_entry(payload), 201)
+                return
+            if self.path == "/api/client-office/cash/resolve":
+                self._send_json(resolve_client_cash_entry(payload), 200)
+                return
+            if self.path == "/api/client-office/accounting/run":
+                self._send_json(run_client_accounting(payload), 201)
+                return
+            if self.path == "/api/client-office/report-delivery/resolve":
+                self._send_json(resolve_client_report_delivery(payload), 200)
                 return
             if self.path == "/api/portfolio/book-assignments":
                 self._send_json(update_book_assignment(payload), 200)

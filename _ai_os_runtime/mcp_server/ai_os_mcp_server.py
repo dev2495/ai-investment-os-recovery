@@ -2996,6 +2996,32 @@ def holding_reconciliation_control(arguments: dict) -> dict:
     raise ValueError("action must be observe or reconcile")
 
 
+def client_cash_ledger_control(arguments: dict) -> dict:
+    action = str(arguments.get("action") or "stage").strip().lower()
+    if action == "stage":
+        return tool_result(post_api_json("/api/client-office/cash/stage", arguments))
+    if action in {"approve", "reject", "resolve"}:
+        payload = dict(arguments)
+        if action != "resolve":
+            payload["decision"] = "approved" if action == "approve" else "rejected"
+        return tool_result(post_api_json("/api/client-office/cash/resolve", payload))
+    raise ValueError("action must be stage, approve, reject, or resolve")
+
+
+def client_accounting_run(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/client-office/accounting/run", arguments, timeout=300))
+
+
+def client_report_delivery_control(arguments: dict) -> dict:
+    action = str(arguments.get("action") or "resolve").strip().lower()
+    payload = dict(arguments)
+    if action in {"approve", "reject"}:
+        payload["decision"] = "approved" if action == "approve" else "rejected"
+    elif action != "resolve":
+        raise ValueError("action must be approve, reject, or resolve")
+    return tool_result(post_api_json("/api/client-office/report-delivery/resolve", payload))
+
+
 def client_3081282_summary(arguments: dict) -> dict:
     return tool_result(
         {
@@ -7531,6 +7557,56 @@ TOOLS = {
             "required": ["action", "account_code", "source_label"]
         },
         "handler": holding_reconciliation_control,
+    },
+    "ai_os_client_cash_ledger_control": {
+        "description": "Stage or resolve an approval-gated, source-backed client cash entry. It updates only the local accounting ledger and never calls a broker.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["stage", "approve", "reject", "resolve"]},
+                "entry_id": {"type": "integer"},
+                "client_code": {"type": "string"},
+                "account_code": {"type": "string"},
+                "entry_ts": {"type": "string"},
+                "entry_type": {"type": "string", "enum": ["opening_balance", "contribution", "withdrawal", "dividend", "interest", "fee", "tax", "broker_charge", "cash_adjustment", "transfer"]},
+                "flow_class": {"type": "string", "enum": ["external", "income", "expense", "internal", "balance"]},
+                "amount": {"type": "number"},
+                "currency": {"type": "string", "default": "INR"},
+                "description": {"type": "string"},
+                "source_ref": {"type": "string"},
+                "source_evidence": {"type": "array", "items": {"type": "object"}},
+                "decision": {"type": "string", "enum": ["approved", "rejected"]},
+                "decision_notes": {"type": "string"},
+                "actor": {"type": "string"}
+            }
+        },
+        "handler": client_cash_ledger_control,
+    },
+    "ai_os_client_accounting_run": {
+        "description": "Rebuild source-backed FIFO long/short tax lots, broker/current NAV evidence, benchmark links, period performance, and attribution. Missing inputs remain explicitly incomplete.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account_code": {"type": "string"},
+                "actor": {"type": "string", "default": "Performance Attribution Agent"}
+            }
+        },
+        "handler": client_accounting_run,
+    },
+    "ai_os_client_report_delivery_control": {
+        "description": "Approve or reject a prepared client-report delivery queue item. This records governance only; external sending remains disabled.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["approve", "reject", "resolve"]},
+                "queue_id": {"type": "integer"},
+                "decision": {"type": "string", "enum": ["approved", "rejected"]},
+                "decision_notes": {"type": "string"},
+                "actor": {"type": "string", "default": "Devarsh"}
+            },
+            "required": ["queue_id"]
+        },
+        "handler": client_report_delivery_control,
     },
     "ai_os_client_3081282_summary": {
         "description": "Return imported client 3081282 transaction summary metrics and dashboard path.",

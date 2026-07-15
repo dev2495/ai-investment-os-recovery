@@ -672,18 +672,22 @@ export interface StageClientOnboardingInput {
 }
 
 export interface ResolveClientOnboardingInput {
-  case_id: string | number;
+  case_id?: string | number;
+  approval_id?: string | number;
   decision: "approved" | "rejected";
   decision_notes: string;
   decided_by?: string;
+  actor?: string;
 }
 
 export interface ResolveHoldingUpdateInput {
-  update_id: string | number;
+  update_id?: string | number;
+  approval_id?: string | number;
   decision: "approved" | "rejected";
   decision_notes: string;
   evidence?: LiveRow[];
   decided_by?: string;
+  actor?: string;
 }
 
 export interface StageAccountChangeInput {
@@ -697,10 +701,12 @@ export interface StageAccountChangeInput {
 }
 
 export interface ResolveAccountChangeInput {
-  request_id: string | number;
+  request_id?: string | number;
+  approval_id?: string | number;
   decision: "approved" | "rejected";
   decision_notes: string;
   decided_by?: string;
+  actor?: string;
 }
 
 export interface UpdateBookAssignmentInput {

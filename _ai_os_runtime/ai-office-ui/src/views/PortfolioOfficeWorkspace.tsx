@@ -4,10 +4,14 @@ import {
   BriefcaseBusiness,
   ClipboardPlus,
   DatabaseZap,
+  FileCheck2,
   GitCompareArrows,
+  Landmark,
+  LineChart,
   RefreshCw,
   ShieldCheck,
   UserPlus,
+  WalletCards,
   Users
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
@@ -22,7 +26,14 @@ import {
   syncPositionReadinessRemediation,
   type LiveRow
 } from "../api/live";
-import { fetchPortfolioOfficeSnapshot, type PortfolioOfficeSnapshot } from "../api/portfolioOffice";
+import {
+  fetchPortfolioOfficeSnapshot,
+  resolveClientCashEntry,
+  resolveClientReportDelivery,
+  runClientAccounting,
+  stageClientCashEntry,
+  type PortfolioOfficeSnapshot
+} from "../api/portfolioOffice";
 import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
 type ConnectionStatus = "loading" | "online" | "offline";
@@ -85,9 +96,12 @@ export default function PortfolioOfficeWorkspace({ mode, onStatusChange }: Props
   const [decisionBusy, setDecisionBusy] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
   const [remediationBusy, setRemediationBusy] = useState(false);
+  const [accountingBusy, setAccountingBusy] = useState(false);
+  const [cashBusy, setCashBusy] = useState(false);
   const [holding, setHolding] = useState({ accountCode: "", symbol: "", quantity: "", averagePrice: "", marketPrice: "", reason: "manual portfolio update" });
   const [onboarding, setOnboarding] = useState({ clientCode: "", displayName: "", riskProfile: "moderate", objective: "long-term capital compounding", horizon: "5-10 years", liquidityNeeds: "", riskTolerance: "moderate", riskCapacity: "moderate", suitabilityStatus: "suitable", accountCode: "", broker: "", evidence: "client intake confirmed by Devarsh" });
   const [accountChange, setAccountChange] = useState({ accountCode: "", changeType: "update", broker: "", accountName: "", reason: "client account details updated by Devarsh", evidence: "manual client instruction" });
+  const [cashEntry, setCashEntry] = useState({ accountCode: "", entryType: "opening_balance", amount: "", description: "opening cash balance from client statement", sourceRef: "", evidence: "client statement reviewed by Devarsh" });
 
   const refresh = useCallback(async () => {
     setStatus("loading");
@@ -129,6 +143,12 @@ export default function PortfolioOfficeWorkspace({ mode, onStatusChange }: Props
   const onboardingCases = snapshot?.client_onboarding ?? [];
   const suitability = (snapshot?.client_suitability ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
   const accountChanges = (snapshot?.account_changes ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
+  const cashLedger = (snapshot?.cash_ledger ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
+  const taxLots = (snapshot?.tax_lot_summary ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
+  const navRows = (snapshot?.client_nav ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
+  const performance = (snapshot?.client_performance ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
+  const attribution = (snapshot?.performance_attribution ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
+  const reportDelivery = (snapshot?.client_report_delivery ?? []).filter((row) => selectedClient === "all" || value(row, "client_code") === selectedClient);
   const totalValue = useMemo(() => positions.reduce((sum, row) => sum + Number(row.market_value ?? 0), 0), [positions]);
   const grossExposure = useMemo(() => symbolExposure.reduce((sum, row) => sum + Number(row.gross_exposure ?? 0), 0), [symbolExposure]);
   const netExposure = useMemo(() => symbolExposure.reduce((sum, row) => sum + Number(row.net_exposure ?? 0), 0), [symbolExposure]);
@@ -139,6 +159,7 @@ export default function PortfolioOfficeWorkspace({ mode, onStatusChange }: Props
     setSelectedClient(clientCode);
     const firstAccount = snapshot?.client_accounts.find((row) => value(row, "client_code") === clientCode);
     setHolding((current) => ({ ...current, accountCode: firstAccount ? value(firstAccount, "account_code", "") : "" }));
+    setCashEntry((current) => ({ ...current, accountCode: firstAccount ? value(firstAccount, "account_code", "") : "" }));
   };
 
   const submitHolding = async (event: FormEvent<HTMLFormElement>) => {
@@ -276,6 +297,49 @@ export default function PortfolioOfficeWorkspace({ mode, onStatusChange }: Props
     }
   };
 
+  const submitCashEntry = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (selectedClient === "all") return setError("Select one client before staging a cash entry.");
+    setCashBusy(true); setError(""); setNotice("");
+    try {
+      const result = await stageClientCashEntry({ actor: "Devarsh", client_code: selectedClient, account_code: cashEntry.accountCode, entry_type: cashEntry.entryType, amount: cashEntry.amount, description: cashEntry.description, source_ref: cashEntry.sourceRef || undefined, source_evidence: [{ source: "manual_client_accounting", note: cashEntry.evidence, actor: "Devarsh" }] });
+      setNotice(`Cash entry #${value(result, "id")} staged; NAV remains unchanged until approval.`);
+      setCashEntry((current) => ({ ...current, amount: "", sourceRef: "" }));
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Cash entry could not be staged"); }
+    finally { setCashBusy(false); }
+  };
+
+  const decideCashEntry = async (entryId: string, decision: "approved" | "rejected") => {
+    setDecisionBusy(`cash-${entryId}`); setError("");
+    try {
+      await resolveClientCashEntry({ entry_id: entryId, decision, actor: "Devarsh", decision_notes: decision === "approved" ? "Cash source, amount, account, and classification reviewed in Client Office." : "Cash entry rejected during Client Office review." });
+      setNotice(`Cash entry #${entryId} ${decision}. Recalculate accounting to refresh NAV.`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Cash-entry decision failed"); }
+    finally { setDecisionBusy(""); }
+  };
+
+  const recalculateAccounting = async () => {
+    setAccountingBusy(true); setError(""); setNotice("");
+    try {
+      await runClientAccounting({ actor: "Performance Attribution Agent", account_code: selectedClient === "all" ? undefined : cashEntry.accountCode || undefined });
+      setNotice("FIFO lots, NAV evidence, benchmark links, performance, and attribution recalculated from warehouse facts.");
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Client accounting recalculation failed"); }
+    finally { setAccountingBusy(false); }
+  };
+
+  const decideReportDelivery = async (queueId: string, decision: "approved" | "rejected") => {
+    setDecisionBusy(`report-${queueId}`); setError("");
+    try {
+      await resolveClientReportDelivery({ queue_id: queueId, decision, actor: "Devarsh", decision_notes: decision === "approved" ? "Draft, evidence gaps, and client scope reviewed. Manual delivery may proceed." : "Client report draft rejected for revision." });
+      setNotice(`Client report queue #${queueId} ${decision}; no external send was executed.`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Client report decision failed"); }
+    finally { setDecisionBusy(""); }
+  };
+
   return (
     <div className="portfolio-office-workspace">
       <div className="workspace-filter-bar">
@@ -311,6 +375,13 @@ export default function PortfolioOfficeWorkspace({ mode, onStatusChange }: Props
           <Panel className="span-5" icon={<Users size={17} />} title="Client Registry" action={<span>{clients.length} clients</span>}><div className="client-registry-list scoped-scroll-list">{clients.map((client) => <button className={selectedClient === value(client, "client_code") ? "client-registry-row selected" : "client-registry-row"} key={value(client, "client_code")} onClick={() => chooseClient(value(client, "client_code"))} type="button"><div><strong>{value(client, "display_name")}</strong><p>{value(client, "client_code")} · {value(client, "risk_profile")} risk</p></div><span>{amount(client.latest_market_value)}</span><small>{value(client, "latest_position_count", "0")} positions</small></button>)}</div></Panel>
           <Panel className="span-7" icon={<BookOpenCheck size={17} />} title="Suitability & Mandate Control" action={<span>{suitability.filter((row) => value(row, "review_health") !== "current").length} gaps</span>}><div className="source-check-list scoped-scroll-list">{suitability.map((row) => <article className="source-check-row" key={value(row, "client_code")}><div><strong>{value(row, "display_name")} · {value(row, "client_code")}</strong><p>{value(row, "risk_tolerance")} tolerance · {value(row, "risk_capacity")} capacity · {value(row, "investment_horizon")}</p></div><StatusPill status={value(row, "review_health")} /><span>{value(row, "suitability_status")}</span><time>{date(row.next_review_due_at)}</time></article>)}{!suitability.length ? <Empty>No suitability rows for this client scope.</Empty> : null}</div></Panel>
           <Panel className="span-7" icon={<BriefcaseBusiness size={17} />} title="Current Holdings" action={<span>{positions.length} rows</span>}><div className="source-check-list scoped-scroll-list">{positions.map((row) => <article className="source-check-row" key={`${value(row, "account_code")}-${value(row, "symbol")}`}><div><strong>{value(row, "symbol")} · {value(row, "display_name")}</strong><p>{value(row, "account_code")} · qty {value(row, "quantity")} · avg {amount(row.average_price)}</p></div><StatusPill status={Number(row.unrealized_pnl ?? 0) >= 0 ? "active" : "review"} /><span>{amount(row.market_value)}</span><time>{date(row.as_of)}</time></article>)}{!positions.length ? <Empty>No current holdings for this client scope.</Empty> : null}</div></Panel>
+          <Panel className="span-5" icon={<Landmark size={17} />} title="NAV & Cash Evidence" action={<button className="mini-action-button" disabled={accountingBusy} onClick={() => void recalculateAccounting()} type="button"><RefreshCw size={14} />{accountingBusy ? "Calculating" : "Recalculate"}</button>}><div className="source-check-list scoped-scroll-list">{navRows.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "display_name")} · {value(row, "account_code")}</strong><p>Securities {amount(row.securities_market_value)} · cash {amount(row.cash_balance)} · {value(row, "missing_inputs", "evidence complete")}</p></div><StatusPill status={value(row, "calculation_status")} /><span>{row.nav == null ? "NAV unavailable" : amount(row.nav)}</span><time>{value(row, "nav_date")}</time></article>)}{!navRows.length ? <Empty>No NAV evidence for this scope.</Empty> : null}</div></Panel>
+          <Panel className="span-7" icon={<LineChart size={17} />} title="Performance & Benchmark" action={<span>{performance.length} periods</span>}><div className="source-check-list scoped-scroll-list">{performance.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "display_name")} · {value(row, "period_type")}</strong><p>{value(row, "period_start")} to {value(row, "period_end")} · benchmark {value(row, "benchmark_key")} {value(row, "benchmark_return_pct", "unavailable")}% · {value(row, "missing_inputs", "evidence complete")}</p></div><StatusPill status={value(row, "calculation_status")} /><span>{row.twr_return_pct == null ? "Return unavailable" : `${Number(row.twr_return_pct).toFixed(2)}%`}</span><time>{amount(row.realized_pnl)} realized</time></article>)}{!performance.length ? <Empty>No performance period has been calculated.</Empty> : null}</div></Panel>
+          <Panel className="span-5" icon={<DatabaseZap size={17} />} title="FIFO Tax-Lot Control" action={<span>{taxLots.reduce((sum, row) => sum + Number(row.position_break_count ?? 0), 0)} breaks</span>}><div className="source-check-list scoped-scroll-list">{taxLots.map((row) => <article className="source-check-row" key={value(row, "run_id")}><div><strong>{value(row, "account_code")} · {value(row, "method")}</strong><p>{value(row, "trade_count")} trades · {value(row, "match_count")} closes · {value(row, "open_lot_count")} open lots · {value(row, "missing_inputs", "covered")}</p></div><StatusPill status={value(row, "status")} /><span>{amount(row.realized_pnl)}</span><time>{value(row, "position_break_count", "0")} position breaks</time></article>)}{!taxLots.length ? <Empty>No tax-lot calculation has been run.</Empty> : null}</div></Panel>
+          <Panel className="span-7" icon={<LineChart size={17} />} title="Realized Attribution" action={<span>{attribution.length} contributors</span>}><div className="source-check-list scoped-scroll-list">{attribution.map((row) => <article className="source-check-row" key={`${value(row, "id")}-${value(row, "attribution_key")}`}><div><strong>{value(row, "attribution_key")} · {value(row, "display_name")}</strong><p>{value(row, "attribution_type")} · {value(row, "period_start")} to {value(row, "period_end")}</p></div><StatusPill status={value(row, "calculation_status")} /><span>{amount(row.contribution_amount)}</span><time>{value(row, "contribution_pct", "-")}%</time></article>)}{!attribution.length ? <Empty>No attributable realized activity for this scope and period.</Empty> : null}</div></Panel>
+          <Panel className="span-5" icon={<WalletCards size={17} />} title="Stage Cash Evidence"><form className="holding-stage-form" onSubmit={submitCashEntry}><label><span>Account</span><select required value={cashEntry.accountCode} onChange={(event) => setCashEntry((current) => ({ ...current, accountCode: event.target.value }))}><option value="">Select account</option>{accounts.map((account) => <option key={value(account, "account_code")} value={value(account, "account_code")}>{value(account, "account_code")}</option>)}</select></label><label><span>Entry type</span><select value={cashEntry.entryType} onChange={(event) => setCashEntry((current) => ({ ...current, entryType: event.target.value }))}><option value="opening_balance">Opening balance</option><option value="contribution">Contribution</option><option value="withdrawal">Withdrawal</option><option value="dividend">Dividend</option><option value="interest">Interest</option><option value="fee">Fee</option><option value="tax">Tax</option><option value="cash_adjustment">Cash adjustment</option><option value="transfer">Transfer</option></select></label><label><span>Amount</span><input inputMode="decimal" required value={cashEntry.amount} onChange={(event) => setCashEntry((current) => ({ ...current, amount: event.target.value }))} /></label><label><span>Source reference</span><input value={cashEntry.sourceRef} onChange={(event) => setCashEntry((current) => ({ ...current, sourceRef: event.target.value }))} /></label><label className="span-form"><span>Description</span><input required value={cashEntry.description} onChange={(event) => setCashEntry((current) => ({ ...current, description: event.target.value }))} /></label><label className="span-form"><span>Evidence</span><input required value={cashEntry.evidence} onChange={(event) => setCashEntry((current) => ({ ...current, evidence: event.target.value }))} /></label><button className="primary-button span-form" disabled={cashBusy || selectedClient === "all"} type="submit"><WalletCards size={15} />{cashBusy ? "Staging" : "Stage cash entry"}</button><p className="form-guard span-form">Cash and NAV remain unchanged until this source-backed entry is approved.</p></form></Panel>
+          <Panel className="span-7" icon={<ShieldCheck size={17} />} title="Cash Approval Queue" action={<span>{cashLedger.filter((row) => value(row, "status") === "pending_approval").length} pending</span>}><div className="source-check-list scoped-scroll-list">{cashLedger.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "entry_type")} · {value(row, "display_name")}</strong><p>{value(row, "account_code")} · {value(row, "description")} · {value(row, "source_ref", "embedded evidence")}</p>{value(row, "status") === "pending_approval" ? <div className="inline-decision-actions"><button disabled={decisionBusy === `cash-${value(row, "id")}`} onClick={() => void decideCashEntry(value(row, "id"), "approved")} type="button">Post</button><button disabled={decisionBusy === `cash-${value(row, "id")}`} onClick={() => void decideCashEntry(value(row, "id"), "rejected")} type="button">Reject</button></div> : null}</div><StatusPill status={value(row, "status")} /><span>{amount(row.amount)}</span><time>{date(row.entry_ts)}</time></article>)}{!cashLedger.length ? <Empty>No cash ledger entries for this scope.</Empty> : null}</div></Panel>
+          <Panel className="span-5" icon={<FileCheck2 size={17} />} title="Client Report Delivery" action={<span>{reportDelivery.filter((row) => value(row, "status") === "pending_approval").length} pending</span>}><div className="source-check-list scoped-scroll-list">{reportDelivery.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "display_name")} · {value(row, "report_period")}</strong><p>{value(row, "output_note_path")} · manual delivery only</p>{value(row, "status") === "pending_approval" ? <div className="inline-decision-actions"><button disabled={decisionBusy === `report-${value(row, "id")}`} onClick={() => void decideReportDelivery(value(row, "id"), "approved")} type="button">Approve</button><button disabled={decisionBusy === `report-${value(row, "id")}`} onClick={() => void decideReportDelivery(value(row, "id"), "rejected")} type="button">Reject</button></div> : null}</div><StatusPill status={value(row, "status")} /><span>#{value(row, "approval_id")}</span><time>{date(row.created_at)}</time></article>)}{!reportDelivery.length ? <Empty>No client report delivery queue has been generated.</Empty> : null}</div></Panel>
           <Panel className="span-5" icon={<ClipboardPlus size={17} />} title="Stage Holding Update"><form className="holding-stage-form" onSubmit={submitHolding}><label><span>Account</span><select required value={holding.accountCode} onChange={(event) => setHolding((current) => ({ ...current, accountCode: event.target.value }))}><option value="">Select account</option>{accounts.map((account) => <option key={value(account, "account_code")} value={value(account, "account_code")}>{value(account, "account_code")} · {value(account, "broker")}</option>)}</select></label><label><span>Symbol</span><input required value={holding.symbol} onChange={(event) => setHolding((current) => ({ ...current, symbol: event.target.value.toUpperCase() }))} /></label><label><span>Quantity</span><input inputMode="decimal" required value={holding.quantity} onChange={(event) => setHolding((current) => ({ ...current, quantity: event.target.value }))} /></label><label><span>Average price</span><input inputMode="decimal" value={holding.averagePrice} onChange={(event) => setHolding((current) => ({ ...current, averagePrice: event.target.value }))} /></label><label><span>Market price</span><input inputMode="decimal" value={holding.marketPrice} onChange={(event) => setHolding((current) => ({ ...current, marketPrice: event.target.value }))} /></label><label className="span-form"><span>Reason</span><input required value={holding.reason} onChange={(event) => setHolding((current) => ({ ...current, reason: event.target.value }))} /></label><button className="primary-button span-form" disabled={stageBusy || selectedClient === "all"} type="submit"><ClipboardPlus size={15} />{stageBusy ? "Staging" : "Stage for review"}</button><p className="form-guard span-form">This creates an approval item. It does not change live positions or place an order.</p></form></Panel>
           <Panel className="span-7" icon={<ShieldCheck size={17} />} title="Holding Update Queue" action={<span>{pendingUpdates.length} open</span>}><div className="source-check-list scoped-scroll-list">{manualUpdates.map((row) => <article className="source-check-row" key={value(row, "id")}><div><strong>{value(row, "symbol")} · {value(row, "client_code")}</strong><p>{value(row, "account_code")} · qty {value(row, "quantity")} · {value(row, "update_reason")}</p>{value(row, "status") === "pending_approval" ? <div className="inline-decision-actions"><button disabled={decisionBusy === `holding-${value(row, "id")}`} onClick={() => void decideHolding(value(row, "id"), "approved")} type="button">Apply</button><button disabled={decisionBusy === `holding-${value(row, "id")}`} onClick={() => void decideHolding(value(row, "id"), "rejected")} type="button">Reject</button></div> : null}</div><StatusPill status={value(row, "status", "pending_approval")} /><span>{amount(row.effective_market_value)}</span><time>{date(row.created_at)}</time></article>)}{!manualUpdates.length ? <Empty>No holding updates for this scope.</Empty> : null}</div></Panel>
           <Panel className="span-5" icon={<BriefcaseBusiness size={17} />} title="Account Maintenance"><form className="holding-stage-form" onSubmit={submitAccountChange}><label><span>Account code</span><input list="client-account-codes" required value={accountChange.accountCode} onChange={(event) => setAccountChange((current) => ({ ...current, accountCode: event.target.value }))} /><datalist id="client-account-codes">{accounts.map((row) => <option key={value(row, "account_code")} value={value(row, "account_code")} />)}</datalist></label><label><span>Change</span><select value={accountChange.changeType} onChange={(event) => setAccountChange((current) => ({ ...current, changeType: event.target.value }))}><option value="update">Update</option><option value="create">Create</option><option value="deactivate">Deactivate</option><option value="reactivate">Reactivate</option></select></label><label><span>Account name</span><input value={accountChange.accountName} onChange={(event) => setAccountChange((current) => ({ ...current, accountName: event.target.value }))} /></label><label><span>Broker</span><input value={accountChange.broker} onChange={(event) => setAccountChange((current) => ({ ...current, broker: event.target.value }))} /></label><label className="span-form"><span>Reason</span><input required value={accountChange.reason} onChange={(event) => setAccountChange((current) => ({ ...current, reason: event.target.value }))} /></label><label className="span-form"><span>Source evidence</span><input required value={accountChange.evidence} onChange={(event) => setAccountChange((current) => ({ ...current, evidence: event.target.value }))} /></label><button className="primary-button span-form" disabled={accountBusy || selectedClient === "all"} type="submit">{accountBusy ? "Staging" : "Stage account change"}</button><p className="form-guard span-form">Account creation, edits, and lifecycle changes are approval-gated and never write to a broker.</p></form></Panel>

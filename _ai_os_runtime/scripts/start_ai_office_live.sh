@@ -38,6 +38,7 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/api/ai_os_api_server.py" "${AIOS_SERVICE_DIR}/api/ai_os_api_server.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_worker_once.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_message_daemon.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_message_daemon.py"
+  cp -f "${RUNTIME_ROOT}/scripts/run_client_accounting.py" "${AIOS_SERVICE_DIR}/scripts/run_client_accounting.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_source_freshness.py" "${AIOS_SERVICE_DIR}/scripts/check_source_freshness.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_tradingview_cdp.py" "${AIOS_SERVICE_DIR}/scripts/check_tradingview_cdp.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_model_endpoint_live.py" "${AIOS_SERVICE_DIR}/scripts/check_model_endpoint_live.py"
