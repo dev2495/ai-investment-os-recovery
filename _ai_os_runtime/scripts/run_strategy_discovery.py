@@ -44,19 +44,41 @@ def normalize_symbols(value: Any) -> list[str]:
     return output
 
 
+IDENTITY_TITLE_PREFIX = re.compile(
+    r"^(research-sourced strategy:|journal pattern strategy:|signal-sourced strategy:|component pattern:)\s*",
+    re.IGNORECASE,
+)
+
+
+def normalize_identity_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def identity_parts(candidate: dict[str, Any], *, include_content: bool) -> list[str]:
+    title = IDENTITY_TITLE_PREFIX.sub("", str(candidate.get("title") or "").strip())
+    parts = [
+        normalize_identity_text(title),
+        ",".join(sorted(normalize_symbols(candidate.get("symbols")))),
+        normalize_identity_text(candidate.get("universe")),
+        normalize_identity_text(candidate.get("timeframe")),
+        normalize_identity_text(candidate.get("template")),
+    ]
+    if include_content:
+        parts.extend(
+            [
+                normalize_identity_text(candidate.get("thesis")),
+                normalize_identity_text(candidate.get("catalyst")),
+            ]
+        )
+    return parts
+
+
+def opportunity_fingerprint(candidate: dict[str, Any]) -> str:
+    return "opp_v2:" + hashlib.md5("|".join(identity_parts(candidate, include_content=False)).encode("utf-8")).hexdigest()  # noqa: S324
+
+
 def source_fingerprint(candidate: dict[str, Any]) -> str:
-    payload = {
-        "source_kind": candidate.get("source_kind"),
-        "source_ref": candidate.get("source_ref"),
-        "title": candidate.get("title"),
-        "symbols": normalize_symbols(candidate.get("symbols")),
-        "universe": candidate.get("universe"),
-        "timeframe": candidate.get("timeframe"),
-        "template": candidate.get("template"),
-        "thesis": candidate.get("thesis"),
-        "catalyst": candidate.get("catalyst"),
-    }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return "src_v2:" + hashlib.md5("|".join(identity_parts(candidate, include_content=True)).encode("utf-8")).hexdigest()  # noqa: S324
 
 
 def infer_template(text: str) -> str:
@@ -76,8 +98,10 @@ def normalize_timeframe(value: str | None) -> str:
         return "15m"
     if "hour" in lowered or "1h" in lowered:
         return "1h"
-    if "daily" in lowered or "day" in lowered or "swing" in lowered or "week" in lowered:
-        return "5m"
+    if "week" in lowered:
+        return "weekly"
+    if "daily" in lowered or "day" in lowered or "swing" in lowered:
+        return "daily"
     return "5m"
 
 
@@ -270,8 +294,8 @@ def create_run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def upsert_generated_idea(run_key: str, candidate: dict[str, Any]) -> dict[str, Any]:
-    fingerprint = str(candidate["source_fingerprint"])
-    idea_key = f"discovery_{slugify(candidate['source_kind'])}_{slugify(str(candidate.get('source_ref') or candidate['title']))}_{fingerprint[:12]}"
+    fingerprint = str(candidate["opportunity_fingerprint"])
+    idea_key = f"discovery_opportunity_{fingerprint.replace(':', '_')}"
     rows = run_psql_json(
         f"""
         WITH upserted AS (
@@ -326,8 +350,9 @@ def upsert_generated_idea(run_key: str, candidate: dict[str, Any]) -> dict[str, 
 
 
 def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea: dict[str, Any], optimizer: dict[str, Any] | None) -> dict[str, Any]:
-    fingerprint = str(candidate["source_fingerprint"])
-    discovery_key = f"discovery_{slugify(candidate['source_kind'])}_{slugify(str(candidate.get('source_ref') or candidate['title']))}_{fingerprint[:12]}"
+    opportunity_key = str(candidate["opportunity_fingerprint"])
+    source_key = str(candidate["source_fingerprint"])
+    discovery_key = f"discovery_opportunity_{opportunity_key.replace(':', '_')}"
     optimizer_run_key = optimizer.get("run_key") if optimizer else None
     optimizer_status = optimizer.get("status") if optimizer else None
     optimizer_run_id = None
@@ -361,7 +386,9 @@ def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea:
                 universe, timeframe, template, thesis, catalyst, priority_score,
                 risk_score, route_to_optimizer, generated_idea_id,
                 optimizer_run_id, optimizer_run_key, optimizer_status,
-                research_gate, next_required_action, evidence, status
+                research_gate, next_required_action, evidence, status,
+                opportunity_fingerprint, source_fingerprint, is_canonical,
+                first_seen_at, last_seen_at, seen_count, updated_at
             )
             VALUES (
                 {run_id},
@@ -385,10 +412,29 @@ def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea:
                 {sql_literal(research_gate)},
                 {sql_literal(next_action)},
                 {sql_jsonb(candidate.get("evidence") or [])},
-                {sql_literal(status)}
+                {sql_literal(status)},
+                {sql_literal(opportunity_key)},
+                {sql_literal(source_key)},
+                true,
+                now(),
+                now(),
+                1,
+                now()
             )
-            ON CONFLICT (discovery_key) DO UPDATE SET
+            ON CONFLICT (opportunity_fingerprint) WHERE is_canonical DO UPDATE SET
                 run_id = EXCLUDED.run_id,
+                source_kind = EXCLUDED.source_kind,
+                source_ref = EXCLUDED.source_ref,
+                title = EXCLUDED.title,
+                symbols = EXCLUDED.symbols,
+                universe = EXCLUDED.universe,
+                timeframe = EXCLUDED.timeframe,
+                template = EXCLUDED.template,
+                thesis = EXCLUDED.thesis,
+                catalyst = EXCLUDED.catalyst,
+                priority_score = EXCLUDED.priority_score,
+                risk_score = EXCLUDED.risk_score,
+                route_to_optimizer = EXCLUDED.route_to_optimizer,
                 generated_idea_id = EXCLUDED.generated_idea_id,
                 optimizer_run_id = EXCLUDED.optimizer_run_id,
                 optimizer_run_key = EXCLUDED.optimizer_run_key,
@@ -396,13 +442,69 @@ def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea:
                 research_gate = EXCLUDED.research_gate,
                 next_required_action = EXCLUDED.next_required_action,
                 status = EXCLUDED.status,
-                evidence = EXCLUDED.evidence
+                source_fingerprint = EXCLUDED.source_fingerprint,
+                evidence = EXCLUDED.evidence,
+                last_seen_at = now(),
+                suppressed_reason = NULL,
+                updated_at = now()
             RETURNING *
         )
         SELECT coalesce(json_agg(row_to_json(upserted)), '[]'::json)::text FROM upserted
         """
     )
     return rows[0]
+
+
+def record_observation(run_id: int, discovery_candidate_id: int, candidate: dict[str, Any]) -> dict[str, Any]:
+    rows = run_psql_json(
+        f"""
+        WITH observed AS (
+            INSERT INTO strategy.strategy_discovery_observations (
+                run_id, discovery_candidate_id, opportunity_fingerprint,
+                source_fingerprint, source_refs, evidence, observed_at
+            )
+            VALUES (
+                {int(run_id)},
+                {int(discovery_candidate_id)},
+                {sql_literal(candidate['opportunity_fingerprint'])},
+                {sql_literal(candidate['source_fingerprint'])},
+                {sql_jsonb(candidate.get('source_refs') or [])},
+                {sql_jsonb(candidate.get('evidence') or [])},
+                now()
+            )
+            ON CONFLICT (run_id, opportunity_fingerprint, source_fingerprint) DO UPDATE SET
+                discovery_candidate_id = EXCLUDED.discovery_candidate_id,
+                source_refs = EXCLUDED.source_refs,
+                evidence = EXCLUDED.evidence
+            RETURNING *
+        ), observation_state AS (
+            SELECT count(*)::integer AS seen_count,
+                   min(observed_at) AS first_seen_at,
+                   max(observed_at) AS last_seen_at
+            FROM (
+                SELECT run_id, source_fingerprint, observed_at
+                FROM strategy.strategy_discovery_observations
+                WHERE opportunity_fingerprint = {sql_literal(candidate['opportunity_fingerprint'])}
+                UNION
+                SELECT run_id, source_fingerprint, observed_at
+                FROM observed
+            ) observations
+        ), refreshed AS (
+            UPDATE strategy.strategy_discovery_candidates canonical
+            SET seen_count = observation_state.seen_count,
+                first_seen_at = observation_state.first_seen_at,
+                last_seen_at = observation_state.last_seen_at,
+                updated_at = now()
+            FROM observation_state
+            WHERE canonical.opportunity_fingerprint = {sql_literal(candidate['opportunity_fingerprint'])}
+              AND canonical.is_canonical
+            RETURNING canonical.id, canonical.seen_count,
+                      canonical.first_seen_at, canonical.last_seen_at
+        )
+        SELECT coalesce(json_agg(row_to_json(refreshed)), '[]'::json)::text FROM refreshed
+        """
+    )
+    return rows[0] if rows else {}
 
 
 def recent_optimizer(candidate: dict[str, Any], cooldown_hours: int) -> dict[str, Any] | None:
@@ -414,9 +516,9 @@ def recent_optimizer(candidate: dict[str, Any], cooldown_hours: int) -> dict[str
         FROM strategy.strategy_discovery_candidates discovery
         JOIN strategy.user_defined_optimizer_runs optimizer
           ON optimizer.id = discovery.optimizer_run_id
-        WHERE discovery.source_kind = {sql_literal(candidate.get('source_kind'))}
-          AND discovery.source_ref IS NOT DISTINCT FROM {sql_literal(candidate.get('source_ref'))}
-          AND discovery.evidence @> {sql_jsonb([{'source_fingerprint': candidate['source_fingerprint']}])}
+        WHERE discovery.opportunity_fingerprint = {sql_literal(candidate.get('opportunity_fingerprint'))}
+          AND discovery.source_fingerprint = {sql_literal(candidate.get('source_fingerprint'))}
+          AND discovery.is_canonical
           AND optimizer.status = 'completed'
           AND optimizer.finished_at >= now() - make_interval(hours => {max(1, cooldown_hours)})
         ORDER BY optimizer.finished_at DESC
@@ -488,16 +590,41 @@ def gather_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         candidates.extend(component_candidates(args.per_source_limit))
     deduped: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
+        candidate["opportunity_fingerprint"] = opportunity_fingerprint(candidate)
         candidate["source_fingerprint"] = source_fingerprint(candidate)
         candidate["evidence"] = [
             *(candidate.get("evidence") or []),
             {
+                "opportunity_fingerprint": candidate["opportunity_fingerprint"],
                 "source_fingerprint": candidate["source_fingerprint"],
-                "fingerprint_version": "strategy_discovery_v1",
+                "fingerprint_version": "strategy_discovery_identity_v2",
             },
         ]
-        key = f"{candidate['source_kind']}:{candidate.get('source_ref') or candidate['title']}"
-        deduped[key] = candidate
+        key = str(candidate["opportunity_fingerprint"])
+        existing = deduped.get(key)
+        if existing is None:
+            candidate["source_refs"] = [f"{candidate.get('source_kind')}:{candidate.get('source_ref')}"]
+            candidate["_source_duplicate_count"] = 1
+            deduped[key] = candidate
+            continue
+        existing_score = float(existing.get("priority_score") or 0)
+        candidate_score = float(candidate.get("priority_score") or 0)
+        selected = candidate if candidate_score > existing_score else existing
+        other = existing if selected is candidate else candidate
+        evidence_by_key = {
+            json.dumps(item, sort_keys=True, default=str): item
+            for item in [*(selected.get("evidence") or []), *(other.get("evidence") or [])]
+        }
+        selected["evidence"] = list(evidence_by_key.values())
+        selected["priority_score"] = max(existing_score, candidate_score)
+        selected["risk_score"] = max(float(existing.get("risk_score") or 0), float(candidate.get("risk_score") or 0))
+        selected["route_to_optimizer"] = bool(existing.get("route_to_optimizer") or candidate.get("route_to_optimizer"))
+        selected["source_refs"] = sorted(set([
+            *(existing.get("source_refs") or [f"{existing.get('source_kind')}:{existing.get('source_ref')}"]),
+            f"{candidate.get('source_kind')}:{candidate.get('source_ref')}",
+        ]))
+        selected["_source_duplicate_count"] = int(existing.get("_source_duplicate_count") or 1) + 1
+        deduped[key] = selected
     return sorted(deduped.values(), key=lambda row: float(row.get("priority_score") or 0), reverse=True)[: max(1, args.max_candidates)]
 
 
@@ -535,11 +662,14 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
         if optimizer and optimizer.get("status") == "reused":
             optimizer_reused_count += 1
         row = upsert_candidate(int(run["id"]), args.run_key, candidate, idea, optimizer)
-        output_candidates.append({"candidate": row, "generated_idea": idea, "optimizer": optimizer})
+        observation = record_observation(int(run["id"]), int(row["id"]), candidate)
+        output_candidates.append({"candidate": row, "generated_idea": idea, "optimizer": optimizer, "observation": observation})
 
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     summary = {
         "discovered_count": len(candidates),
+        "canonical_opportunity_count": len(candidates),
+        "source_duplicate_suppressed_count": sum(max(0, int(candidate.get("_source_duplicate_count") or 1) - 1) for candidate in candidates),
         "generated_idea_count": len(output_candidates),
         "optimizer_routed_count": optimizer_count,
         "optimizer_reused_count": optimizer_reused_count,

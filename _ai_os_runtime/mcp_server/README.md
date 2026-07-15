@@ -16,7 +16,7 @@ _ai_os_runtime/mcp_server/mcp_config.example.json
 
 Current verified surface (2026-07-15):
 
-- 172 callable `ai_os_*` MCP tools returned by the live `tools/list` protocol.
+- 174 callable `ai_os_*` MCP tools returned by the live `tools/list` protocol.
 - 229 enabled internal and external capabilities in `agent.tool_registry`; registry entries are not all directly importable MCP calls.
 - DB access uses `docker exec` first and falls back to the published local Postgres port.
 

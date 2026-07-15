@@ -6244,6 +6244,11 @@ button {
   border-bottom: 0;
 }
 
+.arsenal-candidate-row.is-selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
 .arsenal-candidate-main {
   display: grid;
   min-width: 0;
@@ -6324,6 +6329,78 @@ button {
 .arsenal-stage time {
   color: var(--faint);
   font-size: 8px;
+}
+
+.arsenal-gate-console {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.35fr);
+  align-items: center;
+  gap: 12px 18px;
+  padding: 12px;
+}
+
+.arsenal-gate-summary {
+  min-width: 0;
+}
+
+.arsenal-gate-summary > span {
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.arsenal-gate-summary strong,
+.arsenal-gate-summary p,
+.arsenal-gate-summary small {
+  display: block;
+  margin-top: 4px;
+}
+
+.arsenal-gate-summary strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arsenal-gate-summary p,
+.arsenal-gate-summary small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.arsenal-gate-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(88px, 1fr));
+  gap: 6px;
+}
+
+.arsenal-gate-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 820;
+}
+
+.arsenal-gate-actions button:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.arsenal-gate-console > .form-guard {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .arsenal-discovery-list {
@@ -6443,6 +6520,14 @@ button {
 
   .arsenal-discovery-row {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .arsenal-gate-console {
+    grid-template-columns: 1fr;
+  }
+
+  .arsenal-gate-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .arsenal-triage-actions {

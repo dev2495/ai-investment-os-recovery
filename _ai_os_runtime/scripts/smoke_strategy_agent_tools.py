@@ -102,13 +102,6 @@ def cleanup_smoke_rows() -> dict:
            OR source_ref ILIKE '%{MARKER}%'
            OR evidence::text ILIKE '%{MARKER}%'
         RETURNING id
-    ),
-    deleted_audit AS (
-        DELETE FROM agent.mcp_audit_log
-        WHERE request_payload::text ILIKE '%{MARKER}%'
-           OR result_payload::text ILIKE '%{MARKER}%'
-           OR target_id ILIKE '%{MARKER}%'
-        RETURNING id
     )
     SELECT json_build_object(
         'validations', (SELECT count(*) FROM deleted_validation),
@@ -119,7 +112,7 @@ def cleanup_smoke_rows() -> dict:
         'intakes', (SELECT count(*) FROM deleted_intakes),
         'inbox', (SELECT count(*) FROM deleted_inbox),
         'tasks', (SELECT count(*) FROM deleted_tasks),
-        'audit', (SELECT count(*) FROM deleted_audit)
+        'audit_preserved', true
     )::text;
     """
     return run_sql_json(sql)
@@ -168,6 +161,7 @@ def main() -> int:
             "ai_os_queue_strategy_backtest",
             "ai_os_record_strategy_optimization",
             "ai_os_record_strategy_validation",
+            "ai_os_strategy_discovery_governance",
         }
         missing = sorted(required - tool_names)
         if missing:
@@ -274,6 +268,9 @@ def main() -> int:
         )
         lab = parse_tool_content(call("tools/call", {"name": "ai_os_strategy_lab", "arguments": {"limit": 20}}))
         intakes = parse_tool_content(call("tools/call", {"name": "ai_os_strategy_intakes", "arguments": {"limit": 20}}))
+        governance = parse_tool_content(
+            call("tools/call", {"name": "ai_os_strategy_discovery_governance", "arguments": {"limit": 120}})
+        )
 
         if not intake.get("id") or not idea.get("strategy_id") or not backtest.get("id"):
             raise RuntimeError("Strategy lifecycle create path failed")
@@ -283,6 +280,18 @@ def main() -> int:
             raise RuntimeError("Strategy lab did not return candidates")
         if not intakes:
             raise RuntimeError("Strategy intakes readback is empty")
+        governance_summary = {
+            row["metric"]: int(row["value"])
+            for row in (governance or {}).get("summary", [])
+        }
+        canonical_queue = (governance or {}).get("canonical_opportunities", [])
+        opportunity_fingerprints = [row.get("opportunity_fingerprint") for row in canonical_queue]
+        if governance_summary.get("suppressed_duplicates", 0) <= 0:
+            raise RuntimeError(f"Discovery duplicate governance is not active: {governance_summary}")
+        if not canonical_queue:
+            raise RuntimeError("Canonical strategy discovery queue is empty")
+        if len(opportunity_fingerprints) != len(set(opportunity_fingerprints)):
+            raise RuntimeError("Canonical strategy discovery queue contains repeated opportunity fingerprints")
 
         process.stdin.close()
         process.terminate()
@@ -300,6 +309,8 @@ def main() -> int:
             "validation_decision": validation["decision"],
             "lab_candidate_rows": len((lab or {}).get("strategy_candidates", [])),
             "intake_rows": len(intakes or []),
+            "canonical_discovery_rows": len(canonical_queue),
+            "suppressed_discovery_duplicates": governance_summary.get("suppressed_duplicates", 0),
             "cleanup_before": cleanup_before,
             "cleanup_after": cleanup_after,
         }, indent=2, sort_keys=True))

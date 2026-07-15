@@ -2209,7 +2209,12 @@ def build_strategy_arsenal_snapshot() -> dict:
     queries = {
         "summary": """
             SELECT metric, value, interpretation
-            FROM strategy.v_strategy_arsenal_control_summary
+            FROM strategy.v_strategy_arsenal_canonical_summary
+            ORDER BY metric
+        """,
+        "discovery_governance": """
+            SELECT metric, value, interpretation
+            FROM strategy.v_strategy_discovery_governance_summary
             ORDER BY metric
         """,
         "control_board": """
@@ -2233,8 +2238,11 @@ def build_strategy_arsenal_snapshot() -> dict:
                    limited_live_approval_status, promotion_stage,
                    next_required_action, gates_passed, gates_total, gate_flags,
                    broker_order_allowed, autonomous_live_execution_allowed,
-                   open_tasks, latest_task_at, evidence, updated_at
-            FROM strategy.v_strategy_arsenal_control_board
+                   open_tasks, latest_task_at, evidence, updated_at,
+                   opportunity_fingerprint, source_fingerprint,
+                   discovery_seen_count, discovery_last_seen_at,
+                   duplicate_candidate_count, canonical_rank
+            FROM strategy.v_strategy_arsenal_canonical_control_board
             ORDER BY updated_at DESC NULLS LAST, candidate_id DESC
             LIMIT 160
         """,
@@ -2258,8 +2266,10 @@ def build_strategy_arsenal_snapshot() -> dict:
                    routed_to_agent, inbox_item_id, approval_id,
                    committee_review_id, decision_notes, recommended_triage_action,
                    broker_order_allowed, autonomous_live_execution_allowed,
-                   created_at
-            FROM strategy.v_strategy_discovery_triage_queue
+                   created_at, opportunity_fingerprint, source_fingerprint,
+                   first_seen_at, last_seen_at, seen_count,
+                   suppressed_duplicate_count
+            FROM strategy.v_strategy_discovery_canonical_queue
             ORDER BY
                 CASE triage_status WHEN 'pending' THEN 1 ELSE 2 END,
                 priority_score DESC NULLS LAST, created_at DESC
@@ -7078,12 +7088,15 @@ def run_integration_job(payload: dict) -> dict:
             result_summary.get("inserted"),
             result_summary.get("discovered_count"),
             result_summary.get("quotes_imported"),
+            result_summary.get("rows_upserted_total"),
             nested_summary.get("items_upserted"),
             nested_summary.get("rows_written"),
         )
         rows_read = first_present(
             result_summary.get("rows_read"),
             result_summary.get("items_seen"),
+            (result_summary.get("tick_profile") or {}).get("tick_rows")
+                if isinstance(result_summary.get("tick_profile"), dict) else None,
             nested_summary.get("items_seen"),
             nested_summary.get("rows_read"),
         )

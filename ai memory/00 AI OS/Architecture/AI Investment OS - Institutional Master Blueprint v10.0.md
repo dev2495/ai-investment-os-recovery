@@ -1769,3 +1769,27 @@ Release evidence passed the production UI build, Python parse gate, idempotent m
 The final MCP protocol gate exposes 172 callable tools, including eight committee tools; the warehouse registry contains 229 enabled internal and external capabilities. These are different counts by design: the registry includes implementation capabilities that are not directly importable as MCP calls.
 
 This closes the operating-foundation phase, not the investment-office product. Remaining phases are real client/source completeness, recurring broker and alternative-data adapters, deeper options/intraday and factor models, remaining committee-family adapters, research/report product depth, remote deployment and authentication, representative local-model quality and thermal benchmarks, and the later 3D office art/interaction refinement. Live broker execution remains disabled until its independent security, risk, compliance, capital, and per-order gates are designed and accepted. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
+
+## 44. Canonical Alpha Factory And Plug-In Readiness - 2026-07-15
+
+The Strategy Arsenal now distinguishes an opportunity from an observation. Every discovery receives a stable opportunity fingerprint based on normalized title, symbols, universe, timeframe, and template, plus a source fingerprint that includes the normalized thesis and catalyst. Repeated scheduler observations are retained in `strategy.strategy_discovery_observations`, while only one canonical candidate can enter the operating queue for each opportunity identity. Historical duplicate rows are never deleted; they are labeled `superseded_duplicate` and linked to their canonical candidate.
+
+```text
+Research, journal, signal, or component observation
+  -> normalize opportunity and source identity
+  -> record immutable run observation
+  -> reuse or create one canonical discovery candidate
+  -> reuse unchanged recent optimizer evidence
+  -> operator Backtest / Optimize / Validate actions
+  -> independent committee gate
+  -> independent paper-monitor gate
+  -> broker authority remains false
+```
+
+The live identity migration is replay-safe. Two consecutive migration runs held at 17 canonical opportunities, 770 retained duplicates, 787 candidate-history rows, and 787 historical observations. Two subsequent source-backed acceptance runs added only their expected observation records, created no new candidate rows, and reused the existing TATASTEEL optimizer result with zero redundant optimizer routes. The canonical Arsenal API returns 15 unique lifecycle candidates and zero broker-authorized candidates. Its summary query was rewritten as one materialized board scan, reducing full endpoint latency from 18.2 seconds to about 0.7 seconds and allowing four-worker browser operation.
+
+The Data & Model Gateway now resolves all 95 active employees to explicit model-catalog keys. Eighty-three assignments use installed-local models; twelve are planned, optional, or approval-gated and all retain fallback routes. No active employee has an incomplete model assignment and no employee has autonomous cloud authority. A live provider sweep checked all 21 model endpoints and 18 source connectors: 24 providers are ready, four await secret references, five absent Qwen endpoints remain degraded, three crypto/commodity connectors await activation, and X remains browser-gated. These are explicit onboarding gates rather than silent fallbacks.
+
+The tick-to-OHLCV bounded integration job was corrected to report its actual 2,131 rows upserted. A source freshness evaluation moved the connector from stale to fresh without changing the age or scope of the underlying historical ticks. This proves scheduler health, not live-market coverage; the intraday dataset remains historically narrow and cannot be represented as execution-ready.
+
+Release evidence passed idempotent migrations `133` and `134`, Python compilation, production frontend build, six Strategy Arsenal browser tests, six Data & Model Gateway browser tests, a 174-tool broad MCP smoke, a strategy lifecycle MCP smoke, live provider readiness, full assignment completeness, and the global execution lock. Deferred local Qwen installation, broker credentials, crypto/commodity activation, authenticated X access, full live market coverage, and 3D office refinement remain open by design. Evidence: [[2026-07-15-alpha-factory-and-plugin-readiness-v1]].

@@ -314,7 +314,7 @@ export default function IntegrationGatewayWorkspace({ onStatusChange }: Props) {
 
       <Panel className="span-12" icon={<Cpu size={17}/>} title="Governed Model Runtime" action={<StatusPill status={modelMetric(snapshot,"autonomous_cloud_agents") === 0 ? "local first locked" : "review required"}/>}>
         <div className="model-control-metrics" aria-label="Model runtime controls">
-          <div><span>Assignments</span><strong>{modelMetric(snapshot,"complete_assignments")}/{modelMetric(snapshot,"active_agents")}</strong><small>role scoped</small></div>
+          <div><span>Assignments</span><strong>{modelMetric(snapshot,"explicit_model_assignments")}/{modelMetric(snapshot,"active_agents")}</strong><small>catalog explicit</small></div>
           <div><span>Ready routes</span><strong>{modelMetric(snapshot,"ready_routes")}</strong><small>before task gates</small></div>
           <div><span>Unavailable</span><strong>{modelMetric(snapshot,"unavailable_routes")}</strong><small>model not installed</small></div>
           <div><span>Pending escalation</span><strong>{modelMetric(snapshot,"pending_escalations")}</strong><small>human approval</small></div>

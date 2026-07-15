@@ -9,8 +9,10 @@ import {
   RefreshCw,
   Route,
   Search,
+  SendToBack,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  Workflow
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,9 +20,13 @@ import type { EvidenceSelection } from "../api/evidence";
 import {
   applyStrategyTemplate,
   createStrategyIntake,
+  openStrategyCommitteeReview,
   resolveStrategyDiscoveryTriage,
   runModelValidationSweep,
+  runStrategyBacktest,
   runStrategyDiscovery,
+  runStrategyOptimization,
+  startStrategyPaperMonitor,
   runUserDefinedStrategyOptimizer,
   type LiveRow,
   type ResolveStrategyDiscoveryTriageInput
@@ -68,6 +74,16 @@ function metric(snapshot: StrategyArsenalSnapshot | null, key: string): number {
   return Number(row?.value ?? 0);
 }
 
+function discoveryMetric(snapshot: StrategyArsenalSnapshot | null, key: string): number {
+  const row = snapshot?.discovery_governance.find((item) => value(item, "metric") === key);
+  return Number(row?.value ?? 0);
+}
+
+function enabled(row: LiveRow | undefined, key: string): boolean {
+  const raw = row?.[key];
+  return raw === true || String(raw).toLowerCase() === "true";
+}
+
 const gateLabels: Array<[string, string]> = [
   ["dsl_parse", "DSL"],
   ["data_quality", "Data"],
@@ -93,6 +109,7 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
   const [query, setQuery] = useState("");
   const [origin, setOrigin] = useState("all");
   const [stage, setStage] = useState("all");
+  const [selectedCandidateId, setSelectedCandidateId] = useState("");
   const [evidence, setEvidence] = useState<EvidenceSelection | null>(null);
   const [intake, setIntake] = useState({
     name: "", family: "quant", assetClass: "equity", symbols: "", universe: "NSE",
@@ -138,6 +155,10 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
     });
   }, [origin, query, snapshot, stage]);
   const pendingDiscovery = useMemo(() => (snapshot?.discovery_triage ?? []).filter((row) => value(row, "triage_status") === "pending"), [snapshot]);
+  const selectedCandidate = useMemo(
+    () => candidates.find((row) => value(row, "candidate_id") === selectedCandidateId) ?? candidates[0],
+    [candidates, selectedCandidateId]
+  );
   const execution = snapshot?.execution_control[0];
 
   const runAction = async (key: string, action: () => Promise<unknown>, success: string) => {
@@ -210,6 +231,39 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
     notes: "Applied from the Strategy Arsenal. Paper-first and human approval gates remain mandatory."
   }), `${value(row, "template_name")} added to the Arsenal.`);
 
+  const runSelectedBacktest = () => selectedCandidate && runAction("selected-backtest", () => runStrategyBacktest({
+    candidate_id: value(selectedCandidate, "candidate_id"),
+    symbols: Array.isArray(selectedCandidate.symbols) ? selectedCandidate.symbols.map(String) : undefined,
+    timeframe: value(selectedCandidate, "timeframe", "daily"),
+    cost_bps: 3,
+    slippage_bps: 2,
+    min_rows_per_symbol: 50,
+    min_total_rows: 250,
+    actor: "Devarsh"
+  }), "Deterministic baseline backtest completed. Review evidence before optimization.");
+
+  const runSelectedOptimization = () => selectedCandidate && runAction("selected-optimize", () => runStrategyOptimization({
+    candidate_id: value(selectedCandidate, "candidate_id"),
+    symbols: Array.isArray(selectedCandidate.symbols) ? selectedCandidate.symbols.map(String) : undefined,
+    timeframe: value(selectedCandidate, "timeframe", "daily"),
+    cost_bps: 3,
+    slippage_bps: 2,
+    min_rows_per_symbol: 50,
+    min_total_rows: 250,
+    actor: "Devarsh"
+  }), "Robust optimization completed. Independent model validation is still required.");
+
+  const openSelectedCommittee = () => selectedCandidate && runAction("selected-committee", () => openStrategyCommitteeReview({
+    optimization_run_id: value(selectedCandidate, "latest_optimization_run_id"),
+    actor: "Devarsh"
+  }), "Strategy Committee review opened. This does not approve paper or live trading.");
+
+  const startSelectedPaper = () => selectedCandidate && runAction("selected-paper", () => startStrategyPaperMonitor({
+    committee_review_id: value(selectedCandidate, "committee_review_id"),
+    actor: "Devarsh",
+    notes: "Started from the Strategy Arsenal after the independent committee gate. Broker execution remains locked."
+  }), "Paper-monitor session started without broker authority.");
+
   return <div className="strategy-arsenal-workspace">
     <div className="arsenal-masthead">
       <div><span>Strategy lifecycle control</span><h2>Strategy Arsenal</h2><p>Operator ideas · system discovery · independent promotion gates</p></div>
@@ -227,6 +281,8 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
       <div><span>Validated</span><strong>{metric(snapshot,"validation_passed")}</strong><small>independent gate</small></div>
       <div><span>Paper</span><strong>{metric(snapshot,"paper_monitoring")}</strong><small>monitored only</small></div>
       <div><span>Orders</span><strong>{metric(snapshot,"broker_orders_allowed")}</strong><small>must remain zero</small></div>
+      <div><span>Unique</span><strong>{discoveryMetric(snapshot,"canonical_opportunities")}</strong><small>discovered opportunities</small></div>
+      <div><span>Suppressed</span><strong>{discoveryMetric(snapshot,"suppressed_duplicates")}</strong><small>duplicate evidence rows</small></div>
     </section>
 
     <section className="dashboard-grid">
@@ -257,6 +313,20 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
         </div>
       </Panel>
 
+      <Panel className="span-12 arsenal-gate-operator" icon={<Workflow size={17}/>} title="Selected Strategy Gate Operator" action={<StatusPill status={value(selectedCandidate,"promotion_stage","select a strategy")}/>}>
+        {selectedCandidate ? <div className="arsenal-gate-console">
+          <div className="arsenal-gate-summary"><span>{value(selectedCandidate,"origin_type").replace(/_/g," ")}</span><strong>{value(selectedCandidate,"strategy_name")}</strong><p>{value(selectedCandidate,"next_required_action")}</p><small>{value(selectedCandidate,"symbols",value(selectedCandidate,"universe"))} · {value(selectedCandidate,"gates_passed","0")}/{value(selectedCandidate,"gates_total","8")} gates · seen {value(selectedCandidate,"discovery_seen_count","1")} times · duplicate candidates {value(selectedCandidate,"duplicate_candidate_count","1")}</small></div>
+          <div className="arsenal-gate-actions">
+            <button disabled={Boolean(busy) || value(selectedCandidate,"parse_status") !== "passed" || value(selectedCandidate,"data_quality_status") !== "passed"} onClick={()=>void runSelectedBacktest()} type="button"><Beaker size={14}/>Backtest</button>
+            <button disabled={Boolean(busy) || value(selectedCandidate,"latest_backtest_run_id","-") === "-"} onClick={()=>void runSelectedOptimization()} type="button"><SendToBack size={14}/>Optimize</button>
+            <button disabled={Boolean(busy) || value(selectedCandidate,"latest_optimization_run_id","-") === "-"} onClick={()=>void runAction("selected-validation",()=>runModelValidationSweep({actor:"Model Validation Agent",limit:50}),"Independent model-validation sweep completed.")} type="button"><BookOpenCheck size={14}/>Validate</button>
+            <button disabled={Boolean(busy) || value(selectedCandidate,"validation_gate_status") !== "validation_passed" || value(selectedCandidate,"latest_optimization_run_id","-") === "-"} onClick={()=>void openSelectedCommittee()} type="button"><Route size={14}/>Open committee</button>
+            <button disabled={Boolean(busy) || !enabled(selectedCandidate,"paper_monitor_allowed") || value(selectedCandidate,"committee_review_id","-") === "-"} onClick={()=>void startSelectedPaper()} type="button"><Play size={14}/>Start paper</button>
+          </div>
+          <p className="form-guard">Each action advances only its own evidence gate. Committee approval does not grant capital, limited-live, or broker-order authority.</p>
+        </div> : <div className="empty-state">Select a lifecycle candidate to operate its next evidence gate.</div>}
+      </Panel>
+
       <Panel className="span-7" icon={<Layers3 size={17}/>} title="Template Library" action={<span>{snapshot?.templates.length ?? 0} active</span>}>
         <div className="arsenal-template-grid scoped-scroll-list">
           {snapshot?.templates.map((row)=><article className="arsenal-template-row" key={value(row,"template_key")}><div><strong>{value(row,"template_name")}</strong><p>{value(row,"entry_rule")} · {value(row,"exit_rule")}</p><small>{value(row,"required_gates")}</small></div><StatusPill status={value(row,"execution_readiness","research")}/><button className="mini-action-button" disabled={Boolean(busy)} onClick={()=>void applyTemplate(row)} type="button"><Plus size={13}/>Add</button></article>)}
@@ -270,20 +340,20 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
           <select aria-label="Filter by promotion stage" value={stage} onChange={(event)=>setStage(event.target.value)}><option value="all">All stages</option>{stages.map((item)=><option key={item} value={item}>{item.replace(/_/g," ")}</option>)}</select>
         </div>
         <div className="arsenal-board scoped-scroll-list" tabIndex={0} aria-label="Strategy lifecycle candidates">
-          {candidates.map((row)=>{const flags=gateFlags(row);return <article className="arsenal-candidate-row" key={value(row,"candidate_id")}>
+          {candidates.map((row)=>{const flags=gateFlags(row);return <article className={`arsenal-candidate-row ${value(row,"candidate_id")===value(selectedCandidate,"candidate_id")?"is-selected":""}`} key={value(row,"candidate_id")}>
             <button className="arsenal-candidate-main" onClick={()=>setEvidence({kind:"strategy",key:value(row,"candidate_id"),title:value(row,"strategy_name"),subtitle:`${value(row,"origin_type")} · ${value(row,"promotion_stage")}`,record:row})} type="button">
               <span className="arsenal-origin">{value(row,"origin_type").replace(/_/g," ")}</span><strong>{value(row,"strategy_name")}</strong><small>{value(row,"symbols",value(row,"universe"))} · {value(row,"timeframe")} · owner {value(row,"owner_agent")}</small><p>{value(row,"next_required_action")}</p>
             </button>
             <div className="arsenal-gates" aria-label={`${value(row,"gates_passed","0")} of ${value(row,"gates_total","8")} gates passed`}>{gateLabels.map(([key,label])=><span className={flags[key]?"gate-pass":"gate-wait"} key={key}>{label}</span>)}</div>
-            <div className="arsenal-stage"><StatusPill status={value(row,"promotion_stage","research")}/><strong>{value(row,"gates_passed","0")}/{value(row,"gates_total","8")}</strong><time>{date(row.updated_at)}</time></div>
+            <div className="arsenal-stage"><StatusPill status={value(row,"promotion_stage","research")}/><strong>{value(row,"gates_passed","0")}/{value(row,"gates_total","8")}</strong><button className="mini-action-button" onClick={()=>setSelectedCandidateId(value(row,"candidate_id"))} type="button">Operate</button><time>{date(row.updated_at)}</time></div>
           </article>;})}
           {!candidates.length?<div className="empty-state">No strategy candidates match the current filters.</div>:null}
         </div>
       </Panel>
 
-      <Panel className="span-12" icon={<Sparkles size={17}/>} title="System Discovery Triage" action={<div className="panel-action-group"><button className="mini-action-button" disabled={Boolean(busy)} onClick={()=>void runDiscovery()} type="button"><Play size={13}/>{busy==="discovery"?"Running":"Run discovery"}</button><button className="mini-action-button" disabled={Boolean(busy)} onClick={()=>void runAction("validation",()=>runModelValidationSweep({actor:"Model Validation Agent",limit:50}),"Validation sweep completed; no execution authority granted.")} type="button"><BookOpenCheck size={13}/>{busy==="validation"?"Running":"Validate gates"}</button></div>}>
+      <Panel className="span-12" icon={<Sparkles size={17}/>} title="System Discovery Triage" action={<div className="panel-action-group"><span>{discoveryMetric(snapshot,"canonical_opportunities")} unique · {discoveryMetric(snapshot,"suppressed_duplicates")} suppressed</span><button className="mini-action-button" disabled={Boolean(busy)} onClick={()=>void runDiscovery()} type="button"><Play size={13}/>{busy==="discovery"?"Running":"Run discovery"}</button><button className="mini-action-button" disabled={Boolean(busy)} onClick={()=>void runAction("validation",()=>runModelValidationSweep({actor:"Model Validation Agent",limit:50}),"Validation sweep completed; no execution authority granted.")} type="button"><BookOpenCheck size={13}/>{busy==="validation"?"Running":"Validate gates"}</button></div>}>
         <div className="arsenal-discovery-list scoped-scroll-list">
-          {pendingDiscovery.slice(0,40).map((row)=><article className="arsenal-discovery-row" key={value(row,"id")}><div><span>{value(row,"source_kind")}</span><strong>{value(row,"title")}</strong><p>{value(row,"thesis")} · next: {value(row,"next_required_action")}</p></div><span className="arsenal-score">{value(row,"priority_score","-")}</span><div className="arsenal-triage-actions"><button disabled={Boolean(busy)} onClick={()=>void triage(row,"route_quant_lab")} type="button"><Route size={13}/>Quant</button><button disabled={Boolean(busy)} onClick={()=>void triage(row,"request_more_evidence")} type="button"><FileSearch size={13}/>Evidence</button><button disabled={Boolean(busy)} onClick={()=>void triage(row,"reject")} type="button">Reject</button></div></article>)}
+          {pendingDiscovery.slice(0,40).map((row)=><article className="arsenal-discovery-row" key={value(row,"id")}><div><span>{value(row,"source_kind")} · seen {value(row,"seen_count","1")} · suppressed {value(row,"suppressed_duplicate_count","0")}</span><strong>{value(row,"title")}</strong><p>{value(row,"thesis")} · next: {value(row,"next_required_action")}</p><small>identity {value(row,"opportunity_fingerprint")} · last seen {date(row.last_seen_at)}</small></div><span className="arsenal-score">{value(row,"priority_score","-")}</span><div className="arsenal-triage-actions"><button disabled={Boolean(busy)} onClick={()=>void triage(row,"route_quant_lab")} type="button"><Route size={13}/>Quant</button><button disabled={Boolean(busy)} onClick={()=>void triage(row,"request_more_evidence")} type="button"><FileSearch size={13}/>Evidence</button><button disabled={Boolean(busy)} onClick={()=>void triage(row,"reject")} type="button">Reject</button></div></article>)}
           {!pendingDiscovery.length?<div className="empty-state">No unreviewed discovery candidates.</div>:null}
         </div>
       </Panel>

@@ -4347,6 +4347,31 @@ def model_runtime_control(arguments: dict) -> dict:
     )
 
 
+def agent_model_assignment_completeness(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=100)
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                "SELECT * FROM agent.v_agent_model_assignment_completeness"
+            ),
+            "incomplete_assignments": run_psql_json(
+                f"""
+                SELECT agent_name, department, display_title, primary_route,
+                       model_key, assigned_provider, assigned_model, model_status,
+                       fallback_route, escalation_route, cost_policy
+                FROM agent.v_agent_model_matrix
+                WHERE primary_route IS NULL OR model_key IS NULL
+                ORDER BY department, agent_name
+                LIMIT {limit}
+                """
+            ),
+            "raw_secrets_allowed": False,
+            "autonomous_cloud_allowed": False,
+            "live_execution_allowed": False,
+        }
+    )
+
+
 def request_model_escalation(arguments: dict) -> dict:
     payload = {
         "decision_id": arguments.get("decision_id") or arguments.get("decisionId"),
@@ -4682,7 +4707,7 @@ def strategy_arsenal_control_board(arguments: dict) -> dict:
     return tool_result(
         {
             "summary": run_psql_json(
-                "SELECT metric, value, interpretation FROM strategy.v_strategy_arsenal_control_summary ORDER BY metric"
+                "SELECT metric, value, interpretation FROM strategy.v_strategy_arsenal_canonical_summary ORDER BY metric"
             ),
             "control_board": run_psql_json(
                 f"""
@@ -4699,8 +4724,10 @@ def strategy_arsenal_control_board(arguments: dict) -> dict:
                        next_required_action, gates_passed, gates_total,
                        gate_flags, broker_order_allowed,
                        autonomous_live_execution_allowed, open_tasks,
-                       evidence, updated_at
-                FROM strategy.v_strategy_arsenal_control_board
+                       evidence, updated_at, opportunity_fingerprint,
+                       source_fingerprint, discovery_seen_count,
+                       discovery_last_seen_at, duplicate_candidate_count
+                FROM strategy.v_strategy_arsenal_canonical_control_board
                 {where}
                 ORDER BY updated_at DESC NULLS LAST, candidate_id DESC
                 LIMIT {limit}
@@ -4805,7 +4832,7 @@ def strategy_discovery_runs(arguments: dict) -> dict:
                        backtest_run_id, optimization_run_id, research_gate,
                        next_required_action, broker_order_allowed,
                        autonomous_live_execution_allowed, created_at
-                FROM strategy.v_strategy_discovery_candidates
+                FROM strategy.v_strategy_discovery_canonical_queue
                 ORDER BY created_at DESC, priority_score DESC NULLS LAST
                 LIMIT {limit}
                 """
@@ -4842,7 +4869,7 @@ def strategy_discovery_triage_queue(arguments: dict) -> dict:
                        committee_review_id, recommended_triage_action,
                        broker_order_allowed, autonomous_live_execution_allowed,
                        created_at
-                FROM strategy.v_strategy_discovery_triage_queue
+                FROM strategy.v_strategy_discovery_canonical_queue
                 {where}
                 ORDER BY
                     CASE WHEN triage_decision = 'unreviewed' THEN 0 ELSE 1 END,
@@ -4862,6 +4889,40 @@ def strategy_discovery_triage_queue(arguments: dict) -> dict:
                 FROM strategy.v_strategy_discovery_triage_decisions
                 ORDER BY created_at DESC
                 LIMIT {limit}
+                """
+            ),
+        }
+    )
+
+
+def strategy_discovery_governance(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=50, maximum=200)
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                "SELECT metric, value, interpretation FROM strategy.v_strategy_discovery_governance_summary ORDER BY metric"
+            ),
+            "canonical_opportunities": run_psql_json(
+                f"""
+                SELECT id, opportunity_fingerprint, source_fingerprint,
+                       title, symbols, universe, timeframe, template,
+                       priority_score, risk_score, optimizer_status,
+                       research_gate, next_required_action,
+                       triage_decision, triage_status, first_seen_at,
+                       last_seen_at, seen_count, suppressed_duplicate_count,
+                       broker_order_allowed, autonomous_live_execution_allowed
+                FROM strategy.v_strategy_discovery_canonical_queue
+                ORDER BY priority_score DESC NULLS LAST, last_seen_at DESC
+                LIMIT {limit}
+                """
+            ),
+            "execution_control": run_psql_json(
+                """
+                SELECT global_execution_locked, broker_execution_policy,
+                       paper_trading_allowed, limited_live_allowed,
+                       live_broker_writes_allowed, lock_reason, updated_at
+                FROM trading.v_execution_control_state
+                LIMIT 1
                 """
             ),
         }
@@ -7072,6 +7133,14 @@ TOOLS = {
         },
         "handler": model_runtime_control,
     },
+    "ai_os_agent_model_assignment_completeness": {
+        "description": "Read active-agent route and explicit model-catalog assignment completeness, including any incomplete agents. Never exposes credentials or invokes a model.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 100}},
+        },
+        "handler": agent_model_assignment_completeness,
+    },
     "ai_os_request_model_escalation": {
         "description": "Request a privacy-checked, human-approved higher-cost model escalation for an existing model-call decision. Never invokes a cloud model or trading action.",
         "inputSchema": {
@@ -7339,6 +7408,16 @@ TOOLS = {
             },
         },
         "handler": strategy_discovery_triage_queue,
+    },
+    "ai_os_strategy_discovery_governance": {
+        "description": "Read canonical strategy opportunities, duplicate suppression, cooldown reuse, provenance, and triage state.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 50},
+            },
+        },
+        "handler": strategy_discovery_governance,
     },
     "ai_os_build_strategy_idea_dossiers": {
         "description": "Build persistent strategy idea dossiers from repeated discoveries and triage decisions, with Obsidian writeback. This never approves trades.",

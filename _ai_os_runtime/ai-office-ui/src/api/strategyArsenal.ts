@@ -7,6 +7,7 @@ export interface StrategyArsenalSnapshot {
   data_mode: { seed_data_allowed: boolean; source: string };
   payload_profile: { query_count: number; row_count: number };
   summary: LiveRow[];
+  discovery_governance: LiveRow[];
   control_board: LiveRow[];
   intakes: LiveRow[];
   discovery_triage: LiveRow[];
