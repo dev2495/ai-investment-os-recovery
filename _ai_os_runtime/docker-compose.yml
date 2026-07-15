@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${AI_OS_POSTGRES_PASSWORD:-ai_os_local_dev_change_me}
       POSTGRES_DB: ${AI_OS_POSTGRES_DB:-ai_os}
     ports:
-      - "${AI_OS_POSTGRES_PORT:-54329}:5432"
+      - "127.0.0.1:${AI_OS_POSTGRES_PORT:-54329}:5432"
     volumes:
       - ai_os_postgres_data:/var/lib/postgresql/data
       - type: bind
@@ -28,8 +28,8 @@ services:
     container_name: ai_os_qdrant
     restart: unless-stopped
     ports:
-      - "${AI_OS_QDRANT_HTTP_PORT:-6333}:6333"
-      - "${AI_OS_QDRANT_GRPC_PORT:-6334}:6334"
+      - "127.0.0.1:${AI_OS_QDRANT_HTTP_PORT:-6333}:6333"
+      - "127.0.0.1:${AI_OS_QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - ai_os_qdrant_data:/qdrant/storage
 
@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${AI_OS_REDIS_PORT:-63799}:6379"
+      - "127.0.0.1:${AI_OS_REDIS_PORT:-63799}:6379"
     volumes:
       - ai_os_redis_data:/data
     healthcheck:
