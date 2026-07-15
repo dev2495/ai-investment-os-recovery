@@ -13,6 +13,7 @@ import {
   Command as CommandIcon,
   DatabaseZap,
   Cpu,
+  Crosshair,
   FileText,
   FlaskConical,
   Gauge,
@@ -26,12 +27,14 @@ import {
   MessageSquareText,
   PanelLeft,
   Plus,
+  RotateCcw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Scale,
   UsersRound,
+  UserCheck,
   X
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
@@ -122,6 +125,7 @@ import {
   syncLongTermCoverage,
   syncPositionReadinessRemediation,
   triageAgentMessage,
+  updateInboxItem,
   updateBookAssignment
 } from "./api/live";
 import type {
@@ -162,7 +166,7 @@ import IntegrationGatewayWorkspace from "./views/IntegrationGatewayWorkspace";
 import DepartmentDeskWorkspace from "./views/DepartmentDeskWorkspace";
 import WorkspaceManager from "./components/WorkspaceManager";
 import WorkspaceWidgetRail from "./components/WorkspaceWidgetRail";
-import { fetchWorkspaceConfig, type TerminalWorkspace, type WorkspaceConfig } from "./api/terminal";
+import { fetchWorkspaceConfig, updateDashboardWidget, updateWorkspaceConfig, type TerminalWorkspace, type WorkspaceConfig } from "./api/terminal";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
 
@@ -182,6 +186,7 @@ const baseWorkspaces: Workspace[] = [
   { id: "governance", label: "Governance & Safety" },
   { id: "portfolio", label: "Portfolio Office" },
   { id: "clients", label: "Client Folios" },
+  { id: "tactical", label: "Tactical Office" },
   { id: "research", label: "Holdings Research" },
   { id: "ideas", label: "Idea Pipeline" },
   { id: "arsenal", label: "Strategy Arsenal" },
@@ -204,6 +209,7 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   governance: ShieldCheck,
   portfolio: BriefcaseBusiness,
   clients: Building2,
+  tactical: Crosshair,
   research: Landmark,
   ideas: Sparkles,
   arsenal: GitBranch,
@@ -219,7 +225,7 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
 
 const workspaceGroups: { label: string; workspaces: WorkspaceId[] }[] = [
   { label: "Executive", workspaces: ["command", "approvals", "agents", "departments", "committees", "governance"] },
-  { label: "Investing", workspaces: ["portfolio", "clients", "capital", "treasury"] },
+  { label: "Investing", workspaces: ["portfolio", "clients", "tactical", "capital", "treasury"] },
   { label: "Research", workspaces: ["research", "ideas", "reports"] },
   { label: "Trading", workspaces: ["arsenal", "trading", "quant", "risk"] },
   { label: "System", workspaces: ["models", "system"] }
@@ -644,14 +650,19 @@ function liveInbox(snapshot: LiveSnapshot | null): InboxItem[] {
   if (!snapshot?.inbox.length) {
     return [];
   }
-  return snapshot.inbox.slice(0, 30).map((item) => ({
+  return snapshot.inbox.slice(0, 50).map((item) => ({
     id: asText(item, "id"),
+    taskId: asText(item, "task_id"),
     title: asText(item, "title", "Inbox item"),
     agent: asText(item, "owner_agent", "Jarvis"),
-    status: asStatus(item.status, "queued"),
+    status: asStatus(asText(item, "status") === "in_progress" ? "running" : asText(item, "status"), "queued"),
     priority: asSeverity(item.priority, "medium"),
     evidence: asArray(item, "evidence").length ? asArray(item, "evidence") : ["agent.inbox_items"],
     recommendedAction: asText(item, "recommended_action", "Review"),
+    claimedBy: asText(item, "claimed_by"),
+    claimedAt: compactDate(item.claimed_at),
+    resolvedBy: asText(item, "resolved_by"),
+    resolutionNote: asText(item, "resolution_note"),
     updatedAt: compactDate(item.updated_at)
   }));
 }
@@ -794,6 +805,7 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
     governance: snapshot?.approvals.filter((approval) => asText(approval, "approval_type") === "architecture_change").length ?? 0,
     capital: (snapshot?.book_positions.length ?? 0) + (snapshot?.cross_book_conflicts.length ?? 0),
     clients: snapshot?.clients.length ?? 0,
+    tactical: snapshot?.agents.filter((agent) => asText(agent, "department") === "tactical").length ?? 0,
     command: (snapshot?.inbox.length ?? 0) + (snapshot?.agent_jobs.length ?? 0) + (snapshot?.agent_worker_queue.length ?? 0),
     ideas: snapshot?.approvals.length ?? 0,
     portfolio: (snapshot?.latest_positions.length ?? 0) + (snapshot?.book_positions.length ?? 0),
@@ -905,6 +917,7 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   const [legacySourceBusy, setLegacySourceBusy] = useState(false);
   const [widgetBusy, setWidgetBusy] = useState(false);
   const [agentWorkerBusy, setAgentWorkerBusy] = useState(false);
+  const [inboxBusyId, setInboxBusyId] = useState("");
   const [modelEndpointBusyId, setModelEndpointBusyId] = useState("");
   const [sourceConnectorBusyId, setSourceConnectorBusyId] = useState("");
   const [providerReadinessBusy, setProviderReadinessBusy] = useState(false);
@@ -1038,6 +1051,10 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
     asText((snapshot?.approval_board_summary ?? []).find((row) => asText(row, "metric") === "pending") ?? {}, "value", String(approvalItems.filter((item) => item.status === "pending").length))
   );
   const highPriorityItems = items.filter((item) => item.priority === "high" || item.priority === "critical").length;
+  const inboxAgentOptions = useMemo(
+    () => [...new Set((snapshot?.agents ?? []).map((agent) => asText(agent, "agent_name")).filter(Boolean))].sort(),
+    [snapshot]
+  );
 
   const refreshSnapshot = async () => {
     const nextSnapshot = await refreshLiveSnapshot();
@@ -1579,6 +1596,43 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       setLiveStatus("offline");
     } finally {
       setAgentWorkerBusy(false);
+    }
+  };
+
+  const handleInboxAction = async (
+    item: InboxItem,
+    action: "claim" | "reassign" | "resolve" | "block" | "reopen",
+    ownerAgent?: string
+  ) => {
+    if (!item.id || inboxBusyId) {
+      return;
+    }
+    setInboxBusyId(`${item.id}:${action}`);
+    setUiError("");
+    try {
+      await updateInboxItem({
+        action,
+        actor: "Devarsh",
+        inbox_id: item.id,
+        owner_agent: ownerAgent,
+        resolution_note:
+          action === "resolve"
+            ? "Resolved by Devarsh from the Command Center after reviewing the linked evidence."
+            : action === "block"
+              ? "Blocked by Devarsh pending missing evidence or dependency resolution."
+              : undefined
+      });
+      const nextSnapshot = await fetchLiveSnapshot();
+      setSnapshot(nextSnapshot);
+      setItems(liveInbox(nextSnapshot));
+      setApprovalItems(liveApprovals(nextSnapshot));
+      setManualUpdates(liveManualUpdates(nextSnapshot));
+      setLiveStatus("online");
+    } catch (error) {
+      setUiError(error instanceof Error ? error.message : "Inbox update failed");
+      setLiveStatus("offline");
+    } finally {
+      setInboxBusyId("");
     }
   };
 
@@ -3767,6 +3821,8 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
           <SystemHealthWorkspace onStatusChange={setLiveStatus} />
         ) : activeWorkspace === "command" ? (
           <MissionControlWorkspace onStatusChange={setLiveStatus} />
+        ) : activeWorkspace === "tactical" ? (
+          <DepartmentDeskWorkspace initialDepartment="tactical" onStatusChange={setLiveStatus} />
         ) : activeWorkspace === "portfolio" || activeWorkspace === "clients" ? (
           <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />
         ) : activeWorkspace === "research" || activeWorkspace === "ideas" ? (
@@ -4930,7 +4986,8 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
                   <article className="reconciliation-issue-row" key={`algo-${asText(row, "database_path")}-${asText(row, "table_name")}`}>
                     <div>
                       <strong>{asText(row, "table_name", "table")} · {asText(row, "readiness_status", "status").replace(/_/g, " ")}</strong>
-                      <p>{asText(row, "source_rows", "0")} source rows · {asText(row, "imported_rows", "0")} promoted · {asText(row, "source_value", "source")}</p>
+                      <p>{asText(row, "source_rows", "0")} source · {asText(row, "imported_rows", "0")} canonical · {asText(row, "deduplicated_rows", "0")} deduped · {asText(row, "resolved_rows", "0")} resolved</p>
+                      <p>{asText(row, "resolution_mode", "unclassified").replace(/_/g, " ")} · {asText(row, "canonical_relation", "no destination")}</p>
                     </div>
                     <SeverityBadge severity={asText(row, "readiness_status") === "profiled_not_promoted" && asText(row, "source_value") === "high_value" ? "high" : asText(row, "readiness_status") === "partially_promoted" ? "medium" : "low"} />
                   </article>
@@ -7279,9 +7336,10 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
             <div className="inbox-table">
               <div className="inbox-head">
                 <span>Work</span>
-                <span>Agent</span>
+                <span>Owner</span>
                 <span>Status</span>
                 <span>Evidence</span>
+                <span>Actions</span>
               </div>
               {items.length ? (
                 items.map((item) => (
@@ -7290,13 +7348,80 @@ function LegacyCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
                       <strong>{item.title}</strong>
                       <p>{item.recommendedAction}</p>
                     </div>
-                    <span>{item.agent}</span>
-                    <StatusBadge status={item.status} />
+                    <label className="inbox-owner-control">
+                      <span className="sr-only">Reassign {item.title}</span>
+                      <select
+                        aria-label={`Reassign ${item.title}`}
+                        disabled={Boolean(inboxBusyId)}
+                        onChange={(event) => {
+                          if (event.target.value && event.target.value !== item.agent) {
+                            void handleInboxAction(item, "reassign", event.target.value);
+                          }
+                        }}
+                        value={item.agent}
+                      >
+                        {!inboxAgentOptions.includes(item.agent) ? <option value={item.agent}>{item.agent}</option> : null}
+                        {inboxAgentOptions.map((agentName) => (
+                          <option key={agentName} value={agentName}>{agentName}</option>
+                        ))}
+                      </select>
+                      {item.claimedBy ? <small>claimed by {item.claimedBy}</small> : null}
+                    </label>
+                    <div className="inbox-status-cell">
+                      <StatusBadge status={item.status} />
+                      {item.resolvedBy ? <small>by {item.resolvedBy}</small> : null}
+                    </div>
                     <div className="evidence-stack">
                       {item.evidence.slice(0, 2).map((source) => (
                         <small key={source}>{source}</small>
                       ))}
                       <time>{item.updatedAt}</time>
+                    </div>
+                    <div className="inbox-actions">
+                      {item.status === "queued" ? (
+                        <button
+                          className="icon-button"
+                          disabled={Boolean(inboxBusyId)}
+                          onClick={() => void handleInboxAction(item, "claim")}
+                          title="Claim item"
+                          type="button"
+                        >
+                          <UserCheck size={15} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      {item.status !== "done" ? (
+                        <button
+                          className="icon-button approve"
+                          disabled={Boolean(inboxBusyId)}
+                          onClick={() => void handleInboxAction(item, "resolve")}
+                          title="Resolve item"
+                          type="button"
+                        >
+                          <Check size={15} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      {item.status !== "blocked" && item.status !== "done" ? (
+                        <button
+                          className="icon-button reject"
+                          disabled={Boolean(inboxBusyId)}
+                          onClick={() => void handleInboxAction(item, "block")}
+                          title="Block item"
+                          type="button"
+                        >
+                          <X size={15} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                      {item.status === "blocked" || item.status === "done" ? (
+                        <button
+                          className="icon-button"
+                          disabled={Boolean(inboxBusyId)}
+                          onClick={() => void handleInboxAction(item, "reopen")}
+                          title="Reopen item"
+                          type="button"
+                        >
+                          <RotateCcw size={15} aria-hidden="true" />
+                        </button>
+                      ) : null}
                     </div>
                   </article>
                 ))
@@ -8441,10 +8566,12 @@ function StatusPill({ status }: { status: string }) {
 function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterfaceMode }: CommandCenterAppProps) {
   const [command, setCommand] = useState("");
   const [commandBusy, setCommandBusy] = useState(false);
+  const [commandNotice, setCommandNotice] = useState("");
   const [liveStatus, setLiveStatus] = useState<"loading" | "online" | "offline">("loading");
   const [uiError, setUiError] = useState("");
   const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const activeWorkspaceLabel = baseWorkspaces.find((workspace) => workspace.id === activeWorkspace)?.label ?? "Command Center";
 
   useEffect(() => {
@@ -8463,6 +8590,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       system: "aios:system-health-refresh",
       portfolio: "aios:portfolio-office-refresh",
       clients: "aios:portfolio-office-refresh",
+      tactical: "aios:department-terminal-refresh",
       research: "aios:research-ideas-refresh",
       ideas: "aios:research-ideas-refresh",
       arsenal: "aios:strategy-arsenal-refresh",
@@ -8472,7 +8600,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       risk: "aios:trading-quant-risk-refresh",
       reports: "aios:reports-refresh"
     };
-    if (["approvals", "agents", "departments", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) {
+    if (["approvals", "agents", "departments", "tactical", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) {
       window.dispatchEvent(new Event("aios:department-terminal-refresh"));
       return;
     }
@@ -8489,7 +8617,54 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
     setCommand("");
     setCommandBusy(true);
     setUiError("");
+    setCommandNotice("");
     try {
+      const normalized = cleanCommand.toLowerCase();
+      const workspaceWidgets = workspaceConfig?.widgets.filter((widget) => String(widget.workspace ?? "") === activeWorkspace) ?? [];
+      const mentionedWidget = workspaceWidgets.find((widget) => {
+        const key = String(widget.widget_key ?? "").replace(/_/g, " ").toLowerCase();
+        const title = String(widget.widget_title ?? "").toLowerCase();
+        return normalized.includes(key) || title.split(/\s+/).filter((term) => term.length > 4).some((term) => normalized.includes(term));
+      });
+      const columnMatch = normalized.match(/(?:set|use|make|change).*?([123])\s*columns?/);
+      if (columnMatch) {
+        setWorkspaceConfig(await updateWorkspaceConfig({ actor: "Charlie Munger", column_count: Number(columnMatch[1]), profile_key: workspaceConfig?.profile.profile_key ?? "devarsh", workspace_key: activeWorkspace }));
+        setCommandNotice(`Charlie changed ${activeWorkspaceLabel} to ${columnMatch[1]} columns.`);
+        setLiveStatus("online");
+        return;
+      }
+      if (mentionedWidget && /\b(hide|show|move)\b/.test(normalized)) {
+        const widgetLayout = mentionedWidget.layout && typeof mentionedWidget.layout === "object" ? mentionedWidget.layout as Record<string, unknown> : {};
+        const currentOrder = Number(widgetLayout.order ?? 100);
+        const patch: Record<string, unknown> = /\bhide\b/.test(normalized)
+          ? { status: "hidden" }
+          : /\bshow\b/.test(normalized)
+            ? { status: "active" }
+            : { order: /\bup\b/.test(normalized) ? Math.max(0, currentOrder - 10) : currentOrder + 10 };
+        await updateDashboardWidget({ actor: "Charlie Munger", widget_id: Number(mentionedWidget.id), ...patch });
+        setWorkspaceConfig(await fetchWorkspaceConfig(workspaceConfig?.profile.profile_key ?? "devarsh"));
+        setCommandNotice(`Charlie updated ${String(mentionedWidget.widget_title ?? "the widget")}.`);
+        setLiveStatus("online");
+        return;
+      }
+      if (["dashboard", "widget", "show", "view", "monitor", "watch"].some((term) => normalized.includes(term))) {
+        const response = await sendChat({
+          actor: "Devarsh",
+          deterministic_only: true,
+          include_client_context: false,
+          message: cleanCommand,
+          metadata: { source_surface: "scoped_command_center", workspace: activeWorkspace },
+          privacy_class: "internal",
+          session_key: "ai-office-workspace-management",
+          workspace: activeWorkspace
+        });
+        setWorkspaceConfig(await fetchWorkspaceConfig(workspaceConfig?.profile.profile_key ?? "devarsh"));
+        const created = Array.isArray(response.dashboard_widgets) ? response.dashboard_widgets.length : 0;
+        setCommandNotice(created ? `Charlie materialized ${created} source-bound widget${created === 1 ? "" : "s"}.` : response.message.split("\n")[0]);
+        setLiveStatus("online");
+        refreshScopedWorkspace();
+        return;
+      }
       if (routed.agent === "Trading Desk") {
         await createTradingViewTask({
           task_title: title,
@@ -8524,6 +8699,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
           task_title: title
         });
       }
+      setCommandNotice(`Charlie routed this assignment to ${routed.agent}; Jarvis created the durable handoff.`);
       setLiveStatus("online");
       refreshScopedWorkspace();
     } catch (reason) {
@@ -8539,6 +8715,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   else if (activeWorkspace === "command") workspaceContent = <MissionControlWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "models") workspaceContent = <IntegrationGatewayWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "departments") workspaceContent = <DepartmentDeskWorkspace onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "tactical") workspaceContent = <DepartmentDeskWorkspace initialDepartment="tactical" onStatusChange={setLiveStatus} />;
   else if (["approvals", "agents", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
@@ -8548,16 +8725,21 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   workspaceContent = <WorkspaceErrorBoundary workspace={activeWorkspaceLabel}>{workspaceContent}</WorkspaceErrorBoundary>;
   const activeLayout = workspaceConfig?.layouts.find((item) => item.workspace_key === activeWorkspace);
   const activeWidgets = workspaceConfig?.widgets.filter((item) => String(item.workspace ?? "") === activeWorkspace) ?? [];
+  const visibleWorkspaces = new Set(
+    Array.isArray(workspaceConfig?.profile.navigation?.visible)
+      ? workspaceConfig.profile.navigation.visible.map(String)
+      : baseWorkspaces.map((workspace) => workspace.id)
+  );
 
   return (
-    <div className="app-shell app-shell-focused">
+    <div className={`app-shell app-shell-focused ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
       <ScrollableRegionAccessibility />
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><CommandIcon size={18} aria-hidden="true" /></div><div><p>AI Office</p><span>Charlie orchestrator</span></div></div>
         <nav className="workspace-nav workspace-nav-grouped" aria-label="AI Office workspaces">
           {workspaceGroups.map((group) => <section className="workspace-nav-group" key={group.label}>
             <span>{group.label}</span>
-            {group.workspaces.map((workspaceId) => {
+            {group.workspaces.filter((workspaceId) => visibleWorkspaces.has(workspaceId)).map((workspaceId) => {
               const workspace = baseWorkspaces.find((item) => item.id === workspaceId);
               if (!workspace) return null;
               const Icon = workspaceIcons[workspace.id];
@@ -8569,14 +8751,14 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       </aside>
       <main className="main">
         <header className="topbar">
-          <button className="icon-button" type="button" title="Toggle sidebar"><PanelLeft size={18} aria-hidden="true" /></button>
+          <button aria-label="Toggle sidebar" className="icon-button" onClick={() => setSidebarCollapsed((value) => !value)} type="button" title="Toggle sidebar"><PanelLeft size={18} aria-hidden="true" /></button>
           <div className="workspace-title"><span>AI Office</span><h1>{activeWorkspaceLabel}</h1></div>
           <div className="topbar-actions">
             <span className={`live-status live-${liveStatus}`}>{liveStatus === "online" ? "Live warehouse" : liveStatus === "loading" ? "Connecting" : "Warehouse offline"}</span>
             <button className="ghost-button" onClick={() => setInterfaceMode("office")} type="button"><Building2 size={16} aria-hidden="true" />Live Office</button>
-            <button className="ghost-button" type="button"><Search size={16} aria-hidden="true" />Search memory</button>
+            <button className="ghost-button" onClick={() => setActiveWorkspace("reports")} type="button"><Search size={16} aria-hidden="true" />Search memory</button>
             <button className="icon-button" onClick={() => setWorkspaceManagerOpen(true)} type="button" title="Customize workspace"><SlidersHorizontal size={18} aria-hidden="true" /></button>
-            <button className="icon-button" type="button" title="Approval queue"><Bell size={18} aria-hidden="true" /></button>
+            <button aria-label="Open approval queue" className="icon-button" onClick={() => setActiveWorkspace("approvals")} type="button" title="Approval queue"><Bell size={18} aria-hidden="true" /></button>
           </div>
         </header>
         <section className="institutional-control-strip" aria-label="Investment and execution control notice">
@@ -8588,9 +8770,10 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
           <div className="command-copy"><div className="jarvis-avatar"><Sparkles size={18} aria-hidden="true" /></div><div><p>Charlie Munger</p><span>Routes work through Jarvis runtime, agents, SQL, and Obsidian write-back.</span></div></div>
           <form className="command-form" onSubmit={submitCommand}><input aria-label="Command Charlie Munger" onChange={(event) => setCommand(event.target.value)} placeholder="Ask Charlie to review portfolios, research holdings, inspect signals, or open a task..." value={command}/><button className="primary-button" disabled={commandBusy} type="submit"><Plus size={16} aria-hidden="true" />{commandBusy ? "Queueing" : "Assign"}</button></form>
           {uiError ? <div className="error-strip">{uiError}</div> : null}
+          {commandNotice ? <div className="success-strip">{commandNotice}</div> : null}
           <div className="quick-command-row">{quickCommands.map((quickCommand) => <button key={quickCommand} onClick={() => setCommand(quickCommand)} type="button" title={quickCommand}>{quickCommand}</button>)}</div>
         </section>
-        <WorkspaceWidgetRail columns={activeLayout?.column_count ?? 2} widgets={activeWidgets} workspaceLabel={activeWorkspaceLabel}/>
+        <WorkspaceWidgetRail columns={activeLayout?.column_count ?? 2} data={workspaceConfig?.widget_data ?? {}} widgets={activeWidgets} workspaceLabel={activeWorkspaceLabel}/>
         {workspaceContent}
       </main>
       {workspaceManagerOpen && workspaceConfig ? <WorkspaceManager config={workspaceConfig} onChanged={setWorkspaceConfig} onClose={() => setWorkspaceManagerOpen(false)} workspace={activeWorkspace} /> : null}

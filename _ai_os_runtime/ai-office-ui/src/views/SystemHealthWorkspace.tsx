@@ -130,6 +130,13 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
   const readyProviders = metric(snapshot?.provider_readiness_summary ?? [], "ready_providers");
   const sourceIssues = snapshot?.source_freshness.filter((row) => text(row, "status", "fresh") !== "fresh").length ?? 0;
   const daemon = snapshot?.runtime_daemons[0];
+  const reportScheduler = snapshot?.report_scheduler_health[0];
+  const reportSchedulerHealthy = Boolean(
+    snapshot?.recovery.report_schedule_installed &&
+    snapshot.recovery.vault_bookmark_exists &&
+    text(reportScheduler, "latest_launchd_status", "") === "completed" &&
+    text(reportScheduler, "latest_launchd_failed_count", "0") === "0"
+  );
   const recoveryReady = Boolean(
     snapshot?.recovery.current_exists &&
     snapshot.recovery.postgres_dump_exists &&
@@ -284,9 +291,9 @@ export default function SystemHealthWorkspace({ onStatusChange }: SystemHealthWo
               <span>{date(snapshot?.recovery.latest_restore_drill.verified_at)}</span>
             </article>
             <article className="pipeline-row">
-              <div><strong>Unattended schedules</strong><p>Critical backup 03:20 · source-backed reports 08:35</p></div>
-              <StatusPill status={snapshot?.recovery.backup_schedule_installed && snapshot.recovery.report_schedule_installed ? "configured" : "blocked"} />
-              <span>launchd</span>
+              <div><strong>Unattended schedules</strong><p>Critical backup 03:20 · reports 08:35 · {text(reportScheduler,"due_schedules","-")} due · bookmark {snapshot?.recovery.vault_bookmark_exists ? "ready" : "missing"}</p></div>
+              <StatusPill status={snapshot?.recovery.backup_schedule_installed && reportSchedulerHealthy ? "ready" : "blocked"} />
+              <span>launchd · {date(reportScheduler?.latest_launchd_finished_at)}</span>
             </article>
           </div>
         </HealthPanel>

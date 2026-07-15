@@ -8,6 +8,7 @@ LAUNCHD_API_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.a
 LAUNCHD_UI_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.ui.plist"
 LAUNCHD_AGENT_DAEMON_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.agent-daemon.plist"
 LAUNCHD_OLLAMA_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.ollama.plist"
+LAUNCHD_TRADINGVIEW_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.tradingview-browser.plist"
 LAUNCHD_DOMAIN="gui/$(id -u)"
 
 stop_launchd_services() {
@@ -23,6 +24,9 @@ stop_launchd_services() {
   fi
   if [[ -f "${LAUNCHD_OLLAMA_PLIST}" ]]; then
     launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_OLLAMA_PLIST}" 2>/dev/null && stopped=0 || true
+  fi
+  if [[ -f "${LAUNCHD_TRADINGVIEW_PLIST}" ]]; then
+    launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_TRADINGVIEW_PLIST}" 2>/dev/null && stopped=0 || true
   fi
   return "${stopped}"
 }
@@ -46,9 +50,12 @@ stop_pid_file() {
   rm -f "${pid_file}"
 }
 
-if stop_launchd_services; then
-  echo "Stopped AI OS LaunchAgents"
-else
-  stop_pid_file "AI Office UI" "${RUN_DIR}/ai_office_ui.pid"
-  stop_pid_file "AI OS API" "${RUN_DIR}/ai_os_api.pid"
-fi
+stop_launchd_services || true
+echo "Stopped any installed AI OS LaunchAgents"
+stop_pid_file "AI OS user-session supervisor" "${RUN_DIR}/supervisor.pid"
+sleep 2
+stop_pid_file "AI Office UI" "${RUN_DIR}/ai_office_ui.pid"
+stop_pid_file "AI OS API" "${RUN_DIR}/ai_os_api.pid"
+stop_pid_file "Agent daemon" "${RUN_DIR}/agent_daemon.pid"
+stop_pid_file "TradingView browser" "${RUN_DIR}/tradingview_browser.pid"
+stop_pid_file "Ollama" "${RUN_DIR}/ollama.pid"

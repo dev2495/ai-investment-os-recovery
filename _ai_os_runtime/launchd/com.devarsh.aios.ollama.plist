@@ -34,7 +34,7 @@
     <key>OLLAMA_HOST</key>
     <string>127.0.0.1:11434</string>
     <key>OLLAMA_MODELS</key>
-    <string>/Volumes/Devarsh SSD/OllamaModels</string>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/ollama-control-models</string>
     <key>OLLAMA_NUM_PARALLEL</key>
     <string>1</string>
     <key>OLLAMA_CONTEXT_LENGTH</key>
@@ -43,6 +43,8 @@
     <string>5m</string>
     <key>OLLAMA_NOHISTORY</key>
     <string>true</string>
+    <key>OLLAMA_NO_CLOUD</key>
+    <string>1</string>
   </dict>
 </dict>
 </plist>

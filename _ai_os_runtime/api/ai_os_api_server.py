@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
+import ipaddress
 import os
 import re
 import subprocess
@@ -28,8 +30,19 @@ PSQL_BIN = os.environ.get("AI_OS_PSQL_BIN", "/opt/homebrew/opt/postgresql@15/bin
 DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/usr/local/bin/docker")
 QDRANT_BASE_URL = os.environ.get("AI_OS_QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
 OLLAMA_BASE_URL = os.environ.get("AI_OS_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+TRADINGVIEW_CDP_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
 EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "mxbai-embed-large")
 CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "always_on_daily_driver")
+ALLOWED_ORIGINS = {
+    origin.strip()
+    for origin in os.environ.get(
+        "AI_OS_ALLOWED_ORIGINS",
+        "http://127.0.0.1:5177,http://localhost:5177",
+    ).split(",")
+    if origin.strip()
+}
+OPERATOR_TOKEN = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
+ALLOW_TOKENLESS_LOOPBACK = os.environ.get("AI_OS_ALLOW_TOKENLESS_LOOPBACK", "1").strip().lower() in {"1", "true", "yes"}
 DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
 PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
 
@@ -164,6 +177,7 @@ def build_recovery_status() -> dict[str, Any]:
         "latest_restore_drill": latest_drill,
         "backup_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.critical-backup.plist").is_file(),
         "report_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.scheduled-reports.plist").is_file(),
+        "vault_bookmark_exists": (Path.home() / "Library/Application Support/AIOS/backup-vault.bookmark").is_file(),
     }
 
 
@@ -373,7 +387,7 @@ def build_office_snapshot() -> dict:
         """,
     }
     try:
-        data = run_psql_json_object(queries, row_limit=50)
+        data = run_psql_json_object(queries, row_limit=160)
     except Exception as exc:  # noqa: BLE001
         issues.append({"section": "office_snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
         data = {name: [] for name in queries}
@@ -935,22 +949,23 @@ def safe_query(name: str, query: str, issues: list[dict]) -> list[dict]:
         return []
 
 
-def probe_tradingview_cdp() -> dict:
+def probe_tradingview_cdp(port: int | None = None) -> dict:
+    resolved_port = int(port or TRADINGVIEW_CDP_PORT)
     try:
-        with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=1.5) as response:
+        with urllib.request.urlopen(f"http://127.0.0.1:{resolved_port}/json/version", timeout=1.5) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return {
             "available": True,
-            "port": 9222,
+            "port": resolved_port,
             "browser": payload.get("Browser"),
             "user_agent": payload.get("User-Agent"),
         }
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         return {
             "available": False,
-            "port": 9222,
+            "port": resolved_port,
             "error": str(exc),
-            "next_action": "Relaunch TradingView Desktop with --remote-debugging-port=9222 before desktop MCP control.",
+            "next_action": f"Start the managed TradingView browser service on CDP port {resolved_port}.",
         }
 
 
@@ -1190,6 +1205,16 @@ def build_system_health_snapshot() -> dict:
             FROM trading.v_execution_control_state
             LIMIT 1
         """,
+        "report_scheduler_health": """
+            SELECT enabled_schedules, due_schedules, latest_invocation_id,
+                   latest_trigger_type, latest_status, latest_due_count,
+                   latest_completed_count, latest_failed_count,
+                   latest_error_message, latest_started_at, latest_finished_at,
+                   latest_launchd_status, latest_launchd_failed_count,
+                   latest_launchd_error_message, latest_launchd_started_at,
+                   latest_launchd_finished_at
+            FROM ops.v_report_scheduler_health
+        """,
         "pipeline_readiness": """
             SELECT 'configuration' AS record_class, 'control modules' AS area,
                    'core.control_plane_modules' AS relation_name, count(*)::TEXT AS row_count
@@ -1212,7 +1237,7 @@ def build_system_health_snapshot() -> dict:
         "tradingview_cdp": probe_tradingview_cdp(),
         "storage": {
             "vault_mounted": VAULT_ROOT.exists(),
-            "ollama_models_external": Path("/Volumes/Devarsh SSD/OllamaModels").is_dir(),
+            "ollama_models_external": Path("/Volumes/Devarsh SSD/AI OS Data/ollama/models").is_dir(),
             "docker_raw_external": Path("/Volumes/Devarsh SSD/Docker/DockerDesktop/Docker.raw").is_file(),
             "heavy_state_external": Path("/Volumes/Devarsh SSD/AI OS Data").is_dir(),
         },
@@ -1232,7 +1257,8 @@ def build_mission_control_snapshot() -> dict:
         "metrics": "SELECT metric, value FROM core.v_control_plane_snapshot ORDER BY metric",
         "inbox": """
             SELECT id, task_id, title, owner_agent, status, priority,
-                   recommended_action, target_workspace, created_at, updated_at
+                   recommended_action, target_workspace, claimed_by, claimed_at,
+                   resolved_by, resolved_at, resolution_note, created_at, updated_at
             FROM agent.inbox_items
             WHERE target_workspace IN ('command', 'system') OR target_workspace IS NULL
             ORDER BY
@@ -2611,7 +2637,8 @@ def build_reports_snapshot() -> dict:
                    enabled, source_views, description, config, latest_run_id,
                    latest_run_key, latest_period_key, latest_status,
                    latest_output_note_path, latest_summary,
-                   latest_finished_at, due_now, updated_at
+                   latest_finished_at, due_now, updated_at,
+                   latest_completed_period_key, latest_trigger_type, due_reason
             FROM ops.v_report_schedule_status
             ORDER BY cadence, report_name
         """,
@@ -2620,10 +2647,28 @@ def build_reports_snapshot() -> dict:
                    report_family, cadence, owner_agent, approval_required,
                    status, task_id, worker_run_id, output_note_path, summary,
                    source_snapshot, evidence, error_message, started_at,
-                   finished_at, updated_at
+                   finished_at, updated_at, scheduled_period_key, trigger_type
             FROM ops.v_recent_report_runs
             ORDER BY started_at DESC, id DESC
             LIMIT 60
+        """,
+        "report_scheduler_health": """
+            SELECT enabled_schedules, due_schedules, latest_invocation_id,
+                   latest_invocation_key, latest_trigger_type, latest_status,
+                   latest_due_count, latest_completed_count, latest_failed_count,
+                   latest_error_message, latest_started_at, latest_finished_at,
+                   latest_launchd_status, latest_launchd_failed_count,
+                   latest_launchd_error_message, latest_launchd_started_at,
+                   latest_launchd_finished_at
+            FROM ops.v_report_scheduler_health
+        """,
+        "report_scheduler_invocations": """
+            SELECT id, invocation_key, trigger_type, report_key, status,
+                   due_count, completed_count, failed_count, error_message,
+                   started_at, finished_at
+            FROM ops.report_scheduler_invocations
+            ORDER BY started_at DESC
+            LIMIT 30
         """,
         "chat_turns": """
             SELECT id, session_key, actor, assistant_name, user_message,
@@ -2643,6 +2688,24 @@ def build_reports_snapshot() -> dict:
             FROM trading.v_execution_control_state
             LIMIT 1
         """,
+        "local_artifact_summary": """
+            SELECT metric, value, interpretation
+            FROM core.v_local_artifact_ingestion_summary
+            ORDER BY CASE metric WHEN 'total_ingestions' THEN 0 ELSE 1 END, metric
+        """,
+        "local_artifact_ingestions": """
+            SELECT id, ingestion_key, run_key, task_id, file_name, file_extension,
+                   artifact_family, mime_type, content_hash, file_size_bytes,
+                   parser_name, status, promotion_status, suggested_destination,
+                   row_count, sheet_count, page_count, image_width, image_height,
+                   extracted_chars, sensitivity, seen_count, task_status,
+                   owner_agent, source_path, stored_path, extracted_text_path,
+                   capital_action_allowed, live_execution_allowed,
+                   first_seen_at, last_seen_at, updated_at
+            FROM core.v_local_artifact_ingestion_queue
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 100
+        """,
     }
     data = run_psql_json_object(queries)
     return {
@@ -2656,6 +2719,158 @@ def build_reports_snapshot() -> dict:
         },
         **data,
     }
+
+
+def run_scheduled_reports(payload: dict) -> dict:
+    report_key = str(payload.get("report_key") or payload.get("reportKey") or "").strip()
+    force = bool(payload.get("force", False))
+    if report_key:
+        known = run_psql_json_statement(
+            f"SELECT report_key FROM ops.report_schedules WHERE report_key={sql_literal(report_key)} AND enabled=true"
+        )
+        if not known:
+            raise ValueError("report_key must identify an enabled report schedule")
+    if force and not report_key:
+        raise ValueError("force requires one explicit report_key")
+
+    script = RUNTIME_ROOT / "scripts" / "run_scheduled_reports.py"
+    if not script.is_file():
+        raise RuntimeError("scheduled report runner is missing")
+    command = [sys.executable, str(script), "--json", "--trigger-type", "api"]
+    if report_key:
+        command.extend(["--report-key", report_key])
+    else:
+        command.append("--all")
+    if force:
+        command.append("--force")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(RUNTIME_ROOT),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("scheduled report runner timed out after 600 seconds") from exc
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "scheduled report runner failed").strip())
+    try:
+        result = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("scheduled report runner returned invalid JSON") from exc
+    audit_api_write(
+        "ai_os_api_scheduled_reports_run",
+        "run_scheduled_reports",
+        str(payload.get("actor") or "Devarsh"),
+        "ops.report_scheduler_invocations",
+        result,
+        {"report_key": report_key or None, "force": force},
+    )
+    return result
+
+
+def ingest_local_artifact(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before the system can read a local file")
+    local_path = str(payload.get("local_path") or "").strip()
+    if not local_path:
+        raise ValueError("local_path is required")
+    candidate_path = Path(local_path).expanduser()
+    direct_roots = [RUNTIME_ROOT, VAULT_ROOT, Path("/Volumes/Devarsh SSD"), Path.home() / "Library" / "Application Support" / "AIOS"]
+    if not any(candidate_path == root or root in candidate_path.parents for root in direct_roots):
+        raise ValueError("direct service paths must be inside the AI OS runtime, vault, or external SSD; use the browser file picker for Desktop, Downloads, and Documents")
+    sensitivity = str(payload.get("sensitivity") or "private").strip()
+    if sensitivity not in {"public", "internal", "private", "client_private", "restricted"}:
+        raise ValueError("sensitivity is invalid")
+    actor = str(payload.get("actor") or "Data Steward").strip() or "Data Steward"
+    script_path = RUNTIME_ROOT / "scripts" / "ingest_local_artifact.py"
+    command = [
+        sys.executable,
+        str(script_path),
+        "--local-path", local_path,
+        "--title", str(payload.get("title") or "").strip(),
+        "--sensitivity", sensitivity,
+        "--suggested-destination", str(payload.get("suggested_destination") or "").strip(),
+        "--run-key", str(payload.get("run_key") or "").strip(),
+        "--source-label", str(payload.get("source_label") or "").strip(),
+        "--actor", actor,
+        "--max-mb", str(max(1, min(int(payload.get("max_mb") or 100), 200))),
+        "--operator-confirmed",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(RUNTIME_ROOT),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("local artifact intake timed out after 180 seconds") from exc
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "local artifact intake failed").strip())
+    result = json.loads(completed.stdout or "{}")
+    audit_api_write(
+        "ai_os_ingest_local_artifact",
+        "ingest_local_artifact",
+        actor,
+        "core.local_artifact_ingestions",
+        result,
+        payload,
+    )
+    return result
+
+
+def receive_local_artifact_upload(handler: BaseHTTPRequestHandler) -> dict:
+    parsed = urllib.parse.urlparse(handler.path)
+    query = urllib.parse.parse_qs(parsed.query)
+    file_name = Path(str(query.get("file_name", [""])[0])).name
+    if not file_name:
+        raise ValueError("file_name is required")
+    suffix = Path(file_name).suffix.lower()
+    if suffix not in {".csv", ".tsv", ".xls", ".xlsx", ".pdf", ".docx", ".txt", ".md", ".json", ".png", ".jpg", ".jpeg", ".webp"}:
+        raise ValueError("unsupported local artifact format")
+    try:
+        content_length = int(handler.headers.get("Content-Length", "0") or "0")
+    except ValueError as exc:
+        raise ValueError("Content-Length must be an integer") from exc
+    max_bytes = 200 * 1024 * 1024
+    if content_length <= 0 or content_length > max_bytes:
+        raise ValueError("uploaded file must be between 1 byte and 200 MB")
+    incoming_root = Path(os.environ.get("AI_OS_LOCAL_UPLOAD_ROOT", "/Volumes/Devarsh SSD/AI OS Data/artifacts/local_intake/incoming"))
+    incoming_root.mkdir(parents=True, exist_ok=True)
+    staging_path = incoming_root / f"{time.time_ns()}-{os.getpid()}{suffix}"
+    remaining = content_length
+    digest = hashlib.sha256()
+    try:
+        with staging_path.open("wb") as handle:
+            while remaining:
+                chunk = handler.rfile.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError("uploaded file ended before Content-Length bytes were received")
+                handle.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+        title = str(query.get("title", [""])[0]).strip()
+        sensitivity = str(query.get("sensitivity", ["private"])[0]).strip()
+        destination = str(query.get("suggested_destination", [""])[0]).strip()
+        actor = str(query.get("actor", ["Devarsh via Reports Terminal"])[0]).strip()
+        return ingest_local_artifact({
+            "local_path": str(staging_path),
+            "source_label": f"browser-upload://{file_name}",
+            "title": title or file_name,
+            "sensitivity": sensitivity,
+            "suggested_destination": destination,
+            "run_key": f"browser_upload_{digest.hexdigest()[:18]}",
+            "actor": actor,
+            "operator_confirmed": True,
+            "max_mb": 200,
+        })
+    finally:
+        staging_path.unlink(missing_ok=True)
 
 
 def audit_api_write(tool_name: str, action_type: str, actor: str, target_table: str, result: object, request: object) -> None:
@@ -2693,15 +2908,85 @@ TERMINAL_WORKSPACES = {
 
 CUSTOMIZABLE_WORKSPACES = {
     "command", "approvals", "agents", "departments", "committees", "portfolio",
-    "clients", "research", "ideas", "arsenal", "trading", "quant", "risk",
+    "clients", "tactical", "research", "ideas", "arsenal", "trading", "quant", "risk",
     "capital", "treasury", "models", "governance", "reports", "system",
 }
 
 WORKSPACE_KEYS = {
     "command", "approvals", "agents", "departments", "committees", "portfolio", "clients",
-    "research", "ideas", "arsenal", "trading", "quant", "risk", "capital", "treasury",
+    "research", "ideas", "arsenal", "tactical", "trading", "quant", "risk", "capital", "treasury",
     "models", "governance", "reports", "system",
 }
+
+
+WORKSPACE_WIDGET_PREVIEW_QUERIES = {
+    "portfolio_latest_positions": """
+        WITH latest AS (
+            SELECT DISTINCT ON (account.account_code, position.symbol)
+                client.display_name, client.client_code, account.account_code,
+                position.symbol, position.quantity, position.market_price,
+                position.market_value, position.unrealized_pnl, position.as_of
+            FROM portfolio.positions position
+            JOIN portfolio.accounts account ON account.id = position.account_id
+            JOIN portfolio.clients client ON client.id = account.client_id
+            ORDER BY account.account_code, position.symbol, position.as_of DESC
+        )
+        SELECT * FROM latest ORDER BY market_value DESC NULLS LAST LIMIT 5
+    """,
+    "portfolio_book_intelligence": """
+        SELECT client_name, symbol, gross_exposure, net_exposure, book_count,
+               active_books, overall_bias, latest_as_of
+        FROM books.v_symbol_book_exposure
+        ORDER BY gross_exposure DESC NULLS LAST, client_name, symbol
+        LIMIT 5
+    """,
+    "strategy_lab_queue": """
+        SELECT candidate_key, strategy_name, candidate_status, validation_status,
+               activation_gate, owner_agent, timeframe, updated_at
+        FROM strategy.v_strategy_arsenal_queue
+        ORDER BY updated_at DESC NULLS LAST, candidate_id DESC
+        LIMIT 5
+    """,
+    "research_filings_inbox": """
+        SELECT exchange, symbol, company_name, filing_type, filing_event_type,
+               title, filed_at, extraction_status, event_type, urgency
+        FROM research.v_corporate_filing_inbox
+        ORDER BY filed_at DESC NULLS LAST, event_created_at DESC
+        LIMIT 5
+    """,
+    "model_runtime_status": """
+        SELECT route_name, default_provider, default_model, enabled,
+               endpoint_status, health_status, credential_ready, runtime_status,
+               last_checked_at, next_required_action
+        FROM agent.v_model_route_runtime_control
+        ORDER BY CASE runtime_status WHEN 'ready' THEN 2 ELSE 1 END,
+                 route_name
+        LIMIT 5
+    """,
+    "market_signal_monitor": """
+        SELECT id, ts, strategy, symbol, exchange, action, price, confidence, status
+        FROM trading.v_recent_signals
+        ORDER BY ts DESC
+        LIMIT 5
+    """,
+}
+
+
+def build_workspace_widget_data(widgets: list[dict]) -> dict:
+    queries = {
+        str(widget.get("widget_key")): WORKSPACE_WIDGET_PREVIEW_QUERIES[str(widget.get("widget_key"))]
+        for widget in widgets
+        if str(widget.get("status") or "active") == "active"
+        and str(widget.get("widget_key")) in WORKSPACE_WIDGET_PREVIEW_QUERIES
+    }
+    if not queries:
+        return {}
+    try:
+        return run_psql_json_object(queries)
+    except Exception as exc:
+        return {
+            "_error": [{"status": "unavailable", "message": f"{type(exc).__name__}: {exc}"[:240]}]
+        }
 
 
 def build_workspace_config(profile_key: str = "devarsh") -> dict:
@@ -2720,6 +3005,23 @@ def build_workspace_config(profile_key: str = "devarsh") -> dict:
     if not rows:
         raise ValueError(f"workspace profile not found: {profile_key}")
     first = rows[0]
+    widgets = run_psql_json(
+        f"""
+        SELECT id, widget_key, widget_title, widget_type, workspace, status,
+               priority, owner_agent, query_ref, linked_task_id, task_status,
+               config, layout, data_binding, evidence, last_refreshed_at, updated_at
+        FROM ops.v_dashboard_widgets
+        WHERE workspace IN (
+            SELECT jsonb_array_elements_text(coalesce(
+                (SELECT navigation -> 'visible' FROM ops.workspace_profiles
+                 WHERE profile_key = {sql_literal(profile_key)}),
+                '[]'::jsonb
+            ))
+        )
+        ORDER BY workspace, coalesce((layout ->> 'order')::integer, 100), updated_at DESC
+        LIMIT 120
+        """
+    )
     return {
         "profile": {
             key: first.get(key)
@@ -2740,23 +3042,8 @@ def build_workspace_config(profile_key: str = "devarsh") -> dict:
             for row in rows
             if row.get("workspace_key")
         ],
-        "widgets": run_psql_json(
-            f"""
-            SELECT id, widget_key, widget_title, widget_type, workspace, status,
-                   priority, owner_agent, query_ref, linked_task_id, task_status,
-                   config, layout, data_binding, evidence, last_refreshed_at, updated_at
-            FROM ops.v_dashboard_widgets
-            WHERE workspace IN (
-                SELECT jsonb_array_elements_text(coalesce(
-                    (SELECT navigation -> 'visible' FROM ops.workspace_profiles
-                     WHERE profile_key = {sql_literal(profile_key)}),
-                    '[]'::jsonb
-                ))
-            )
-            ORDER BY workspace, coalesce((layout ->> 'order')::integer, 100), updated_at DESC
-            LIMIT 120
-            """
-        ),
+        "widgets": widgets,
+        "widget_data": build_workspace_widget_data(widgets),
         "data_mode": {"seed_data_allowed": False, "source": "workspace_operator_configuration"},
     }
 
@@ -4472,14 +4759,18 @@ def build_snapshot() -> dict:
         "algo_extraction_readiness": """
             SELECT source_system, database_path, table_name, source_rows,
                    imported_rows, target_tables, import_status, profiled_at,
-                   readiness_status, source_value, recommended_action
+                   readiness_status, source_value, recommended_action,
+                   deduplicated_rows, rejected_rows, resolved_rows,
+                   resolution_mode, canonical_relation, resolution_evidence
             FROM core.v_algo_extraction_readiness
             ORDER BY
                 CASE readiness_status
                     WHEN 'profiled_not_promoted' THEN 1
                     WHEN 'partially_promoted' THEN 2
-                    WHEN 'promoted' THEN 3
-                    ELSE 4
+                    WHEN 'archived_governed' THEN 3
+                    WHEN 'promoted_deduplicated' THEN 4
+                    WHEN 'promoted' THEN 5
+                    ELSE 6
                 END,
                 CASE source_value WHEN 'high_value' THEN 1 ELSE 2 END,
                 source_rows DESC NULLS LAST,
@@ -4793,7 +5084,8 @@ def build_snapshot() -> dict:
         """,
         "inbox": """
             SELECT id, task_id, title, owner_agent, status, priority, recommended_action,
-                   evidence, target_workspace, created_at, updated_at
+                   evidence, target_workspace, claimed_by, claimed_at, resolved_by,
+                   resolved_at, resolution_note, created_at, updated_at
             FROM agent.inbox_items
             ORDER BY updated_at DESC, created_at DESC
             LIMIT 50
@@ -5242,7 +5534,7 @@ def build_snapshot() -> dict:
         """,
     }
     try:
-        data = run_psql_json_object(queries, row_limit=50)
+        data = run_psql_json_object(queries, row_limit=160)
     except Exception as exc:  # noqa: BLE001
         issues.append({"section": "snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
         data = {name: [] for name in queries}
@@ -5364,6 +5656,7 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
 
     script_payload = {
         "action": payload.get("action") or "open_chart_capture",
+        "port": int(payload.get("port") or TRADINGVIEW_CDP_PORT),
         "task_id": task_id_int,
         "symbols": symbols,
         "exchange": payload.get("exchange") or "NSE",
@@ -5375,10 +5668,15 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
         "capture_screenshot": payload.get("capture_screenshot", True),
         "quality_check": payload.get("quality_check", True),
         "max_quality_attempts": payload.get("max_quality_attempts") or payload.get("maxQualityAttempts") or 3,
-        "activate_app": payload.get("activate_app", True),
+        "activate_app": payload.get("activate_app", TRADINGVIEW_CDP_PORT == 9222),
         "studies": (
             payload.get("studies")
             or ((payload.get("compiled_plan") or {}).get("studies") if isinstance(payload.get("compiled_plan"), dict) else None)
+            or []
+        ),
+        "panes": (
+            ((payload.get("compiled_plan") or {}).get("panes") if isinstance(payload.get("compiled_plan"), dict) else None)
+            or payload.get("panes")
             or []
         ),
     }
@@ -5428,12 +5726,21 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     title = f"TradingView chart screenshot: {', '.join(map(str, symbols[:3]))}"
     quality_status = str(action_result.get("artifact_quality_status") or "not_checked")
     study_status = str(action_result.get("study_application_status") or "not_requested")
+    dispatch_status = str(action_result.get("action_dispatch_status") or "generic_capture_only")
     task_status = (
         "done"
-        if quality_status in {"passed", "skipped", "not_checked"} and study_status in {"passed", "not_requested"}
+        if quality_status in {"passed", "skipped", "not_checked"}
+        and study_status in {"passed", "not_requested"}
+        and dispatch_status in {"passed", "generic_capture_only"}
         else "needs_review"
     )
-    result_summary = (
+    if action_result.get("layout_mode") == "four_chart_evidence_board":
+        result_summary = (
+            f"Captured a governed four-chart TradingView evidence board for {', '.join(map(str, action_result.get('symbols') or symbols))}; "
+            "interactive pane synchronization remains manual."
+        )
+    else:
+        result_summary = (
         f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
         f"({script_payload['exchange']}, {script_payload['timeframe']}) and captured screenshot evidence."
         if task_status == "done"
@@ -5441,7 +5748,7 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
             f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
             f"({script_payload['exchange']}, {script_payload['timeframe']}) but screenshot quality failed; artifact requires review."
         )
-    )
+        )
     evidence_item = {
         "source": "TradingView CDP",
         "action": script_payload["action"],
@@ -5450,6 +5757,9 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
         "screenshot_path": str(screenshot_path),
         "content_hash": content_hash,
         "artifact_quality_status": quality_status,
+        "action_dispatch_status": dispatch_status,
+        "layout_mode": action_result.get("layout_mode"),
+        "pane_count": len(action_result.get("pane_results") or []),
     }
     request_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     template_key = request_metadata.get("template_key")
@@ -5669,17 +5979,25 @@ def compile_tradingview_template_plan(template: dict, payload: dict, symbols: li
             plan["required_parameters"] = ["underlying", "expiry", "strike", "call_symbol", "put_symbol"]
         else:
             expression = f"{call_symbol}+{put_symbol}"
+            panes = [
+                {"label": "Underlying", "symbol": underlying, "url": tradingview_chart_url(underlying, timeframe)},
+                {"label": "Call", "symbol": call_symbol, "url": tradingview_chart_url(call_symbol, timeframe)},
+                {"label": "Put", "symbol": put_symbol, "url": tradingview_chart_url(put_symbol, timeframe)},
+                {"label": "Combined premium", "symbol": expression, "url": tradingview_chart_url(expression, timeframe)},
+            ]
             plan.update({
                 "execution_ready": True,
-                "fulfillment": "straddle_formula_only_four_pane_pending",
+                "fulfillment": "complete_four_chart_evidence_board",
+                "browser_action": "option_straddle_layout_request",
                 "chart_style": "Line",
                 "symbol_expression": expression,
                 "target_url": tradingview_chart_url(expression, timeframe),
+                "panes": panes,
                 "validated_parameters": {
                     "underlying": underlying, "expiry": expiry, "strike": strike,
                     "call_symbol": call_symbol, "put_symbol": put_symbol,
                 },
-                "remaining_manual_step": "Open and synchronize underlying, call, put, and formula panes; deterministic pane mutation is not yet enabled.",
+                "remaining_manual_step": "Interactive TradingView pane synchronization remains manual; the approved controller produces a deterministic four-chart evidence board.",
             })
     elif template_key == "technical_indicator_stack":
         requested_indicators = collect_tradingview_technical_indicators(payload)
@@ -6166,6 +6484,103 @@ def create_inbox_item(payload: dict) -> dict:
     )
     result = rows[0] if rows else {}
     audit_api_write("ai_os_api_create_inbox_item", "create_inbox_item", actor, "agent.inbox_items", result, payload)
+    return result
+
+
+def update_inbox_item(payload: dict) -> dict:
+    try:
+        inbox_id = int(payload.get("inbox_id") or payload.get("inboxId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("inbox_id is required") from exc
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in {"claim", "reassign", "resolve", "block", "reopen"}:
+        raise ValueError("action must be claim, reassign, resolve, block, or reopen")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    note = str(payload.get("resolution_note") or payload.get("note") or "").strip()
+    new_owner = str(payload.get("owner_agent") or payload.get("ownerAgent") or "").strip()
+    if action == "reassign":
+        if not new_owner:
+            raise ValueError("owner_agent is required for reassign")
+        if not run_psql_json(
+            f"SELECT agent_name FROM agent.profiles WHERE status='active' AND agent_name={sql_literal(new_owner)} LIMIT 1"
+        ):
+            raise ValueError(f"active agent not found: {new_owner}")
+
+    status_by_action = {
+        "claim": "in_progress",
+        "reassign": "queued",
+        "resolve": "done",
+        "block": "blocked",
+        "reopen": "queued",
+    }
+    task_status_by_action = {
+        "claim": "in_progress",
+        "reassign": "queued",
+        "resolve": "completed",
+        "block": "blocked",
+        "reopen": "queued",
+    }
+    target_status = status_by_action[action]
+    task_status = task_status_by_action[action]
+    evidence_entry = {
+        "source": "ai_os_api.update_inbox_item",
+        "action": action,
+        "actor": actor,
+        "owner_agent": new_owner or None,
+        "note": note or None,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    rows = run_psql_json_statement(
+        f"""
+        WITH current_item AS (
+            SELECT * FROM agent.inbox_items WHERE id={inbox_id} FOR UPDATE
+        ), updated_item AS (
+            UPDATE agent.inbox_items item
+            SET owner_agent=CASE WHEN {sql_literal(action)}='reassign' THEN {sql_literal(new_owner)} ELSE item.owner_agent END,
+                status={sql_literal(target_status)},
+                claimed_by=CASE
+                    WHEN {sql_literal(action)}='claim' THEN {sql_literal(actor)}
+                    WHEN {sql_literal(action)} IN ('reassign','reopen') THEN NULL
+                    ELSE item.claimed_by END,
+                claimed_at=CASE
+                    WHEN {sql_literal(action)}='claim' THEN now()
+                    WHEN {sql_literal(action)} IN ('reassign','reopen') THEN NULL
+                    ELSE item.claimed_at END,
+                resolved_by=CASE WHEN {sql_literal(action)}='resolve' THEN {sql_literal(actor)} WHEN {sql_literal(action)}='reopen' THEN NULL ELSE item.resolved_by END,
+                resolved_at=CASE WHEN {sql_literal(action)}='resolve' THEN now() WHEN {sql_literal(action)}='reopen' THEN NULL ELSE item.resolved_at END,
+                resolution_note=CASE WHEN {sql_literal(action)} IN ('resolve','block') THEN {sql_literal(note or action)} WHEN {sql_literal(action)}='reopen' THEN NULL ELSE item.resolution_note END,
+                recommended_action=CASE
+                    WHEN {sql_literal(action)}='resolve' THEN 'Resolved; inspect the linked task evidence before reopening.'
+                    WHEN {sql_literal(action)}='block' THEN 'Blocked; resolve the recorded dependency or evidence gap before reopening.'
+                    WHEN {sql_literal(action)}='reassign' THEN 'Reassigned to the accountable specialist for bounded execution.'
+                    WHEN {sql_literal(action)}='claim' THEN 'Claimed for active work; keep evidence and linked task state synchronized.'
+                    ELSE 'Reopened for accountable review and execution.' END,
+                evidence=coalesce(item.evidence,'[]'::jsonb) || jsonb_build_array({sql_jsonb(evidence_entry)}),
+                updated_at=now()
+            FROM current_item current
+            WHERE item.id=current.id
+            RETURNING item.*
+        ), updated_task AS (
+            UPDATE agent.tasks task
+            SET owner_agent=CASE WHEN {sql_literal(action)}='reassign' THEN {sql_literal(new_owner)} ELSE task.owner_agent END,
+                status={sql_literal(task_status)},
+                evidence=coalesce(task.evidence,'[]'::jsonb) || jsonb_build_array({sql_jsonb(evidence_entry)}),
+                updated_at=now()
+            FROM updated_item item
+            WHERE task.id=item.task_id
+            RETURNING task.id,task.owner_agent,task.status,task.updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM (
+            SELECT item.*,(SELECT row_to_json(task) FROM updated_task task) AS linked_task
+            FROM updated_item item
+        ) result_rows
+        """
+    )
+    if not rows:
+        raise ValueError(f"inbox item not found: {inbox_id}")
+    result = rows[0]
+    audit_api_write("ai_os_api_update_inbox_item", f"inbox_{action}", actor, "agent.inbox_items", result, payload)
     return result
 
 
@@ -7285,8 +7700,8 @@ def check_browser_profile(payload: dict) -> dict:
     if profile_status in {"planned", "disabled", "inactive", "retired"}:
         status = "planned" if profile_status == "planned" else "inactive"
         error_message = f"Browser profile status is {profile_status}."
-    elif port == 9222 or "tradingview" in browser_name.lower():
-        cdp = probe_tradingview_cdp()
+    elif port in {9222, 9333} or "tradingview" in browser_name.lower():
+        cdp = probe_tradingview_cdp(int(port or TRADINGVIEW_CDP_PORT))
         sample_payload["cdp"] = cdp
         if cdp.get("available"):
             status = "available"
@@ -12101,10 +12516,11 @@ def chat_with_charlie(payload: dict) -> dict:
     if include_client_context and requested_privacy in {"public", "internal"}:
         raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
     context = build_chat_context(message, include_client_context=include_client_context)
-    if include_client_context:
+    deterministic_only = bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
+    if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
     else:
-        retrieval_hits, retrieval_status = [], "disabled_for_nonprivate_context"
+        retrieval_hits, retrieval_status = [], "disabled_for_deterministic_route" if deterministic_only else "disabled_for_nonprivate_context"
     widget_intents = infer_widget_intents(message, context)
     tool_intents: list[dict] = []
 
@@ -12127,7 +12543,11 @@ def chat_with_charlie(payload: dict) -> dict:
         str(payload.get("route_name") or payload.get("routeName") or CHAT_MODEL_ROUTE)
     )
     cached_response = model_decision.get("cached_response")
-    if cached_response:
+    if deterministic_only:
+        route = {**route, "last_model_status": "deterministic_tool_route"}
+        assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+        model_status = "deterministic_fallback"
+    elif cached_response:
         assistant_message, model_status = str(cached_response), "cache_hit"
     elif model_decision.get("decision_status") == "allowed":
         assistant_message, model_status = ollama_chat(str(route.get("default_model") or "llama3.2:3b"), prompt)
@@ -12204,6 +12624,12 @@ def run_agent_worker(payload: dict) -> dict:
     ]
     if payload.get("include_completed") or payload.get("includeCompleted"):
         command.append("--include-completed")
+    task_id = payload.get("task_id") or payload.get("taskId")
+    if task_id is not None:
+        try:
+            command.extend(["--task-id", str(int(task_id))])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("task_id must be an integer") from exc
     try:
         completed = subprocess.run(command, text=True, capture_output=True, check=False, cwd=str(VAULT_ROOT), timeout=90)
     except subprocess.TimeoutExpired as exc:
@@ -12250,14 +12676,40 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
 
+    def _cors_origin(self) -> str:
+        origin = self.headers.get("Origin", "").strip()
+        if origin and origin in ALLOWED_ORIGINS:
+            return origin
+        return sorted(ALLOWED_ORIGINS)[0] if ALLOWED_ORIGINS else "http://127.0.0.1:5177"
+
+    def _authorize_request(self, *, write: bool = False) -> None:
+        origin = self.headers.get("Origin", "").strip()
+        if origin and origin not in ALLOWED_ORIGINS:
+            raise PermissionError(f"origin is not allowed: {origin}")
+        try:
+            is_loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            is_loopback = False
+        authorization = self.headers.get("Authorization", "").strip()
+        supplied_token = self.headers.get("X-AI-OS-Operator-Token", "").strip()
+        if authorization.lower().startswith("bearer "):
+            supplied_token = authorization[7:].strip()
+        if OPERATOR_TOKEN and supplied_token and hmac.compare_digest(supplied_token, OPERATOR_TOKEN):
+            return
+        if is_loopback and ALLOW_TOKENLESS_LOOPBACK:
+            return
+        requirement = "write" if write else "read"
+        raise PermissionError(f"operator authorization is required for this {requirement} request")
+
     def _send_json(self, payload: object, status: int = 200) -> None:
         data = json.dumps(payload, indent=2, sort_keys=True, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", os.environ.get("AI_OS_CORS_ORIGIN", "*"))
+        self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+        self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-AI-OS-Operator-Token")
         self.end_headers()
         self.wfile.write(data)
 
@@ -12269,10 +12721,17 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         return json.loads(raw or "{}")
 
     def do_OPTIONS(self) -> None:  # noqa: N802
-        self._send_json({"ok": True})
+        try:
+            origin = self.headers.get("Origin", "").strip()
+            if origin and origin not in ALLOWED_ORIGINS:
+                raise PermissionError(f"origin is not allowed: {origin}")
+            self._send_json({"ok": True})
+        except PermissionError as exc:
+            self._send_json({"error": "forbidden", "message": str(exc)}, 403)
 
     def do_GET(self) -> None:  # noqa: N802
         try:
+            self._authorize_request(write=False)
             parsed_path = urllib.parse.urlparse(self.path)
             request_path = parsed_path.path
             query = urllib.parse.parse_qs(parsed_path.query)
@@ -12289,6 +12748,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                         "runtime_root": str(RUNTIME_ROOT),
                         "tradingview_cdp": probe_tradingview_cdp(),
+                        "operator_auth": {
+                            "bind_host": API_HOST,
+                            "allowed_origins": sorted(ALLOWED_ORIGINS),
+                            "token_configured": bool(OPERATOR_TOKEN),
+                            "tokenless_loopback_allowed": ALLOW_TOKENLESS_LOOPBACK,
+                        },
                         "db": db_rows,
                     },
                     200 if healthy else 503,
@@ -12362,14 +12827,26 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(probe_tradingview_cdp())
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)
+        except PermissionError as exc:
+            self._send_json({"error": "forbidden", "message": str(exc)}, 403)
         except Exception as exc:  # noqa: BLE001
             self._send_json({"error": type(exc).__name__, "message": str(exc)}, 500)
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            self._authorize_request(write=True)
+            if urllib.parse.urlparse(self.path).path == "/api/artifacts/local/upload":
+                self._send_json(receive_local_artifact_upload(self), 201)
+                return
             payload = self._read_body()
             if self.path == "/api/tradingview/tasks":
                 self._send_json(create_tradingview_task(payload), 201)
+                return
+            if self.path == "/api/artifacts/local/ingest":
+                self._send_json(ingest_local_artifact(payload), 201)
+                return
+            if self.path == "/api/reports/run":
+                self._send_json(run_scheduled_reports(payload), 201)
                 return
             if self.path == "/api/tradingview/chart-actions":
                 self._send_json(execute_tradingview_chart_action(payload), 201)
@@ -12385,6 +12862,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/inbox/items":
                 self._send_json(create_inbox_item(payload), 201)
+                return
+            if self.path == "/api/inbox/items/update":
+                self._send_json(update_inbox_item(payload), 200)
                 return
             if self.path == "/api/agents/messages":
                 self._send_json(create_agent_message(payload), 201)
@@ -12744,6 +13224,8 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(chat_with_charlie(payload), 201)
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)
+        except PermissionError as exc:
+            self._send_json({"error": "forbidden", "message": str(exc)}, 403)
         except ValueError as exc:
             self._send_json({"error": "bad_request", "message": str(exc)}, 400)
         except Exception as exc:  # noqa: BLE001

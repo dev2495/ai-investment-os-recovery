@@ -6,7 +6,9 @@ import {
   ExternalLink,
   FileCheck2,
   FileSearch,
+  FileUp,
   History,
+  PlayCircle,
   RefreshCw,
   ScrollText,
   Workflow
@@ -15,7 +17,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EvidenceSelection } from "../api/evidence";
 import type { LiveRow } from "../api/live";
-import { fetchReportsSnapshot, type ReportsSnapshot } from "../api/reports";
+import { fetchReportsSnapshot, runScheduledReports, uploadLocalArtifact, type ReportsSnapshot } from "../api/reports";
 import EvidenceDrawer from "../components/EvidenceDrawer";
 import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
@@ -57,6 +59,14 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
   const [query, setQuery] = useState("");
   const [family, setFamily] = useState("all");
   const [artifactStatus, setArtifactStatus] = useState("all");
+  const [localFile, setLocalFile] = useState<File | null>(null);
+  const [localFileInputKey, setLocalFileInputKey] = useState(0);
+  const [localTitle, setLocalTitle] = useState("");
+  const [localSensitivity, setLocalSensitivity] = useState<"public" | "internal" | "private" | "client_private" | "restricted">("private");
+  const [localDestination, setLocalDestination] = useState("");
+  const [localConfirmed, setLocalConfirmed] = useState(false);
+  const [localIngesting, setLocalIngesting] = useState(false);
+  const [reportBusy, setReportBusy] = useState("");
   const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null);
 
   const refresh = useCallback(async () => {
@@ -81,8 +91,42 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
     return (!normalized || searchable.includes(normalized)) && (family === "all" || value(row, "artifact_family") === family) && (artifactStatus === "all" || value(row, "status") === artifactStatus);
   });
   const execution = snapshot?.execution_control[0];
+  const scheduler = snapshot?.report_scheduler_health[0];
   const blueprintDone = value(snapshot?.blueprint_summary.find((row) => value(row, "metric") === "done_requirements"), "value", "-");
   const dueReports = (snapshot?.report_schedules ?? []).filter((row) => value(row, "due_now", "false") === "true").length;
+  const localNeedsAction = (snapshot?.local_artifact_ingestions ?? []).filter((row) => ["needs_mapping", "needs_review", "blocked"].includes(value(row, "promotion_status"))).length;
+
+  const submitLocalArtifact = async () => {
+    if (!localFile || !localConfirmed) return;
+    setLocalIngesting(true); setError(""); setNotice("");
+    try {
+      const response = await uploadLocalArtifact(localFile, {
+        title: localTitle.trim(),
+        sensitivity: localSensitivity,
+        suggested_destination: localDestination.trim(),
+        actor: "Devarsh via Reports Terminal",
+      });
+      setNotice(`${value(response.result, "file_name", "Artifact")} registered · task ${value(response.result, "task_id", "queued")}`);
+      setLocalFile(null); setLocalFileInputKey((key)=>key+1); setLocalTitle(""); setLocalDestination(""); setLocalConfirmed(false);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Local artifact intake failed");
+    } finally { setLocalIngesting(false); }
+  };
+
+  const runReports = async (reportKey = "", force = false) => {
+    setReportBusy(reportKey || "all"); setError(""); setNotice("");
+    try {
+      const result = await runScheduledReports({ report_key: reportKey || undefined, force, actor: "Devarsh via Reports Terminal" });
+      const rows = Array.isArray(result.results) ? result.results as LiveRow[] : [];
+      const completed = rows.filter((row) => value(row, "status") === "completed").length;
+      const failed = rows.filter((row) => value(row, "status") === "failed").length;
+      setNotice(`Report scheduler finished · ${completed} completed · ${failed} failed · invocation ${value(result, "invocation_id", "recorded")}`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Scheduled report run failed");
+    } finally { setReportBusy(""); }
+  };
 
   const copyPath = async (row: LiveRow) => {
     const path = value(row, "note_path", value(row, "local_path", ""));
@@ -111,14 +155,31 @@ export default function ReportsWorkspace({ onStatusChange }: Props) {
       <div className="metric-tile"><span>Output Artifacts</span><strong>{snapshot?.artifacts.length ?? 0}</strong><p className="tone-neutral">{artifacts.length} in current filter</p></div>
       <div className="metric-tile"><span>Raw Imports</span><strong>{snapshot?.raw_artifacts.length ?? 0}</strong><p className="tone-neutral">checksum-backed</p></div>
       <div className="metric-tile"><span>Scheduled Reports</span><strong>{snapshot?.report_schedules.length ?? 0}</strong><p className={dueReports ? "tone-warn" : "tone-good"}>{dueReports ? `${dueReports} due` : "cadence current"}</p></div>
+      <div className="metric-tile"><span>Scheduler Runtime</span><strong>{value(scheduler,"latest_status","never run")}</strong><p className={value(scheduler,"latest_failed_count","0") === "0" ? "tone-good" : "tone-warn"}>{date(scheduler?.latest_finished_at)}</p></div>
       <div className="metric-tile"><span>Artifact Gaps</span><strong>{snapshot?.artifact_gaps.length ?? 0}</strong><p className={snapshot?.artifact_gaps.length ? "tone-warn" : "tone-good"}>missing durable outputs</p></div>
       <div className="metric-tile"><span>Blueprint Done</span><strong>{blueprintDone}</strong><p className="tone-good">execution {value(execution,"global_execution_locked","true") === "true" ? "locked" : "review"}</p></div>
     </section>
     <WorkspaceFreshness generatedAt={snapshot?.generated_at} status={status}/>
     {error ? <div className="error-strip">{error}</div> : null}{notice ? <div className="success-strip">{notice}</div> : null}
     <section className="dashboard-grid">
-      <Panel className="span-6" icon={<CalendarClock size={17}/>} title="Report Schedule" action={<span>{snapshot?.report_schedules.length ?? 0} enabled</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.report_schedules.map((row)=><article className="source-check-row" key={value(row,"report_key")}><div><strong>{value(row,"report_name")}</strong><p>{value(row,"description")} · owner {value(row,"owner_agent")}{value(row,"approval_required","false") === "true" ? " · human approval required" : ""}</p><small>{value(row,"latest_output_note_path","No completed output yet")}</small></div><StatusPill status={value(row,"due_now","false") === "true" ? "due" : value(row,"latest_status","waiting")}/><span>{value(row,"cadence")}</span><time>{date(row.latest_finished_at)}</time></article>)}{!snapshot?.report_schedules.length?<Empty>No report schedules are configured.</Empty>:null}</div></Panel>
+      <Panel className="span-12" icon={<FileUp size={17}/>} title="Governed File Intake" action={<span>{localNeedsAction} awaiting review</span>}>
+        <form className="artifact-intake-form" onSubmit={(event)=>{event.preventDefault();void submitLocalArtifact();}}>
+          <label className="artifact-path-field"><span>Local file</span><input accept=".csv,.tsv,.xls,.xlsx,.pdf,.docx,.txt,.md,.json,.png,.jpg,.jpeg,.webp" aria-label="Local file" key={localFileInputKey} onChange={(event)=>setLocalFile(event.target.files?.[0] ?? null)} type="file"/></label>
+          <label><span>Title</span><input aria-label="Artifact title" onChange={(event)=>setLocalTitle(event.target.value)} placeholder="Optional display title" value={localTitle}/></label>
+          <label><span>Sensitivity</span><select aria-label="Artifact sensitivity" onChange={(event)=>setLocalSensitivity(event.target.value as typeof localSensitivity)} value={localSensitivity}><option value="public">Public</option><option value="internal">Internal</option><option value="private">Private</option><option value="client_private">Client private</option><option value="restricted">Restricted</option></select></label>
+          <label><span>Suggested destination</span><input aria-label="Suggested destination" onChange={(event)=>setLocalDestination(event.target.value)} placeholder="Auto-detect" value={localDestination}/></label>
+          <label className="artifact-confirm-field"><input aria-label="Confirm local file intake" checked={localConfirmed} onChange={(event)=>setLocalConfirmed(event.target.checked)} type="checkbox"/><span>I confirm this file may be read and registered</span></label>
+          <button className="mini-action-button" disabled={!localFile || !localConfirmed || localIngesting} type="submit"><FileUp size={14}/>{localIngesting ? "Registering" : "Register file"}</button>
+        </form>
+      </Panel>
+      <Panel className="span-12" icon={<DatabaseZap size={17}/>} title="Local Intake Queue" action={<span>{snapshot?.local_artifact_ingestions.length ?? 0} checksum-backed files</span>}>
+        <div className="source-check-list scoped-scroll-list local-artifact-queue">{snapshot?.local_artifact_ingestions.map((row)=><article className="source-check-row" key={value(row,"ingestion_key")}><div><strong>{value(row,"file_name")}</strong><p>{value(row,"artifact_family")} · {value(row,"parser_name")} · {value(row,"suggested_destination","mapping required")}</p><small>{value(row,"row_count","0")} rows · {value(row,"sheet_count","0")} sheets · {value(row,"page_count","0")} pages · checksum {value(row,"content_hash").slice(0,12)}</small></div><StatusPill status={value(row,"promotion_status")}/><span>task {value(row,"task_id","-")}</span><time>{date(row.updated_at)}</time></article>)}{!snapshot?.local_artifact_ingestions.length?<Empty>No local artifacts registered.</Empty>:null}</div>
+      </Panel>
+      <Panel className="span-6" icon={<CalendarClock size={17}/>} title="Report Schedule" action={<button className="mini-action-button" disabled={Boolean(reportBusy)} onClick={()=>void runReports()} type="button"><PlayCircle size={14}/>{reportBusy === "all" ? "Running" : "Run due"}</button>}>
+        <div className="source-check-list scoped-scroll-list">{snapshot?.report_schedules.map((row)=>{const key=value(row,"report_key");return <article className="source-check-row" key={key}><div><strong>{value(row,"report_name")}</strong><p>{value(row,"description")} · owner {value(row,"owner_agent")}{value(row,"approval_required","false") === "true" ? " · human approval required" : ""}</p><small>{value(row,"due_reason","-").replace(/_/g," ")} · {value(row,"latest_output_note_path","No completed output yet")}</small></div><StatusPill status={value(row,"due_now","false") === "true" ? "due" : value(row,"latest_status","waiting")}/><button className="mini-action-button" disabled={Boolean(reportBusy)} onClick={()=>void runReports(key,true)} type="button">{reportBusy === key ? "Running" : "Run now"}</button><time>{date(row.latest_finished_at)}</time></article>})}{!snapshot?.report_schedules.length?<Empty>No report schedules are configured.</Empty>:null}</div>
+      </Panel>
       <Panel className="span-6" icon={<History size={17}/>} title="Recent Report Runs" action={<span>{snapshot?.report_runs.length ?? 0} runs</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.report_runs.map((row)=>{const taskId=value(row,"task_id","");const selection:EvidenceSelection={kind:"task",key:taskId,title:value(row,"report_name"),subtitle:`Scheduled report · ${value(row,"owner_agent")}`,record:row};return <article className={`source-check-row${taskId ? " evidence-open-row" : ""}`} key={value(row,"id")} onClick={taskId ? ()=>openEvidence(selection) : undefined} onKeyDown={taskId ? (event)=>evidenceKeyDown(event,selection) : undefined} role={taskId ? "button" : undefined} tabIndex={taskId ? 0 : undefined}><div><strong>{value(row,"report_name")}</strong><p>{value(row,"summary",value(row,"error_message","No summary recorded"))}</p><small>{value(row,"output_note_path",value(row,"run_key"))}</small></div><StatusPill status={value(row,"status")}/><span>{value(row,"period_key")}</span><time>{date(row.finished_at)}</time></article>;})}{!snapshot?.report_runs.length?<Empty>No scheduled report run has been recorded.</Empty>:null}</div></Panel>
+      <Panel className="span-12" icon={<Workflow size={17}/>} title="Scheduler Invocation Evidence" action={<span>{snapshot?.report_scheduler_invocations.length ?? 0} attempts</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.report_scheduler_invocations.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"trigger_type")} · {value(row,"report_key","all enabled reports")}</strong><p>{value(row,"completed_count","0")} completed · {value(row,"failed_count","0")} failed · {value(row,"due_count","0")} processed</p><small>{value(row,"error_message",value(row,"invocation_key"))}</small></div><StatusPill status={value(row,"status")}/><span>#{value(row,"id")}</span><time>{date(row.finished_at)}</time></article>)}{!snapshot?.report_scheduler_invocations.length?<Empty>No scheduler invocation has been recorded.</Empty>:null}</div></Panel>
       <Panel className="span-8" icon={<ScrollText size={17}/>} title="Output Registry" action={<span>{artifacts.length} records</span>}><div className="report-artifact-list scoped-scroll-list">{artifacts.map((row)=>{const selection: EvidenceSelection={kind:"artifact",key:value(row,"artifact_key"),title:value(row,"title"),subtitle:`${value(row,"artifact_family")} · ${value(row,"owner_agent")}`,record:row};return <article className="report-artifact-row evidence-open-row" key={value(row,"artifact_key")}><div className="evidence-open-cell" onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><strong>{value(row,"title")}</strong><p>{value(row,"summary")} · {value(row,"owner_agent")} · {value(row,"artifact_family")}</p><small>{value(row,"note_path",value(row,"local_path",value(row,"source_url","No location")))}</small></div><StatusPill status={value(row,"status","stored")}/><div className="artifact-actions">{value(row,"source_url","") ? <a href={value(row,"source_url")} rel="noreferrer" target="_blank" title="Open source"><ExternalLink size={14}/></a> : null}{value(row,"note_path",value(row,"local_path","")) ? <button onClick={()=>void copyPath(row)} title="Copy artifact path" type="button"><Clipboard size={14}/></button> : null}</div><time>{date(row.latest_activity_at)}</time></article>;})}{!artifacts.length?<Empty>No artifact matches the current filter.</Empty>:null}</div></Panel>
       <Panel className="span-4" icon={<FileCheck2 size={17}/>} title="Artifact Summary"><div className="portfolio-intelligence-list scoped-scroll-list">{snapshot?.artifact_summary.map((row)=><article className="portfolio-intelligence-row" key={value(row,"metric")}><div><strong>{value(row,"metric").replace(/_/g," ")}</strong><p>{value(row,"interpretation")}</p></div><span>{value(row,"value")}</span></article>)}</div></Panel>
       <Panel className="span-6" icon={<Workflow size={17}/>} title="Agent Outputs" action={<span>{snapshot?.worker_runs.length ?? 0} runs</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.worker_runs.map((row)=>{const selection:EvidenceSelection={kind:"task",key:value(row,"task_id"),title:value(row,"task_title"),subtitle:`Worker output · ${value(row,"agent_name")}`,record:row};return <article className="source-check-row evidence-open-row" key={value(row,"id")} onClick={()=>openEvidence(selection)} onKeyDown={(event)=>evidenceKeyDown(event,selection)} role="button" tabIndex={0}><div><strong>{value(row,"task_title")}</strong><p>{value(row,"output_summary")} · {value(row,"agent_name")}</p></div><StatusPill status={value(row,"status","stored")}/><span>{value(row,"skill_name","-")}</span><time>{date(row.finished_at)}</time></article>;})}</div></Panel>

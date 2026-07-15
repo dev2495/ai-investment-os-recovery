@@ -4,7 +4,7 @@ set -euo pipefail
 runtime_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 external_prefix="/Volumes/Devarsh SSD"
 vault_root="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memory }"
-ollama_models="${AI_OS_OLLAMA_MODELS:-/Volumes/Devarsh SSD/OllamaModels}"
+ollama_models="${AI_OS_OLLAMA_MODELS:-/Volumes/Devarsh SSD/AI OS Data/ollama/models}"
 critical_backup_root="${AI_OS_CRITICAL_BACKUP_ROOT:-/Volumes/Devarsh SSD/AI OS Data/backups/critical}"
 docker_raw="${HOME}/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
 external_docker_raw="$(find "${external_prefix}" -maxdepth 5 \( -name 'Docker.raw' -o -name '*.raw' \) -print 2>/dev/null | head -n 1 || true)"

@@ -16,6 +16,15 @@ interface Props {
   workspace: string;
 }
 
+const workspaceOptions = [
+  ["command", "Command"], ["approvals", "Approvals"], ["agents", "Agents"],
+  ["departments", "Departments"], ["committees", "Committees"], ["governance", "Governance"],
+  ["portfolio", "Portfolio"], ["clients", "Clients"], ["tactical", "Tactical"], ["capital", "Capital"],
+  ["treasury", "Treasury"], ["research", "Research"], ["ideas", "Ideas"],
+  ["reports", "Reports"], ["arsenal", "Arsenal"], ["trading", "Trading"],
+  ["quant", "Quant"], ["risk", "Risk"], ["models", "Data & models"], ["system", "System"]
+] as const;
+
 function text(row: LiveRow, key: string, fallback = "-"): string {
   const value = row[key];
   return value === null || value === undefined || value === "" ? fallback : String(value);
@@ -29,6 +38,10 @@ export default function WorkspaceManager({ config, onChanged, onClose, workspace
     () => config.widgets.filter((item) => text(item, "workspace") === workspace),
     [config.widgets, workspace]
   );
+  const visibleWorkspaces = useMemo(() => {
+    const visible = config.profile.navigation?.visible;
+    return Array.isArray(visible) && visible.length ? visible.map(String) : workspaceOptions.map(([key]) => key);
+  }, [config.profile.navigation]);
 
   const saveProfile = async (patch: Record<string, unknown>) => {
     setBusy("profile");
@@ -56,6 +69,13 @@ export default function WorkspaceManager({ config, onChanged, onClose, workspace
     }
   };
 
+  const setWorkspaceVisible = async (key: string, checked: boolean) => {
+    const next = checked
+      ? Array.from(new Set([...visibleWorkspaces, key]))
+      : visibleWorkspaces.filter((item) => item !== key);
+    await saveProfile({ navigation: { visible: next } });
+  };
+
   return (
     <div className="workspace-manager-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <aside aria-label="Workspace manager" aria-modal="true" className="workspace-manager" role="dialog">
@@ -80,6 +100,9 @@ export default function WorkspaceManager({ config, onChanged, onClose, workspace
               </div>
             </div>
             {layout ? <div className="workspace-segment-row"><span>Columns</span><div className="segmented-control">{[1, 2, 3].map((count) => <button className={layout.column_count === count ? "active" : ""} disabled={busy === "profile"} key={count} onClick={() => void saveProfile({ column_count: count, workspace_key: workspace as CustomizableWorkspace })} type="button">{count}</button>)}</div></div> : null}
+            <div className="workspace-navigation-grid">
+              {workspaceOptions.map(([key, label]) => <label key={key}><input checked={visibleWorkspaces.includes(key)} disabled={busy === "profile" || key === workspace} onChange={(event) => void setWorkspaceVisible(key, event.target.checked)} type="checkbox"/><span>{label}</span></label>)}
+            </div>
           </section>
 
           <section>
@@ -89,6 +112,7 @@ export default function WorkspaceManager({ config, onChanged, onClose, workspace
                 const id = text(widget, "id");
                 const widgetLayout = (widget.layout && typeof widget.layout === "object" ? widget.layout : {}) as Record<string, unknown>;
                 const order = Number(widgetLayout.order ?? 100);
+                const size = String(widgetLayout.size ?? "standard");
                 const hidden = text(widget, "status", "active") === "hidden";
                 return (
                   <article key={id}>
@@ -97,6 +121,9 @@ export default function WorkspaceManager({ config, onChanged, onClose, workspace
                       <button aria-label="Move widget up" disabled={busy === `widget-${id}`} onClick={() => void saveWidget(widget, { order: Math.max(0, order - 10) })} title="Move up" type="button"><ArrowUp size={14} /></button>
                       <button aria-label="Move widget down" disabled={busy === `widget-${id}`} onClick={() => void saveWidget(widget, { order: order + 10 })} title="Move down" type="button"><ArrowDown size={14} /></button>
                       <button aria-label={hidden ? "Show widget" : "Hide widget"} disabled={busy === `widget-${id}`} onClick={() => void saveWidget(widget, { status: hidden ? "active" : "hidden" })} title={hidden ? "Show" : "Hide"} type="button">{hidden ? <Eye size={14} /> : <EyeOff size={14} />}</button>
+                    </div>
+                    <div className="workspace-widget-size segmented-control" aria-label={`${text(widget, "widget_title")} size`}>
+                      {["standard", "wide", "full"].map((option) => <button className={size === option ? "active" : ""} disabled={busy === `widget-${id}`} key={option} onClick={() => void saveWidget(widget, { size: option })} type="button">{option}</button>)}
                     </div>
                   </article>
                 );

@@ -7,6 +7,7 @@ export type CustomizableWorkspace =
   | "departments"
   | "portfolio"
   | "clients"
+  | "tactical"
   | "research"
   | "ideas"
   | "arsenal"
@@ -67,6 +68,7 @@ export interface WorkspaceConfig {
   profile: WorkspaceProfile;
   layouts: WorkspaceLayout[];
   widgets: LiveRow[];
+  widget_data: Record<string, LiveRow[]>;
   data_mode: { seed_data_allowed: boolean; source: string };
 }
 

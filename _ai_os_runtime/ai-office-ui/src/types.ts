@@ -11,6 +11,7 @@ export type WorkspaceId =
   | "governance"
   | "portfolio"
   | "clients"
+  | "tactical"
   | "research"
   | "ideas"
   | "arsenal"
@@ -45,8 +46,13 @@ export interface BriefLine {
 
 export interface InboxItem {
   id: string;
+  taskId?: string;
   title: string;
   agent: string;
+  claimedBy?: string;
+  claimedAt?: string;
+  resolvedBy?: string;
+  resolutionNote?: string;
   status: Status;
   priority: Severity;
   evidence: string[];

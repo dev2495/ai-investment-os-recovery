@@ -70,6 +70,9 @@ def main() -> int:
         "ai_os_fincept_install_status",
         "ai_os_ingest_research_paper",
         "ai_os_create_paper_strategy_hypotheses",
+        "ai_os_ingest_local_artifact",
+        "ai_os_local_artifact_ingestions",
+        "ai_os_legacy_source_resolution_board",
         "ai_os_workspace_terminal_config",
         "ai_os_update_workspace_terminal",
         "ai_os_update_workspace_widget",
@@ -109,6 +112,8 @@ def main() -> int:
         "model_assignment_completeness": parse_tool_content(call("tools/call", {"name": "ai_os_agent_model_assignment_completeness", "arguments": {"limit": 100}})),
         "market_data": parse_tool_content(call("tools/call", {"name": "ai_os_market_data_readiness", "arguments": {"limit": 10}})),
         "runtime_daemons": parse_tool_content(call("tools/call", {"name": "ai_os_runtime_daemon_health", "arguments": {}})),
+        "local_artifacts": parse_tool_content(call("tools/call", {"name": "ai_os_local_artifact_ingestions", "arguments": {"limit": 20}})),
+        "legacy_source_resolutions": parse_tool_content(call("tools/call", {"name": "ai_os_legacy_source_resolution_board", "arguments": {"limit": 100}})),
         "client_accounting": parse_tool_content(call("tools/call", {"name": "ai_os_client_accounting_run", "arguments": {"account_code": "p2cursor_account_2", "actor": "MCP smoke validation"}})),
     }
 
@@ -148,6 +153,13 @@ def main() -> int:
         "market_data_import_rows": len((checks["market_data"] or {}).get("imports", [])),
         "market_bias_control_rows": len((checks["market_data"] or {}).get("bias_controls", [])),
         "runtime_daemon_rows": len((checks["runtime_daemons"] or {}).get("runtime_daemons", [])),
+        "local_artifact_rows": len((checks["local_artifacts"] or {}).get("ingestions", [])),
+        "local_artifact_summary_metrics": len((checks["local_artifacts"] or {}).get("summary", [])),
+        "legacy_source_resolution_rows": len(checks["legacy_source_resolutions"] or []),
+        "legacy_source_unresolved_rows": sum(
+            row.get("readiness_status") in {"profiled_not_promoted", "partially_promoted"}
+            for row in (checks["legacy_source_resolutions"] or [])
+        ),
         "client_accounting_status": (checks["client_accounting"] or {}).get("status"),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))

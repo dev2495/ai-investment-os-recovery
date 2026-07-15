@@ -29,6 +29,7 @@ export interface SystemHealthSnapshot {
     latest_restore_drill: Record<string, unknown>;
     backup_schedule_installed: boolean;
     report_schedule_installed: boolean;
+    vault_bookmark_exists: boolean;
   };
   data_mode: {
     seed_data_allowed: boolean;
@@ -54,6 +55,7 @@ export interface SystemHealthSnapshot {
   connector_health_checks: LiveRow[];
   browser_session_checks: LiveRow[];
   execution_control: LiveRow[];
+  report_scheduler_health: LiveRow[];
   pipeline_readiness: LiveRow[];
 }
 

@@ -166,13 +166,24 @@ def compact(value: object, max_length: int = 180) -> str:
     return text if len(text) <= max_length else text[: max_length - 1] + "..."
 
 
+REPORT_FIELD_PRIORITY = (
+    "client_code", "display_name", "account_code", "symbol", "company_name",
+    "strategy_name", "strategy", "book_name", "direction", "quantity",
+    "market_price", "market_value", "unrealized_pnl", "realized_pnl",
+    "gross_exposure", "net_exposure", "confidence", "severity", "status",
+    "calculation_status", "as_of", "event_at", "created_at", "updated_at",
+)
+
+
 def render_rows(rows: list[dict[str, Any]]) -> list[str]:
     if not rows:
         return ["No warehouse-backed rows were returned for this section."]
     lines: list[str] = []
     for row in rows:
-        values = [(key.replace("_", " "), compact(value)) for key, value in row.items() if value not in (None, "", [], {})]
-        primary = values[:6]
+        populated = {key: value for key, value in row.items() if value not in (None, "", [], {})}
+        ordered_keys = [key for key in REPORT_FIELD_PRIORITY if key in populated]
+        ordered_keys.extend(key for key in populated if key not in ordered_keys)
+        primary = [(key.replace("_", " "), compact(populated[key])) for key in ordered_keys[:10]]
         lines.append("- " + " | ".join(f"**{key}:** {value}" for key, value in primary))
     return lines
 
@@ -218,14 +229,20 @@ def schedule_rows(report_key: str = "") -> list[dict[str, Any]]:
     return psql_json(f"SELECT * FROM ops.v_report_schedule_status {clause} ORDER BY report_key")
 
 
-def claim_run(schedule: dict[str, Any], period: str, force: bool, now: datetime) -> dict[str, Any] | None:
+def claim_run(schedule: dict[str, Any], period: str, force: bool, now: datetime, trigger_type: str) -> dict[str, Any] | None:
     effective_period = f"{period}-{now.strftime('%H%M%S')}" if force else period
     run_key = f"{schedule['report_key']}:{effective_period}"
     payload = psql_text(
         f"""
         WITH inserted AS (
-            INSERT INTO ops.report_runs (schedule_id, run_key, period_key, status, started_at)
-            VALUES ({int(schedule['id'])}, {sql_literal(run_key)}, {sql_literal(effective_period)}, 'running', now())
+            INSERT INTO ops.report_runs (
+                schedule_id, run_key, period_key, scheduled_period_key,
+                trigger_type, status, started_at
+            )
+            VALUES (
+                {int(schedule['id'])}, {sql_literal(run_key)}, {sql_literal(effective_period)},
+                {sql_literal(period)}, {sql_literal(trigger_type)}, 'running', now()
+            )
             ON CONFLICT DO NOTHING
             RETURNING id, run_key, period_key
         )
@@ -421,11 +438,11 @@ def run_monthly_client_report(schedule: dict[str, Any], run: dict[str, Any], now
     return {"report_key": schedule["report_key"], "status": "completed", **completed, "client_drafts": generated, "delivery_queues": queues}
 
 
-def run_report(schedule: dict[str, Any], force: bool, now: datetime) -> dict[str, Any]:
+def run_report(schedule: dict[str, Any], force: bool, now: datetime, trigger_type: str) -> dict[str, Any]:
     period = period_key(str(schedule["cadence"]), now)
     if not force and not schedule.get("due_now"):
         return {"report_key": schedule["report_key"], "status": "not_due", "period_key": period}
-    run = claim_run(schedule, period, force, now)
+    run = claim_run(schedule, period, force, now, trigger_type)
     if not run:
         return {"report_key": schedule["report_key"], "status": "already_claimed", "period_key": period}
     if schedule["report_key"] == "monthly_client_report":
@@ -464,6 +481,7 @@ def main() -> int:
     parser.add_argument("--report-key", default="")
     parser.add_argument("--all", action="store_true", help="Process every enabled schedule.")
     parser.add_argument("--force", action="store_true", help="Generate a new run even when the current period is complete.")
+    parser.add_argument("--trigger-type", choices=("launchd", "api", "operator", "test"), default="operator")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if not args.all and not args.report_key:
@@ -472,13 +490,49 @@ def main() -> int:
     schedules = schedule_rows(args.report_key)
     if args.report_key and not schedules:
         raise ValueError(f"unknown report key: {args.report_key}")
+    invocation_key = f"reports:{args.trigger_type}:{now.strftime('%Y%m%dT%H%M%S%f%z')}"
+    invocation_id = int(psql_text(
+        f"""
+        INSERT INTO ops.report_scheduler_invocations (
+            invocation_key, trigger_type, report_key, status, started_at
+        ) VALUES (
+            {sql_literal(invocation_key)}, {sql_literal(args.trigger_type)},
+            {sql_literal(args.report_key or None)}, 'running', now()
+        ) RETURNING id;
+        """
+    ))
     results: list[dict[str, Any]] = []
-    for schedule in schedules:
-        try:
-            results.append(run_report(schedule, args.force, now))
-        except (RuntimeError, OSError, urllib.error.URLError, json.JSONDecodeError) as error:
-            results.append({"report_key": schedule["report_key"], "status": "failed", "error": f"{type(error).__name__}: {error}"})
-    payload = {"generated_at": now.isoformat(timespec="seconds"), "count": len(results), "results": results}
+    try:
+        for schedule in schedules:
+            try:
+                results.append(run_report(schedule, args.force, now, args.trigger_type))
+            except (RuntimeError, OSError, urllib.error.URLError, json.JSONDecodeError) as error:
+                results.append({"report_key": schedule["report_key"], "status": "failed", "error": f"{type(error).__name__}: {error}"})
+        failed_count = sum(row["status"] == "failed" for row in results)
+        completed_count = sum(row["status"] == "completed" for row in results)
+        due_count = sum(row["status"] not in {"not_due", "already_claimed"} for row in results)
+        payload = {"generated_at": now.isoformat(timespec="seconds"), "count": len(results), "invocation_id": invocation_id, "results": results}
+        psql_text(
+            f"""
+            UPDATE ops.report_scheduler_invocations
+            SET status={sql_literal('failed' if failed_count else 'completed')},
+                due_count={due_count}, completed_count={completed_count}, failed_count={failed_count},
+                result={sql_jsonb(payload)},
+                error_message={sql_literal('one or more report runs failed' if failed_count else None)},
+                finished_at=now(), updated_at=now()
+            WHERE id={invocation_id};
+            """
+        )
+    except Exception as error:
+        psql_text(
+            f"""
+            UPDATE ops.report_scheduler_invocations
+            SET status='failed', error_message={sql_literal(f'{type(error).__name__}: {error}')},
+                result={sql_jsonb({'results': results})}, finished_at=now(), updated_at=now()
+            WHERE id={invocation_id};
+            """
+        )
+        raise
     print(json.dumps(payload, indent=2, default=str) if args.json else "\n".join(f"{row['report_key']}: {row['status']}" for row in results))
     return 1 if any(row["status"] == "failed" for row in results) else 0
 

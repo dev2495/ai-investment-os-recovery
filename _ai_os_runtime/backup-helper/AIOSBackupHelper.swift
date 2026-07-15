@@ -124,7 +124,7 @@ if arguments.contains("--scheduled-reports") {
     let python = fileManager.isExecutableFile(atPath: preferredPython) ? preferredPython : "/usr/bin/python3"
     let status = runChild(
         executable: python,
-        arguments: [reportScript, "--all", "--json"],
+        arguments: [reportScript, "--all", "--json", "--trigger-type", "launchd"],
         environment: childEnvironment,
         failureCode: 91
     )

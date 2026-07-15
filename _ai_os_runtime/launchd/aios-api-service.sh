@@ -9,6 +9,7 @@ export AI_OS_VAULT_ROOT="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memor
 export AI_OS_WORKER_SCRIPT="${AI_OS_WORKER_SCRIPT:-/Users/devarshthakkar/Library/Application Support/AIOS/service/scripts/run_agent_worker_once.py}"
 export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psql}"
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/usr/local/bin/docker}"
+export AI_OS_TRADINGVIEW_CDP_PORT="${AI_OS_TRADINGVIEW_CDP_PORT:-9333}"
 
 cd "/Users/devarshthakkar/Library/Application Support/AIOS/service"
 exec python3 -u api/ai_os_api_server.py

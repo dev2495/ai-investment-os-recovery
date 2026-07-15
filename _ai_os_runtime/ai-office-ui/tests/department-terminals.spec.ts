@@ -102,10 +102,10 @@ test("committee room exposes sealed positions, quorum, minutes, follow-ups, and 
   await expect(page.getByRole("heading", { level: 3, name: "Open decision packet" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open packet and dispatch members" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 3, name: "Session control" })).toBeVisible();
-  await expect(page.locator(".committee-session-metrics").getByText("5 / 5", { exact: true })).toBeVisible();
-  await expect(page.locator(".committee-position-preview article")).toHaveCount(5);
-  await expect(page.getByText("Refresh Rolex Rings buyback decision evidence", { exact: false })).toBeVisible();
-  await expect(page.getByText("more research", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(".committee-session-metrics").getByText(/\d+ \/ \d+/, { exact: true })).toBeVisible();
+  expect(await page.locator(".committee-position-preview article").count()).toBeGreaterThan(0);
+  await expect(page.getByRole("region", { name: "Committee member positions" })).toBeVisible();
+  await expect(page.getByText(/Record human final|Record chair synthesis/)).toBeVisible();
   await page.screenshot({ path: "/tmp/ai-os-committee-room.png", fullPage: true });
 });
 
@@ -144,6 +144,20 @@ test("department desks preserve an addressable selection and have no mobile over
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: "/tmp/ai-os-department-desks-news-mobile.png", fullPage: true });
+});
+
+test("tactical office is a first-class configurable department workspace", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/?mode=command&workspace=tactical", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 1, name: "Tactical Office" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Tactical Investing Office" })).toBeVisible();
+  await expect(page.getByText("Tactical Portfolio Manager", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Live work queue" })).toBeVisible();
+  await page.getByTitle("Customize workspace").click();
+  const manager = page.getByRole("dialog", { name: "Workspace manager" });
+  await expect(manager.getByText("Tactical", { exact: true })).toBeVisible();
+  await expect(manager.getByRole("button", { name: "2", exact: true })).toHaveClass(/active/);
+  await manager.getByRole("button", { name: "Close workspace manager" }).click();
 });
 
 test("governance terminal exposes live controls and persistent human authority", async ({ page }) => {

@@ -317,6 +317,14 @@ export interface CreateInboxItemInput {
   evidence?: unknown[];
 }
 
+export interface UpdateInboxItemInput {
+  inbox_id: string | number;
+  action: "claim" | "reassign" | "resolve" | "block" | "reopen";
+  actor?: string;
+  owner_agent?: string;
+  resolution_note?: string;
+}
+
 export interface CreateAgentMessageInput {
   from_agent?: string;
   to_agent: string;
@@ -1034,6 +1042,9 @@ export interface ChatInput {
   actor?: string;
   workspace?: string;
   route_name?: string;
+  deterministic_only?: boolean;
+  include_client_context?: boolean;
+  privacy_class?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -1053,12 +1064,14 @@ export interface ChatResponse {
 }
 
 const API_URL = (import.meta.env.VITE_AI_OS_API_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+const OPERATOR_TOKEN = String(import.meta.env.VITE_AI_OS_OPERATOR_TOKEN || "").trim();
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(OPERATOR_TOKEN ? { Authorization: `Bearer ${OPERATOR_TOKEN}` } : {}),
       ...(init?.headers ?? {})
     }
   });
@@ -1111,6 +1124,13 @@ export function resolveTradingViewTemplateApproval(input: ResolveTradingViewTemp
 
 export function createInboxItem(input: CreateInboxItemInput): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/inbox/items", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function updateInboxItem(input: UpdateInboxItemInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/inbox/items/update", {
     body: JSON.stringify(input),
     method: "POST"
   });
@@ -1745,7 +1765,8 @@ export function runLegacySourceReadiness(input: {
 export function sendChat(input: ChatInput): Promise<ChatResponse> {
   return requestJson<ChatResponse>("/api/chat", {
     body: JSON.stringify(input),
-    method: "POST"
+    method: "POST",
+    signal: AbortSignal.timeout(15_000)
   });
 }
 
@@ -1765,6 +1786,7 @@ export function runAgentWorker(input: {
   actor?: string;
   include_completed?: boolean;
   limit?: number;
+  task_id?: string | number;
 } = {}): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/agents/worker/run", {
     body: JSON.stringify(input),

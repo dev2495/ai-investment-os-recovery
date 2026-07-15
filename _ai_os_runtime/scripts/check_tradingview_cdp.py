@@ -16,7 +16,7 @@ from pathlib import Path
 SOURCE_KEY = "tradingview_mcp"
 PROFILE_KEY = "tradingview_desktop_cdp"
 CONNECTOR_KEY = "tradingview_mcp_connector"
-DEFAULT_PORT = 9222
+DEFAULT_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
 
 
 def sql_literal(value: object) -> str:
@@ -77,7 +77,7 @@ def store_check(
             )
             VALUES (
                 {sql_literal(SOURCE_KEY)},
-                'TradingView Desktop CDP controller',
+                'TradingView managed browser CDP controller',
                 'local_http',
                 {sql_literal(f'http://127.0.0.1:{port}/json/version')},
                 {sql_literal(status)},
@@ -121,7 +121,7 @@ def sync_browser_readiness(
         "status": browser_status,
         "remote_debugging_host": "127.0.0.1",
         "remote_debugging_port": port,
-        "browser_label": "TradingView Desktop",
+        "browser_label": "TradingView Managed Browser",
         "target_base_url": "https://www.tradingview.com",
         "error_message": error_message,
         "sample_payload": {**sample_payload, "checked_by": actor, "source": "check_tradingview_cdp"},
@@ -140,7 +140,7 @@ def sync_browser_readiness(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check TradingView Desktop CDP controller and record a data-source check.")
+    parser = argparse.ArgumentParser(description="Check the governed TradingView CDP controller and record a data-source check.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--timeout", type=float, default=3.0)
     parser.add_argument("--actor", default="Automation Engineer")

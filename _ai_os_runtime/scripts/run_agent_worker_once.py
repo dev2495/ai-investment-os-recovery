@@ -115,14 +115,23 @@ def psql_one(query: str) -> dict[str, Any]:
     return rows[0] if rows else {}
 
 
-def get_queue(limit: int, include_completed: bool) -> list[dict[str, Any]]:
-    completed_filter = "" if include_completed else "AND coalesce(latest_worker_status, '') <> 'completed'"
+def get_queue(limit: int, include_completed: bool, task_id: int | None = None) -> list[dict[str, Any]]:
+    completed_filter = (
+        ""
+        if include_completed
+        else "AND (source_kind='committee_packet_position' OR coalesce(latest_worker_status, '') <> 'completed')"
+    )
+    task_filter = f"AND task_id = {int(task_id)}" if task_id is not None else ""
     return psql_json(
         f"""
         SELECT *
         FROM agent.v_live_agent_worker_queue
-        WHERE task_status IN ('queued','in_progress','needs_review')
+        WHERE (
+            task_status IN ('queued','in_progress','needs_review')
+            OR (source_kind='committee_packet_position' AND task_status='blocked')
+        )
           {completed_filter}
+          {task_filter}
         ORDER BY
             CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
             CASE task_status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'needs_review' THEN 3 ELSE 4 END,
@@ -135,10 +144,25 @@ def get_queue(limit: int, include_completed: bool) -> list[dict[str, Any]]:
 def profile_for(agent_name: str) -> dict[str, Any]:
     return psql_one(
         f"""
-        SELECT agent_name, display_title, department_name, role_scope, persona,
-               operating_style, mental_models, primary_skills, cost_policy
-        FROM agent.v_active_agents
-        WHERE agent_name = {sql_literal(agent_name)}
+        SELECT active.agent_name, active.display_title, active.department,
+               active.department_name, active.role_scope, active.persona,
+               active.operating_style, active.mental_models, active.primary_skills,
+               active.cost_policy, active.default_model_route, active.default_tools,
+               active.permission_level, active.output_targets, active.guardrails,
+               active.escalation_rules, active.daily_cadence, active.human_interface,
+               assignment.primary_route, assignment.primary_model_key,
+               assignment.fallback_route, assignment.escalation_route,
+               assignment.context_policy, assignment.max_autonomous_cost_tier,
+               assignment.escalation_triggers,
+               primary_runtime.runtime_status AS primary_route_status,
+               fallback_runtime.runtime_status AS fallback_route_status
+        FROM agent.v_active_agents active
+        LEFT JOIN agent.agent_model_assignments assignment USING(agent_name)
+        LEFT JOIN agent.v_model_route_runtime_control primary_runtime
+          ON primary_runtime.route_name=assignment.primary_route
+        LEFT JOIN agent.v_model_route_runtime_control fallback_runtime
+          ON fallback_runtime.route_name=assignment.fallback_route
+        WHERE active.agent_name = {sql_literal(agent_name)}
         """
     )
 
@@ -189,7 +213,7 @@ def evaluate_task_provider_gates(task_id: object, actor: str = "Jarvis", context
     ).get("result") or {}
 
 
-def claim_task(task_id: object, actor: str = "Jarvis") -> dict[str, Any]:
+def claim_task(task_id: object, actor: str = "Jarvis", allow_committee_reclaim: bool = False) -> dict[str, Any]:
     try:
         numeric_task_id = int(task_id)
     except (TypeError, ValueError) as exc:
@@ -205,7 +229,14 @@ def claim_task(task_id: object, actor: str = "Jarvis") -> dict[str, Any]:
             )),
             updated_at = now()
         WHERE id = {numeric_task_id}
-          AND status = 'queued'
+          AND (
+              status = 'queued'
+              OR (
+                  {str(bool(allow_committee_reclaim)).lower()}
+                  AND source_kind='committee_packet_position'
+                  AND status IN ('needs_review','blocked')
+              )
+          )
         RETURNING id, status, updated_at
     )
     SELECT coalesce((SELECT row_to_json(claimed) FROM claimed), '{{}}'::json)::text;
@@ -237,6 +268,30 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
             "unread_messages": psql_one("SELECT count(*)::INT AS count FROM agent.agent_messages WHERE status = 'unread'"),
             "pending_messages": psql_one("SELECT count(*)::INT AS count FROM agent.agent_messages WHERE processing_status IN ('pending','failed_retry')"),
         }
+    if job and job.get("source_kind") == "committee_packet_position":
+        source_ref = str(job.get("source_ref") or "")
+        packet_id = source_ref.split(":", 1)[0]
+        if packet_id.isdigit():
+            base["committee_packet"] = psql_one(
+                f"""
+                SELECT id,packet_key,committee_key,committee_name,chair_agent,mandate,
+                       quorum,decision_options,human_final_required,committee_item_key,
+                       source_view,source_id,title,decision_question,packet_status,
+                       evidence,metadata,due_at,opened_by,opened_at,counted_positions
+                FROM agent.v_committee_packet_control
+                WHERE id={int(packet_id)}
+                """
+            )
+            base["committee_mandate"] = psql_one(
+                f"""
+                SELECT membership.committee_role,membership.vote_type,
+                       membership.challenge_mandate,membership.required
+                FROM agent.committee_memberships membership
+                JOIN agent.committee_packets packet USING(committee_key)
+                WHERE packet.id={int(packet_id)}
+                  AND membership.agent_name={sql_literal(str(job.get('owner_agent') or ''))}
+                """
+            )
     if skill_key == "portfolio_snapshot_review" or widget_key == "portfolio_latest_positions":
         base["portfolio"] = psql_one(
             """
@@ -306,12 +361,214 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
     return base
 
 
+def execution_envelope_for(profile: dict[str, Any], skill: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mode": "deterministic_evidence_worker",
+        "model_invocation": "deferred_until_model_stack",
+        "primary_route": profile.get("primary_route") or profile.get("default_model_route"),
+        "primary_route_status": profile.get("primary_route_status"),
+        "fallback_route": profile.get("fallback_route"),
+        "fallback_route_status": profile.get("fallback_route_status"),
+        "escalation_route": profile.get("escalation_route"),
+        "permission_level": profile.get("permission_level"),
+        "tools": profile.get("default_tools") or [],
+        "skills": profile.get("primary_skills") or [],
+        "required_tools": skill.get("required_tools") or [],
+        "guardrails": profile.get("guardrails") or {},
+        "human_interface": profile.get("human_interface"),
+        "evidence_policy": "warehouse_and_source_references_only",
+        "capital_action_allowed": False,
+        "live_execution_allowed": False,
+    }
+
+
+def committee_position_for(
+    job: dict[str, Any], profile: dict[str, Any], context: dict[str, Any]
+) -> dict[str, Any]:
+    packet = context.get("committee_packet") or {}
+    mandate = context.get("committee_mandate") or {}
+    options = [str(option) for option in (packet.get("decision_options") or [])]
+    if not packet or not options:
+        raise ValueError("committee packet context or decision options are missing")
+
+    role_text = " ".join(
+        str(value or "")
+        for value in (
+            profile.get("agent_name"),
+            profile.get("display_title"),
+            mandate.get("committee_role"),
+            mandate.get("vote_type"),
+            mandate.get("challenge_mandate"),
+        )
+    ).lower()
+    defensive_role = any(
+        token in role_text
+        for token in ("risk", "bear", "compliance", "validation", "quality", "kill switch", "forensic", "veto")
+    )
+    preferred = (
+        ["request_evidence", "more_research", "revise", "paper_only", "paper_monitor", "paper_trade", "watchlist", "defer", "reject", "block"]
+        if defensive_role
+        else ["paper_monitor", "more_research", "watchlist", "conditional", "revise", "paper_trade", "defer"]
+    )
+    recommendation = next((option for option in preferred if option in options), options[0])
+    evidence = packet.get("evidence") if isinstance(packet.get("evidence"), list) else []
+    stance = "request_more_evidence" if defensive_role else "conditional"
+    confidence = 82 if defensive_role else 72
+    challenge = str(mandate.get("challenge_mandate") or "independent evidence and opportunity cost")
+    thesis = (
+        f"{profile.get('agent_name')} independently reviewed '{packet.get('title')}' under the "
+        f"{mandate.get('committee_role', 'member')} mandate. The current bounded packet supports "
+        f"a {recommendation} recommendation, conditional on resolving {challenge.lower()}. "
+        f"This is a deterministic evidence-stage position; no model-generated facts or capital action were used."
+    )
+    conditions = [
+        {"condition": "Verify every material claim against the packet source and current warehouse data."},
+        {"condition": f"Resolve role challenge mandate: {challenge}."},
+        {"condition": "Keep broker execution and capital allocation blocked until the human-final decision."},
+    ]
+    return {
+        "packet_id": int(packet["id"]),
+        "agent_name": str(profile.get("agent_name") or job.get("owner_agent")),
+        "stance": stance,
+        "recommendation": recommendation,
+        "confidence": confidence,
+        "thesis": thesis,
+        "evidence": evidence + [
+            {
+                "source": "agent.committee_memberships",
+                "agent_name": profile.get("agent_name"),
+                "challenge_mandate": challenge,
+            },
+            {"source": "agent.worker_runs", "mode": "deterministic_evidence_worker"},
+        ],
+        "conditions": conditions,
+    }
+
+
+def submit_committee_position(position: dict[str, Any]) -> dict[str, Any]:
+    return psql_one(
+        f"""
+        SELECT agent.submit_committee_position(
+            {int(position['packet_id'])},
+            {sql_literal(position['agent_name'])},
+            {sql_literal(position['stance'])},
+            {sql_literal(position['recommendation'])},
+            {float(position['confidence'])},
+            {sql_literal(position['thesis'])},
+            {sql_jsonb(position['evidence'])},
+            {sql_jsonb(position['conditions'])}
+        ) AS result
+        """
+    ).get("result") or {}
+
+
+def advance_committee_after_all_positions(packet_id: int) -> dict[str, Any]:
+    packet = psql_one(
+        f"SELECT * FROM agent.v_committee_packet_control WHERE id={int(packet_id)}"
+    )
+    if packet.get("packet_status") != "deliberating":
+        return {"status": packet.get("packet_status"), "advanced": False}
+    required = psql_one(
+        f"""
+        SELECT count(*)::int AS required_count,
+               count(position.id)::int AS submitted_count
+        FROM agent.committee_packets packet
+        JOIN agent.committee_memberships membership
+          ON membership.committee_key=packet.committee_key AND membership.required
+        LEFT JOIN agent.committee_positions position
+          ON position.packet_id=packet.id AND position.agent_name=membership.agent_name
+        WHERE packet.id={int(packet_id)}
+        """
+    )
+    if int(required.get("submitted_count") or 0) < int(required.get("required_count") or 0):
+        return {"status": "deliberating", "advanced": False, **required}
+
+    positions = psql_json(
+        f"""
+        SELECT position.id,position.agent_name,position.stance,position.recommendation,
+               position.confidence,position.thesis,position.conditions,
+               membership.vote_type,membership.challenge_mandate
+        FROM agent.committee_positions position
+        JOIN agent.committee_packets packet ON packet.id=position.packet_id
+        JOIN agent.committee_memberships membership
+          ON membership.committee_key=packet.committee_key AND membership.agent_name=position.agent_name
+        WHERE position.packet_id={int(packet_id)}
+        ORDER BY position.submitted_at,position.id
+        """
+    )
+    for position in positions:
+        existing = psql_one(
+            f"""
+            SELECT id FROM agent.committee_discussion_messages
+            WHERE packet_id={int(packet_id)} AND from_agent={sql_literal(position['agent_name'])}
+            LIMIT 1
+            """
+        )
+        if existing:
+            continue
+        message_type = "risk_objection" if position.get("stance") in {"block", "request_more_evidence", "oppose"} else "challenge"
+        body = (
+            f"Post-quorum challenge from {position['agent_name']}: test the recommendation "
+            f"'{position['recommendation']}' against {str(position.get('challenge_mandate') or 'the strongest disconfirming evidence').lower()}. "
+            "No peer position changes the original sealed stance without new cited evidence."
+        )
+        psql_one(
+            f"""
+            SELECT agent.add_committee_discussion(
+                {int(packet_id)},{sql_literal(position['agent_name'])},{sql_literal(message_type)},
+                {sql_literal(body)},{int(position['id'])},
+                {sql_jsonb([{'source': 'agent.committee_positions', 'position_id': position['id']}])}
+            ) AS result
+            """
+        )
+
+    voting = [position for position in positions if position.get("vote_type") != "non_voting"]
+    counts: dict[str, int] = {}
+    for position in voting:
+        recommendation = str(position.get("recommendation") or "")
+        counts[recommendation] = counts.get(recommendation, 0) + 1
+    recommendation = sorted(counts, key=lambda value: (-counts[value], value))[0]
+    dissent = [
+        f"{position['agent_name']}: {position['recommendation']} ({position['stance']})"
+        for position in voting
+        if position.get("recommendation") != recommendation
+    ]
+    minutes = "\n".join(
+        [
+            f"Committee packet {packet.get('packet_key')} completed sealed independent collection and post-quorum challenge.",
+            f"Recommendation tally: {json.dumps(counts, sort_keys=True)}.",
+            f"Synthesized recommendation: {recommendation}.",
+            "All capital, client-facing, and broker actions remain blocked pending Devarsh's human-final decision.",
+        ]
+    )
+    result = psql_one(
+        f"""
+        SELECT agent.synthesize_committee_session(
+            {int(packet_id)},{sql_literal(packet['chair_agent'])},{sql_literal(recommendation)},
+            {sql_literal(minutes)},{sql_literal('; '.join(dissent) if dissent else 'No recommendation dissent recorded.')},
+            {sql_jsonb([{'condition': 'Human-final decision by Devarsh is required before any external or capital action.'}])}
+        ) AS result
+        """
+    ).get("result") or {}
+    return {"status": result.get("packet_status"), "advanced": True, "packet": result}
+
+
 def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any]) -> tuple[str, list[str]]:
     skill_key = str(skill.get("skill_key") or job.get("suggested_skill_key") or "refresh_dashboard_widget")
     lines: list[str] = []
     next_actions: list[str] = []
 
-    if job.get("source_kind") == "agent_message":
+    if job.get("source_kind") == "committee_packet_position":
+        position = committee_position_for(job, profile, context)
+        packet = context.get("committee_packet") or {}
+        lines.append(
+            f"Prepared a sealed independent {position['stance']} position for {packet.get('committee_name')} "
+            f"with recommendation {position['recommendation']} and confidence {position['confidence']}%."
+        )
+        lines.append(position["thesis"])
+        next_actions.append("Submit the position, wait for every required member, then open post-quorum challenge and chair synthesis.")
+        next_actions.append("Require Devarsh's human-final decision before capital, client-facing, or broker action.")
+    elif job.get("source_kind") == "agent_message":
         message = context.get("agent_message", {})
         lines.append(
             f"Processed internal message '{message.get('subject', job.get('title'))}' "
@@ -372,8 +629,31 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         )
         next_actions.append("Run the worker on a schedule after manual run outputs are reviewed.")
     else:
-        lines.append(f"{profile.get('agent_name', job.get('owner_agent'))} processed the dashboard job using {skill.get('skill_name', skill_key)}.")
-        next_actions.append("Review the output and assign a more specific skill if needed.")
+        department = str(profile.get("department_name") or profile.get("department") or "operations").lower()
+        objective = str(job.get("objective") or job.get("title") or "governed work")[:320]
+        source = f"{job.get('source_kind') or 'task'}:{job.get('source_ref') or job.get('task_id')}"
+        family_guidance = {
+            "research": "separated sourced evidence, interpretation, disconfirming evidence, and unresolved questions",
+            "quant": "framed a falsifiable hypothesis with data lineage, costs, leakage controls, and out-of-sample validation",
+            "portfolio": "checked book purpose, horizon, gross/net exposure, concentration, liquidity, and client mandate",
+            "risk": "tested limits, tail scenarios, data quality, model risk, and kill-switch implications",
+            "trading": "kept order intent, execution evidence, costs, and post-trade attribution separate from investment thesis",
+            "data": "checked provenance, schema, freshness, reconciliation, licensing, and quarantine boundaries",
+            "engineering": "bounded the change, verification evidence, rollback path, and production safety controls",
+            "knowledge": "preserved citations, entity links, provenance, and the durable Obsidian output path",
+            "client": "checked account scope, suitability, privacy, reconciliation, approval, and communication controls",
+            "treasury": "checked cash, collateral, liquidity, counterparty, currency, and funding constraints",
+            "executive": "framed opportunity cost, decision owner, dissent, approval boundary, and next accountable action",
+        }
+        guidance = next((value for key, value in family_guidance.items() if key in department), None)
+        if guidance is None:
+            guidance = "checked source evidence, ownership, dependencies, approval boundaries, and next accountable action"
+        lines.append(
+            f"{profile.get('agent_name', job.get('owner_agent'))} triaged '{objective}' using "
+            f"{skill.get('skill_name', skill_key)} and {guidance}."
+        )
+        lines.append(f"Bounded source: {source}. Model invocation is deferred; this run records deterministic operating evidence only.")
+        next_actions.append("Review unresolved evidence gaps and route any specialized analysis through the assigned department skill.")
 
     lines.append(f"Agent stance: {profile.get('display_title') or profile.get('agent_name')} uses {profile.get('cost_policy', 'local_first')} routing.")
     return " ".join(lines), next_actions
@@ -404,6 +684,8 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
         f"Skill: {skill.get('skill_name', job.get('suggested_skill_key'))}",
         f"Widget: {job.get('widget_key')} - {job.get('widget_title')}",
         f"Task status before run: {job.get('task_status')}",
+        f"Execution mode: {(context.get('execution_envelope') or {}).get('mode', 'deterministic_evidence_worker')}",
+        f"Model invocation: {(context.get('execution_envelope') or {}).get('model_invocation', 'deferred_until_model_stack')}",
         "",
         "## Output",
         "",
@@ -556,8 +838,8 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
     )
 
 
-def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
-    jobs = get_queue(limit, include_completed)
+def run_once(limit: int, include_completed: bool, task_id: int | None = None) -> dict[str, Any]:
+    jobs = get_queue(limit, include_completed, task_id)
     results: list[dict[str, Any]] = []
     for job in jobs:
         skill_key = str(job.get("suggested_skill_key") or "refresh_dashboard_widget")
@@ -570,7 +852,11 @@ def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
             profile = profile_for(str(job.get("owner_agent") or "Jarvis"))
         if not profile:
             profile = profile_for("Jarvis")
-        claim = claim_task(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
+        claim = claim_task(
+            job.get("task_id"),
+            str(profile.get("agent_name") or "Jarvis"),
+            job.get("source_kind") == "committee_packet_position",
+        )
         if not claim:
             results.append(
                 {
@@ -586,7 +872,15 @@ def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
             )
             continue
         try:
-            gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
+            if job.get("source_kind") == "committee_packet_position":
+                gate_result = {
+                    "overall_status": "passed",
+                    "next_task_status": "in_progress",
+                    "gate_ids": [],
+                    "reason": "deterministic sealed position; no model or external provider invocation",
+                }
+            else:
+                gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             if gate_result.get("overall_status") != "passed":
                 results.append(
                     {
@@ -603,9 +897,22 @@ def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
                 )
                 continue
             context = context_for(skill_key, job.get("widget_key"), job)
+            context["execution_envelope"] = execution_envelope_for(profile, skill)
             summary, next_actions = summary_for(job, profile, skill, context)
             note_path = write_note(job, profile, skill, context, summary, next_actions)
             completed = complete_job(job, profile, skill, context, summary, note_path)
+            committee_result: dict[str, Any] | None = None
+            if job.get("source_kind") == "committee_packet_position":
+                position = committee_position_for(job, profile, context)
+                submitted = submit_committee_position(position)
+                committee_result = {
+                    "position": submitted,
+                    "deliberation": advance_committee_after_all_positions(int(position["packet_id"])),
+                }
+                current_task = psql_one(
+                    f"SELECT id,status,output_note_path,updated_at FROM agent.tasks WHERE id={int(job.get('task_id'))}"
+                )
+                completed["task"] = current_task
             results.append(
                 {
                     "task_id": job.get("task_id"),
@@ -615,6 +922,7 @@ def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
                     "output_note_path": completed.get("worker_run", {}).get("output_note_path"),
                     "worker_run_id": completed.get("worker_run", {}).get("id"),
                     "task_status": completed.get("task", {}).get("status"),
+                    "committee": committee_result,
                 }
             )
         except Exception as exc:
@@ -642,10 +950,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run one bounded AI OS agent worker pass.")
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--include-completed", action="store_true")
+    parser.add_argument("--task-id", type=int)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    result = run_once(max(1, args.limit), args.include_completed)
+    result = run_once(max(1, args.limit), args.include_completed, args.task_id)
     if args.json:
         print(json.dumps(result, indent=2, default=str))
     else:

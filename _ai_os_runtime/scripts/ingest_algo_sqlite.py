@@ -173,6 +173,8 @@ def copy_rows(
 
 
 def import_small_tables() -> dict:
+    app_hash = file_sha256(APP_DB)
+    prices_hash = file_sha256(PRICES_DB)
     app_accounts = sqlite_rows(APP_DB, "accounts")
     app_holdings = sqlite_rows(APP_DB, "holdings")
     app_snapshots = sqlite_rows(APP_DB, "portfolio_snapshots")
@@ -182,8 +184,11 @@ def import_small_tables() -> dict:
     app_signals = sqlite_rows(APP_DB, "tradingview_signals")
     app_ideas = sqlite_rows(APP_DB, "ideas")
     app_watchlist = sqlite_rows(APP_DB, "watchlist")
+    app_agent_events = sqlite_rows(APP_DB, "agent_events")
+    app_cashflows = sqlite_rows(APP_DB, "cashflows")
     backtests = sqlite_rows(PRICES_DB, "backtest_runs")
     regimes = sqlite_rows(PRICES_DB, "regime_runs")
+    live_signals = sqlite_rows(PRICES_DB, "live_signals")
     token_map = sqlite_rows(PRICES_DB, "token_map")
 
     statements = ["BEGIN;"]
@@ -558,6 +563,173 @@ ON CONFLICT (source_kind, source_ref) DO UPDATE SET
 """
         )
 
+    for row in app_agent_events:
+        payload = {**row, "__source_table": "app.agent_events"}
+        statements.append(
+            f"""
+WITH source_lookup AS (
+    SELECT id FROM core.source_systems WHERE name = 'algo app db'
+),
+artifact_lookup AS (
+    SELECT id FROM core.raw_artifacts
+    WHERE title = 'app.db'
+      AND content_hash = {sql_quote(app_hash)}
+    ORDER BY id DESC
+    LIMIT 1
+)
+INSERT INTO agent.legacy_activity_events (
+    source_system_id, source_artifact_id, legacy_id, event_ts, event_kind,
+    title, body, severity, source_payload, production_authority
+)
+SELECT
+    source_lookup.id, artifact_lookup.id, {sql_quote(row.get("id"))}::bigint,
+    {sql_quote(row.get("ts"))}::timestamptz, {sql_quote(row.get("kind"))},
+    {sql_quote(row.get("title"))}, {sql_quote(row.get("body"))},
+    coalesce({sql_quote(row.get("severity"))}, 'info'), {jsonb_quote(payload)}, false
+FROM source_lookup
+LEFT JOIN artifact_lookup ON true
+ON CONFLICT (source_system_id, legacy_id) DO UPDATE SET
+    source_artifact_id = EXCLUDED.source_artifact_id,
+    event_ts = EXCLUDED.event_ts,
+    event_kind = EXCLUDED.event_kind,
+    title = EXCLUDED.title,
+    body = EXCLUDED.body,
+    severity = EXCLUDED.severity,
+    source_payload = EXCLUDED.source_payload,
+    production_authority = false;
+"""
+        )
+
+    account_codes = {row.get("id"): row.get("code") for row in app_accounts}
+    for row in app_cashflows:
+        account_code = account_codes.get(row.get("account_id"))
+        mapping_status = "demo_excluded" if account_code == "demo" else "archived"
+        payload = {**row, "__source_table": "app.cashflows"}
+        statements.append(
+            f"""
+WITH source_lookup AS (
+    SELECT id FROM core.source_systems WHERE name = 'algo app db'
+),
+artifact_lookup AS (
+    SELECT id FROM core.raw_artifacts
+    WHERE title = 'app.db'
+      AND content_hash = {sql_quote(app_hash)}
+    ORDER BY id DESC
+    LIMIT 1
+)
+INSERT INTO portfolio.legacy_cashflows (
+    source_system_id, source_artifact_id, legacy_id, legacy_account_id,
+    account_code, cashflow_ts, cashflow_kind, amount, notes, symbol,
+    source_payload, production_authority, mapping_status
+)
+SELECT
+    source_lookup.id, artifact_lookup.id, {sql_quote(row.get("id"))}::bigint,
+    {sql_quote(row.get("account_id"))}::bigint, {sql_quote(account_code)},
+    {sql_quote(row.get("ts"))}::timestamptz, {sql_quote(row.get("kind"))},
+    {sql_quote(row.get("amount"))}::numeric, {sql_quote(row.get("notes"))},
+    {sql_quote(row.get("symbol"))}, {jsonb_quote(payload)}, false,
+    {sql_quote(mapping_status)}
+FROM source_lookup
+LEFT JOIN artifact_lookup ON true
+ON CONFLICT (source_system_id, legacy_id) DO UPDATE SET
+    source_artifact_id = EXCLUDED.source_artifact_id,
+    legacy_account_id = EXCLUDED.legacy_account_id,
+    account_code = EXCLUDED.account_code,
+    cashflow_ts = EXCLUDED.cashflow_ts,
+    cashflow_kind = EXCLUDED.cashflow_kind,
+    amount = EXCLUDED.amount,
+    notes = EXCLUDED.notes,
+    symbol = EXCLUDED.symbol,
+    source_payload = EXCLUDED.source_payload,
+    production_authority = false,
+    mapping_status = EXCLUDED.mapping_status;
+"""
+        )
+
+    for row in live_signals:
+        payload = parse_json_maybe(row.get("payload_json"))
+        if not isinstance(payload, dict):
+            payload = {"raw_payload": payload}
+        payload["__source_table"] = "prices.live_signals"
+        risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
+        regime = payload.get("regime") if isinstance(payload.get("regime"), dict) else {}
+        statements.append(
+            f"""
+WITH source_lookup AS (
+    SELECT id FROM core.source_systems WHERE name = 'algo prices db'
+),
+artifact_lookup AS (
+    SELECT id FROM core.raw_artifacts
+    WHERE title = 'prices.db'
+      AND content_hash = {sql_quote(prices_hash)}
+    ORDER BY id DESC
+    LIMIT 1
+)
+INSERT INTO strategy.legacy_signal_snapshots (
+    source_system_id, source_artifact_id, legacy_id, as_of, run_at,
+    strategy_name, deploy_now, regime_state, risk_off, holding_count,
+    payload, research_only, execution_allowed
+)
+SELECT
+    source_lookup.id, artifact_lookup.id, {sql_quote(row.get("id"))}::bigint,
+    {sql_quote(row.get("as_of"))}::date, {sql_quote(row.get("run_at"))}::timestamptz,
+    {sql_quote(payload.get("strategy"))}, {sql_quote(payload.get("deploy_now"))}::boolean,
+    {sql_quote(regime.get("state"))}, {sql_quote(risk.get("risk_off"))}::boolean,
+    {sql_quote(payload.get("n_holdings"))}::integer, {jsonb_quote(payload)}, true, false
+FROM source_lookup
+LEFT JOIN artifact_lookup ON true
+ON CONFLICT (source_system_id, legacy_id) DO UPDATE SET
+    source_artifact_id = EXCLUDED.source_artifact_id,
+    as_of = EXCLUDED.as_of,
+    run_at = EXCLUDED.run_at,
+    strategy_name = EXCLUDED.strategy_name,
+    deploy_now = EXCLUDED.deploy_now,
+    regime_state = EXCLUDED.regime_state,
+    risk_off = EXCLUDED.risk_off,
+    holding_count = EXCLUDED.holding_count,
+    payload = EXCLUDED.payload,
+    research_only = true,
+    execution_allowed = false;
+"""
+        )
+
+    for row in token_map:
+        payload = {**row, "__source_table": "prices.token_map"}
+        statements.append(
+            f"""
+WITH source_lookup AS (
+    SELECT id FROM core.source_systems WHERE name = 'algo prices db'
+),
+artifact_lookup AS (
+    SELECT id FROM core.raw_artifacts
+    WHERE title = 'prices.db'
+      AND content_hash = {sql_quote(prices_hash)}
+    ORDER BY id DESC
+    LIMIT 1
+)
+INSERT INTO trading.legacy_token_map (
+    source_system_id, source_artifact_id, legacy_id, symbol,
+    instrument_token, tradingsymbol, exchange, instrument_type,
+    source_payload, production_authority
+)
+SELECT
+    source_lookup.id, artifact_lookup.id, {sql_quote(row.get("token"))}::bigint,
+    upper({sql_quote(row.get("symbol"))}), {sql_quote(row.get("token"))},
+    upper({sql_quote(row.get("symbol"))}), 'NSE', 'equity', {jsonb_quote(payload)}, false
+FROM source_lookup
+LEFT JOIN artifact_lookup ON true
+ON CONFLICT (source_system_id, legacy_id) DO UPDATE SET
+    source_artifact_id = EXCLUDED.source_artifact_id,
+    symbol = EXCLUDED.symbol,
+    instrument_token = EXCLUDED.instrument_token,
+    tradingsymbol = EXCLUDED.tradingsymbol,
+    exchange = EXCLUDED.exchange,
+    instrument_type = EXCLUDED.instrument_type,
+    source_payload = EXCLUDED.source_payload,
+    production_authority = false;
+"""
+        )
+
     def backtest_statement(row: dict, source_table: str) -> str:
         strategy_name = row.get("strategy") or f"legacy_{source_table}"
         external_ref = f"algo_{source_table}:{row.get('id')}"
@@ -641,6 +813,7 @@ ON CONFLICT (source_system_id, external_ref) DO UPDATE SET
     for row in regimes:
         statements.append(backtest_statement(row, "regime_runs"))
 
+    statements.append("SELECT core.refresh_legacy_source_profile_statuses();")
     statements.append("COMMIT;")
     run_psql("\n".join(statements))
 
@@ -654,8 +827,11 @@ ON CONFLICT (source_system_id, external_ref) DO UPDATE SET
         "tradingview_signals": len(app_signals),
         "ideas": len(app_ideas),
         "watchlist": len(app_watchlist),
+        "agent_events": len(app_agent_events),
+        "cashflows": len(app_cashflows),
         "backtest_runs": len(backtests),
         "regime_runs": len(regimes),
+        "live_signals": len(live_signals),
         "token_map": len(token_map),
     }
 

@@ -475,15 +475,19 @@ def legacy_source_readiness(arguments: dict) -> dict:
             "algo_tables": run_psql_json(
                 f"""
                 SELECT source_system, database_path, table_name, source_rows,
-                       imported_rows, readiness_status, source_value,
-                       recommended_action
+                       imported_rows, deduplicated_rows, rejected_rows,
+                       resolved_rows, readiness_status, resolution_mode,
+                       canonical_relation, source_value, recommended_action,
+                       resolution_evidence
                 FROM core.v_algo_extraction_readiness
                 ORDER BY
                     CASE readiness_status
                         WHEN 'profiled_not_promoted' THEN 1
                         WHEN 'partially_promoted' THEN 2
-                        WHEN 'promoted' THEN 3
-                        ELSE 4
+                        WHEN 'archived_governed' THEN 3
+                        WHEN 'promoted_deduplicated' THEN 4
+                        WHEN 'promoted' THEN 5
+                        ELSE 6
                     END,
                     CASE source_value WHEN 'high_value' THEN 1 ELSE 2 END,
                     source_rows DESC NULLS LAST,
@@ -501,6 +505,34 @@ def legacy_source_readiness(arguments: dict) -> dict:
                 """
             ),
         }
+    )
+
+
+def legacy_source_resolution_board(arguments: dict) -> dict:
+    limit = max(1, min(int(arguments.get("limit") or 100), 250))
+    return tool_result(
+        run_psql_json(
+            f"""
+            SELECT source_system, database_path, table_name, source_rows,
+                   imported_rows, deduplicated_rows, rejected_rows, resolved_rows,
+                   resolution_mode, canonical_relation, readiness_status,
+                   source_value, recommended_action, resolution_evidence
+            FROM core.v_algo_extraction_readiness
+            ORDER BY
+                CASE readiness_status
+                    WHEN 'profiled_not_promoted' THEN 1
+                    WHEN 'partially_promoted' THEN 2
+                    WHEN 'archived_governed' THEN 3
+                    WHEN 'promoted_deduplicated' THEN 4
+                    WHEN 'promoted' THEN 5
+                    ELSE 6
+                END,
+                source_rows DESC NULLS LAST,
+                source_system,
+                table_name
+            LIMIT {limit}
+            """
+        )
     )
 
 
@@ -2200,27 +2232,66 @@ def update_inbox_status(arguments: dict) -> dict:
         inbox_id = int(arguments.get("inbox_id"))
     except (TypeError, ValueError) as exc:
         raise ValueError("inbox_id is required and must be an integer") from exc
-    status = required_text(arguments, "status")
-    recommended_action = str(arguments.get("recommended_action") or "").strip() or None
+    action = str(arguments.get("action") or "").strip().lower()
+    legacy_status = str(arguments.get("status") or "").strip().lower()
+    if not action and legacy_status:
+        action = {
+            "done": "resolve", "resolved": "resolve", "completed": "resolve",
+            "blocked": "block", "queued": "reopen", "new": "reopen",
+            "in_progress": "claim", "running": "claim",
+        }.get(legacy_status, "")
+    if action not in {"claim", "reassign", "resolve", "block", "reopen"}:
+        raise ValueError("action must be claim, reassign, resolve, block, or reopen")
+    new_owner = str(arguments.get("owner_agent") or "").strip()
+    if action == "reassign" and not new_owner:
+        raise ValueError("owner_agent is required for reassign")
+    if new_owner and not run_psql_json(
+        f"SELECT agent_name FROM agent.profiles WHERE status='active' AND agent_name={sql_literal(new_owner)} LIMIT 1"
+    ):
+        raise ValueError(f"active agent not found: {new_owner}")
+    note = str(arguments.get("resolution_note") or arguments.get("recommended_action") or "").strip()
     actor = str(arguments.get("actor") or "Jarvis").strip()
+    status = {"claim": "in_progress", "reassign": "queued", "resolve": "done", "block": "blocked", "reopen": "queued"}[action]
+    task_status = {"claim": "in_progress", "reassign": "queued", "resolve": "completed", "block": "blocked", "reopen": "queued"}[action]
+    audit_evidence = [{"source": "ai_os_mcp.update_inbox_status", "action": action, "actor": actor, "owner_agent": new_owner or None, "note": note or None}]
     rows = run_psql_json_statement(
         f"""
         WITH updated AS (
-            UPDATE agent.inbox_items
+            UPDATE agent.inbox_items item
             SET status = {sql_literal(status)},
-                recommended_action = coalesce({sql_literal(recommended_action)}, recommended_action),
+                owner_agent = CASE WHEN {sql_literal(action)}='reassign' THEN {sql_literal(new_owner)} ELSE item.owner_agent END,
+                claimed_by = CASE WHEN {sql_literal(action)}='claim' THEN {sql_literal(actor)} WHEN {sql_literal(action)} IN ('reassign','reopen') THEN NULL ELSE item.claimed_by END,
+                claimed_at = CASE WHEN {sql_literal(action)}='claim' THEN now() WHEN {sql_literal(action)} IN ('reassign','reopen') THEN NULL ELSE item.claimed_at END,
+                resolved_by = CASE WHEN {sql_literal(action)}='resolve' THEN {sql_literal(actor)} WHEN {sql_literal(action)}='reopen' THEN NULL ELSE item.resolved_by END,
+                resolved_at = CASE WHEN {sql_literal(action)}='resolve' THEN now() WHEN {sql_literal(action)}='reopen' THEN NULL ELSE item.resolved_at END,
+                resolution_note = CASE WHEN {sql_literal(action)} IN ('resolve','block') THEN {sql_literal(note or action)} WHEN {sql_literal(action)}='reopen' THEN NULL ELSE item.resolution_note END,
+                recommended_action = CASE
+                    WHEN {sql_literal(action)}='resolve' THEN 'Resolved; inspect linked evidence before reopening.'
+                    WHEN {sql_literal(action)}='block' THEN 'Blocked pending evidence or dependency resolution.'
+                    WHEN {sql_literal(action)}='reassign' THEN 'Reassigned to the accountable specialist.'
+                    WHEN {sql_literal(action)}='claim' THEN 'Claimed for active work.'
+                    ELSE 'Reopened for accountable review.' END,
+                evidence = coalesce(item.evidence,'[]'::jsonb) || {sql_jsonb(audit_evidence)},
                 updated_at = now()
             WHERE id = {inbox_id}
-            RETURNING id, task_id, title, owner_agent, status, priority, recommended_action, target_workspace, updated_at
+            RETURNING item.*
+        ), updated_task AS (
+            UPDATE agent.tasks task
+            SET status={sql_literal(task_status)},
+                owner_agent=CASE WHEN {sql_literal(action)}='reassign' THEN {sql_literal(new_owner)} ELSE task.owner_agent END,
+                evidence=coalesce(task.evidence,'[]'::jsonb) || {sql_jsonb(audit_evidence)},
+                updated_at=now()
+            FROM updated item WHERE task.id=item.task_id
+            RETURNING task.id,task.owner_agent,task.status,task.updated_at
         )
-        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text
-        FROM updated
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM (SELECT item.*,(SELECT row_to_json(task) FROM updated_task task) AS linked_task FROM updated item) result_rows
         """
     )
     result = rows[0] if rows else {"error": "inbox item not found", "inbox_id": inbox_id}
     audit_mcp_call(
         tool_name="ai_os_update_inbox_status",
-        action_type="update_inbox",
+        action_type=f"inbox_{action}",
         permission_level="write_with_approval",
         actor=actor,
         target_table="agent.inbox_items",
@@ -5563,7 +5634,114 @@ def create_paper_strategy_hypotheses(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/research/papers/hypotheses", arguments, timeout=120.0))
 
 
+def ingest_local_artifact(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/artifacts/local/ingest", arguments, timeout=180.0))
+
+
+def local_artifact_ingestions(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=50, maximum=100)
+    promotion_status = str(arguments.get("promotion_status") or "").strip()
+    family = str(arguments.get("artifact_family") or "").strip()
+    clauses = []
+    if promotion_status:
+        clauses.append(f"promotion_status={sql_literal(promotion_status)}")
+    if family:
+        clauses.append(f"artifact_family={sql_literal(family)}")
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    return tool_result({
+        "summary": run_psql_json(
+            "SELECT metric, value, interpretation FROM core.v_local_artifact_ingestion_summary ORDER BY metric"
+        ),
+        "ingestions": run_psql_json(
+            f"""
+            SELECT id, ingestion_key, task_id, file_name, artifact_family, content_hash,
+                   parser_name, status, promotion_status, suggested_destination,
+                   row_count, sheet_count, page_count, image_width, image_height,
+                   extracted_chars, sensitivity, seen_count, task_status, owner_agent,
+                   source_path, stored_path, extracted_text_path,
+                   capital_action_allowed, live_execution_allowed, updated_at
+            FROM core.v_local_artifact_ingestion_queue
+            {where}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT {limit}
+            """
+        ),
+    })
+
+
+def report_scheduler_status(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=20, maximum=100)
+    return tool_result({
+        "health": run_psql_json("SELECT * FROM ops.v_report_scheduler_health"),
+        "schedules": run_psql_json("SELECT * FROM ops.v_report_schedule_status ORDER BY cadence, report_name"),
+        "invocations": run_psql_json(
+            f"""
+            SELECT id, invocation_key, trigger_type, report_key, status,
+                   due_count, completed_count, failed_count, error_message,
+                   started_at, finished_at
+            FROM ops.report_scheduler_invocations
+            ORDER BY started_at DESC
+            LIMIT {limit}
+            """
+        ),
+    })
+
+
+def run_scheduled_reports(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/reports/run", arguments, timeout=620.0))
+
+
 TOOLS = {
+    "ai_os_report_scheduler_status": {
+        "description": "Read report cadence, due state, latest launchd proof, scheduler invocation history, failures, and generated-run linkage.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}},
+        },
+        "handler": report_scheduler_status,
+    },
+    "ai_os_run_scheduled_reports": {
+        "description": "Run due source-backed reports or explicitly force one named schedule through the audited report API. This creates drafts and evidence only; it cannot send client reports or authorize capital actions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "report_key": {"type": "string"},
+                "force": {"type": "boolean", "default": False},
+                "actor": {"type": "string", "default": "Jarvis MCP"},
+            },
+        },
+        "handler": run_scheduled_reports,
+    },
+    "ai_os_ingest_local_artifact": {
+        "description": "Copy an explicitly operator-confirmed spreadsheet, document, or screenshot from the AI OS runtime, vault, or external SSD into immutable storage, profile or extract it, and create a Data Steward mapping task. Desktop, Downloads, and Documents files must use the Reports terminal file picker. Never promotes investment or trading rows automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "local_path": {"type": "string"},
+                "title": {"type": "string"},
+                "sensitivity": {"type": "string", "enum": ["public", "internal", "private", "client_private", "restricted"], "default": "private"},
+                "suggested_destination": {"type": "string"},
+                "run_key": {"type": "string"},
+                "actor": {"type": "string", "default": "Data Steward"},
+                "operator_confirmed": {"type": "boolean", "const": True},
+                "max_mb": {"type": "integer", "minimum": 1, "maximum": 200, "default": 100},
+            },
+            "required": ["local_path", "operator_confirmed"],
+        },
+        "handler": ingest_local_artifact,
+    },
+    "ai_os_local_artifact_ingestions": {
+        "description": "Read governed local-artifact intake counts, checksums, parser status, destination mapping state, and review-task linkage without exposing raw private file contents.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "promotion_status": {"type": "string", "enum": ["needs_mapping", "needs_review", "promoted", "excluded", "blocked"]},
+                "artifact_family": {"type": "string", "enum": ["tabular", "document", "image"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            },
+        },
+        "handler": local_artifact_ingestions,
+    },
     "ai_os_ingest_research_paper": {
         "description": "Register and extract a source-backed research paper from a public HTTPS PDF or an allowed local path. Creates a human research-review task and never promotes a strategy automatically.",
         "inputSchema": {
@@ -5986,16 +6164,19 @@ TOOLS = {
         "handler": triage_agent_message,
     },
     "ai_os_update_inbox_status": {
-        "description": "Update one inbox item status and optional recommended action.",
+        "description": "Claim, reassign, resolve, block, or reopen one inbox item and synchronize its linked task.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "inbox_id": {"type": "integer"},
-                "status": {"type": "string"},
+                "action": {"type": "string", "enum": ["claim", "reassign", "resolve", "block", "reopen"]},
+                "status": {"type": "string", "description": "Legacy status input; action is preferred."},
+                "owner_agent": {"type": "string"},
+                "resolution_note": {"type": "string"},
                 "recommended_action": {"type": "string"},
                 "actor": {"type": "string", "default": "Jarvis"},
             },
-            "required": ["inbox_id", "status"],
+            "required": ["inbox_id"],
         },
         "handler": update_inbox_status,
     },
@@ -6046,6 +6227,11 @@ TOOLS = {
         "description": "Read p2cursor and old algo extraction readiness, including staged/promoted coverage and open extraction issues.",
         "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 25}}},
         "handler": legacy_source_readiness,
+    },
+    "ai_os_legacy_source_resolution_board": {
+        "description": "Read canonical, archived, deduplicated, rejected, and unresolved row accounting for every legacy algo source table.",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 100}}},
+        "handler": legacy_source_resolution_board,
     },
     "ai_os_run_legacy_source_readiness": {
         "description": "Run a legacy-source extraction readiness sweep and queue Data Steward review items for gaps.",

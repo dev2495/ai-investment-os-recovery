@@ -10,6 +10,7 @@ type ConnectionStatus = "loading" | "online" | "offline";
 
 interface Props {
   onStatusChange: (status: ConnectionStatus) => void;
+  initialDepartment?: string;
 }
 
 function text(row: LiveRow | undefined, key: string, fallback = "-"): string {
@@ -66,11 +67,11 @@ function DepartmentList({ departments, selected, onSelect, employeeCounts }: {
   </nav>;
 }
 
-export default function DepartmentDeskWorkspace({ onStatusChange }: Props) {
+export default function DepartmentDeskWorkspace({ initialDepartment = "", onStatusChange }: Props) {
   const [snapshot, setSnapshot] = useState<DepartmentTerminalSnapshot | null>(null);
   const [connection, setConnection] = useState<ConnectionStatus>("loading");
   const [error, setError] = useState("");
-  const [department, setDepartment] = useState(() => new URLSearchParams(window.location.search).get("department") ?? "");
+  const [department, setDepartment] = useState(() => initialDepartment || new URLSearchParams(window.location.search).get("department") || "");
   const [employee, setEmployee] = useState("");
   const [evidence, setEvidence] = useState<EvidenceSelection | null>(null);
 

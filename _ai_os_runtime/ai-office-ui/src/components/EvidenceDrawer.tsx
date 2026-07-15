@@ -194,19 +194,19 @@ export default function EvidenceDrawer({ onChanged, onClose, selection }: Props)
 
         <div className="evidence-drawer-body">
           <section className="evidence-primary-record"><div className="evidence-section-heading"><span>Primary record</span><strong>{rowStatus(record)}</strong></div><DetailFields record={record} /></section>
-          {evidence?.groups.map((group) => group.records.length ? (
+          {evidence?.groups.map((group) => (
             <section className="evidence-group" key={group.key}>
               <div className="evidence-section-heading"><span>{group.label}</span><strong>{group.records.length}</strong></div>
-              <div className="evidence-group-list">
+              {group.records.length ? <div className="evidence-group-list">
                 {group.records.map((row, index) => (
                   <details key={`${group.key}-${rowTitle(row)}-${index}`}>
                     <summary><span><strong>{rowTitle(row)}</strong><small>{rowStatus(row)}</small></span><span>Inspect</span></summary>
                     <DetailFields record={row} />
                   </details>
                 ))}
-              </div>
+              </div> : <p className="evidence-empty">No records have cleared this lifecycle stage.</p>}
             </section>
-          ) : null)}
+          ))}
           {!busy && evidence && !relationCount ? <p className="evidence-empty">No linked records were found for this entity.</p> : null}
         </div>
       </aside>
