@@ -2731,10 +2731,10 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "primary": "SELECT * FROM agent.v_committee_room_items ORDER BY priority_rank, latest_activity_at DESC NULLS LAST LIMIT 120",
         },
         "capital": {
-            "summary": "SELECT * FROM books.v_portfolio_intelligence_summary ORDER BY metric",
-            "primary": "SELECT * FROM books.v_investment_books ORDER BY gross_exposure DESC NULLS LAST, book_name",
-            "secondary": "SELECT * FROM books.v_symbol_book_exposure ORDER BY gross_exposure DESC NULLS LAST LIMIT 120",
-            "tertiary": "SELECT * FROM books.v_cross_book_coordination_questions ORDER BY latest_as_of DESC NULLS LAST LIMIT 80",
+            "summary": "SELECT * FROM books.v_capital_allocation_control_summary ORDER BY metric",
+            "primary": "SELECT * FROM books.v_capital_policy_control_board ORDER BY client_name, book_name",
+            "secondary": "SELECT * FROM books.v_capital_allocation_analysis ORDER BY run_id DESC, abs(drift_pct) DESC LIMIT 120",
+            "tertiary": "SELECT * FROM books.v_capital_committee_queue ORDER BY updated_at DESC LIMIT 80",
         },
         "treasury": {
             "summary": "SELECT * FROM core.v_latest_data_source_freshness ORDER BY severity, staleness_minutes DESC NULLS LAST LIMIT 80",
@@ -6913,6 +6913,32 @@ def resolve_approval(payload: dict) -> dict:
     if not rows:
         raise ValueError("pending approval not found")
     result = rows[0]
+    if result.get("approval_type") == "capital_policy":
+        capital_rows = run_psql_json_statement(
+            f"""
+            WITH proposal_update AS (
+                UPDATE books.capital_policy_proposals
+                SET status = {sql_literal('approved' if status == 'approved' else 'rejected')},
+                    approved_by = CASE WHEN {sql_literal(status)} = 'approved' THEN {sql_literal(decided_by)} ELSE approved_by END,
+                    approved_at = CASE WHEN {sql_literal(status)} = 'approved' THEN now() ELSE approved_at END,
+                    updated_at = now()
+                WHERE approval_id = {approval_id}
+                RETURNING id, proposal_key, status
+            ), review_update AS (
+                UPDATE books.capital_committee_reviews
+                SET review_status = {sql_literal('approved' if status == 'approved' else 'rejected')},
+                    decision = {sql_literal('approve' if status == 'approved' else 'reject')},
+                    decided_by = {sql_literal(decided_by)}, decided_at = now(), updated_at = now()
+                WHERE approval_id = {approval_id}
+                RETURNING id
+            )
+            SELECT coalesce(json_agg(row_to_json(proposal_update)), '[]'::json)::text
+            FROM proposal_update
+            """
+        )
+        result["capital_policy_sync"] = capital_rows
+        result["capital_action_allowed"] = False
+        result["live_execution_allowed"] = False
     audit_api_write("ai_os_api_resolve_approval", "resolve_approval", decided_by, "agent.approvals", result, payload)
     return result
 
@@ -7929,6 +7955,251 @@ def run_institutional_portfolio_risk(payload: dict) -> dict:
         result,
         payload,
     )
+    return result
+
+
+def propose_capital_policy(payload: dict) -> dict:
+    client_code = str(payload.get("client_code") or payload.get("clientCode") or "").strip()
+    if not client_code:
+        raise ValueError("client_code is required")
+    client_rows = run_psql_json(
+        f"""
+        SELECT client.id, client.client_code, client.display_name,
+               coalesce(sum(position.gross_exposure) FILTER (WHERE position.status='active'), 0) AS current_gross_exposure,
+               max(position.as_of) FILTER (WHERE position.status='active') AS position_as_of
+        FROM portfolio.clients client
+        LEFT JOIN books.book_positions position ON position.client_id = client.id
+        WHERE client.client_code = {sql_literal(client_code)} AND client.active=true
+        GROUP BY client.id, client.client_code, client.display_name
+        """
+    )
+    if not client_rows:
+        raise ValueError("active client not found")
+    client = client_rows[0]
+    rules = payload.get("rules")
+    if not isinstance(rules, list) or not rules:
+        raise ValueError("rules must be a non-empty array")
+    active_books = run_psql_json("SELECT book_key FROM books.investment_books WHERE status='active' ORDER BY book_key")
+    expected_books = {str(row["book_key"]) for row in active_books}
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in rules:
+        if not isinstance(raw, dict):
+            raise ValueError("each capital policy rule must be an object")
+        book_key = str(raw.get("book_key") or raw.get("bookKey") or "").strip()
+        if book_key not in expected_books or book_key in seen:
+            raise ValueError(f"invalid or duplicate active book: {book_key}")
+        seen.add(book_key)
+        target = Decimal(str(first_present(raw.get("target_pct"), raw.get("targetPct"), 0)))
+        minimum = Decimal(str(first_present(raw.get("min_pct"), raw.get("minPct"), 0)))
+        maximum = Decimal(str(first_present(raw.get("max_pct"), raw.get("maxPct"), 100)))
+        if not (Decimal(0) <= minimum <= target <= maximum <= Decimal(100)):
+            raise ValueError(f"invalid min/target/max range for {book_key}")
+        normalized.append({
+            "book_key": book_key,
+            "target_pct": target,
+            "min_pct": minimum,
+            "max_pct": maximum,
+            "risk_budget": first_present(raw.get("risk_budget_var_99_10d_pct"), raw.get("riskBudgetVar9910dPct")),
+            "max_drawdown": first_present(raw.get("max_drawdown_budget_pct"), raw.get("maxDrawdownBudgetPct")),
+            "minimum_coverage": first_present(raw.get("minimum_liquidity_coverage_pct"), raw.get("minimumLiquidityCoveragePct"), 80),
+            "rationale": str(raw.get("rationale") or "").strip(),
+        })
+    if seen != expected_books:
+        raise ValueError(f"rules must cover all active books: {sorted(expected_books)}")
+    target_total = sum((item["target_pct"] for item in normalized), Decimal(0))
+    if abs(target_total - Decimal(100)) > Decimal("0.0001"):
+        raise ValueError(f"capital policy targets must total 100%, found {target_total}")
+
+    actor = str(payload.get("actor") or "Capital Allocation Agent").strip()
+    proposal_key = str(payload.get("proposal_key") or payload.get("proposalKey") or f"capital-policy-{client_code}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}").strip()
+    proposal_name = str(payload.get("proposal_name") or payload.get("proposalName") or f"{client['display_name']} capital and risk policy").strip()
+    basis_type = str(payload.get("capital_basis_type") or payload.get("capitalBasisType") or "gross_exposure_only").strip()
+    if basis_type not in {"gross_exposure_only", "net_liquidation_value", "operator_supplied_total_capital"}:
+        raise ValueError("invalid capital_basis_type")
+    basis_value = first_present(payload.get("total_capital_basis"), payload.get("totalCapitalBasis"), client["current_gross_exposure"])
+    basis_sql = sql_numeric(basis_value, required=True, field_name="total_capital_basis")
+    if Decimal(basis_sql) <= 0:
+        raise ValueError("total_capital_basis must be positive")
+    values_sql = ",".join(
+        "(" + ",".join([
+            sql_literal(item["book_key"]), str(item["target_pct"]), str(item["min_pct"]), str(item["max_pct"]),
+            sql_numeric(item["risk_budget"], field_name="risk_budget_var_99_10d_pct"),
+            sql_numeric(item["max_drawdown"], field_name="max_drawdown_budget_pct"),
+            sql_numeric(item["minimum_coverage"], required=True, field_name="minimum_liquidity_coverage_pct"),
+            sql_literal(item["rationale"]),
+        ]) + ")"
+        for item in normalized
+    )
+    assumptions = {
+        "legacy_defaults_trusted": False,
+        "cash_and_liabilities_included": basis_type != "gross_exposure_only",
+        "capital_action_allowed": False,
+        "live_execution_allowed": False,
+    }
+    rows = run_psql_json_statement(
+        f"""
+        WITH new_task AS (
+            INSERT INTO agent.tasks (
+                title, objective, owner_agent, status, priority,
+                approval_required, source_kind, source_ref, output_format, evidence
+            ) VALUES (
+                {sql_literal('Independent risk review: ' + proposal_name)},
+                {sql_literal('Validate allocation ranges, risk budgets, liquidity coverage, client constraints, tax/cash assumptions, and opportunity cost. No capital action or broker order is authorized.')},
+                'Portfolio Risk Analyst', 'queued', 'high', true,
+                'capital_policy_proposal', {sql_literal(proposal_key)}, 'capital_allocation_analysis',
+                {sql_jsonb([{'client_code': client_code}, {'targets_total_pct': str(target_total)}])}
+            ) RETURNING id
+        ), new_inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            )
+            SELECT id, {sql_literal('Risk review required: ' + proposal_name)},
+                   'Portfolio Risk Analyst', 'new', 'high',
+                   'Run independent capital allocation analysis; block approval when data coverage or risk budgets fail.',
+                   {sql_jsonb([{'proposal_key': proposal_key}, {'client_code': client_code}])}, 'capital'
+            FROM new_task RETURNING id
+        ), new_proposal AS (
+            INSERT INTO books.capital_policy_proposals (
+                proposal_key, client_id, proposal_name, status,
+                capital_basis_type, total_capital_basis, position_as_of,
+                assumptions, source_lineage, task_id, inbox_item_id, created_by
+            ) SELECT
+                {sql_literal(proposal_key)}, {int(client['id'])}, {sql_literal(proposal_name)},
+                'pending_risk_review', {sql_literal(basis_type)}, {basis_sql},
+                {sql_literal(client.get('position_as_of'))}::timestamptz,
+                {sql_jsonb(assumptions)},
+                {sql_jsonb([{'source': 'operator_supplied_policy'}, {'source': 'books.book_positions', 'current_gross_exposure': client['current_gross_exposure']}])},
+                new_task.id, new_inbox.id, {sql_literal(actor)}
+            FROM new_task CROSS JOIN new_inbox RETURNING *
+        ), rule_values(book_key,target_pct,min_pct,max_pct,risk_budget,max_drawdown,minimum_coverage,rationale) AS (
+            VALUES {values_sql}
+        ), inserted_rules AS (
+            INSERT INTO books.capital_policy_rules (
+                proposal_id, book_key, target_pct, min_pct, max_pct,
+                risk_budget_var_99_10d_pct, max_drawdown_budget_pct,
+                minimum_liquidity_coverage_pct, rationale,
+                evidence
+            )
+            SELECT proposal.id, value.book_key, value.target_pct::numeric, value.min_pct::numeric,
+                   value.max_pct::numeric, value.risk_budget::numeric, value.max_drawdown::numeric,
+                   value.minimum_coverage::numeric, value.rationale,
+                   jsonb_build_array(jsonb_build_object('source','operator_input','proposal_key',{sql_literal(proposal_key)}))
+            FROM new_proposal proposal CROSS JOIN rule_values value
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(new_proposal)), '[]'::json)::text FROM new_proposal
+        """
+    )
+    if not rows:
+        raise ValueError("capital policy proposal was not created")
+    result = rows[0]
+    result["rule_count"] = len(normalized)
+    result["target_total_pct"] = str(target_total)
+    result["capital_action_allowed"] = False
+    result["live_execution_allowed"] = False
+    audit_api_write("ai_os_api_propose_capital_policy", "propose_capital_policy", actor, "books.capital_policy_proposals", result, payload)
+    return result
+
+
+def run_capital_allocation_analysis(payload: dict) -> dict:
+    proposal_id = payload.get("proposal_id") or payload.get("proposalId")
+    if proposal_id is None:
+        raise ValueError("proposal_id is required")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_capital_allocation_analysis.py"),
+        "--proposal-id", str(int(proposal_id)),
+        "--minimum-coverage-pct", str(payload.get("minimum_coverage_pct") or payload.get("minimumCoveragePct") or 80),
+        "--actor", str(payload.get("actor") or "Capital Allocation Agent"),
+    ]
+    if payload.get("run_key") or payload.get("runKey"):
+        command.extend(["--run-key", str(payload.get("run_key") or payload.get("runKey"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    if completed.returncode != 0:
+        raise ValueError((completed.stderr or completed.stdout or "capital allocation analysis failed").strip())
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("capital allocation analysis returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Capital Allocation Agent").strip()
+    audit_api_write("ai_os_api_run_capital_allocation_analysis", "run_capital_allocation_analysis", actor, "books.capital_allocation_analysis_runs", result, payload)
+    return result
+
+
+def decide_capital_committee(payload: dict) -> dict:
+    try:
+        review_id = int(payload.get("review_id") or payload.get("reviewId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("review_id is required") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"approve", "reject", "revise", "defer"}:
+        raise ValueError("decision must be approve, reject, revise, or defer")
+    actor = str(payload.get("actor") or "Charlie Munger").strip()
+    notes = str(payload.get("decision_notes") or payload.get("decisionNotes") or "").strip()
+    review_rows = run_psql_json(
+        f"SELECT * FROM books.v_capital_committee_queue WHERE id={review_id} LIMIT 1"
+    )
+    if not review_rows:
+        raise ValueError("capital committee review not found")
+    review = review_rows[0]
+    if decision == "approve" and review["risk_review_status"] != "passed":
+        raise ValueError("capital policy cannot route for approval until independent risk review passes")
+    if decision == "approve":
+        rows = run_psql_json_statement(
+            f"""
+            WITH new_approval AS (
+                INSERT INTO agent.approvals (
+                    approval_type, title, owner_agent, risk_level,
+                    status, requested_action, rationale
+                ) VALUES (
+                    'capital_policy', {sql_literal('Capital policy approval: ' + str(review['proposal_name']))},
+                    'Devarsh', 'high', 'pending',
+                    {sql_jsonb({'proposal_id': review['proposal_id'], 'review_id': review_id, 'client_code': review['client_code'], 'capital_action_allowed': False, 'live_execution_allowed': False})},
+                    {sql_literal(notes or 'Capital Allocation Committee recommends policy approval; this does not authorize a rebalance or broker order.')}
+                ) RETURNING id
+            ), updated_review AS (
+                UPDATE books.capital_committee_reviews review
+                SET review_status='pending_human_approval', decision='approve',
+                    decision_notes={sql_literal(notes)}, approval_id=new_approval.id,
+                    decided_by={sql_literal(actor)}, decided_at=now(), updated_at=now()
+                FROM new_approval WHERE review.id={review_id}
+                RETURNING review.*
+            ), updated_proposal AS (
+                UPDATE books.capital_policy_proposals proposal
+                SET status='pending_human_approval', approval_id=new_approval.id, updated_at=now()
+                FROM new_approval WHERE proposal.id={int(review['proposal_id'])}
+                RETURNING proposal.id
+            )
+            SELECT coalesce(json_agg(row_to_json(updated_review)), '[]'::json)::text FROM updated_review
+            """
+        )
+    else:
+        review_status = {"reject": "rejected", "revise": "needs_revision", "defer": "needs_revision"}[decision]
+        proposal_status = "rejected" if decision == "reject" else "pending_risk_review"
+        rows = run_psql_json_statement(
+            f"""
+            WITH updated_review AS (
+                UPDATE books.capital_committee_reviews
+                SET review_status={sql_literal(review_status)}, decision={sql_literal(decision)},
+                    decision_notes={sql_literal(notes)}, decided_by={sql_literal(actor)},
+                    decided_at=now(), updated_at=now()
+                WHERE id={review_id} RETURNING *
+            ), updated_proposal AS (
+                UPDATE books.capital_policy_proposals
+                SET status={sql_literal(proposal_status)}, updated_at=now()
+                WHERE id={int(review['proposal_id'])} RETURNING id
+            )
+            SELECT coalesce(json_agg(row_to_json(updated_review)), '[]'::json)::text FROM updated_review
+            """
+        )
+    if not rows:
+        raise ValueError("capital committee decision was not recorded")
+    result = rows[0]
+    result["capital_action_allowed"] = False
+    result["live_execution_allowed"] = False
+    audit_api_write("ai_os_api_decide_capital_committee", "decide_capital_committee", actor, "books.capital_committee_reviews", result, payload)
     return result
 
 
@@ -10359,6 +10630,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/risk/institutional/run":
                 self._send_json(run_institutional_portfolio_risk(payload), 201)
+                return
+            if self.path == "/api/capital/policies/propose":
+                self._send_json(propose_capital_policy(payload), 201)
+                return
+            if self.path == "/api/capital/analysis/run":
+                self._send_json(run_capital_allocation_analysis(payload), 201)
+                return
+            if self.path == "/api/capital/committee/decision":
+                self._send_json(decide_capital_committee(payload), 200)
                 return
             if self.path == "/api/models/endpoints/register":
                 self._send_json(register_model_endpoint(payload), 201)

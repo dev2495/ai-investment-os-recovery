@@ -4153,6 +4153,54 @@ def institutional_portfolio_risk(arguments: dict) -> dict:
     )
 
 
+def capital_allocation_control_board(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=120)
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                "SELECT metric, value, interpretation FROM books.v_capital_allocation_control_summary ORDER BY metric"
+            ),
+            "control_board": run_psql_json(
+                f"SELECT * FROM books.v_capital_policy_control_board ORDER BY client_name, book_name LIMIT {limit}"
+            ),
+            "analysis": run_psql_json(
+                f"SELECT * FROM books.v_capital_allocation_analysis ORDER BY run_id DESC, abs(drift_pct) DESC LIMIT {limit}"
+            ),
+            "committee": run_psql_json(
+                f"SELECT * FROM books.v_capital_committee_queue ORDER BY updated_at DESC LIMIT {limit}"
+            ),
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+        }
+    )
+
+
+def propose_capital_policy(arguments: dict) -> dict:
+    payload = dict(arguments)
+    payload.setdefault("actor", "Capital Allocation Agent")
+    return tool_result(post_api_json("/api/capital/policies/propose", payload, timeout=90))
+
+
+def run_capital_allocation_analysis(arguments: dict) -> dict:
+    payload = {
+        "proposal_id": arguments.get("proposal_id") or arguments.get("proposalId"),
+        "run_key": arguments.get("run_key") or arguments.get("runKey"),
+        "minimum_coverage_pct": arguments.get("minimum_coverage_pct") or arguments.get("minimumCoveragePct") or 80,
+        "actor": arguments.get("actor") or "Capital Allocation Agent",
+    }
+    return tool_result(post_api_json("/api/capital/analysis/run", payload, timeout=200))
+
+
+def decide_capital_committee(arguments: dict) -> dict:
+    payload = {
+        "review_id": arguments.get("review_id") or arguments.get("reviewId"),
+        "decision": arguments.get("decision"),
+        "decision_notes": arguments.get("decision_notes") or arguments.get("decisionNotes"),
+        "actor": arguments.get("actor") or "Charlie Munger",
+    }
+    return tool_result(post_api_json("/api/capital/committee/decision", payload, timeout=90))
+
+
 def strategy_quant_analytics(arguments: dict) -> dict:
     limit = limit_arg(arguments, default=50)
     run_key = str(arguments.get("run_key") or arguments.get("runKey") or "").strip()
@@ -6746,6 +6794,75 @@ TOOLS = {
             },
         },
         "handler": institutional_portfolio_risk,
+    },
+    "ai_os_capital_allocation_control_board": {
+        "description": "Read client/book policy readiness, real allocation, legacy-unverified defaults, drift analysis, risk budgets, committee state, and execution locks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 120}},
+        },
+        "handler": capital_allocation_control_board,
+    },
+    "ai_os_propose_capital_policy": {
+        "description": "Create an operator-supplied client capital/risk policy covering every active book and totaling 100%. Routes independent risk review; no capital or broker authority.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["client_code", "rules"],
+            "properties": {
+                "client_code": {"type": "string"},
+                "proposal_key": {"type": "string"},
+                "proposal_name": {"type": "string"},
+                "capital_basis_type": {"type": "string", "enum": ["gross_exposure_only", "net_liquidation_value", "operator_supplied_total_capital"]},
+                "total_capital_basis": {"type": "number"},
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["book_key", "target_pct", "min_pct", "max_pct"],
+                        "properties": {
+                            "book_key": {"type": "string"},
+                            "target_pct": {"type": "number"},
+                            "min_pct": {"type": "number"},
+                            "max_pct": {"type": "number"},
+                            "risk_budget_var_99_10d_pct": {"type": "number"},
+                            "max_drawdown_budget_pct": {"type": "number"},
+                            "minimum_liquidity_coverage_pct": {"type": "number", "default": 80},
+                            "rationale": {"type": "string"},
+                        },
+                    },
+                },
+                "actor": {"type": "string", "default": "Capital Allocation Agent"},
+            },
+        },
+        "handler": propose_capital_policy,
+    },
+    "ai_os_run_capital_allocation_analysis": {
+        "description": "Calculate advisory-only book drift and risk-budget gates from a client policy, real positions, and latest institutional risk evidence.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["proposal_id"],
+            "properties": {
+                "proposal_id": {"type": "integer"},
+                "run_key": {"type": "string"},
+                "minimum_coverage_pct": {"type": "number", "default": 80},
+                "actor": {"type": "string", "default": "Capital Allocation Agent"},
+            },
+        },
+        "handler": run_capital_allocation_analysis,
+    },
+    "ai_os_capital_committee_decision": {
+        "description": "Record approve, reject, revise, or defer for a Capital Allocation Committee review. Approve only routes a separate Devarsh approval and never authorizes a trade.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["review_id", "decision"],
+            "properties": {
+                "review_id": {"type": "integer"},
+                "decision": {"type": "string", "enum": ["approve", "reject", "revise", "defer"]},
+                "decision_notes": {"type": "string"},
+                "actor": {"type": "string", "default": "Charlie Munger"},
+            },
+        },
+        "handler": decide_capital_committee,
     },
     "ai_os_run_strategy_portfolio_allocation": {
         "description": "Create a paper-only strategy portfolio allocation and probability-of-ruin metrics from a quant analytics run.",

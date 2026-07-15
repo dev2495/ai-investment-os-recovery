@@ -66,6 +66,18 @@ export function fetchDepartmentTerminal(workspace: TerminalWorkspace): Promise<D
   return request(`/api/department-terminal/snapshot?workspace=${encodeURIComponent(workspace)}`);
 }
 
+export function proposeCapitalPolicy(input: Record<string, unknown>): Promise<LiveRow> {
+  return request("/api/capital/policies/propose", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function runCapitalAllocationAnalysis(input: Record<string, unknown>): Promise<LiveRow> {
+  return request("/api/capital/analysis/run", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function decideCapitalCommittee(input: Record<string, unknown>): Promise<LiveRow> {
+  return request("/api/capital/committee/decision", { method: "POST", body: JSON.stringify(input) });
+}
+
 export function fetchWorkspaceConfig(profileKey = "devarsh"): Promise<WorkspaceConfig> {
   return request(`/api/workspaces/config?profile_key=${encodeURIComponent(profileKey)}`);
 }

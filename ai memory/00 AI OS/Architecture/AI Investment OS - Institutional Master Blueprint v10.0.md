@@ -1618,3 +1618,28 @@ The operating interfaces are `GET /api/trading-quant-risk/snapshot`, `POST /api/
 Capital and execution authority are explicitly absent. Every artifact and action returns `capital_action_allowed=false` and `live_execution_allowed=false`; the global broker lock remains independent and closed. Missing history uses a separately disclosed proxy rather than being hidden inside covered returns. Corporate-action factors and point-in-time universe history remain unverified, so this engine cannot support strategy promotion, capital allocation, or live orders by itself.
 
 The release gate passed: numerical exposure reconciliation; ES greater than or equal to VaR across all five scopes; five non-positive stress-loss scenarios; 45 unique portfolio-liquidity symbols reconciling to gross exposure; factor-row completeness; global execution lock; SSD artifact checksum; audited API run; 152-tool MCP protocol/read smoke; production build; 15/15 department-terminal browser tests; 39/39 desktop/mobile WCAG A/AA tests; and desktop/mobile visual review. Remaining Risk Office work is the options tail-risk/Greeks model, multi-factor sector/style/rates/FX/commodity risk, correlation clusters, cross-book conflict escalation, formal Risk Committee decisions, override logging, order-risk evidence drawers, and scheduled specialist worker cadence. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+
+## 39. Capital Allocation And Risk Budget Control Plane - 2026-07-15
+
+Capital allocation is now an operator-supplied, risk-reviewed policy workflow rather than a trusted copy of old percentage defaults. The 18 historical client/book allocation rows remain visible only as `legacy_unverified`; they cannot become policy, capital authority, or execution authority. Each active client has six current book rows derived from real `books.book_positions`, with current exposure, current percentage, risk coverage, observed 10-day VaR, policy state, and next required action.
+
+```text
+Devarsh enters client targets, ranges, and book risk budgets
+  -> Capital Allocation Agent creates a policy proposal and risk-review task
+  -> Portfolio Risk Analyst runs allocation drift and risk-budget analysis
+  -> data coverage, liquidity, risk budgets, and current position basis gate every book
+  -> Capital Allocation Committee may reject, revise, defer, or recommend approval
+  -> Devarsh receives a separate human approval only after independent risk passes
+  -> approved policy remains a monitoring contract
+  -> any future rebalance and broker order require separate cash, tax, suitability, risk, and order approvals
+```
+
+The database contract is `books.capital_policy_proposals`, `books.capital_policy_rules`, `books.capital_allocation_analysis_runs`, `books.capital_allocation_analysis_lines`, and `books.capital_committee_reviews`. The operating views are `books.v_capital_policy_control_board`, `books.v_capital_allocation_analysis`, `books.v_capital_committee_queue`, and `books.v_capital_allocation_control_summary`. Migration `125_capital_allocation_control_plane_v1.sql` is idempotent and inserts no client policy, analysis, committee, market, portfolio, or execution seed.
+
+Every policy must cover all active investment books exactly once, satisfy `0 <= min <= target <= max <= 100`, and total 100%. The analysis uses the latest institutional client risk run and real active book positions. When the selected basis is gross invested exposure, the system explicitly warns that cash, liabilities, tax, and external assets are unavailable. Rebalance amounts are advisory previews, not orders. Risk-data coverage below the configured gate, a missing risk budget, or a risk-budget breach blocks committee approval.
+
+The scoped API exposes the Capital terminal plus `POST /api/capital/policies/propose`, `POST /api/capital/analysis/run`, and `POST /api/capital/committee/decision`. MCP exposes `ai_os_capital_allocation_control_board`, `ai_os_propose_capital_policy`, `ai_os_run_capital_allocation_analysis`, and `ai_os_capital_committee_decision`, bringing the full surface to 156 tools. The responsive terminal provides client selection, observed-allocation loading, six book target/range/10-day-VaR controls, independent analysis, policy state, committee queue, durable tasks/inbox, and permanent broker-lock visibility.
+
+A validation-only Naval policy used the real INR 4,978,708.50 gross position basis and the existing institutional risk run. Its 70.96% covered exposure failed the 80% minimum. All six book lines became `blocked_data_quality`, the committee approval route returned HTTP 400, and every capital, broker-order, and live-execution flag remained false. The validation proposal, run, lines, review, and SSD artifact were then deleted; the production tables returned to zero proposals, runs, lines, and reviews. Current production state therefore contains three clients requiring operator policy and no synthetic or assumed approval.
+
+The release gate passed: zero-seed state validation; 18-row client/book completeness; per-client observed allocation totals of 100%; global execution lock; invalid-policy HTTP rejection without writes; real-data blocked-risk workflow and cleanup proof; 156-tool MCP protocol/read smoke; production build; 17/17 department-terminal browser tests; 39/39 desktop/mobile WCAG A/AA tests; and desktop/mobile visual inspection. Remaining capital work is operator policy entry, client suitability and restriction records, complete cash/liability/tax basis, drawdown-aware sizing, strategy-capital integration, opportunity-cost ranking, cash deployment, portfolio optimization, and separately governed rebalance/order workflows. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].

@@ -110,3 +110,29 @@ test("institutional risk center has no page-level mobile overflow", async ({ pag
   expect(overflow).toBeLessThanOrEqual(1);
   await page.screenshot({ path: "/tmp/ai-os-institutional-risk-center-mobile.png", fullPage: true });
 });
+
+test("capital allocation terminal exposes real client policy controls without trusted defaults", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.goto("/?mode=command&workspace=capital", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 3, name: "Client Capital And Risk Policy" })).toBeVisible();
+  await expect(page.locator(".capital-policy-toolbar").getByText("Legacy defaults are reference only", { exact: false })).toBeVisible();
+  await expect(page.getByText("policy required", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("legacy unverified", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Propose policy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run risk analysis" })).toBeDisabled();
+  await expect(page.locator(".capital-policy-toolbar select option")).toHaveText([
+    "Naval · naval",
+    "Sanjana · sanjana",
+    "Tushit · 3081832"
+  ]);
+  await page.screenshot({ path: "/tmp/ai-os-capital-allocation-terminal.png", fullPage: true });
+});
+
+test("capital allocation terminal has no page-level mobile overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?mode=command&workspace=capital", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Capital Allocation" })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: "/tmp/ai-os-capital-allocation-terminal-mobile.png", fullPage: true });
+});

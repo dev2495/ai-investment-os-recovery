@@ -320,16 +320,16 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 10. Capital Allocation Office
 
-- [ ] Capital allocation schema.
-- [ ] Capital budget by book.
-- [ ] Risk budget by book.
-- [ ] Capital drift dashboard.
-- [ ] Book-level rebalance suggestions.
-- [ ] Client-level allocation guardrails.
-- [ ] Strategy allocation engine.
-- [ ] Cross-book allocation review.
-- [ ] Drawdown-aware sizing.
-- [ ] Liquidity-aware sizing.
+- [x] Capital allocation schema. Governed policy proposals, six-book rules, analysis runs/lines, committee reviews, approvals, and bounded operating views are live without policy seed. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [~] Capital budget by book. Operator-entered target/min/max contracts and current observed percentages are live; all three clients still require Devarsh to define policy. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [~] Risk budget by book. Ten-day 99% VaR budget fields, observed-risk comparison, and block state are live; real user budgets and broader factor/tail budgets remain open. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [x] Capital drift dashboard. The Capital terminal exposes 18 real client/book rows, policy readiness, drift, risk coverage, analysis, and committee state. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [~] Book-level rebalance suggestions. Target-notional and increase/decrease previews are calculated only after policy/risk review and cannot create orders; cash, tax, suitability, and complete capital basis remain open. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [~] Client-level allocation guardrails. All-book coverage, 100% totals, min/target/max ranges, data coverage, risk budgets, committee review, and Devarsh approval are enforced; client suitability, restrictions, cash, and tax records remain open. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [~] Strategy allocation engine. Existing strategy portfolio analytics remain separate from the new client/book capital policy; governed strategy-to-book budget integration remains open.
+- [~] Cross-book allocation review. All six books are analyzed together with committee routing; economic-offset and opportunity-cost logic remains open. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+- [~] Drawdown-aware sizing. Maximum drawdown budget fields and observed client drawdown are available; sizing rules are not yet implemented.
+- [~] Liquidity-aware sizing. Institutional risk coverage gates policy analysis and blocks inadequate data; position-level capacity and proposed-order sizing integration remain open. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]], [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [ ] Cash deployment queue.
 - [ ] Opportunity-cost ranking.
 - [x] Capital Allocation Officer agent. Active as `Capital Allocation Agent` with Charlie reporting line, approval-only capital authority, mailbox, persona, guardrails, and terminal visibility. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
@@ -337,7 +337,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Performance Attribution Analyst agent. Active as `Performance Attribution Agent` with durable profile and reporting line. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Client Suitability Analyst agent.
 - [ ] Cash/Treasury Analyst agent.
-- [ ] Capital Allocation Committee workflow.
+- [~] Capital Allocation Committee workflow. Independent risk must pass before Charlie's committee recommendation can create a separate Devarsh approval; approved policy cannot authorize capital movement or broker orders. No real policy has entered committee yet. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
 
 ## 11. Risk Office
 
@@ -507,7 +507,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Tactical Office dashboard.
 - [~] Trading Desk dashboard. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Risk Center dashboard. Evidence: [[2026-07-13-trading-quant-risk-v2]].
-- [~] Capital Allocation dashboard. Scoped live terminal, book exposure, portfolio intelligence, cross-book conflicts, evidence, freshness, customization, and execution lock are deployed; allocation proposal/committee/rebalance actions remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Capital Allocation dashboard. Scoped live client/book policy control, editable budgets/ranges, drift and risk analysis, committee queue, legacy-default warning, freshness/customization, and execution lock are deployed. Real policy entry and downstream cash/tax/suitability workflows remain tracked separately. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
 - [~] Research Factory dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] News and Filings dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Special Situations dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].

@@ -257,6 +257,102 @@
   text-transform: uppercase;
 }
 
+.terminal-data-label {
+  color: var(--text-muted);
+  display: inline-block;
+  font-size: 0.68rem;
+  margin-top: 0.35rem;
+  text-transform: uppercase;
+}
+
+.capital-policy-form {
+  display: grid;
+  gap: 10px;
+  padding: 11px;
+}
+
+.capital-policy-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) auto minmax(260px, 1fr);
+  align-items: end;
+  gap: 10px;
+}
+
+.capital-policy-toolbar label {
+  display: grid;
+  gap: 4px;
+}
+
+.capital-policy-toolbar label > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.capital-policy-toolbar select,
+.capital-policy-rule input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.capital-policy-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.capital-policy-rule-grid {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+.capital-policy-rule-head,
+.capital-policy-rule {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.5fr) repeat(4, minmax(110px, 0.75fr));
+  align-items: center;
+  gap: 8px;
+  min-width: 760px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.capital-policy-rule-head {
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.capital-policy-rule:last-child {
+  border-bottom: 0;
+}
+
+.capital-policy-rule strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capital-policy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
 .workspace-manager-backdrop {
   position: fixed;
   z-index: 50;
@@ -417,6 +513,11 @@
 
   .terminal-metric-strip {
     grid-template-columns: repeat(7, 140px);
+  }
+
+  .capital-policy-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 }
 
