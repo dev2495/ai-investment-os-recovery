@@ -75,9 +75,23 @@ test("governance terminal has no page-level mobile overflow", async ({ page }) =
 
 test("research paper and source-linked hypothesis appear in the research factory", async ({ page }) => {
   await page.goto("/?mode=command&workspace=research", { waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { level: 2, name: "Research Paper Library" })).toBeVisible();
-  await expect(page.getByText("Trend-Following Strategies via Dynamic Momentum Learning", { exact: true })).toBeVisible();
+  const libraryHeading = page.getByRole("heading", { level: 2, name: "Research Paper Library" });
+  const library = page.locator("section.panel").filter({ has: libraryHeading });
+  await expect(library).toBeVisible();
+  await expect(library.getByText("Trend-Following Strategies via Dynamic Momentum Learning", { exact: true })).toBeVisible();
   await expect(page.getByText("Dynamic momentum speed selection across liquid futures", { exact: true })).toBeVisible();
+});
+
+test("research paper ingestion and hypothesis controls are governed and mobile safe", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?mode=command&workspace=research", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Ingest Research Paper" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Register and extract" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Create Paper Hypothesis" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Queue hypothesis" })).toBeVisible();
+  await expect(page.getByText("This cannot promote or trade a strategy.", { exact: false })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
 });
 
 test("advanced TradingView templates are visible and remain approval gated", async ({ page }) => {

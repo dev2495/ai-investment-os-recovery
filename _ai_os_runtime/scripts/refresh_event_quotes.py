@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -10,6 +11,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 
@@ -28,45 +30,31 @@ def sql_jsonb(value: object) -> str:
     return f"{sql_literal(json.dumps(value if value is not None else {}, sort_keys=True, default=str))}::jsonb"
 
 
+def _run_psql(sql: str, tuples_only: bool) -> subprocess.CompletedProcess[str]:
+    psql_bin = os.environ.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
+    password = os.environ.get("AI_OS_POSTGRES_PASSWORD")
+    if Path(psql_bin).exists() and password:
+        command = [psql_bin, f"host={os.environ.get('AI_OS_POSTGRES_HOST') or '127.0.0.1'} port={os.environ.get('AI_OS_POSTGRES_PORT') or '54329'} dbname={os.environ.get('AI_OS_POSTGRES_DB') or 'ai_os'} user={os.environ.get('AI_OS_POSTGRES_USER') or 'ai_os'} connect_timeout=3 options='-c statement_timeout=30000 -c lock_timeout=5000'", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql]
+        if tuples_only:
+            command.extend(["-t", "-A"])
+        env = os.environ.copy()
+        env["PGPASSWORD"] = password
+        return subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=35)
+    command = ["docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"]
+    if tuples_only:
+        command.extend(["-t", "-A"])
+    return subprocess.run(command, input=sql, text=True, capture_output=True, check=False, timeout=35)
+
+
 def run_psql_json(sql: str) -> list[dict[str, Any]]:
-    command = [
-        "docker",
-        "exec",
-        "-i",
-        "ai_os_postgres",
-        "psql",
-        "-q",
-        "-t",
-        "-A",
-        "-v",
-        "ON_ERROR_STOP=1",
-        "-U",
-        "ai_os",
-        "-d",
-        "ai_os",
-    ]
-    completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False)
+    completed = _run_psql(sql, True)
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout).strip())
     return json.loads(completed.stdout.strip() or "[]")
 
 
 def run_psql_text(sql: str) -> None:
-    command = [
-        "docker",
-        "exec",
-        "-i",
-        "ai_os_postgres",
-        "psql",
-        "-q",
-        "-v",
-        "ON_ERROR_STOP=1",
-        "-U",
-        "ai_os",
-        "-d",
-        "ai_os",
-    ]
-    completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False)
+    completed = _run_psql(sql, False)
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout).strip())
 

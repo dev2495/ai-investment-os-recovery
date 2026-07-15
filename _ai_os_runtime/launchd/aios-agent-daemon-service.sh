@@ -8,6 +8,20 @@ export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psq
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/usr/local/bin/docker}"
 export AI_OS_ARTIFACT_ROOT="${AI_OS_ARTIFACT_ROOT:-/Volumes/Devarsh SSD/AI OS Data/artifacts}"
 export AI_OS_PDF_PYTHON="${AI_OS_PDF_PYTHON:-/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3}"
+
+runtime_env="${AI_OS_RUNTIME_ROOT}/.env"
+if [[ -f "${runtime_env}" ]]; then
+  env_value() {
+    sed -n "s/^${1}=//p" "${runtime_env}" | tail -n 1
+  }
+  # Read only database keys; do not evaluate the general env file as shell code.
+  export AI_OS_POSTGRES_HOST="${AI_OS_POSTGRES_HOST:-$(env_value AI_OS_POSTGRES_HOST)}"
+  export AI_OS_POSTGRES_PORT="${AI_OS_POSTGRES_PORT:-$(env_value AI_OS_POSTGRES_PORT)}"
+  export AI_OS_POSTGRES_USER="${AI_OS_POSTGRES_USER:-$(env_value AI_OS_POSTGRES_USER)}"
+  export AI_OS_POSTGRES_PASSWORD="${AI_OS_POSTGRES_PASSWORD:-$(env_value AI_OS_POSTGRES_PASSWORD)}"
+  export AI_OS_POSTGRES_DB="${AI_OS_POSTGRES_DB:-$(env_value AI_OS_POSTGRES_DB)}"
+fi
+
 export AI_OS_AGENT_DAEMON_INTERVAL="${AI_OS_AGENT_DAEMON_INTERVAL:-45}"
 export AI_OS_ENABLE_SOURCE_FRESHNESS_SCHEDULER="${AI_OS_ENABLE_SOURCE_FRESHNESS_SCHEDULER:-1}"
 export AI_OS_SOURCE_FRESHNESS_INTERVAL_SECONDS="${AI_OS_SOURCE_FRESHNESS_INTERVAL_SECONDS:-900}"

@@ -15,7 +15,7 @@ import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EvidenceSelection } from "../api/evidence";
 import { createStrategyIntake, runStrategyDiscoveryScheduler, type LiveRow } from "../api/live";
-import { fetchResearchIdeasSnapshot, runLongTermMonteCarlo, type ResearchIdeasSnapshot } from "../api/researchIdeas";
+import { createPaperHypotheses, fetchResearchIdeasSnapshot, ingestResearchPaper, runLongTermMonteCarlo, type ResearchIdeasSnapshot } from "../api/researchIdeas";
 import EvidenceDrawer from "../components/EvidenceDrawer";
 import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
@@ -106,6 +106,10 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
   const [intelligenceBusy, setIntelligenceBusy] = useState(false);
   const [intake, setIntake] = useState({ name: "", family: "", timeframe: "daily", text: "" });
   const [monteCarloBusy, setMonteCarloBusy] = useState(false);
+  const [paperBusy, setPaperBusy] = useState(false);
+  const [hypothesisBusy, setHypothesisBusy] = useState(false);
+  const [paper, setPaper] = useState({ title: "", sourceKey: "arxiv", sourceUrl: "", pdfUrl: "", localPath: "", topics: "" });
+  const [hypothesis, setHypothesis] = useState({ paperId: "", title: "", edge: "", timeframe: "daily", notes: "" });
   const [monteCarlo, setMonteCarlo] = useState({
     thesisId: "",
     horizonYears: "5",
@@ -229,6 +233,57 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
     }
   };
 
+  const submitPaper = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!paper.sourceUrl.trim() && !paper.pdfUrl.trim() && !paper.localPath.trim()) {
+      setError("Provide a source URL, permitted PDF URL, or local document path.");
+      return;
+    }
+    setPaperBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await ingestResearchPaper({
+        title: paper.title.trim(),
+        source_key: paper.sourceKey,
+        source_url: paper.sourceUrl.trim() || undefined,
+        pdf_url: paper.pdfUrl.trim() || undefined,
+        local_path: paper.localPath.trim() || undefined,
+        topics: paper.topics.split(",").map((item) => item.trim()).filter(Boolean),
+        actor: "Research Librarian"
+      });
+      const record = result.paper as LiveRow | undefined;
+      setNotice(`Paper #${value(record, "id")} registered with status ${value(record, "extraction_status", "review")}. Research review is queued; no strategy was promoted.`);
+      setPaper({ title: "", sourceKey: "arxiv", sourceUrl: "", pdfUrl: "", localPath: "", topics: "" });
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Research paper ingestion failed");
+    } finally {
+      setPaperBusy(false);
+    }
+  };
+
+  const submitHypothesis = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setHypothesisBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await createPaperHypotheses({
+        paper_id: Number(hypothesis.paperId),
+        actor: "Strategy Research Agent",
+        hypotheses: [{ title: hypothesis.title.trim(), edge_hypothesis: hypothesis.edge.trim(), timeframe: hypothesis.timeframe, implementation_notes: hypothesis.notes.trim() || undefined }]
+      });
+      setNotice(`${value(result, "count", "1")} source-linked hypothesis queued for research. Backtest promotion and live execution remain disabled.`);
+      setHypothesis({ paperId: "", title: "", edge: "", timeframe: "daily", notes: "" });
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Paper hypothesis creation failed");
+    } finally {
+      setHypothesisBusy(false);
+    }
+  };
+
   const runIntelligenceLoop = async () => {
     if (intelligenceBusy) return;
     setIntelligenceBusy(true);
@@ -300,6 +355,8 @@ export default function ResearchIdeasWorkspace({ mode, onStatusChange }: Props) 
           <Panel className="span-6" icon={<ShieldCheck size={17} />} title="Thesis Checklists" action={<span>{checklists.length} checks · {snapshot?.long_term_research_updates.length ?? 0} updates</span>}><div className="source-check-list scoped-scroll-list">{checklists.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"symbol")} · {value(row,"checklist_name")}</strong><p>{value(row,"findings","Evidence not yet recorded")}</p></div><StatusPill status={value(row,"status","review")}/><span>score {value(row,"score","-")}</span><time>{date(row.updated_at)}</time></article>)}{!checklists.length?<Empty>No checklist rows match this filter.</Empty>:null}</div></Panel>
           <Panel className="span-7" icon={<RadioTower size={17} />} title="Source Intelligence" action={<button className="mini-action-button" disabled={intelligenceBusy} onClick={() => void runIntelligenceLoop()} type="button"><RefreshCw size={14} />{intelligenceBusy ? "Running" : "Run source loop"}</button>}><div className="panel-action-row compact"><span>{activeFeedCount} active feeds</span><span>{healthyFeedCount}/{feedChecks.length} healthy checks</span><small>Hourly daemon · two-day filing lookback · four material-first PDF parses</small></div><div className="source-check-list scoped-scroll-list">{snapshot?.feed_registry.map((feed)=>{const check=feedChecks.find((row)=>value(row,"source_key","")===value(feed,"feed_key",""));const href=value(feed,"url","");return <article className="source-check-row" key={value(feed,"feed_key")}><div><strong>{value(feed,"feed_name")}</strong><p>{value(feed,"provider","source")} · {value(feed,"topics","unclassified")} · {value(check,"latency_ms","-")} ms</p></div><StatusPill status={value(check,"status",value(feed,"status","planned"))}/><span>{value(check,"rows_seen","0")} items</span>{href&&href!=="-"?<a aria-label={`Open ${value(feed,"feed_name")} source`} className="icon-button" href={href} rel="noreferrer" target="_blank" title="Open source"><ExternalLink size={14}/></a>:<time>{date(check?.checked_at ?? feed.updated_at)}</time>}</article>;})}{!snapshot?.feed_registry.length?<Empty>No source feeds registered.</Empty>:null}</div></Panel>
           <Panel className="span-5" icon={<BrainCircuit size={17} />} title="Collector Runs" action={<span>{pipelineRuns.length} recent</span>}><div className="source-check-list scoped-scroll-list">{pipelineRuns.map((row,index)=><article className="source-check-row" key={`${value(row,"pipeline_kind")}-${value(row,"id")}-${index}`}><div><strong>{value(row,"pipeline_kind")}</strong><p>{value(row,"run_key",`filing ${value(row,"filing_id","-")}`)} · {value(row,"rows_seen",value(row,"items_seen",value(row,"extracted_chars","0")))} processed</p></div><StatusPill status={value(row,"status","review")}/><span>{value(row,"event_type_after",value(row,"research_ideas_created","-"))}</span><time>{date(row.finished_at ?? row.started_at)}</time></article>)}{!pipelineRuns.length?<Empty>No collector runs recorded.</Empty>:null}</div></Panel>
+          <Panel className="span-6" icon={<BookOpenText size={17} />} title="Ingest Research Paper"><form className="strategy-intake-form" onSubmit={submitPaper}><label className="span-form"><span>Title</span><input required value={paper.title} onChange={(event)=>setPaper({...paper,title:event.target.value})}/></label><label><span>Source</span><select value={paper.sourceKey} onChange={(event)=>setPaper({...paper,sourceKey:event.target.value})}><option value="arxiv">arXiv</option><option value="crossref">Crossref</option><option value="ssrn">SSRN</option><option value="nber">NBER</option><option value="local">Local library</option></select></label><label><span>Topics</span><input placeholder="momentum, options" value={paper.topics} onChange={(event)=>setPaper({...paper,topics:event.target.value})}/></label><label className="span-form"><span>Source URL</span><input inputMode="url" value={paper.sourceUrl} onChange={(event)=>setPaper({...paper,sourceUrl:event.target.value})}/></label><label className="span-form"><span>Permitted PDF URL</span><input inputMode="url" value={paper.pdfUrl} onChange={(event)=>setPaper({...paper,pdfUrl:event.target.value})}/></label><label className="span-form"><span>Local document path</span><input value={paper.localPath} onChange={(event)=>setPaper({...paper,localPath:event.target.value})}/></label><button className="primary-button span-form" disabled={paperBusy} type="submit"><BookOpenText size={15}/>{paperBusy?"Extracting":"Register and extract"}</button><p className="form-guard span-form">Source, hash, parser, and review task are retained. This cannot promote or trade a strategy.</p></form></Panel>
+          <Panel className="span-6" icon={<Lightbulb size={17} />} title="Create Paper Hypothesis"><form className="strategy-intake-form" onSubmit={submitHypothesis}><label className="span-form"><span>Source paper</span><select required value={hypothesis.paperId} onChange={(event)=>setHypothesis({...hypothesis,paperId:event.target.value})}><option value="">Select an ingested paper</option>{papers.map((row)=><option key={value(row,"id")} value={value(row,"id")}>{value(row,"title")}</option>)}</select></label><label className="span-form"><span>Testable hypothesis</span><input required value={hypothesis.title} onChange={(event)=>setHypothesis({...hypothesis,title:event.target.value})}/></label><label className="span-form"><span>Expected edge and mechanism</span><textarea required rows={4} value={hypothesis.edge} onChange={(event)=>setHypothesis({...hypothesis,edge:event.target.value})}/></label><label><span>Timeframe</span><select value={hypothesis.timeframe} onChange={(event)=>setHypothesis({...hypothesis,timeframe:event.target.value})}><option value="intraday">Intraday</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="event_driven">Event driven</option></select></label><label><span>Implementation notes</span><input value={hypothesis.notes} onChange={(event)=>setHypothesis({...hypothesis,notes:event.target.value})}/></label><button className="primary-button span-form" disabled={hypothesisBusy} type="submit"><Lightbulb size={15}/>{hypothesisBusy?"Queueing":"Queue hypothesis"}</button><p className="form-guard span-form">Creates research work only. Data-leakage review, backtest approval, risk review, and paper monitoring remain separate.</p></form></Panel>
           <Panel className="span-7" icon={<BookOpenText size={17} />} title="Research Paper Library" action={<span>{papers.length} papers</span>}><div className="source-check-list scoped-scroll-list">{papers.map((row)=><article className="source-check-row" key={value(row,"paper_key")}><div><strong>{value(row,"title")}</strong><p>{value(row,"source_name")} · {value(row,"authors","unknown authors")} · {value(row,"page_count","0")} pages</p></div><StatusPill status={value(row,"extraction_status","registered")}/><span>{value(row,"hypothesis_count","0")} hypotheses</span><time>{date(row.latest_ingestion_at ?? row.updated_at)}</time></article>)}{!papers.length?<Empty>No research papers ingested.</Empty>:null}</div></Panel>
           <Panel className="span-5" icon={<Lightbulb size={17} />} title="Paper Strategy Hypotheses" action={<span>{paperHypotheses.length} queued</span>}><div className="source-check-list scoped-scroll-list">{paperHypotheses.map((row)=><article className="source-check-row" key={value(row,"hypothesis_key")}><div><strong>{value(row,"title")}</strong><p>{value(row,"edge_hypothesis")} · source: {value(row,"paper_title")}</p></div><StatusPill status={value(row,"status","research_queue")}/><span>{value(row,"timeframe","research")}</span><time>{date(row.updated_at)}</time></article>)}{!paperHypotheses.length?<Empty>No paper hypotheses queued.</Empty>:null}</div></Panel>
           <Panel className="span-7" icon={<FileSearch size={17} />} title="Corporate Filings" action={<span>{filings.length} filings</span>}><div className="source-check-list scoped-scroll-list">{filings.map((row) => <article className="source-check-row" key={value(row, "filing_id")}><div><strong>{value(row, "symbol")} · {value(row, "title")}</strong><p>{value(row, "source_name")} · {value(row, "event_type", value(row, "filing_event_type"))} · {value(row, "pdf_page_count", "0")} pages</p></div><StatusPill status={value(row, "extraction_status", "pending")} /><span>opp {value(row, "opportunity_score", "-")}</span><time>{date(row.filed_at)}</time></article>)}{!filings.length ? <Empty>No filing rows match this filter.</Empty> : null}</div></Panel>

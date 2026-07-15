@@ -66,3 +66,46 @@ export async function runLongTermMonteCarlo(payload: LongTermMonteCarloRequest):
   if (!response.ok) throw new Error(result.error || `Monte Carlo API returned ${response.status}`);
   return result;
 }
+
+export interface ResearchPaperIngestRequest {
+  title: string;
+  source_key: string;
+  source_url?: string;
+  pdf_url?: string;
+  local_path?: string;
+  topics?: string[];
+  actor: string;
+}
+
+export async function ingestResearchPaper(payload: ResearchPaperIngestRequest): Promise<LiveRow> {
+  const response = await fetch(`${API_URL}/api/research/papers/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json() as LiveRow & { error?: string };
+  if (!response.ok) throw new Error(result.error || `Research paper ingest API returned ${response.status}`);
+  return result;
+}
+
+export interface PaperHypothesisRequest {
+  paper_id: number;
+  actor: string;
+  hypotheses: Array<{
+    title: string;
+    edge_hypothesis: string;
+    timeframe?: string;
+    implementation_notes?: string;
+  }>;
+}
+
+export async function createPaperHypotheses(payload: PaperHypothesisRequest): Promise<LiveRow> {
+  const response = await fetch(`${API_URL}/api/research/papers/hypotheses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json() as LiveRow & { error?: string };
+  if (!response.ok) throw new Error(result.error || `Paper hypothesis API returned ${response.status}`);
+  return result;
+}
