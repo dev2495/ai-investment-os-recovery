@@ -2585,6 +2585,23 @@ def browser_runs(arguments: dict) -> dict:
 
 
 def upsert_client(arguments: dict) -> dict:
+    payload = dict(arguments)
+    payload.setdefault("objectives", arguments.get("objectives") or [arguments.get("objective") or "long-term capital compounding"])
+    payload.setdefault("investment_horizon", arguments.get("investment_horizon") or "needs human review")
+    payload.setdefault("risk_tolerance", arguments.get("risk_tolerance") or arguments.get("risk_profile"))
+    payload.setdefault("risk_capacity", arguments.get("risk_capacity") or "needs human review")
+    payload.setdefault("suitability_status", arguments.get("suitability_status") or "needs_review")
+    payload.setdefault("source_evidence", arguments.get("source_evidence") or [])
+    if arguments.get("account_code"):
+        payload["account"] = {
+            "account_code": arguments.get("account_code"),
+            "account_name": arguments.get("account_name"),
+            "account_type": arguments.get("account_type") or "investment",
+            "broker": arguments.get("broker"),
+            "base_currency": arguments.get("base_currency") or "INR",
+        }
+    return tool_result(post_api_json("/api/client-office/onboarding/stage", payload))
+
     client_code = required_text(arguments, "client_code")
     display_name = str(arguments.get("display_name") or client_code).strip()
     risk_profile = str(arguments.get("risk_profile") or "").strip() or None
@@ -2701,6 +2718,8 @@ def upsert_client(arguments: dict) -> dict:
 
 
 def stage_holding_update(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/portfolio/holding-updates/stage", arguments))
+
     client_code = required_text(arguments, "client_code")
     account_code = required_text(arguments, "account_code")
     symbol = required_text(arguments, "symbol").upper()
@@ -2800,6 +2819,15 @@ def stage_holding_update(arguments: dict) -> dict:
 
 
 def apply_holding_update(arguments: dict) -> dict:
+    payload = {
+        "update_id": arguments.get("update_id"),
+        "decision": arguments.get("decision") or "approved",
+        "decided_by": arguments.get("applied_by") or arguments.get("decided_by") or "Devarsh",
+        "decision_notes": arguments.get("decision_notes") or "Reviewed and explicitly approved through the governed MCP holding workflow.",
+        "evidence": arguments.get("evidence") or [],
+    }
+    return tool_result(post_api_json("/api/portfolio/holding-updates/resolve", payload))
+
     try:
         update_id = int(arguments.get("update_id"))
     except (TypeError, ValueError) as exc:
@@ -2933,6 +2961,39 @@ def apply_holding_update(arguments: dict) -> dict:
         result_payload=payload,
     )
     return tool_result(payload)
+
+
+def client_onboarding_control(arguments: dict) -> dict:
+    action = str(arguments.get("action") or "stage").strip().lower()
+    if action == "stage":
+        return tool_result(post_api_json("/api/client-office/onboarding/stage", arguments))
+    if action in {"approve", "reject", "resolve"}:
+        payload = dict(arguments)
+        if action != "resolve":
+            payload["decision"] = "approved" if action == "approve" else "rejected"
+        return tool_result(post_api_json("/api/client-office/onboarding/resolve", payload))
+    raise ValueError("action must be stage, approve, reject, or resolve")
+
+
+def client_account_change_control(arguments: dict) -> dict:
+    action = str(arguments.get("action") or "stage").strip().lower()
+    if action == "stage":
+        return tool_result(post_api_json("/api/client-office/accounts/stage", arguments))
+    if action in {"approve", "reject", "resolve"}:
+        payload = dict(arguments)
+        if action != "resolve":
+            payload["decision"] = "approved" if action == "approve" else "rejected"
+        return tool_result(post_api_json("/api/client-office/accounts/resolve", payload))
+    raise ValueError("action must be stage, approve, reject, or resolve")
+
+
+def holding_reconciliation_control(arguments: dict) -> dict:
+    action = str(arguments.get("action") or "reconcile").strip().lower()
+    if action == "observe":
+        return tool_result(post_api_json("/api/client-office/holding-observations", arguments, timeout=120))
+    if action == "reconcile":
+        return tool_result(post_api_json("/api/client-office/reconciliation/run", arguments, timeout=120))
+    raise ValueError("action must be observe or reconcile")
 
 
 def client_3081282_summary(arguments: dict) -> dict:
@@ -7345,7 +7406,7 @@ TOOLS = {
         "handler": record_strategy_validation,
     },
     "ai_os_upsert_client": {
-        "description": "Create or update a client and optional account in the local portfolio warehouse. This is a manual DB workflow only; it does not touch broker accounts.",
+        "description": "Compatibility name for staging governed client onboarding. It creates suitability and approval records; no client/account is activated until dedicated human approval.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -7360,8 +7421,14 @@ TOOLS = {
                 "account_type": {"type": "string", "default": "investment"},
                 "base_currency": {"type": "string", "default": "INR"},
                 "notes": {"type": "string"},
+                "objectives": {"type": "array", "items": {"type": "string"}},
+                "investment_horizon": {"type": "string"},
+                "risk_tolerance": {"type": "string"},
+                "risk_capacity": {"type": "string"},
+                "suitability_status": {"type": "string", "enum": ["needs_review", "suitable", "conditionally_suitable", "unsuitable"]},
+                "source_evidence": {"type": "array", "items": {"type": "object"}},
             },
-            "required": ["client_code"],
+            "required": ["client_code", "display_name", "risk_profile", "objectives", "investment_horizon", "risk_tolerance", "risk_capacity", "source_evidence"],
         },
         "handler": upsert_client,
     },
@@ -7387,16 +7454,83 @@ TOOLS = {
         "handler": stage_holding_update,
     },
     "ai_os_apply_holding_update": {
-        "description": "Apply one staged manual holding update into portfolio.positions after review. This writes only to the local warehouse and does not place broker orders.",
+        "description": "Resolve and atomically apply or reject a pending holding update. Approval requires evidence and only writes the local warehouse; it never places broker orders.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "update_id": {"type": "integer"},
                 "applied_by": {"type": "string", "default": "Devarsh"},
+                "decision": {"type": "string", "enum": ["approved", "rejected"], "default": "approved"},
+                "decision_notes": {"type": "string"},
+                "evidence": {"type": "array", "items": {"type": "object"}},
             },
-            "required": ["update_id"],
+            "required": ["update_id", "decision_notes", "evidence"],
         },
         "handler": apply_holding_update,
+    },
+    "ai_os_client_onboarding_control": {
+        "description": "Stage or resolve a governed client onboarding case with objectives, suitability, account scope, source evidence, and human approval.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["stage", "approve", "reject", "resolve"]},
+                "case_id": {"type": "integer"},
+                "client_code": {"type": "string"},
+                "display_name": {"type": "string"},
+                "risk_profile": {"type": "string"},
+                "objectives": {"type": "array", "items": {"type": "string"}},
+                "constraints": {"type": "array", "items": {"type": "string"}},
+                "investment_horizon": {"type": "string"},
+                "liquidity_needs": {"type": "string"},
+                "risk_tolerance": {"type": "string"},
+                "risk_capacity": {"type": "string"},
+                "suitability_status": {"type": "string"},
+                "source_evidence": {"type": "array", "items": {"type": "object"}},
+                "account": {"type": "object"},
+                "decision": {"type": "string"},
+                "decision_notes": {"type": "string"},
+                "actor": {"type": "string"}
+            }
+        },
+        "handler": client_onboarding_control,
+    },
+    "ai_os_client_account_change_control": {
+        "description": "Stage or resolve approval-gated account create, update, deactivate, or reactivate requests. No broker write is possible.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["stage", "approve", "reject", "resolve"]},
+                "request_id": {"type": "integer"},
+                "client_code": {"type": "string"},
+                "account_code": {"type": "string"},
+                "change_type": {"type": "string", "enum": ["create", "update", "deactivate", "reactivate"]},
+                "requested_values": {"type": "object"},
+                "reason": {"type": "string"},
+                "source_evidence": {"type": "array", "items": {"type": "object"}},
+                "decision": {"type": "string"},
+                "decision_notes": {"type": "string"},
+                "actor": {"type": "string"}
+            }
+        },
+        "handler": client_account_change_control,
+    },
+    "ai_os_holding_reconciliation_control": {
+        "description": "Record normalized source holding observations or reconcile their latest snapshot against the warehouse position book with symbol-level breaks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["observe", "reconcile"]},
+                "client_code": {"type": "string"},
+                "account_code": {"type": "string"},
+                "source_label": {"type": "string"},
+                "as_of": {"type": "string"},
+                "positions": {"type": "array", "items": {"type": "object"}},
+                "evidence": {"type": "array", "items": {"type": "object"}},
+                "actor": {"type": "string"}
+            },
+            "required": ["action", "account_code", "source_label"]
+        },
+        "handler": holding_reconciliation_control,
     },
     "ai_os_client_3081282_summary": {
         "description": "Return imported client 3081282 transaction summary metrics and dashboard path.",

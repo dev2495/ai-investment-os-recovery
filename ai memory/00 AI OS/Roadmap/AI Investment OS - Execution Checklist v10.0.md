@@ -87,7 +87,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] VIX/volatility ingestion.
 - [ ] Gold/silver/commodity ingestion.
 - [~] Corporate action adjustment pipeline. Real NSE/BSE filing events now populate 127 source-linked actions; 17 currently map to canonical symbols. Approved factor storage and a non-destructive adjusted-OHLCV view are live, but zero factors are verified/applied and 110 symbol mappings require review. Evidence: [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
-- [ ] Full reconciliation dashboard across broker, p2cursor, algo systems, and manual entries.
+- [~] Full reconciliation dashboard across broker, p2cursor, algo systems, and manual entries. A normalized source-observation ledger, account-scoped reconciliation function, symbol-level break ledger, bounded API/MCP read-write paths, and Client Folio control board are live without auto-apply. P2Cursor remains separately visible. Remaining: connect recurring Zerodha/Dhan/algo feeds and resolve their real break queues. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [~] Data quality score per source. Legacy algo datasets now persist integrity checks, required-field/price/bounds/volume/future-row tests, canonical deduplication, bounded corrections, staleness, and research-bias contracts. Equivalent scoring remains to be applied to every live/provider dataset. Evidence: [[2026-07-15-legacy-market-data-spine-v1]].
 - [~] Source freshness SLA per registered source. All 18 current source plug-ins expose targets. Global news now has a dedicated 15-minute daemon workload, aggregate source checks, and a verified fresh result over ten feeds and 56 real items. Seven other current source issues remain visible, and not-yet-onboarded connectors remain outside coverage. Evidence: [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
 
@@ -162,7 +162,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Quarterly review automation.
 - [ ] Full Long-Term committee room UI.
 - [ ] Human buy/hold/add/trim/sell decision UI.
-- [ ] Client-level long-term suitability review.
+- [~] Client-level long-term suitability review. The governed onboarding path creates evidence-backed suitability records and blocks activation unless status is suitable or conditionally suitable with risk tolerance, risk capacity, and horizon present. All three imported clients remain visibly `missing`, so retrospective mandate capture and long-term book-fit review remain open. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 
 ## 5. Tactical Investing Office
 
@@ -368,25 +368,25 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 12. Client Office
 
-- [ ] Client onboarding workflow.
-- [~] Client holdings foundation.
+- [x] Client onboarding workflow. Intake captures objectives, constraints, horizon, liquidity, risk tolerance/capacity, suitability, account scope, and source evidence; Charlie/Devarsh approval atomically activates client/account/suitability records, while the generic approval route is blocked. Evidence: [[2026-07-15-client-office-control-plane-v1]].
+- [x] Client holdings foundation. Seventy-four real position rows remain intact; manual updates stage a dedicated approval and cannot alter `portfolio.positions` until evidence-backed human resolution. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [~] Client transactions foundation.
 - [ ] Client-level NAV.
-- [ ] Client-level book exposure.
-- [ ] Client-level concentration.
-- [ ] Client-level realized/unrealized P&L.
-- [ ] Client risk profile.
-- [ ] Client restrictions.
+- [x] Client-level book exposure. Live Client Folios exposes current multi-book attribution, symbol exposure, gross/net exposure, purposes, and cross-book conflicts over real holdings. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]], [[2026-07-15-client-office-control-plane-v1]].
+- [~] Client-level concentration. Institutional risk supports client scope and the folio exposes current exposure; a dedicated client concentration policy/limit workflow is still open. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]], [[2026-07-15-client-office-control-plane-v1]].
+- [~] Client-level realized/unrealized P&L. Current holdings expose sourced unrealized P&L; complete realized-P&L, cash-flow, tax-lot, and fee attribution remain open.
+- [~] Client risk profile. The lifecycle schema and onboarding approval enforce risk-profile and suitability inputs; the three imported clients still require retrospective completion. Evidence: [[2026-07-15-client-office-control-plane-v1]].
+- [~] Client restrictions. Structured constraints and restricted-asset fields are live in onboarding/suitability; imported-client population and enforcement at order-risk time remain open. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [ ] Monthly client report.
 - [ ] Portfolio change summary.
-- [ ] Client action log.
-- [ ] Client Folio dashboard.
-- [ ] Client Manager agent.
-- [ ] Reporting Analyst agent.
+- [~] Client action log. Onboarding, account changes, holding changes, approvals, inbox routing, and append-only API/MCP audit events are retained; a consolidated human-readable timeline remains open. Evidence: [[2026-07-15-client-office-control-plane-v1]].
+- [x] Client Folio dashboard. Responsive Bloomberg-style Client Folios now combines registry, suitability gaps, current holdings, governed intake, account maintenance, holding approvals, client-book attribution, P2Cursor reconciliation, and normalized multi-source reconciliation. Evidence: [[2026-07-15-client-office-control-plane-v1]].
+- [~] Client Manager agent. Charlie owns final onboarding review and Portfolio Manager owns folio/account lifecycle with role-scoped skills; a separately named Client Manager profile and recurring cadence remain open. Evidence: [[2026-07-15-client-office-control-plane-v1]].
+- [x] Reporting Analyst agent. Active `Client Reporting Agent` consumes client/account scope and owns draft-only reporting support; external send remains separately approved. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]], [[2026-07-15-client-office-control-plane-v1]].
 - [ ] Performance Reporter agent.
-- [ ] Client Suitability Analyst agent.
+- [~] Client Suitability Analyst agent. Charlie and Portfolio Manager have the governed onboarding skill and the deterministic suitability ledger is live; a dedicated specialist profile, retrospective imported-client reviews, and order-fit enforcement remain. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [ ] Communication Agent.
-- [ ] Onboarding Agent.
+- [~] Onboarding Agent. The workflow, skill, inbox, approval, API, MCP, and terminal controls are live under Charlie and Portfolio Manager; a separately named scheduled Onboarding Agent remains open. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 
 ## 13. Agent Office And Communication
 
@@ -602,6 +602,6 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Implement Long-Term Monte Carlo engine and report. Engine/API/MCP/database/report existed and the scoped Decision Lab, source gate, external-vault contract, real UI run, and browser tests are now verified. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [x] Implement research/news/filing collector expansion. Dedicated 15-minute RSS freshness plus hourly NSE/BSE, material-first PDF extraction, strategy discovery, daemon health evidence, UI control, and agent routing are live. Evidence: [[2026-07-15-research-intelligence-v1]], [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
 - [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy and six advanced chart-template contracts are registered with approval-gated requests; deterministic execution and verification of every multi-pane/indicator/formula mutation remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [ ] Build Client Folio dashboard.
+- [x] Build Client Folio dashboard. Governed onboarding, account lifecycle, holdings approval, suitability gaps, client-book attribution, P2Cursor, and generic multi-source reconciliation are live and verified across desktop/mobile. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [~] Build Risk Office v2 with stress tests and portfolio Monte Carlo. The institutional calculation, API, MCP, audited action, responsive terminal, validation, and SSD-artifact foundation are live; options tail risk, richer factor/correlation models, Risk Committee/override workflows, and automated specialist cadence remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [ ] Build Animated AI Office v1 after core room grid and task arrows are data-backed.

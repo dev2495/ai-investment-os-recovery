@@ -653,6 +653,56 @@ export interface StageHoldingUpdateInput {
   actor?: string;
 }
 
+export interface StageClientOnboardingInput {
+  client_code: string;
+  display_name: string;
+  risk_profile: string;
+  objectives: string[];
+  constraints?: string[];
+  investment_horizon: string;
+  liquidity_needs?: string;
+  risk_tolerance: string;
+  risk_capacity: string;
+  suitability_status: "needs_review" | "suitable" | "conditionally_suitable" | "unsuitable";
+  suitability_notes?: string;
+  tax_residency?: string;
+  source_evidence: LiveRow[];
+  account?: LiveRow;
+  actor?: string;
+}
+
+export interface ResolveClientOnboardingInput {
+  case_id: string | number;
+  decision: "approved" | "rejected";
+  decision_notes: string;
+  decided_by?: string;
+}
+
+export interface ResolveHoldingUpdateInput {
+  update_id: string | number;
+  decision: "approved" | "rejected";
+  decision_notes: string;
+  evidence?: LiveRow[];
+  decided_by?: string;
+}
+
+export interface StageAccountChangeInput {
+  client_code: string;
+  account_code: string;
+  change_type: "create" | "update" | "deactivate" | "reactivate";
+  requested_values?: LiveRow;
+  reason: string;
+  source_evidence: LiveRow[];
+  actor?: string;
+}
+
+export interface ResolveAccountChangeInput {
+  request_id: string | number;
+  decision: "approved" | "rejected";
+  decision_notes: string;
+  decided_by?: string;
+}
+
 export interface UpdateBookAssignmentInput {
   book_position_id: string;
   book_key: string;
@@ -1315,6 +1365,41 @@ export function resolveTradingViewAlertRequest(input: ResolveTradingViewAlertReq
 
 export function stageHoldingUpdate(input: StageHoldingUpdateInput): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/portfolio/holding-updates/stage", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function stageClientOnboarding(input: StageClientOnboardingInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/client-office/onboarding/stage", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function resolveClientOnboarding(input: ResolveClientOnboardingInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/client-office/onboarding/resolve", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function resolveHoldingUpdate(input: ResolveHoldingUpdateInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/portfolio/holding-updates/resolve", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function stageAccountChange(input: StageAccountChangeInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/client-office/accounts/stage", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function resolveAccountChange(input: ResolveAccountChangeInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/client-office/accounts/resolve", {
     body: JSON.stringify(input),
     method: "POST"
   });

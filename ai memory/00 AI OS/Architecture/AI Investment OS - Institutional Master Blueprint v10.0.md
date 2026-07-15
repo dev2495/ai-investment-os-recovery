@@ -1674,3 +1674,35 @@ The production Data & Model Gateway now exposes source-backed model metrics, all
 Release evidence passed: 49/49 model assignments; 49/49 cost caps; 14 ready, five unavailable-model, and two blocked-secret routes; zero autonomous-cloud agents; zero unapproved cloud events; zero private cache entries; no raw-prompt schema column; local fallback; public cache miss/hit; controlled unknown route; HTTP 400 rejection of public/internal requests that ask for client context without creating a decision row; both escalation privacy branches; approval rejection synchronization; production-row cleanup; Python compile; production UI build; MCP protocol/read smoke; 6/6 Gateway browser tests; 17/17 department regressions; 39/39 WCAG A/AA checks; and desktop/mobile visual inspection. Production operational state was returned to zero validation chats, model decisions, cache entries, and escalation requests while append-only API audit evidence remained.
 
 This does not complete model strategy. Remaining gates are a representative task-quality evaluation set, sustained throughput/thermal benchmarks, collection-level retrieval ACLs and quality evaluation, installation or removal of unavailable Qwen routes, cloud-provider secret references, approved provider invocation, budget alerts, and machine-aware routing between the MacBook and future 24/7 host. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+
+## 41. Governed Client Office Control Plane - 2026-07-15
+
+Client operations now use explicit lifecycle records rather than direct warehouse edits. Existing imported clients, accounts, and positions remain the production source state. New intake, account maintenance, and manual holding changes are proposals until a named human resolves the dedicated approval transaction.
+
+```text
+Devarsh or Charlie stages client intake
+  -> objectives, constraints, horizon, liquidity, risk tolerance/capacity
+  -> source evidence and optional first account
+  -> suitability review and high-risk approval
+  -> dedicated resolve endpoint
+  -> atomic client, account, and suitability activation
+
+Source holdings from broker, P2Cursor, algo, or manual statement
+  -> normalized immutable observation rows
+  -> latest source snapshot versus latest warehouse position snapshot
+  -> matched rows plus symbol-level quantity/price/source-only/warehouse-only breaks
+  -> Data Steward and Portfolio Risk review
+  -> no automatic position or broker write
+```
+
+The database contract is `portfolio.client_onboarding_cases`, `portfolio.client_suitability_reviews`, `portfolio.account_change_requests`, `portfolio.holding_source_observations`, `portfolio.holding_reconciliation_runs`, and `portfolio.holding_reconciliation_breaks`. Existing `portfolio.clients`, `portfolio.accounts`, and `portfolio.manual_holding_updates` gain lifecycle, mandate, lineage, reconciliation, and approval references. Operating views are `portfolio.v_client_onboarding_queue`, `portfolio.v_client_suitability_control`, `portfolio.v_holding_reconciliation_control`, and the approval-aware `portfolio.v_manual_holding_update_queue`.
+
+The safety boundary is structural. Generic approval resolution rejects `client_onboarding`, `account_change`, and `holding_update` records because a generic status flip would not perform the linked state change. Dedicated resolve routes lock the pending proposal, resolve the approval, apply or reject the requested change, update suitability/inbox state, and append audit evidence in one governed operation. Holding approval requires source evidence. Account operations cannot call a broker. Reconciliation observations cannot auto-apply to the position book.
+
+Charlie Munger owns onboarding approval, Portfolio Manager owns account and holding lifecycle, and Data Steward owns multi-source reconciliation. Skills `client_onboarding_governance`, `client_account_lifecycle`, and `multi_source_holding_reconciliation` are assigned to those roles with Portfolio Risk and Client Reporting support. MCP tools `ai_os_client_onboarding_control`, `ai_os_client_account_change_control`, and `ai_os_holding_reconciliation_control` bring the server to 161 tools; legacy client/holding tool names now route through the governed API instead of direct SQL.
+
+The production Client Folios terminal now exposes client scope, real holdings, onboarding, suitability health, account maintenance, holding approvals, client-book attribution, P2Cursor reconciliation, and generic broker/algo/manual reconciliation. The deployed desktop and mobile layouts have no horizontal overflow or overlapping controls. The current production read model still contains three real clients, six accounts, and 74 positions, with zero validation clients, observations, or reconciliation runs.
+
+Release evidence passed: idempotent migration replay; Python syntax; 161-tool MCP protocol listing; seven-case lifecycle validator; generic-approval bypass rejection; atomic onboarding/account/holding application; source-only break detection; validation-row cleanup; production UI build; live API/TradingView health; 83/83 full-office Playwright checks including 39 WCAG A/AA desktop/mobile cases and WebGL canvas verification; and desktop/mobile visual inspection. Evidence: [[2026-07-15-client-office-control-plane-v1]].
+
+This does not complete all Client Office work. The three imported clients still require retrospective suitability, restrictions, communication, and mandate reviews. Remaining product gates are complete NAV/cash/liability/tax-lot and realized-P&L accounting, cash flows and fees, client concentration policies, performance attribution, monthly report approval/delivery, consolidated action timeline, recurring Zerodha/Dhan/algo observation feeds, and resolution of real multi-source break queues.

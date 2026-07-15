@@ -19,6 +19,10 @@ export interface PortfolioOfficeSnapshot {
   remediation_summary: LiveRow[];
   portfolio_intelligence: LiveRow[];
   manual_updates: LiveRow[];
+  client_onboarding: LiveRow[];
+  client_suitability: LiveRow[];
+  account_changes: LiveRow[];
+  holding_reconciliation: LiveRow[];
   p2cursor_reconciliation: LiveRow[];
   execution_control: LiveRow[];
 }

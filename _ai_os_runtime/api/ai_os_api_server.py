@@ -1482,9 +1482,53 @@ def build_portfolio_office_snapshot() -> dict:
             SELECT id, client_code, account_code, symbol, exchange,
                    instrument_type, quantity, average_price, market_price,
                    effective_market_value, as_of, update_reason, status,
-                   created_by, created_at, applied_at
+                   created_by, created_at, applied_at, approval_id,
+                   approval_status, decision_notes, decided_by, decided_at
             FROM portfolio.v_manual_holding_update_queue
             ORDER BY created_at DESC
+            LIMIT 100
+        """,
+        "client_onboarding": """
+            SELECT id, case_key, client_code, display_name, risk_profile,
+                   investment_horizon, liquidity_needs, risk_tolerance,
+                   risk_capacity, suitability_status, status, approval_id,
+                   approval_status, requested_by, reviewed_by, decision_notes,
+                   created_at, updated_at, applied_client_id,
+                   applied_account_id, applied_at, objectives, constraints,
+                   account_payload, source_evidence
+            FROM portfolio.v_client_onboarding_queue
+            LIMIT 100
+        """,
+        "client_suitability": """
+            SELECT client_code, display_name, lifecycle_status, review_id,
+                   review_key, review_type, suitability_status, risk_tolerance,
+                   risk_capacity, investment_horizon, liquidity_needs,
+                   allowed_books, restricted_assets, findings, reviewed_by,
+                   reviewed_at, next_review_due_at, review_health
+            FROM portfolio.v_client_suitability_control
+            LIMIT 100
+        """,
+        "account_changes": """
+            SELECT r.id, r.request_key, c.client_code, c.display_name,
+                   a.account_code current_account_code, r.change_type,
+                   r.requested_values, r.reason, r.status, r.approval_id,
+                   approval.status approval_status, r.requested_by,
+                   r.decided_by, r.decision_notes, r.created_at, r.applied_at
+            FROM portfolio.account_change_requests r
+            JOIN portfolio.clients c ON c.id=r.client_id
+            LEFT JOIN portfolio.accounts a ON a.id=r.account_id
+            LEFT JOIN agent.approvals approval ON approval.id=r.approval_id
+            ORDER BY CASE r.status WHEN 'pending_approval' THEN 1 ELSE 2 END,
+                     r.created_at DESC
+            LIMIT 100
+        """,
+        "holding_reconciliation": """
+            SELECT id, run_key, client_code, display_name, account_code, broker,
+                   source_label, source_as_of, warehouse_as_of, status,
+                   source_position_count, warehouse_position_count,
+                   matched_count, break_count, material_break_count, created_by,
+                   created_at, completed_at, breaks
+            FROM portfolio.v_holding_reconciliation_control
             LIMIT 100
         """,
         "p2cursor_reconciliation": """
@@ -6956,6 +7000,11 @@ def resolve_approval(payload: dict) -> dict:
     if status not in {"approved", "rejected"}:
         raise ValueError("status must be approved or rejected")
     decided_by = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    guarded = run_psql_json(
+        f"SELECT approval_type FROM agent.approvals WHERE id={approval_id} AND status='pending' LIMIT 1"
+    )
+    if guarded and guarded[0].get("approval_type") in {"client_onboarding", "account_change", "holding_update"}:
+        raise ValueError("Client Office approvals must use their dedicated resolve endpoint so the governed state change is atomic")
     rows = run_psql_json_statement(
         f"""
         WITH updated AS (
@@ -7110,6 +7159,361 @@ def resolve_tradingview_alert_request(payload: dict) -> dict:
     return result
 
 
+def stage_client_onboarding(payload: dict) -> dict:
+    client_code = str(payload.get("client_code") or payload.get("clientCode") or "").strip()
+    display_name = str(payload.get("display_name") or payload.get("displayName") or "").strip()
+    risk_profile = str(payload.get("risk_profile") or payload.get("riskProfile") or "").strip()
+    if not client_code or not display_name or not risk_profile:
+        raise ValueError("client_code, display_name, and risk_profile are required")
+    actor = str(payload.get("requested_by") or payload.get("actor") or "Devarsh").strip()
+    objectives = payload.get("objectives") or []
+    constraints = payload.get("constraints") or []
+    evidence = payload.get("source_evidence") or payload.get("evidence") or []
+    account_payload = payload.get("account") or payload.get("account_payload") or {}
+    if not isinstance(objectives, list) or not objectives:
+        raise ValueError("at least one investment objective is required")
+    if not isinstance(evidence, list) or not evidence:
+        raise ValueError("source_evidence must contain at least one traceable item")
+    if account_payload and not str(account_payload.get("account_code") or "").strip():
+        raise ValueError("account.account_code is required when an account is supplied")
+    key_material = json.dumps(payload, sort_keys=True, default=str) + datetime.now(timezone.utc).isoformat()
+    case_key = "client-onboarding-" + hashlib.sha256(key_material.encode()).hexdigest()[:20]
+    suitability_status = str(payload.get("suitability_status") or "needs_review").strip().lower()
+    if suitability_status not in {"needs_review", "suitable", "conditionally_suitable", "unsuitable"}:
+        raise ValueError("invalid suitability_status")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH duplicate_guard AS (
+            SELECT 1 FROM portfolio.clients WHERE client_code={sql_literal(client_code)} LIMIT 1
+        ), approval AS (
+            INSERT INTO agent.approvals (
+                approval_type, title, owner_agent, risk_level, status,
+                requested_action, rationale
+            )
+            SELECT 'client_onboarding', 'Approve client onboarding: ' || {sql_literal(display_name)},
+                   'Charlie Munger', 'high', 'pending',
+                   jsonb_build_object('case_key',{sql_literal(case_key)},'client_code',{sql_literal(client_code)},
+                                      'action','review_and_activate_client'),
+                   'Client-private onboarding requires human review of suitability, identity mapping, and account scope.'
+            WHERE NOT EXISTS (SELECT 1 FROM duplicate_guard)
+            RETURNING id
+        ), case_row AS (
+            INSERT INTO portfolio.client_onboarding_cases (
+                case_key, client_code, display_name, risk_profile, objectives,
+                constraints, investment_policy, communication_preferences,
+                tax_residency, investment_horizon, liquidity_needs,
+                risk_tolerance, risk_capacity, suitability_status,
+                suitability_notes, account_payload, source_evidence,
+                sensitivity, status, requested_by, approval_id
+            )
+            SELECT {sql_literal(case_key)}, {sql_literal(client_code)}, {sql_literal(display_name)},
+                   {sql_literal(risk_profile)}, {sql_jsonb(objectives)}, {sql_jsonb(constraints)},
+                   {sql_jsonb(payload.get('investment_policy') or {})},
+                   {sql_jsonb(payload.get('communication_preferences') or {})},
+                   {sql_literal(payload.get('tax_residency'))},
+                   {sql_literal(payload.get('investment_horizon'))},
+                   {sql_literal(payload.get('liquidity_needs'))},
+                   {sql_literal(payload.get('risk_tolerance'))},
+                   {sql_literal(payload.get('risk_capacity'))},
+                   {sql_literal(suitability_status)}, {sql_literal(payload.get('suitability_notes'))},
+                   {sql_jsonb(account_payload)}, {sql_jsonb(evidence)},
+                   'client_private', 'pending_approval', {sql_literal(actor)}, (SELECT id FROM approval)
+            WHERE EXISTS (SELECT 1 FROM approval)
+            RETURNING *
+        ), suitability AS (
+            INSERT INTO portfolio.client_suitability_reviews (
+                review_key, onboarding_case_id, review_type, risk_tolerance,
+                risk_capacity, investment_horizon, liquidity_needs, objectives,
+                constraints, allowed_books, restricted_assets, status, findings,
+                evidence
+            )
+            SELECT case_key || '-initial', id, 'initial', risk_tolerance,
+                   risk_capacity, investment_horizon, liquidity_needs, objectives,
+                   constraints, {sql_jsonb(payload.get('allowed_books') or [])},
+                   {sql_jsonb(payload.get('restricted_assets') or [])},
+                   suitability_status, suitability_notes, source_evidence
+            FROM case_row RETURNING id
+        ), inbox AS (
+            INSERT INTO agent.inbox_items (
+                title, owner_agent, status, priority, recommended_action,
+                evidence, target_workspace
+            )
+            SELECT 'Client onboarding review: ' || client_code, 'Charlie Munger',
+                   'needs_review', 'high',
+                   'Verify suitability, account mapping, restrictions, and source evidence before approval.',
+                   jsonb_build_array(
+                       jsonb_build_object('table','portfolio.client_onboarding_cases','id',id),
+                       jsonb_build_object('table','agent.approvals','id',approval_id)
+                   ), 'clients'
+            FROM case_row RETURNING id
+        ), result_rows AS (
+            SELECT case_row.id, case_row.case_key, case_row.client_code, case_row.display_name,
+                   case_row.risk_profile, case_row.suitability_status, case_row.status,
+                   case_row.approval_id, (SELECT id FROM suitability) suitability_review_id,
+                   (SELECT id FROM inbox) inbox_item_id, case_row.created_at
+            FROM case_row
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("client_code already exists; use a governed account or profile change request")
+    result = rows[0]
+    audit_api_write("ai_os_api_stage_client_onboarding", "stage_client_onboarding", actor, "portfolio.client_onboarding_cases", result, payload)
+    return result
+
+
+def resolve_client_onboarding(payload: dict) -> dict:
+    try:
+        case_id = int(payload.get("case_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("case_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    actor = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("notes") or "").strip()
+    if not notes:
+        raise ValueError("decision_notes are required")
+    if decision == "approved":
+        readiness = run_psql_json(
+            f"SELECT suitability_status, risk_tolerance, risk_capacity, investment_horizon, source_evidence FROM portfolio.client_onboarding_cases WHERE id={case_id} AND status='pending_approval' LIMIT 1"
+        )
+        if not readiness:
+            raise ValueError("pending onboarding case not found")
+        case = readiness[0]
+        if case.get("suitability_status") not in {"suitable", "conditionally_suitable"}:
+            raise ValueError("onboarding cannot be approved until suitability is suitable or conditionally_suitable")
+        if not all(case.get(field) for field in ("risk_tolerance", "risk_capacity", "investment_horizon")):
+            raise ValueError("risk_tolerance, risk_capacity, and investment_horizon are required before approval")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT * FROM portfolio.client_onboarding_cases
+            WHERE id={case_id} AND status='pending_approval' FOR UPDATE
+        ), approval_update AS (
+            UPDATE agent.approvals a
+            SET status={sql_literal(decision)}, decided_by={sql_literal(actor)}, decided_at=now()
+            WHERE a.id=(SELECT approval_id FROM selected) AND a.status='pending'
+            RETURNING a.id
+        ), client_row AS (
+            INSERT INTO portfolio.clients (
+                client_code, display_name, risk_profile, investment_policy,
+                sensitivity, active, lifecycle_status, objectives, constraints,
+                communication_preferences, tax_residency,
+                suitability_review_due_at, updated_at
+            )
+            SELECT client_code, display_name, risk_profile, investment_policy,
+                   sensitivity, true, 'active', objectives, constraints,
+                   communication_preferences, tax_residency,
+                   now() + interval '1 year', now()
+            FROM selected WHERE {sql_literal(decision)}='approved'
+              AND EXISTS (SELECT 1 FROM approval_update)
+            ON CONFLICT (client_code) DO NOTHING
+            RETURNING id, client_code
+        ), account_row AS (
+            INSERT INTO portfolio.accounts (
+                client_id, account_code, account_name, account_type, broker,
+                base_currency, active, lifecycle_status, external_account_ref,
+                metadata, updated_at
+            )
+            SELECT c.id, s.account_payload->>'account_code',
+                   coalesce(s.account_payload->>'account_name',s.display_name || ' Account'),
+                   coalesce(s.account_payload->>'account_type','investment'),
+                   s.account_payload->>'broker',
+                   coalesce(s.account_payload->>'base_currency','INR'), true, 'active',
+                   s.account_payload->>'external_account_ref',
+                   coalesce(s.account_payload->'metadata','{{}}'::jsonb), now()
+            FROM selected s JOIN client_row c ON true
+            WHERE nullif(s.account_payload->>'account_code','') IS NOT NULL
+            ON CONFLICT (account_code) DO NOTHING
+            RETURNING id, account_code
+        ), suitability_update AS (
+            UPDATE portfolio.client_suitability_reviews sr
+            SET client_id=(SELECT id FROM client_row),
+                status=CASE WHEN {sql_literal(decision)}='approved' THEN sr.status ELSE 'unsuitable' END,
+                reviewed_by={sql_literal(actor)}, reviewed_at=now(),
+                next_review_due_at=CASE WHEN {sql_literal(decision)}='approved' THEN now()+interval '1 year' ELSE NULL END,
+                findings=concat_ws(E'\n',nullif(sr.findings,''),{sql_literal(notes)}), updated_at=now()
+            WHERE sr.onboarding_case_id=(SELECT id FROM selected)
+              AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING id, status
+        ), case_update AS (
+            UPDATE portfolio.client_onboarding_cases c
+            SET status=CASE WHEN {sql_literal(decision)}='approved' THEN 'applied' ELSE 'rejected' END,
+                reviewed_by={sql_literal(actor)}, decision_notes={sql_literal(notes)},
+                decided_at=now(), applied_client_id=(SELECT id FROM client_row),
+                applied_account_id=(SELECT id FROM account_row),
+                applied_at=CASE WHEN {sql_literal(decision)}='approved' THEN now() ELSE NULL END,
+                updated_at=now()
+            WHERE c.id=(SELECT id FROM selected)
+              AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING c.*
+        ), inbox_update AS (
+            UPDATE agent.inbox_items i
+            SET status=CASE WHEN {sql_literal(decision)}='approved' THEN 'done' ELSE 'blocked' END,
+                updated_at=now()
+            WHERE i.evidence @> jsonb_build_array(jsonb_build_object('table','portfolio.client_onboarding_cases','id',{case_id}))
+            RETURNING id
+        ), result_rows AS (
+            SELECT c.id case_id, c.case_key, c.client_code, c.status,
+                   c.approval_id, (SELECT id FROM client_row) client_id,
+                   (SELECT id FROM account_row) account_id,
+                   (SELECT id FROM suitability_update) suitability_review_id,
+                   c.reviewed_by, c.decision_notes, c.applied_at
+            FROM case_update c
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("pending onboarding case or approval not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_client_onboarding", "resolve_client_onboarding", actor, "portfolio.client_onboarding_cases", result, payload)
+    return result
+
+
+def stage_account_change(payload: dict) -> dict:
+    client_code = str(payload.get("client_code") or "").strip()
+    account_code = str(payload.get("account_code") or "").strip()
+    change_type = str(payload.get("change_type") or "").strip().lower()
+    actor = str(payload.get("requested_by") or payload.get("actor") or "Devarsh").strip()
+    reason = str(payload.get("reason") or "").strip()
+    values = payload.get("requested_values") or {}
+    evidence = payload.get("source_evidence") or payload.get("evidence") or []
+    if not client_code or not account_code or change_type not in {"create", "update", "deactivate", "reactivate"}:
+        raise ValueError("client_code, account_code, and a valid change_type are required")
+    if not reason or not isinstance(evidence, list) or not evidence:
+        raise ValueError("reason and source_evidence are required")
+    if not isinstance(values, dict):
+        raise ValueError("requested_values must be an object")
+    existing = run_psql_json(
+        f"SELECT a.id FROM portfolio.accounts a JOIN portfolio.clients c ON c.id=a.client_id WHERE c.client_code={sql_literal(client_code)} AND a.account_code={sql_literal(account_code)} LIMIT 1"
+    )
+    if change_type == "create" and existing:
+        raise ValueError("account already exists; use change_type=update")
+    if change_type != "create" and not existing:
+        raise ValueError("account not found")
+    key_material = json.dumps(payload, sort_keys=True, default=str) + datetime.now(timezone.utc).isoformat()
+    request_key = "account-change-" + hashlib.sha256(key_material.encode()).hexdigest()[:20]
+    rows = run_psql_json_statement(
+        f"""
+        WITH resolved AS (
+            SELECT c.id client_id,a.id account_id
+            FROM portfolio.clients c
+            LEFT JOIN portfolio.accounts a ON a.client_id=c.id AND a.account_code={sql_literal(account_code)}
+            WHERE c.client_code={sql_literal(client_code)}
+        ), approval AS (
+            INSERT INTO agent.approvals (
+                approval_type,title,owner_agent,risk_level,status,requested_action,rationale
+            )
+            SELECT 'account_change','Approve account ' || {sql_literal(change_type)} || ': ' || {sql_literal(account_code)},
+                   'Portfolio Manager','high','pending',
+                   jsonb_build_object('request_key',{sql_literal(request_key)},'change_type',{sql_literal(change_type)},
+                                      'account_code',{sql_literal(account_code)}), {sql_literal(reason)}
+            FROM resolved RETURNING id
+        ), request_row AS (
+            INSERT INTO portfolio.account_change_requests (
+                request_key,client_id,account_id,change_type,requested_values,
+                reason,source_evidence,status,requested_by,approval_id
+            )
+            SELECT {sql_literal(request_key)},client_id,account_id,{sql_literal(change_type)},
+                   {sql_jsonb({**values, 'account_code': account_code})},{sql_literal(reason)},
+                   {sql_jsonb(evidence)},'pending_approval',{sql_literal(actor)},(SELECT id FROM approval) FROM resolved
+            WHERE EXISTS (SELECT 1 FROM approval)
+            RETURNING *
+        ), inbox AS (
+            INSERT INTO agent.inbox_items (title,owner_agent,status,priority,recommended_action,evidence,target_workspace)
+            SELECT 'Account change review: ' || (requested_values->>'account_code'),'Portfolio Manager','needs_review','high',
+                   'Verify account ownership, broker mapping, requested values, and evidence before approval.',
+                   jsonb_build_array(jsonb_build_object('table','portfolio.account_change_requests','id',id),
+                                     jsonb_build_object('table','agent.approvals','id',approval_id)),'clients'
+            FROM request_row RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(request_row)),'[]'::json)::text FROM request_row
+        """
+    )
+    if not rows:
+        raise ValueError("client not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_stage_account_change", "stage_account_change", actor, "portfolio.account_change_requests", result, payload)
+    return result
+
+
+def resolve_account_change(payload: dict) -> dict:
+    try:
+        request_id = int(payload.get("request_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("request_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    actor = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("notes") or "").strip()
+    if not notes:
+        raise ValueError("decision_notes are required")
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT * FROM portfolio.account_change_requests
+            WHERE id={request_id} AND status='pending_approval' FOR UPDATE
+        ), approval_update AS (
+            UPDATE agent.approvals a SET status={sql_literal(decision)},decided_by={sql_literal(actor)},decided_at=now()
+            WHERE a.id=(SELECT approval_id FROM selected) AND a.status='pending' RETURNING id
+        ), created AS (
+            INSERT INTO portfolio.accounts (
+                client_id,account_code,account_name,account_type,broker,base_currency,
+                active,lifecycle_status,external_account_ref,metadata,updated_at
+            )
+            SELECT client_id,requested_values->>'account_code',
+                   coalesce(requested_values->>'account_name',requested_values->>'account_code'),
+                   coalesce(requested_values->>'account_type','investment'),requested_values->>'broker',
+                   coalesce(requested_values->>'base_currency','INR'),true,'active',
+                   requested_values->>'external_account_ref',coalesce(requested_values->'metadata','{{}}'::jsonb),now()
+            FROM selected WHERE change_type='create' AND {sql_literal(decision)}='approved'
+              AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING id
+        ), updated AS (
+            UPDATE portfolio.accounts a SET
+                account_name=coalesce(s.requested_values->>'account_name',a.account_name),
+                account_type=coalesce(s.requested_values->>'account_type',a.account_type),
+                broker=coalesce(s.requested_values->>'broker',a.broker),
+                base_currency=coalesce(s.requested_values->>'base_currency',a.base_currency),
+                external_account_ref=coalesce(s.requested_values->>'external_account_ref',a.external_account_ref),
+                metadata=a.metadata || coalesce(s.requested_values->'metadata','{{}}'::jsonb),
+                active=CASE s.change_type WHEN 'deactivate' THEN false WHEN 'reactivate' THEN true ELSE a.active END,
+                lifecycle_status=CASE s.change_type WHEN 'deactivate' THEN 'inactive' WHEN 'reactivate' THEN 'active' ELSE a.lifecycle_status END,
+                updated_at=now()
+            FROM selected s WHERE a.id=s.account_id AND s.change_type<>'create' AND {sql_literal(decision)}='approved'
+              AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING a.id
+        ), request_update AS (
+            UPDATE portfolio.account_change_requests r SET
+                status=CASE WHEN {sql_literal(decision)}='approved' THEN 'applied' ELSE 'rejected' END,
+                decided_by={sql_literal(actor)},decision_notes={sql_literal(notes)},decided_at=now(),
+                applied_at=CASE WHEN {sql_literal(decision)}='approved' THEN now() ELSE NULL END,updated_at=now()
+            WHERE r.id=(SELECT id FROM selected) AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING r.*
+        ), inbox_update AS (
+            UPDATE agent.inbox_items i SET status=CASE WHEN {sql_literal(decision)}='approved' THEN 'done' ELSE 'blocked' END,updated_at=now()
+            WHERE i.evidence @> jsonb_build_array(jsonb_build_object('table','portfolio.account_change_requests','id',{request_id})) RETURNING id
+        ), result_rows AS (
+            SELECT r.id request_id,r.request_key,r.change_type,r.status,r.approval_id,
+                   coalesce((SELECT id FROM created),(SELECT id FROM updated),r.account_id) account_id,
+                   r.decided_by,r.decision_notes,r.applied_at FROM request_update r
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)),'[]'::json)::text FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("pending account change request or approval not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_account_change", "resolve_account_change", actor, "portfolio.account_change_requests", result, payload)
+    return result
+
+
 def stage_holding_update(payload: dict) -> dict:
     client_code = str(payload.get("client_code") or payload.get("clientCode") or "").strip()
     account_code = str(payload.get("account_code") or payload.get("accountCode") or "").strip()
@@ -7139,27 +7543,38 @@ def stage_holding_update(payload: dict) -> dict:
             WHERE c.client_code = {sql_literal(client_code)}
               AND a.account_code = {sql_literal(account_code)}
             LIMIT 1
-        ),
-        inserted AS (
+        ), approval AS (
+            INSERT INTO agent.approvals (
+                approval_type, title, owner_agent, risk_level, status,
+                requested_action, rationale
+            )
+            SELECT 'holding_update', 'Approve holding update: ' || {sql_literal(symbol)} || ' for ' || client_code,
+                   'Portfolio Manager', 'high', 'pending',
+                   jsonb_build_object('client_code',client_code,'account_code',account_code,
+                                      'symbol',{sql_literal(symbol)},'action','apply_verified_holding_snapshot'),
+                   'Manual position-book changes require source verification and human approval.'
+            FROM resolved RETURNING id
+        ), inserted AS (
             INSERT INTO portfolio.manual_holding_updates (
                 client_id, account_id, client_code, account_code, symbol, exchange,
                 instrument_type, quantity, average_price, market_price, market_value,
-                as_of, update_reason, status, source_label, created_by, payload
+                as_of, update_reason, status, source_label, created_by, payload, approval_id
             )
             SELECT
                 client_id, account_id, client_code, account_code, {sql_literal(symbol)},
                 {sql_literal(exchange)}, {sql_literal(instrument_type)}, {quantity},
                 {average_price}, {market_price}, coalesce({market_value}, {quantity} * {market_price}),
                 coalesce({sql_literal(payload.get("as_of"))}::timestamptz, now()),
-                {sql_literal(update_reason)}, 'staged', 'ai_office_api_manual_update',
+                {sql_literal(update_reason)}, 'pending_approval', 'ai_office_api_manual_update',
                 {sql_literal(actor)},
-                {sql_jsonb(payload.get("payload") or {"api_route": "/api/portfolio/holding-updates/stage"})}
+                {sql_jsonb(payload.get("payload") or {"api_route": "/api/portfolio/holding-updates/stage"})},
+                (SELECT id FROM approval)
             FROM resolved
+            WHERE EXISTS (SELECT 1 FROM approval)
             RETURNING id, client_code, account_code, symbol, exchange, instrument_type,
                       quantity, average_price, market_price, market_value, as_of,
-                      update_reason, status, source_label, created_by, created_at, applied_at
-        ),
-        inbox AS (
+                      update_reason, status, source_label, created_by, created_at, applied_at, approval_id
+        ), inbox AS (
             INSERT INTO agent.inbox_items (
                 title, owner_agent, status, priority, recommended_action, evidence, target_workspace
             )
@@ -7187,6 +7602,165 @@ def stage_holding_update(payload: dict) -> dict:
         raise ValueError("client/account not found; create or import the client/account first")
     result = rows[0]
     audit_api_write("ai_os_api_stage_holding_update", "stage_holding_update", actor, "portfolio.manual_holding_updates", result, payload)
+    return result
+
+
+def resolve_holding_update(payload: dict) -> dict:
+    try:
+        update_id = int(payload.get("update_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("update_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    if decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    actor = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    notes = str(payload.get("decision_notes") or payload.get("notes") or "").strip()
+    if not notes:
+        raise ValueError("decision_notes are required")
+    evidence = payload.get("evidence") or []
+    if decision == "approved" and (not isinstance(evidence, list) or not evidence):
+        raise ValueError("approval requires source evidence")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT * FROM portfolio.manual_holding_updates
+            WHERE id={update_id} AND status='pending_approval' FOR UPDATE
+        ), approval_update AS (
+            UPDATE agent.approvals a
+            SET status={sql_literal(decision)}, decided_by={sql_literal(actor)}, decided_at=now()
+            WHERE a.id=(SELECT approval_id FROM selected) AND a.status='pending'
+            RETURNING id
+        ), position_row AS (
+            INSERT INTO portfolio.positions (
+                account_id, symbol, exchange, instrument_type, quantity,
+                average_price, market_price, market_value, unrealized_pnl,
+                as_of, source_system_id, payload
+            )
+            SELECT account_id, symbol, exchange, instrument_type, quantity,
+                   average_price, market_price, coalesce(market_value,quantity*market_price),
+                   CASE WHEN average_price IS NOT NULL AND market_price IS NOT NULL
+                        THEN (market_price-average_price)*quantity ELSE NULL END,
+                   as_of, NULL,
+                   payload || jsonb_build_object('source','approved_manual_holding_update',
+                       'manual_update_id',id,'approved_by',{sql_literal(actor)},
+                       'approval_evidence',{sql_jsonb(evidence)})
+            FROM selected WHERE {sql_literal(decision)}='approved'
+              AND EXISTS (SELECT 1 FROM approval_update)
+            ON CONFLICT (account_id,symbol,exchange,instrument_type,as_of) DO UPDATE SET
+                quantity=EXCLUDED.quantity, average_price=EXCLUDED.average_price,
+                market_price=EXCLUDED.market_price, market_value=EXCLUDED.market_value,
+                unrealized_pnl=EXCLUDED.unrealized_pnl,
+                payload=portfolio.positions.payload || EXCLUDED.payload
+            RETURNING id, account_id, symbol, exchange, instrument_type,
+                      quantity, average_price, market_price, market_value,
+                      unrealized_pnl, as_of
+        ), update_row AS (
+            UPDATE portfolio.manual_holding_updates m
+            SET status=CASE WHEN {sql_literal(decision)}='approved' THEN 'applied' ELSE 'rejected' END,
+                applied_at=CASE WHEN {sql_literal(decision)}='approved' THEN now() ELSE NULL END,
+                decision_notes={sql_literal(notes)}, decided_by={sql_literal(actor)},
+                decided_at=now(), payload=payload || jsonb_build_object('decision_evidence',{sql_jsonb(evidence)})
+            WHERE m.id=(SELECT id FROM selected)
+              AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING m.*
+        ), inbox_update AS (
+            UPDATE agent.inbox_items i
+            SET status=CASE WHEN {sql_literal(decision)}='approved' THEN 'done' ELSE 'blocked' END, updated_at=now()
+            WHERE i.evidence @> jsonb_build_array(jsonb_build_object('table','portfolio.manual_holding_updates','id',{update_id}))
+            RETURNING id
+        ), result_rows AS (
+            SELECT u.id update_id, u.client_code, u.account_code, u.symbol,
+                   u.status, u.approval_id, u.decided_by, u.decision_notes,
+                   u.applied_at, p.id position_id, p.quantity, p.market_value,
+                   p.unrealized_pnl, p.as_of
+            FROM update_row u LEFT JOIN position_row p ON true
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("pending holding update or approval not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_resolve_holding_update", "resolve_holding_update", actor, "portfolio.manual_holding_updates", result, payload)
+    return result
+
+
+def record_holding_observations(payload: dict) -> dict:
+    client_code = str(payload.get("client_code") or "").strip()
+    account_code = str(payload.get("account_code") or "").strip()
+    source_label = str(payload.get("source_label") or "").strip()
+    rows_input = payload.get("positions") or []
+    actor = str(payload.get("observed_by") or payload.get("actor") or "Data Steward").strip()
+    if not client_code or not account_code or not source_label:
+        raise ValueError("client_code, account_code, and source_label are required")
+    if not isinstance(rows_input, list) or not rows_input:
+        raise ValueError("positions must contain at least one source observation")
+    inserted: list[dict] = []
+    for row in rows_input:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            raise ValueError("every source observation requires symbol")
+        quantity = sql_numeric(row.get("quantity"), required=True, field_name="quantity")
+        as_of = str(row.get("as_of") or payload.get("as_of") or "").strip()
+        if not as_of:
+            raise ValueError("as_of is required for every source observation or the batch")
+        key_material = json.dumps({"client":client_code,"account":account_code,"source":source_label,"row":row,"as_of":as_of}, sort_keys=True, default=str)
+        observation_key = "holding-observation-" + hashlib.sha256(key_material.encode()).hexdigest()
+        result_rows = run_psql_json_statement(
+            f"""
+            WITH resolved AS (
+                SELECT c.id client_id,a.id account_id
+                FROM portfolio.clients c JOIN portfolio.accounts a ON a.client_id=c.id
+                WHERE c.client_code={sql_literal(client_code)} AND a.account_code={sql_literal(account_code)}
+            ), inserted AS (
+                INSERT INTO portfolio.holding_source_observations (
+                    observation_key,client_id,account_id,source_label,source_record_ref,
+                    symbol,exchange,instrument_type,quantity,average_price,market_price,
+                    market_value,as_of,content_hash,evidence,payload,observed_by
+                )
+                SELECT {sql_literal(observation_key)},client_id,account_id,{sql_literal(source_label)},
+                       {sql_literal(row.get('source_record_ref'))},{sql_literal(symbol)},
+                       {sql_literal(str(row.get('exchange') or 'NSE').upper())},
+                       {sql_literal(str(row.get('instrument_type') or 'equity').lower())},
+                       {quantity},{sql_numeric(row.get('average_price'),field_name='average_price')},
+                       {sql_numeric(row.get('market_price'),field_name='market_price')},
+                       {sql_numeric(row.get('market_value'),field_name='market_value')},
+                       {sql_literal(as_of)}::timestamptz,{sql_literal(observation_key.removeprefix('holding-observation-'))},
+                       {sql_jsonb(row.get('evidence') or payload.get('evidence') or [])},
+                       {sql_jsonb(row.get('payload') or {})},{sql_literal(actor)} FROM resolved
+                ON CONFLICT (observation_key) DO UPDATE SET observed_at=now(), evidence=EXCLUDED.evidence
+                RETURNING id,observation_key,symbol,quantity,as_of
+            ) SELECT coalesce(json_agg(row_to_json(inserted)),'[]'::json)::text FROM inserted
+            """
+        )
+        if not result_rows:
+            raise ValueError("client/account not found")
+        inserted.append(result_rows[0])
+    result = {"client_code":client_code,"account_code":account_code,"source_label":source_label,"inserted_count":len(inserted),"observations":inserted}
+    audit_api_write("ai_os_api_record_holding_observations", "record_holding_observations", actor, "portfolio.holding_source_observations", result, payload)
+    return result
+
+
+def run_holding_reconciliation(payload: dict) -> dict:
+    account_code = str(payload.get("account_code") or "").strip()
+    source_label = str(payload.get("source_label") or "").strip()
+    actor = str(payload.get("actor") or "Data Steward").strip()
+    if not account_code or not source_label:
+        raise ValueError("account_code and source_label are required")
+    run_rows = run_psql_json(
+        f"SELECT portfolio.run_holding_reconciliation({sql_literal(account_code)},{sql_literal(source_label)},{sql_literal(actor)}) id"
+    )
+    if not run_rows:
+        raise ValueError("reconciliation function did not return a run id")
+    run_id = int(run_rows[0]["id"])
+    rows = run_psql_json(
+        f"SELECT * FROM portfolio.v_holding_reconciliation_control WHERE id={run_id} LIMIT 1"
+    )
+    if not rows:
+        raise ValueError("reconciliation did not produce a run")
+    result = rows[0]
+    audit_api_write("ai_os_api_run_holding_reconciliation", "run_holding_reconciliation", actor, "portfolio.holding_reconciliation_runs", result, payload)
     return result
 
 
@@ -11192,8 +11766,29 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path == "/api/approvals/resolve":
                 self._send_json(resolve_approval(payload), 200)
                 return
+            if self.path == "/api/client-office/onboarding/stage":
+                self._send_json(stage_client_onboarding(payload), 201)
+                return
+            if self.path == "/api/client-office/onboarding/resolve":
+                self._send_json(resolve_client_onboarding(payload), 200)
+                return
+            if self.path == "/api/client-office/accounts/stage":
+                self._send_json(stage_account_change(payload), 201)
+                return
+            if self.path == "/api/client-office/accounts/resolve":
+                self._send_json(resolve_account_change(payload), 200)
+                return
             if self.path == "/api/portfolio/holding-updates/stage":
                 self._send_json(stage_holding_update(payload), 201)
+                return
+            if self.path == "/api/portfolio/holding-updates/resolve":
+                self._send_json(resolve_holding_update(payload), 200)
+                return
+            if self.path == "/api/client-office/holding-observations":
+                self._send_json(record_holding_observations(payload), 201)
+                return
+            if self.path == "/api/client-office/reconciliation/run":
+                self._send_json(run_holding_reconciliation(payload), 201)
                 return
             if self.path == "/api/portfolio/book-assignments":
                 self._send_json(update_book_assignment(payload), 200)
