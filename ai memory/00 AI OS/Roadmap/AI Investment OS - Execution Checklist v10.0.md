@@ -40,12 +40,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] API server foundation. Verified 2026-07-11 at `http://127.0.0.1:8765/api/health` with Postgres and TradingView CDP checks passing.
 - [x] AI Office dashboard shell. Verified 2026-07-11 at `http://127.0.0.1:5177/` through the deployed LaunchAgent build.
 - [x] Obsidian vault memory surface. Verified 2026-07-11 at `/Volumes/Devarsh SSD/Obsidian memory ` with the runtime symlink preserved.
-- [x] MCP server foundation. Verified 2026-07-15 with 158 importable tools, including governed model-runtime/cache/escalation controls plus scoped integration Gateway, strategy Arsenal, governance/change control, evidence, provider, source, portfolio, research, task, approval, browser, and workspace controls. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-governance-and-production-safety-v1]].
+- [x] MCP server foundation. Verified 2026-07-15 with 166 importable tools, including governed model-runtime/cache/escalation controls plus scoped integration Gateway, strategy Arsenal, governance/change control, evidence, provider, source, portfolio, research, task, approval, browser, schedule, and workspace controls. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-governance-and-production-safety-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [x] Model endpoint registry. Twenty-one synchronized model-provider plug-ins retain route, endpoint, readiness, cost, capability, and credential-reference contracts; absent models remain non-assignable. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Data-source connector registry. Eighteen source plug-ins synchronize from the connector registry into one readiness contract with health, freshness, mapping, schedule, access, and evidence gates. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Provider readiness board foundation with live model availability checks. Verified 2026-07-11 by readiness run `live-model-readiness-v2-20260711`; installed models are assignable and five absent Qwen routes are degraded/non-assignable.
 - [x] Provider assignment gate foundation. Verified 2026-07-11 by Command Center task `#327` and provider gate inbox `#413`; approval policy held the task at `needs_review`.
-- [x] Department-level provider policy controls. All 49 active role-scoped agents have explicit primary, fallback, escalation, context, and zero-autonomous-cloud cost-cap records; the Gateway exposes the matrix. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [x] Department-level provider policy controls. All 95 active role-scoped agents have explicit primary, fallback, escalation, context, and zero-autonomous-cloud cost-cap records; the Gateway exposes the matrix. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [x] Blueprint v9 operating-model registry. Evidence: [[2026-07-07-blueprint-v9-operating-model-registry-v1]].
 - [x] Blueprint v10 operating-model registry. Verified 2026-07-11 through `core.v_os_blueprint_summary`, `core.v_os_blueprint_domains`, `core.v_os_blueprint_requirements`, API blueprint routes, and MCP tools `ai_os_blueprint_summary` and `ai_os_blueprint_requirements`.
 - [x] Worker daemon health monitor. The 24/7 agent daemon persists instance, PID, host, cadence, enabled workloads, last-pass status, error, and heartbeat age. Every enabled startup workload now uses bounded direct PostgreSQL connections when the local 0600 runtime env is present; Docker CLI fallback cannot silently hang the production LaunchAgent. Live verification showed `running`, `healthy`, TradingView `ok`, no last error, and no Docker psql child after a complete pass. Evidence: [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]], [[2026-07-15-research-paper-operator-and-daemon-hardening-v1]].
@@ -390,29 +390,29 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 13. Agent Office And Communication
 
-- [x] Agent profiles foundation. Forty-nine active profiles carry role scope, model policy, tools, permissions, guardrails, outputs, persona, cadence, cost policy, and human interface. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Agent departments foundation. Eleven live departments are exposed in the Agent Office terminal. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Agent skills foundation. Role-scoped tools, decision rights, consultation rules, and approval boundaries are registered for the active team. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [~] Agent task queue foundation.
-- [~] Agent inbox foundation.
-- [~] Agent messages foundation.
+- [x] Agent profiles foundation. Ninety-five active profiles carry role scope, hierarchy, model policy, tools, permissions, guardrails, outputs, persona, mental models, cadence, cost policy, and human interface. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [x] Agent departments foundation. Fifteen live departments are exposed in the Agent Office terminal. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [x] Agent skills foundation. The active team has 117 active skills and 166 role-to-skill mappings with scoped tools, decision rights, consultation rules, and approval boundaries. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [x] Agent task queue foundation. The deterministic worker queue, task state transitions, retries, and failure recovery are live.
+- [x] Agent inbox foundation. Every active employee has one unique active mailbox and durable queue state.
+- [x] Agent messages foundation. Internal assignments and handoffs are durable and Jarvis-routed.
 - [~] Agent approvals foundation.
-- [~] Agent run logging foundation.
-- [~] Charlie profile.
-- [~] Jarvis profile.
+- [x] Agent run logging foundation. Completed and failed runs retain worker, task, evidence, model, timing, and recovery state.
+- [x] Charlie profile. Charlie is the chief orchestrator and Devarsh-facing decision partner with explicit escalation and human-control boundaries.
+- [x] Jarvis profile. Jarvis is the runtime operator and dispatcher; it routes work but does not replace specialist ownership.
 - [~] Agent comments.
 - [x] Agent output artifact registry. Scoped Reports exposes 164 durable outputs with search, family/status filters, owner/source/location, path copy, source links, safety flags, worker runs, and gap detection. Evidence: [[2026-07-13-reports-v2]].
 - [~] Per-agent tool permissions UI.
-- [~] Per-agent model route UI.
+- [x] Per-agent model route UI. Every active employee exposes its explicit primary/fallback/escalation route and hard cost policy.
 - [x] Agent mailbox UI. The Agent Office renders durable warehouse mail and the active team has addressable mailboxes; message handoffs remain audited tasks/inbox records. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [~] Committee room view.
+- [x] Committee constitution view. Eleven committee constitutions expose chair, quorum, membership, evidence, dissent, and human-final-decision rules; committee-specific packet/vote/minute automation remains open.
 - [~] Approval board view.
 - [x] Character/personality cards. All active roles have warehouse-backed persona/operating-style data and office character identity; 3D art refinement remains separate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [~] Agent hover cards.
 - [~] Agent handoff threads.
 - [~] Live AI Office room foundation.
-- [ ] Agent reliability score.
-- [ ] Agent productivity metrics.
+- [x] Agent reliability foundation. Readiness and recent worker completion/failure evidence are available per employee; calibrated long-run confidence scoring remains open.
+- [x] Agent productivity foundation. Open work, queue state, completed runs, schedules, and mailbox load are visible; normalized cross-role productivity scoring remains open.
 - [ ] Task arrows between agents.
 - [ ] Click-through agent profile pages.
 - [ ] Agent discussion thread detail pages.
@@ -420,8 +420,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Per-agent cost and quality report.
 - [ ] Department manager dashboards.
 - [ ] Agent hiring/onboarding workflow.
+- [x] Recurring agent schedules. Thirteen database-backed schedules materialize idempotent work and retain schedule-run evidence.
+- [x] Agent model cost controls. All 95 active agents have hard caps; autonomous cloud use and cloud escalation without approval are both zero.
 
 ## 14. Committees
+
+- [x] Committee constitution registry. Eleven committees have durable chairs, quorum, member rosters, required evidence, dissent rules, and human-final-decision boundaries. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 
 - [~] Strategy Committee workflow.
 - [~] Long-Term Investment Committee workflow.
@@ -443,7 +447,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 15. MCP And External Adapters
 
-- [x] MCP server foundation. The importable 144-tool server now includes strategy, integration Gateway, provider, source, evidence, task, approval, browser, portfolio, research, and workspace contracts; smoke verification passed. Evidence: [[2026-07-08-strategy-template-library-v1]], [[2026-07-15-data-model-integration-gateway-v1]].
+- [x] MCP server foundation. The importable 166-tool server now includes strategy, integration Gateway, provider, source, evidence, task, approval, browser, schedule, portfolio, research, and workspace contracts; smoke verification passed. Evidence: [[2026-07-08-strategy-template-library-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [~] Obsidian/vault read-write path.
 - [~] Postgres API tool path.
 - [~] Browser profile registry.
@@ -453,7 +457,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] TradingView CDP/chart-action executor foundation. Verified 2026-07-10: local Desktop CDP is available and provider-gated ready through the guarded relaunch script; native executor remains the runtime controller while the missing third-party candidate checkout is treated as optional, not a dependency.
 - [~] TradingView screenshot artifact API.
 - [x] TradingView action template registry/API/MCP. Six advanced chart contracts and approval-gated request flow are live; deterministic multi-pane mutation remains tracked under controller hardening. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Research paper ingestion/hypothesis MCP tools. Both source ingestion and source-linked hypothesis creation are registered in the permanent 138-tool MCP smoke gate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Research paper ingestion/hypothesis MCP tools. Both source ingestion and source-linked hypothesis creation are registered in the permanent 166-tool MCP smoke gate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [ ] Browser research runner hardening.
 - [ ] Web/document scraper MCP.
 - [ ] PDF/doc extraction MCP.
@@ -473,7 +477,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 16. Dashboards And Live Office
 
-- [x] Canonical frontend delivery plan linked to blueprint and checklist. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]]; the live 49-agent registry overrides historical proposal counts.
+- [x] Canonical frontend delivery plan linked to blueprint and checklist. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]]; the live 95-agent registry overrides historical proposal counts.
 - [x] Command Center foundation with durable delegation. Verified 2026-07-11 through the deployed UI: Charlie message `#94` routed to Research Analyst, created task `#327`, task inbox `#412`, and provider-policy inbox `#413`; no investment or trading action was requested or executed.
 - [x] Portfolio widget foundation. Verified 2026-07-13 in the scoped Portfolio Office with production holdings, market value, gross/net exposure, investment books, position objects, conflicts, and readiness gaps. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
 - [x] Book exposure widget. Verified 2026-07-13 for symbol-level multi-book and client-book exposure with client filtering. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
@@ -483,7 +487,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Long-Term Office dashboard foundation.
 - [x] Quant Lab dashboard foundation. Scoped validation, promotion, committee, retirement/drift, and safe analytics controls are deployed against live strategy rows. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [x] Strategy Arsenal terminal v1. Operator intake, ten templates, source-backed discovery triage, validation sweep, origin/stage filters, eight promotion gates, next-required actions, and strategy evidence chains are deployed through a scoped endpoint. Broker orders remain zero and globally locked. Evidence: [[2026-07-15-strategy-arsenal-v1]].
-- [x] AI Office live activity foundation. The office maps 36 employee records, 24 live activity rows, 10 rooms, mailbox handoffs, committee matters, priority work, risk events, freshness alerts, and execution control from the warehouse with no seed fallback. Evidence: [[2026-07-13-live-office-operations-v3]].
+- [x] AI Office live activity foundation. The office maps the 95-agent organization, live activity, rooms, mailbox handoffs, committee matters, priority work, risk events, freshness alerts, and execution control from the warehouse with no seed fallback. Evidence: [[2026-07-13-live-office-operations-v3]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [x] Live snapshot/API contract for every Command Center workspace and Live Office. Reports now uses `/api/reports/snapshot`; no UI route requests broad `/api/snapshot`. Evidence: [[2026-07-13-reports-v2]].
 - [x] Recovery schema parity for strategy templates and long-term coverage. Verified 2026-07-10: snapshot returned 36 agents, 10 rooms, 24 live activity records, 11 departments, 77 skills, 10 strategy templates, and no API query issues after applying migrations 108 and 109.
 - [~] Command Center shell extraction from monolithic `App.tsx` with no behavior loss. The production root now uses a compact scoped-only shell; the legacy function is unreferenced and tree-shaken. Main JS fell from 464.25 KB to 250.16 KB (46.1%), and the 18-test full workspace matrix passed. Physical removal of the legacy source function remains. Evidence: [[2026-07-13-scoped-command-shell-v2]].
@@ -512,7 +516,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] News and Filings dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Special Situations dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Treasury/Hedges/Crypto dashboard. Treasury and Macro terminal is live over source-backed macro/news/market records; dedicated hedge construction, collateral, cash ladder, and crypto execution connectors remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes 39 plug-in readiness rows, validates 12 warehouse mappings, configures/runs seven allowlisted executor families, shows 21 governed route states, four privacy/cache policies, all 49 agent assignments, model-call decisions, and escalation queue state, and includes strategy-data coverage/import/quality ledgers. Raw prompts, raw secrets, arbitrary commands, seed fallback, autonomous cloud use, and broker authority are rejected. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]].
+- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes plug-in readiness, validates warehouse mappings, configures allowlisted executor families, shows governed route states, privacy/cache policies, all 95 agent assignments, model-call decisions, and escalation queue state, and includes strategy-data coverage/import/quality ledgers. Raw prompts, raw secrets, arbitrary commands, seed fallback, autonomous cloud use, and broker authority are rejected. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [x] Provider Readiness dashboard v2. Model assignment readiness and source health/freshness are unified in the Gateway with filters, per-row checks, full sweeps, missing-credential/model actions, and evidence. Provider policy simulation and final department overrides remain separate open controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [~] Committee Room dashboard v2. Scoped live committee packet, approval state, evidence drawer, workspace customization, and execution lock are deployed; participant discussion, specialized decisions, and follow-up action routes remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] 3D office scene with procedural rooms, stable camera controls, live room placement, room-floor selection, and animated department focus. Directory selection moves the camera without leaving the office; an explicit secondary action opens the mapped Command Center workspace. Evidence: [[2026-07-13-live-office-operations-v3]].
@@ -558,8 +562,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Model endpoint registry foundation. Twenty-one endpoints are synchronized into the canonical integration plug-in manifest and exposed through API, MCP, and the Gateway terminal. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Local model route foundation. `always_on_daily_driver`, `jarvis_intake`, `jarvis_runtime`, daily brief, research, news, strategy intake, and trade-journal routes can use installed `llama3.2:3b`.
 - [x] Ollama/local model runtime foundation. LaunchAgent startup is enabled by default, bound to `127.0.0.1:11434`, and model files remain under `/Volumes/Devarsh SSD/OllamaModels`.
-- [x] Per-agent model route table. All 49 active agents have explicit primary, fallback, escalation, context, and cost-policy assignments; validation fails on incomplete coverage. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
-- [x] Cost ledger and per-agent hard caps. All 49 active agents have cost-cap rows; autonomous cloud agents and unapproved cloud events are both zero. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-06-model-cost-ledger-v1]].
+- [x] Per-agent model route table. All 95 active agents have explicit primary, fallback, escalation, context, and cost-policy assignments; validation fails on incomplete coverage. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [x] Cost ledger and per-agent hard caps. All 95 active agents have cost-cap rows; autonomous cloud agents and unapproved cloud events are both zero. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]], [[2026-07-06-model-cost-ledger-v1]].
 - [x] Embedding model path. `mxbai-embed-large` is installed on the SSD and six Qdrant collections are registered against the embedding path.
 - [x] Live model availability gate. API and readiness sweeps query Ollama `/api/tags`; installed `llama3.2:3b` is `configured`, while absent `qwen3:8b`/`qwen3:14b` routes are `model_unavailable` and non-assignable. Evidence: health checks `#773` and `#774`.
 - [~] Daily driver model selected and smoke-benchmarked. `llama3.2:3b` direct cold-load verification completed in 9.73 seconds and Charlie chat turn `#44` used the model successfully; formal task-quality and sustained-throughput benchmarks remain open.
@@ -570,7 +574,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Local-vs-cloud routing tests. Missing Charlie/Qwen primary route fell back to installed `llama3.2:3b`; unknown routes were controlled rather than foreign-key failures; public cache miss/hit and both escalation privacy branches passed. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
 - [~] Context/RAG compression policy. Client-context inclusion is now authoritative, public/internal cacheable calls omit client/book/position context and disable unscoped vault retrieval, and private calls use bounded local retrieval. Remaining gate: collection-level sensitivity ACLs and retrieval-quality evaluation.
 - [x] Privacy restrictions per model route. Four database policies enforce local/cloud/cache/context/retention rules; private and restricted classes cannot use cloud or cache. Raw prompt columns do not exist in the decision ledger. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
-- [x] Per-department model policies. The 49-agent assignment and cost matrix is visible in the production Gateway and exposed through MCP. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [x] Per-department model policies. The 95-agent assignment and cost matrix is visible in the production Gateway and exposed through MCP. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 
 ## 19. Production Safety
 
@@ -601,7 +605,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Implement Long-Term checklist tables and UI. Evidence: [[2026-07-08-long-term-coverage-board-v1]] plus existing live `portfolio.v_long_term_thesis_checklists` dashboard rows; table/API/UI are live, while row completion remains tracked by the coverage board.
 - [x] Implement Long-Term Monte Carlo engine and report. Engine/API/MCP/database/report existed and the scoped Decision Lab, source gate, external-vault contract, real UI run, and browser tests are now verified. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [x] Implement research/news/filing collector expansion. Dedicated 15-minute RSS freshness plus hourly NSE/BSE, material-first PDF extraction, strategy discovery, daemon health evidence, UI control, and agent routing are live. Evidence: [[2026-07-15-research-intelligence-v1]], [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
-- [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy and six advanced chart-template contracts are registered with approval-gated requests; deterministic execution and verification of every multi-pane/indicator/formula mutation remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy; six advanced chart-template contracts, compiled actions, atomic approval resolution, screenshot quality validation, and the production formula/ratio-chart workflow are verified. Deterministic verification of every multi-pane straddle, indicator-stack, options-combination, and fundamental-ratio mutation remains. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [x] Build Client Folio dashboard. Governed onboarding, account lifecycle, holdings approval, suitability gaps, client-book attribution, P2Cursor, and generic multi-source reconciliation are live and verified across desktop/mobile. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [x] Build client accounting and reporting control plane. Deterministic FIFO, cash/fee ledgers, NAV, Modified Dietz benchmark performance, realized attribution, approval-gated monthly drafts, API/MCP controls, and Client Folio terminal panels are live over real imported data with missing evidence explicitly incomplete. Evidence: [[2026-07-15-client-accounting-performance-reporting-v1]].
 - [~] Build Risk Office v2 with stress tests and portfolio Monte Carlo. The institutional calculation, API, MCP, audited action, responsive terminal, validation, and SSD-artifact foundation are live; options tail risk, richer factor/correlation models, Risk Committee/override workflows, and automated specialist cadence remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].

@@ -299,6 +299,12 @@ export interface ExecuteTradingViewTemplateActionInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface ResolveTradingViewTemplateApprovalInput {
+  approval_id: string | number;
+  status: "approved" | "rejected";
+  decided_by?: string;
+}
+
 export interface CreateInboxItemInput {
   title: string;
   owner_agent?: string;
@@ -1091,6 +1097,13 @@ export function executeTradingViewChartAction(input: ExecuteTradingViewChartActi
 
 export function executeTradingViewTemplateAction(input: ExecuteTradingViewTemplateActionInput): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/tradingview/template-actions", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function resolveTradingViewTemplateApproval(input: ResolveTradingViewTemplateApprovalInput): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/tradingview/template-approvals/resolve", {
     body: JSON.stringify(input),
     method: "POST"
   });

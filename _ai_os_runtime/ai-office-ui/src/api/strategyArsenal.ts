@@ -12,6 +12,7 @@ export interface StrategyArsenalSnapshot {
   discovery_triage: LiveRow[];
   templates: LiveRow[];
   discovery_runs: LiveRow[];
+  user_optimizer_runs: LiveRow[];
   execution_control: LiveRow[];
 }
 

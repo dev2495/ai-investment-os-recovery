@@ -36,7 +36,9 @@ test("strategy evidence drawer resolves the linked lifecycle records", async ({ 
 test("Strategy Arsenal intake and discovery controls are operationally complete", async ({ page }) => {
   await page.goto("/?mode=command&workspace=arsenal", { waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "Add Strategy Idea" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add to Arsenal" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Save hypothesis" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Run full research test" })).toBeEnabled();
+  await expect(page.getByRole("heading", { level: 2, name: "Operator Test Runs" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run discovery" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Validate gates" })).toBeEnabled();
   await expect(page.getByText("must remain zero", { exact: true })).toBeVisible();

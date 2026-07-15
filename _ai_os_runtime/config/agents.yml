@@ -1,9 +1,24 @@
-version: 1
+version: 2
+executive_office:
+  main_assistant: Charlie Munger
+  runtime_operator: Jarvis
+  interaction_policy: user_assigns_to_charlie_then_charlie_routes_to_specialists
+  source_of_truth:
+    profiles: agent.profiles
+    hierarchy: agent.org_hierarchy
+    mailboxes: agent.mailboxes
+    skills: agent.agent_skill_map
+    model_routes: agent.agent_model_assignments
+    schedules: agent.workflow_schedules
+    committees: agent.committee_registry
+
 orchestrator:
-  name: Jarvis
+  name: Charlie Munger
   memory_policy: retrieve_then_reason
-  default_model_route: jarvis_intake
+  default_model_route: charlie_munger_orchestration
+  runtime_dispatcher: Jarvis
   writes_to:
+    - agent.agent_messages
     - agent.inbox_items
     - agent.tasks
     - knowledge.obsidian_notes
@@ -65,4 +80,3 @@ approval_required:
   - broker_credential_change
   - live_strategy_enablement
   - external_message_post
-

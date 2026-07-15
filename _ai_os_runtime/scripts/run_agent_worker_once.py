@@ -99,9 +99,8 @@ def psql_text(sql: str) -> str:
         ]
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
-        sys.stderr.write(completed.stdout)
-        sys.stderr.write(completed.stderr)
-        raise SystemExit(completed.returncode)
+        detail = (completed.stderr or completed.stdout or "psql command failed").strip()
+        raise RuntimeError(detail)
     return completed.stdout.strip()
 
 
@@ -497,7 +496,7 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
             recommended_action = 'Review the completed agent worker output note, then decide whether to close, rerun, or escalate.',
             evidence = coalesce(evidence, '[]'::jsonb) || {sql_jsonb(evidence)},
             updated_at = now()
-        WHERE task_id = {int(job.get('task_id'))}
+        WHERE id = {int(job.get('inbox_item_id')) if job.get('inbox_item_id') is not None else -1}
         RETURNING id, status, updated_at
     )
     SELECT json_build_object(
@@ -508,6 +507,53 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     )::text;
     """
     return json.loads(psql_text(sql))
+
+
+def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], error: Exception) -> dict[str, Any]:
+    message = str(error)[:1200]
+    task_id = int(job.get("task_id"))
+    inbox_id = int(job.get("inbox_item_id")) if job.get("inbox_item_id") is not None else -1
+    evidence = [
+        {"source": "run_agent_worker_once", "task_id": task_id, "status": "failed"},
+        {"error": message},
+    ]
+    return psql_one(
+        f"""
+        WITH inserted_run AS (
+            INSERT INTO agent.worker_runs (
+                task_id, widget_id, agent_name, skill_key, run_mode, status,
+                input_snapshot, output_summary, evidence, started_at, finished_at
+            ) VALUES (
+                {task_id},
+                {int(job.get('widget_id')) if job.get('widget_id') is not None else 'NULL'},
+                {sql_literal(profile.get('agent_name') or job.get('owner_agent') or 'Jarvis')},
+                {sql_literal(skill.get('skill_key') or job.get('suggested_skill_key'))},
+                'manual_once', 'failed', {sql_jsonb({'job': job})},
+                {sql_literal('Worker failure: ' + message)}, {sql_jsonb(evidence)}, now(), now()
+            )
+            RETURNING id,task_id,agent_name,skill_key,status,output_summary,finished_at
+        ),
+        updated_task AS (
+            UPDATE agent.tasks
+            SET status='needs_review',
+                evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
+                updated_at=now()
+            WHERE id={task_id}
+            RETURNING id,status
+        ),
+        updated_inbox AS (
+            UPDATE agent.inbox_items
+            SET status='needs_review',
+                recommended_action='Worker failed. Review the recorded error, fix the bounded cause, then requeue.',
+                evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
+                updated_at=now()
+            WHERE id={inbox_id}
+            RETURNING id
+        )
+        SELECT inserted_run.*,updated_task.status AS task_status
+        FROM inserted_run CROSS JOIN updated_task
+        """
+    )
 
 
 def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
@@ -539,8 +585,40 @@ def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
                 }
             )
             continue
-        gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
-        if gate_result.get("overall_status") != "passed":
+        try:
+            gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
+            if gate_result.get("overall_status") != "passed":
+                results.append(
+                    {
+                        "task_id": job.get("task_id"),
+                        "widget_key": job.get("widget_key"),
+                        "agent_name": profile.get("agent_name"),
+                        "skill_key": skill.get("skill_key"),
+                        "output_note_path": None,
+                        "worker_run_id": None,
+                        "task_status": gate_result.get("next_task_status"),
+                        "provider_gate_status": gate_result.get("overall_status"),
+                        "provider_gate_ids": gate_result.get("gate_ids"),
+                    }
+                )
+                continue
+            context = context_for(skill_key, job.get("widget_key"), job)
+            summary, next_actions = summary_for(job, profile, skill, context)
+            note_path = write_note(job, profile, skill, context, summary, next_actions)
+            completed = complete_job(job, profile, skill, context, summary, note_path)
+            results.append(
+                {
+                    "task_id": job.get("task_id"),
+                    "widget_key": job.get("widget_key"),
+                    "agent_name": profile.get("agent_name"),
+                    "skill_key": skill.get("skill_key"),
+                    "output_note_path": completed.get("worker_run", {}).get("output_note_path"),
+                    "worker_run_id": completed.get("worker_run", {}).get("id"),
+                    "task_status": completed.get("task", {}).get("status"),
+                }
+            )
+        except Exception as exc:
+            failed = record_worker_failure(job, profile, skill, exc)
             results.append(
                 {
                     "task_id": job.get("task_id"),
@@ -548,28 +626,11 @@ def run_once(limit: int, include_completed: bool) -> dict[str, Any]:
                     "agent_name": profile.get("agent_name"),
                     "skill_key": skill.get("skill_key"),
                     "output_note_path": None,
-                    "worker_run_id": None,
-                    "task_status": gate_result.get("next_task_status"),
-                    "provider_gate_status": gate_result.get("overall_status"),
-                    "provider_gate_ids": gate_result.get("gate_ids"),
+                    "worker_run_id": failed.get("id"),
+                    "task_status": failed.get("task_status", "needs_review"),
+                    "error": str(exc),
                 }
             )
-            continue
-        context = context_for(skill_key, job.get("widget_key"), job)
-        summary, next_actions = summary_for(job, profile, skill, context)
-        note_path = write_note(job, profile, skill, context, summary, next_actions)
-        completed = complete_job(job, profile, skill, context, summary, note_path)
-        results.append(
-            {
-                "task_id": job.get("task_id"),
-                "widget_key": job.get("widget_key"),
-                "agent_name": profile.get("agent_name"),
-                "skill_key": skill.get("skill_key"),
-                "output_note_path": completed.get("worker_run", {}).get("output_note_path"),
-                "worker_run_id": completed.get("worker_run", {}).get("id"),
-                "task_status": completed.get("task", {}).get("status"),
-            }
-        )
     return {
         "count": len(results),
         "results": results,

@@ -21,6 +21,7 @@ import {
   resolveStrategyDiscoveryTriage,
   runModelValidationSweep,
   runStrategyDiscovery,
+  runUserDefinedStrategyOptimizer,
   type LiveRow,
   type ResolveStrategyDiscoveryTriageInput
 } from "../api/live";
@@ -95,7 +96,8 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
   const [evidence, setEvidence] = useState<EvidenceSelection | null>(null);
   const [intake, setIntake] = useState({
     name: "", family: "quant", assetClass: "equity", symbols: "", universe: "NSE",
-    timeframe: "daily", thesis: "", constraints: "", risk: ""
+    timeframe: "daily", thesis: "", constraints: "", risk: "",
+    engineTemplate: "momentum", costBps: "3", slippageBps: "2", minRows: "500"
   });
 
   const refresh = useCallback(async () => {
@@ -148,19 +150,41 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
   const submitIntake = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const symbols = intake.symbols.split(",").map((item) => item.trim().toUpperCase()).filter(Boolean);
-    await runAction("intake", () => createStrategyIntake({
-      intake_text: intake.thesis,
-      strategy_name: intake.name || undefined,
-      strategy_family: intake.family,
-      asset_class: intake.assetClass,
-      symbols,
-      universe: intake.universe,
-      timeframe: intake.timeframe,
-      intent_tags: ["operator_submitted", "paper_first"],
-      constraints_text: intake.constraints || undefined,
-      risk_notes: intake.risk || "Parser, data, backtest, validation, committee, and paper gates required.",
-      actor: "Devarsh"
-    }), "Strategy intake added to the paper-first Arsenal.");
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const runFullPipeline = submitter?.value === "test";
+    if (runFullPipeline) {
+      await runAction("optimizer", () => runUserDefinedStrategyOptimizer({
+        run_key: `operator_strategy_${Date.now()}`,
+        actor: "Devarsh",
+        strategy_name: intake.name || `Operator strategy ${new Date().toLocaleDateString("en-IN")}`,
+        intake_text: intake.thesis,
+        asset_class: intake.assetClass,
+        symbols,
+        universe: intake.universe,
+        timeframe: intake.timeframe,
+        template: intake.engineTemplate as "momentum" | "mean_reversion" | "breakout" | "low_volatility",
+        constraints_text: intake.constraints || "Paper-first research only. No live execution.",
+        risk_notes: intake.risk || "Parser, data, backtest, validation, committee, and paper gates required.",
+        cost_bps: intake.costBps,
+        slippage_bps: intake.slippageBps,
+        min_total_rows: intake.minRows,
+        min_rows_per_symbol: Math.min(500, Math.max(50, Number(intake.minRows) || 50))
+      }), "Strategy research pipeline completed. Review the out-of-sample evidence and validation queue; no execution authority was granted.");
+    } else {
+      await runAction("intake", () => createStrategyIntake({
+        intake_text: intake.thesis,
+        strategy_name: intake.name || undefined,
+        strategy_family: intake.family,
+        asset_class: intake.assetClass,
+        symbols,
+        universe: intake.universe,
+        timeframe: intake.timeframe,
+        intent_tags: ["operator_submitted", "paper_first"],
+        constraints_text: intake.constraints || undefined,
+        risk_notes: intake.risk || "Parser, data, backtest, validation, committee, and paper gates required.",
+        actor: "Devarsh"
+      }), "Strategy intake added to the paper-first Arsenal.");
+    }
     setIntake((current) => ({ ...current, name: "", symbols: "", thesis: "", constraints: "", risk: "" }));
   };
 
@@ -214,11 +238,23 @@ export default function StrategyArsenalWorkspace({ onStatusChange }: Props) {
           <label><span>Timeframe</span><select value={intake.timeframe} onChange={(event)=>setIntake({...intake,timeframe:event.target.value})}><option value="5m">5m</option><option value="15m">15m</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="event_driven">Event driven</option></select></label>
           <label><span>Symbols</span><input placeholder="RELIANCE, NIFTY" value={intake.symbols} onChange={(event)=>setIntake({...intake,symbols:event.target.value})}/></label>
           <label><span>Universe</span><input value={intake.universe} onChange={(event)=>setIntake({...intake,universe:event.target.value})}/></label>
+          <label><span>Test engine</span><select value={intake.engineTemplate} onChange={(event)=>setIntake({...intake,engineTemplate:event.target.value})}><option value="momentum">Momentum</option><option value="mean_reversion">Mean reversion</option><option value="breakout">Breakout</option><option value="low_volatility">Low volatility</option></select></label>
+          <label><span>Minimum OHLCV rows</span><input inputMode="numeric" min="50" type="number" value={intake.minRows} onChange={(event)=>setIntake({...intake,minRows:event.target.value})}/></label>
+          <label><span>Costs (bps)</span><input inputMode="decimal" min="0" step="0.1" type="number" value={intake.costBps} onChange={(event)=>setIntake({...intake,costBps:event.target.value})}/></label>
+          <label><span>Slippage (bps)</span><input inputMode="decimal" min="0" step="0.1" type="number" value={intake.slippageBps} onChange={(event)=>setIntake({...intake,slippageBps:event.target.value})}/></label>
           <label className="span-form"><span>Hypothesis and rules</span><textarea required rows={5} value={intake.thesis} onChange={(event)=>setIntake({...intake,thesis:event.target.value})}/></label>
           <label className="span-form"><span>Constraints</span><input value={intake.constraints} onChange={(event)=>setIntake({...intake,constraints:event.target.value})}/></label>
           <label className="span-form"><span>Risk and invalidation</span><input value={intake.risk} onChange={(event)=>setIntake({...intake,risk:event.target.value})}/></label>
-          <button className="primary-button span-form" disabled={Boolean(busy)} type="submit"><Plus size={15}/>{busy === "intake" ? "Adding" : "Add to Arsenal"}</button>
+          <div className="panel-action-group span-form"><button className="mini-action-button" disabled={Boolean(busy)} type="submit" value="save"><Plus size={15}/>{busy === "intake" ? "Adding" : "Save hypothesis"}</button><button className="primary-button" disabled={Boolean(busy)} type="submit" value="test"><Beaker size={15}/>{busy === "optimizer" ? "Testing" : "Run full research test"}</button></div>
+          <p className="form-guard span-form">Testing uses warehouse OHLCV, transaction costs, timestamp-aligned returns, embargoed nested walk-forward selection, cost stress, and Monte Carlo diagnostics. It cannot promote, paper trade, or place an order.</p>
         </form>
+      </Panel>
+
+      <Panel className="span-12" icon={<Beaker size={17}/>} title="Operator Test Runs" action={<span>{snapshot?.user_optimizer_runs.length ?? 0} recent</span>}>
+        <div className="arsenal-discovery-list scoped-scroll-list">
+          {snapshot?.user_optimizer_runs.map((row)=><article className="arsenal-discovery-row" key={value(row,"id")}><div><span>{value(row,"requested_template")} · {value(row,"requested_timeframe")}</span><strong>{value(row,"strategy_name")}</strong><p>{value(row,"requested_symbols", "universe test")} · stage {value(row,"current_stage")} {value(row,"failure_reason","")}</p></div><StatusPill status={value(row,"status","review")}/><div><small>backtest #{value(row,"backtest_run_id","-")}</small><br/><small>optimization #{value(row,"optimization_run_id","-")}</small></div></article>)}
+          {!snapshot?.user_optimizer_runs.length?<div className="empty-state">No operator test run has been recorded.</div>:null}
+        </div>
       </Panel>
 
       <Panel className="span-7" icon={<Layers3 size={17}/>} title="Template Library" action={<span>{snapshot?.templates.length ?? 0} active</span>}>

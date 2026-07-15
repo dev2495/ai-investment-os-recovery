@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -41,6 +42,21 @@ def normalize_symbols(value: Any) -> list[str]:
             seen.add(symbol)
             output.append(symbol)
     return output
+
+
+def source_fingerprint(candidate: dict[str, Any]) -> str:
+    payload = {
+        "source_kind": candidate.get("source_kind"),
+        "source_ref": candidate.get("source_ref"),
+        "title": candidate.get("title"),
+        "symbols": normalize_symbols(candidate.get("symbols")),
+        "universe": candidate.get("universe"),
+        "timeframe": candidate.get("timeframe"),
+        "template": candidate.get("template"),
+        "thesis": candidate.get("thesis"),
+        "catalyst": candidate.get("catalyst"),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 def infer_template(text: str) -> str:
@@ -254,7 +270,8 @@ def create_run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def upsert_generated_idea(run_key: str, candidate: dict[str, Any]) -> dict[str, Any]:
-    idea_key = f"discovery_{run_key}_{slugify(candidate['source_kind'])}_{slugify(str(candidate.get('source_ref') or candidate['title']))}"
+    fingerprint = str(candidate["source_fingerprint"])
+    idea_key = f"discovery_{slugify(candidate['source_kind'])}_{slugify(str(candidate.get('source_ref') or candidate['title']))}_{fingerprint[:12]}"
     rows = run_psql_json(
         f"""
         WITH upserted AS (
@@ -309,7 +326,8 @@ def upsert_generated_idea(run_key: str, candidate: dict[str, Any]) -> dict[str, 
 
 
 def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea: dict[str, Any], optimizer: dict[str, Any] | None) -> dict[str, Any]:
-    discovery_key = f"{run_key}_{slugify(candidate['source_kind'])}_{slugify(str(candidate.get('source_ref') or candidate['title']))}"
+    fingerprint = str(candidate["source_fingerprint"])
+    discovery_key = f"discovery_{slugify(candidate['source_kind'])}_{slugify(str(candidate.get('source_ref') or candidate['title']))}_{fingerprint[:12]}"
     optimizer_run_key = optimizer.get("run_key") if optimizer else None
     optimizer_status = optimizer.get("status") if optimizer else None
     optimizer_run_id = None
@@ -323,10 +341,10 @@ def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea:
             """
         )
         optimizer_run_id = rows[0]["id"] if rows else None
-    if optimizer_status == "completed":
+    if optimizer_status in {"completed", "reused"}:
         research_gate = "optimizer_completed_model_validation_required"
         next_action = "Review optimizer/backtest evidence, run model validation sweep, then committee review."
-        status = "optimizer_routed"
+        status = "optimizer_reused" if optimizer_status == "reused" else "optimizer_routed"
     elif candidate.get("route_to_optimizer"):
         research_gate = "optimizer_route_available"
         next_action = "Run or repair optimizer workflow before promotion."
@@ -370,6 +388,7 @@ def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea:
                 {sql_literal(status)}
             )
             ON CONFLICT (discovery_key) DO UPDATE SET
+                run_id = EXCLUDED.run_id,
                 generated_idea_id = EXCLUDED.generated_idea_id,
                 optimizer_run_id = EXCLUDED.optimizer_run_id,
                 optimizer_run_key = EXCLUDED.optimizer_run_key,
@@ -386,12 +405,43 @@ def upsert_candidate(run_id: int, run_key: str, candidate: dict[str, Any], idea:
     return rows[0]
 
 
+def recent_optimizer(candidate: dict[str, Any], cooldown_hours: int) -> dict[str, Any] | None:
+    rows = fetch_json(
+        f"""
+        SELECT optimizer.id AS workflow_run_id, optimizer.run_key,
+               optimizer.optimization_run_id, optimizer.backtest_run_id,
+               optimizer.finished_at
+        FROM strategy.strategy_discovery_candidates discovery
+        JOIN strategy.user_defined_optimizer_runs optimizer
+          ON optimizer.id = discovery.optimizer_run_id
+        WHERE discovery.source_kind = {sql_literal(candidate.get('source_kind'))}
+          AND discovery.source_ref IS NOT DISTINCT FROM {sql_literal(candidate.get('source_ref'))}
+          AND discovery.evidence @> {sql_jsonb([{'source_fingerprint': candidate['source_fingerprint']}])}
+          AND optimizer.status = 'completed'
+          AND optimizer.finished_at >= now() - make_interval(hours => {max(1, cooldown_hours)})
+        ORDER BY optimizer.finished_at DESC
+        LIMIT 1
+        """
+    )
+    if not rows:
+        return None
+    return {
+        "status": "reused",
+        **rows[0],
+        "source_fingerprint": candidate["source_fingerprint"],
+        "reuse_reason": f"unchanged source was optimized within the last {max(1, cooldown_hours)} hours",
+    }
+
+
 def route_optimizer(args: argparse.Namespace, run_key: str, index: int, candidate: dict[str, Any]) -> dict[str, Any] | None:
     if not candidate.get("route_to_optimizer"):
         return None
     symbols = normalize_symbols(candidate.get("symbols"))
     if not symbols:
         return None
+    reusable = recent_optimizer(candidate, args.optimizer_cooldown_hours)
+    if reusable:
+        return reusable
     optimizer_run_key = f"{run_key}_opt_{index}_{slugify(candidate['title'])}"
     command = [
         sys.executable,
@@ -438,6 +488,14 @@ def gather_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
         candidates.extend(component_candidates(args.per_source_limit))
     deduped: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
+        candidate["source_fingerprint"] = source_fingerprint(candidate)
+        candidate["evidence"] = [
+            *(candidate.get("evidence") or []),
+            {
+                "source_fingerprint": candidate["source_fingerprint"],
+                "fingerprint_version": "strategy_discovery_v1",
+            },
+        ]
         key = f"{candidate['source_kind']}:{candidate.get('source_ref') or candidate['title']}"
         deduped[key] = candidate
     return sorted(deduped.values(), key=lambda row: float(row.get("priority_score") or 0), reverse=True)[: max(1, args.max_candidates)]
@@ -468,11 +526,14 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
     candidates = gather_candidates(args)
     output_candidates = []
     optimizer_count = 0
+    optimizer_reused_count = 0
     for index, candidate in enumerate(candidates[: args.max_candidates], start=1):
         idea = upsert_generated_idea(args.run_key, candidate)
         optimizer = route_optimizer(args, args.run_key, index, candidate) if index <= args.route_top else None
         if optimizer and optimizer.get("status") == "completed":
             optimizer_count += 1
+        if optimizer and optimizer.get("status") == "reused":
+            optimizer_reused_count += 1
         row = upsert_candidate(int(run["id"]), args.run_key, candidate, idea, optimizer)
         output_candidates.append({"candidate": row, "generated_idea": idea, "optimizer": optimizer})
 
@@ -481,6 +542,7 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
         "discovered_count": len(candidates),
         "generated_idea_count": len(output_candidates),
         "optimizer_routed_count": optimizer_count,
+        "optimizer_reused_count": optimizer_reused_count,
         "source_scope": [source.strip() for source in args.sources.split(",") if source.strip()],
         "live_execution_allowed": False,
         "seed_data_allowed": False,
@@ -508,6 +570,7 @@ def main() -> int:
     parser.add_argument("--per-source-limit", type=int, default=8)
     parser.add_argument("--max-candidates", type=int, default=16)
     parser.add_argument("--route-top", type=int, default=2)
+    parser.add_argument("--optimizer-cooldown-hours", type=int, default=168)
     args = parser.parse_args()
     print(json.dumps(run_discovery(args), indent=2, sort_keys=True, default=str))
     return 0

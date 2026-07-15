@@ -189,7 +189,7 @@ The frontend is delivered as two interlinked worlds that preserve the selected e
 
 Charlie chat is the common work-entry surface. A command must show its interpreted objective, delegation, source/tool use, blockers, approvals, evidence, durable task/message records, and resulting widgets. Clicking an office employee uses the same audited agent-message route; the 3D scene has no separate action authority and cannot bypass risk, provider, committee, or execution gates.
 
-The delivery architecture keeps React, TypeScript, Vite, and the existing API contract; uses React Router for addressable workspaces, Zustand only for client selection/view state, React Three Fiber/Three.js/Drei for the office, and standard DOM charts for decision-critical analytics. The implementation order is shell and scoped live reads, Mission Control and core workspaces, 3D interaction completion, then production/accessibility/performance hardening. The current 36-agent live registry is authoritative; older frontend proposals that mention 16 agents are historical snapshots, not the runtime target.
+The delivery architecture keeps React, TypeScript, Vite, and the existing API contract; uses React Router for addressable workspaces, Zustand only for client selection/view state, React Three Fiber/Three.js/Drei for the office, and standard DOM charts for decision-critical analytics. The implementation order is shell and scoped live reads, Mission Control and core workspaces, 3D interaction completion, then production/accessibility/performance hardening. The current 95-agent live registry is authoritative; older frontend proposals that mention 16, 36, or 49 agents are historical snapshots, not the runtime target.
 
 ## 7. Storage And Memory Contract
 
@@ -1457,7 +1457,7 @@ The system is not "complete" until:
 
 The operating interface now includes scoped Approval Board, Agent Office, Committee Rooms, Capital Allocation, Treasury and Macro, and Model Runtime terminals. The operator can persist theme, density, columns, module order, hidden modules, and dashboard widget layout through audited API and MCP actions. Charlie may propose and apply workspace changes, but a layout change cannot alter evidence, approval, capital, or execution records.
 
-The live organization contains 49 active role-scoped agents across automation, data, executive, knowledge, news, portfolio, quant, research, risk, runtime, and trading. The hierarchy follows this control path:
+The live organization contains 95 active role-scoped agents across 15 departments spanning executive, portfolio, research, quant, trading, risk, data, news, knowledge, automation, runtime, client, model, and engineering responsibilities. The hierarchy follows this control path:
 
 ```text
 Devarsh
@@ -1646,7 +1646,7 @@ The release gate passed: zero-seed state validation; 18-row client/book complete
 
 ## 40. Governed Model Runtime Control Plane - 2026-07-15
 
-Model selection is now an enforceable operating decision rather than an informal prompt convention. Every active agent has one explicit primary route, fallback route, escalation route, bounded context policy, cost policy, and hard cap. The current matrix covers all 49 active agents. A missing local model degrades the route and triggers a local fallback; it does not silently become a cloud call.
+Model selection is now an enforceable operating decision rather than an informal prompt convention. Every active agent has one explicit primary route, fallback route, escalation route, bounded context policy, cost policy, and hard cap. The current matrix covers all 95 active agents. A missing local model degrades the route and triggers a local fallback; it does not silently become a cloud call.
 
 ```text
 Agent and task
@@ -1669,9 +1669,9 @@ The runtime path is integrated into Charlie chat. Charlie's configured 14B prima
 
 Higher-capability escalation is a request workflow, not a provider call. A client-private/restricted request is rejected before approval. A public/internal non-client request creates a high-risk human approval containing only decision ID, route/provider/model request, privacy class, and prompt hash. Approval resolution updates privacy/cost/escalation state but explicitly reports `cloud_call_executed=false`. Provider credentials and actual frontier invocation remain separate future configuration.
 
-The production Data & Model Gateway now exposes source-backed model metrics, all 21 route states, four privacy/cache policies, all 49 agent assignments, recent call decisions, and the escalation queue. It can request an eligible escalation but cannot invoke a provider, change capital, or place an order. MCP tools `ai_os_model_runtime_control` and `ai_os_request_model_escalation` bring the full server to 158 tools.
+The production Data & Model Gateway now exposes source-backed model metrics, governed route states, four privacy/cache policies, all 95 agent assignments, recent call decisions, and the escalation queue. It can request an eligible escalation but cannot invoke a provider, change capital, or place an order. The full MCP server currently exposes 166 importable tools.
 
-Release evidence passed: 49/49 model assignments; 49/49 cost caps; 14 ready, five unavailable-model, and two blocked-secret routes; zero autonomous-cloud agents; zero unapproved cloud events; zero private cache entries; no raw-prompt schema column; local fallback; public cache miss/hit; controlled unknown route; HTTP 400 rejection of public/internal requests that ask for client context without creating a decision row; both escalation privacy branches; approval rejection synchronization; production-row cleanup; Python compile; production UI build; MCP protocol/read smoke; 6/6 Gateway browser tests; 17/17 department regressions; 39/39 WCAG A/AA checks; and desktop/mobile visual inspection. Production operational state was returned to zero validation chats, model decisions, cache entries, and escalation requests while append-only API audit evidence remained.
+Release evidence passed: 95/95 model assignments; 95/95 cost caps; zero autonomous-cloud agents; zero cloud escalations without approval; zero private cache entries; no raw-prompt schema column; local fallback; public cache miss/hit; controlled unknown route; HTTP 400 rejection of public/internal requests that ask for client context without creating a decision row; both escalation privacy branches; approval rejection synchronization; production-row cleanup; Python compile; production UI build; MCP protocol/read smoke; Gateway and department browser regressions; WCAG automation; and desktop/mobile visual inspection. Production validation records were cleaned while append-only API audit evidence remained.
 
 This does not complete model strategy. Remaining gates are a representative task-quality evaluation set, sustained throughput/thermal benchmarks, collection-level retrieval ACLs and quality evaluation, installation or removal of unavailable Qwen routes, cloud-provider secret references, approved provider invocation, budget alerts, and machine-aware routing between the MacBook and future 24/7 host. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
 

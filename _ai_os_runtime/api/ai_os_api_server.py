@@ -2023,10 +2023,24 @@ def build_trading_quant_risk_snapshot() -> dict:
             SELECT template_key, template_name, category, action_kind,
                    default_exchange, default_timeframe, default_chart_layout,
                    requires_symbol, approval_required, execution_mode, status,
-                   owner_agent, description, risk_notes, updated_at
+                   owner_agent, description, risk_notes, default_payload, updated_at
             FROM ops.v_tradingview_action_templates
             ORDER BY category, template_name
             LIMIT 80
+        """,
+        "tradingview_template_approvals": """
+            SELECT approval.id, approval.title, approval.owner_agent,
+                   approval.risk_level, approval.status, approval.requested_action,
+                   approval.rationale, approval.created_at, approval.decided_at,
+                   task.id AS tradingview_task_id, task.task_title,
+                   task.status AS task_status, task.symbols, task.timeframe,
+                   task.chart_layout, task.result_summary
+            FROM agent.approvals approval
+            LEFT JOIN ops.tradingview_tasks task
+              ON task.id = (approval.requested_action->>'tradingview_task_id')::BIGINT
+            WHERE approval.approval_type = 'tradingview_template_action'
+            ORDER BY approval.created_at DESC
+            LIMIT 60
         """,
         "trade_activity": """
             SELECT id, activity_type, execution_mode, source_kind, source_ref,
@@ -2271,6 +2285,18 @@ def build_strategy_arsenal_snapshot() -> dict:
             FROM strategy.v_strategy_discovery_runs
             ORDER BY created_at DESC
             LIMIT 20
+        """,
+        "user_optimizer_runs": """
+            SELECT id, run_key, strategy_name, intake_id, intake_key,
+                   candidate_id, candidate_key, candidate_name,
+                   backtest_run_id, optimization_run_id, status, current_stage,
+                   requested_template, requested_timeframe, requested_symbols,
+                   stage_results, failure_reason, artifact_path, created_by,
+                   started_at, finished_at, created_at,
+                   broker_order_allowed, autonomous_live_execution_allowed
+            FROM strategy.v_user_defined_optimizer_runs
+            ORDER BY created_at DESC
+            LIMIT 40
         """,
         "execution_control": """
             SELECT state_key, global_execution_locked, broker_execution_policy,
@@ -2878,10 +2904,13 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "secondary": "SELECT * FROM trading.v_execution_gate_checks ORDER BY checked_at DESC NULLS LAST LIMIT 60",
         },
         "agents": {
-            "summary": "SELECT * FROM agent.v_agent_departments ORDER BY priority, department_name",
-            "primary": "SELECT * FROM agent.v_active_agents ORDER BY department_name, agent_name",
+            "summary": "SELECT * FROM agent.v_agent_operating_summary ORDER BY metric",
+            "primary": """SELECT e.agent_name,e.display_title,e.department,e.department_name,e.role_scope,e.persona,e.operating_style,e.mental_models,e.reports_to_agent,e.hierarchy_level,e.character_name,e.color_token,e.icon_hint,e.mailbox_address,e.live_state,e.current_work_title,e.current_work_detail,e.primary_route,e.assigned_model,e.model_status,e.cost_policy,e.active_skill_count,e.skills,e.open_task_count,e.open_inbox_count,e.worker_run_count,e.completed_worker_run_count,e.latest_activity_at,r.operating_readiness_score,r.reliability_score,r.reliability_confidence,r.readiness_status FROM agent.v_employee_profiles_v1 e JOIN agent.v_agent_operating_readiness r USING(agent_name) ORDER BY e.role_rank,e.agent_name""",
             "secondary": "SELECT * FROM agent.v_live_agent_worker_queue ORDER BY updated_at DESC LIMIT 100",
             "tertiary": "SELECT * FROM agent.v_agent_message_threads ORDER BY created_at DESC NULLS LAST LIMIT 80",
+            "departments": "SELECT * FROM agent.v_agent_departments ORDER BY priority, department_name",
+            "schedules": "SELECT * FROM agent.v_workflow_schedule_control ORDER BY CASE schedule_state WHEN 'due' THEN 1 WHEN 'waiting_on_open_task' THEN 2 ELSE 3 END, next_run_at",
+            "committees": "SELECT * FROM agent.v_committee_membership_roster ORDER BY committee_name",
         },
         "committees": {
             "summary": "SELECT * FROM agent.v_committee_room_summary ORDER BY metric",
@@ -5319,11 +5348,13 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
         "exchange": payload.get("exchange") or "NSE",
         "timeframe": payload.get("timeframe") or "D",
         "chart_layout": payload.get("chart_layout"),
+        "chart_style": payload.get("chart_style") or payload.get("chartStyle"),
         "target_url": payload.get("target_url"),
         "wait_ms": payload.get("wait_ms") or payload.get("waitMs") or 9000,
         "capture_screenshot": payload.get("capture_screenshot", True),
         "quality_check": payload.get("quality_check", True),
         "max_quality_attempts": payload.get("max_quality_attempts") or payload.get("maxQualityAttempts") or 3,
+        "activate_app": payload.get("activate_app", True),
     }
     action_timeout = max(
         45,
@@ -5470,6 +5501,126 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     return result
 
 
+def tradingview_parameter(payload: dict, key: str, default: object = None) -> object:
+    if payload.get(key) not in (None, ""):
+        return payload.get(key)
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    return metadata.get(key, default)
+
+
+def normalize_tradingview_symbol(value: object, default_exchange: str) -> str:
+    symbol = str(value or "").strip().upper().replace(" ", "")
+    if not symbol:
+        return ""
+    return symbol if ":" in symbol else f"{default_exchange}:{symbol}"
+
+
+def tradingview_chart_url(symbol_expression: str, timeframe: object) -> str:
+    params = urllib.parse.urlencode({"symbol": symbol_expression, "interval": str(timeframe or "D")})
+    return f"https://www.tradingview.com/chart/?{params}"
+
+
+def compile_tradingview_template_plan(template: dict, payload: dict, symbols: list[str]) -> dict[str, Any]:
+    template_key = str(template["template_key"])
+    exchange = str(payload.get("exchange") or template.get("default_exchange") or "NSE").upper()
+    timeframe = payload.get("timeframe") or template.get("default_timeframe") or "D"
+    primary = normalize_tradingview_symbol(payload.get("symbol") or (symbols[0] if symbols else ""), exchange)
+    plan: dict[str, Any] = {
+        "plan_version": "tradingview_template_plan_v1",
+        "template_key": template_key,
+        "execution_ready": False,
+        "fulfillment": "manual_required",
+        "browser_action": "open_chart_capture",
+        "symbol_expression": primary,
+        "target_url": tradingview_chart_url(primary, timeframe) if primary else None,
+        "required_parameters": [],
+        "validated_parameters": {},
+        "broker_order_allowed": False,
+    }
+    if template_key in {"open_symbol_chart", "capture_chart_snapshot", "capture_symbol_watchlist"}:
+        plan.update({"execution_ready": bool(primary), "fulfillment": "complete"})
+    elif template_key == "relative_strength_ratio_chart":
+        benchmark = normalize_tradingview_symbol(tradingview_parameter(payload, "benchmark"), exchange)
+        if not primary or not benchmark:
+            plan["required_parameters"] = ["symbol", "benchmark"]
+        else:
+            expression = f"100*{primary}/{benchmark}"
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "complete_formula_chart",
+                "chart_style": "Line",
+                "symbol_expression": expression,
+                "target_url": tradingview_chart_url(expression, timeframe),
+                "validated_parameters": {"symbol": primary, "benchmark": benchmark, "scale_factor": 100},
+            })
+    elif template_key == "spread_pair_formula_chart":
+        leg_a = normalize_tradingview_symbol(tradingview_parameter(payload, "leg_a") or primary, exchange)
+        leg_b = normalize_tradingview_symbol(tradingview_parameter(payload, "leg_b"), exchange)
+        try:
+            hedge_ratio = Decimal(str(tradingview_parameter(payload, "hedge_ratio", "1")))
+        except InvalidOperation:
+            hedge_ratio = Decimal("0")
+        if not leg_a or not leg_b or hedge_ratio <= 0:
+            plan["required_parameters"] = ["leg_a", "leg_b", "positive hedge_ratio"]
+        else:
+            expression = f"{leg_a}-{hedge_ratio.normalize()}*{leg_b}"
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "complete_formula_chart",
+                "chart_style": "Line",
+                "symbol_expression": expression,
+                "target_url": tradingview_chart_url(expression, timeframe),
+                "validated_parameters": {"leg_a": leg_a, "leg_b": leg_b, "hedge_ratio": str(hedge_ratio)},
+            })
+    elif template_key in {"open_option_straddle_layout", "option_straddle_four_pane"}:
+        underlying = normalize_tradingview_symbol(tradingview_parameter(payload, "underlying") or primary, exchange)
+        call_symbol = normalize_tradingview_symbol(tradingview_parameter(payload, "call_symbol"), exchange)
+        put_symbol = normalize_tradingview_symbol(tradingview_parameter(payload, "put_symbol"), exchange)
+        expiry = str(tradingview_parameter(payload, "expiry") or "").strip()
+        strike = str(tradingview_parameter(payload, "strike") or "").strip()
+        if not all([underlying, call_symbol, put_symbol, expiry, strike]):
+            plan["required_parameters"] = ["underlying", "expiry", "strike", "call_symbol", "put_symbol"]
+        else:
+            expression = f"{call_symbol}+{put_symbol}"
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "straddle_formula_only_four_pane_pending",
+                "chart_style": "Line",
+                "symbol_expression": expression,
+                "target_url": tradingview_chart_url(expression, timeframe),
+                "validated_parameters": {
+                    "underlying": underlying, "expiry": expiry, "strike": strike,
+                    "call_symbol": call_symbol, "put_symbol": put_symbol,
+                },
+                "remaining_manual_step": "Open and synchronize underlying, call, put, and formula panes; deterministic pane mutation is not yet enabled.",
+            })
+    elif template_key == "technical_indicator_stack":
+        plan.update({
+            "required_parameters": ["symbol", "approved indicator list"],
+            "validated_parameters": {"requested_indicators": tradingview_parameter(payload, "indicators", [])},
+            "remaining_manual_step": "Apply and verify each indicator through the signed-in TradingView dialog.",
+        })
+    elif template_key == "fundamental_ratio_dashboard":
+        plan.update({
+            "required_parameters": ["symbol", "available TradingView financial fields"],
+            "validated_parameters": {"requested_fields": tradingview_parameter(payload, "fields", [])},
+            "remaining_manual_step": "Apply financial metrics and cross-check each value against the linked filing evidence.",
+        })
+    elif template_key == "market_regime_four_pane":
+        plan.update({
+            "required_parameters": ["equity_index", "volatility_index", "bond_yield", "currency"],
+            "remaining_manual_step": "Resolve entitled symbols and synchronize four TradingView panes.",
+        })
+    elif template_key == "create_alert_request":
+        plan.update({
+            "required_parameters": ["symbol", "condition", "timeframe", "manual TradingView alert confirmation"],
+            "remaining_manual_step": "Use the dedicated alert-request resolver; automatic account-level alert mutation is disabled.",
+        })
+    else:
+        plan.update({"execution_ready": bool(primary), "fulfillment": "single_chart_only"})
+    return plan
+
+
 def execute_tradingview_template_action(payload: dict) -> dict:
     template_key = str(payload.get("template_key") or payload.get("template") or "").strip()
     if not template_key:
@@ -5502,6 +5653,7 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         raise ValueError("symbol or symbols is required for this TradingView template")
 
     default_payload = template.get("default_payload") if isinstance(template.get("default_payload"), dict) else {}
+    compiled_plan = compile_tradingview_template_plan(template, {**default_payload, **payload}, symbols)
     merged_payload = {
         **default_payload,
         **payload,
@@ -5514,12 +5666,16 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         "actor": actor,
         "owner_agent": payload.get("owner_agent") or template.get("owner_agent") or "Trading Desk Agent",
         "instruction": payload.get("instruction") or template.get("description") or f"Run TradingView template {template_key}.",
+        "target_url": compiled_plan.get("target_url"),
+        "chart_style": compiled_plan.get("chart_style"),
+        "compiled_plan": compiled_plan,
         "metadata": {
             **(payload.get("metadata") or {}),
             "template_key": template_key,
             "template_status": template.get("status"),
             "template_execution_mode": template.get("execution_mode"),
             "template_risk_notes": template.get("risk_notes"),
+            "compiled_plan": compiled_plan,
         },
     }
 
@@ -5605,11 +5761,104 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         audit_api_write("ai_os_api_execute_tradingview_template_action", "create_template_approval_request", actor, "agent.approvals", result, payload)
         return result
 
+    if not compiled_plan.get("execution_ready"):
+        missing = ", ".join(compiled_plan.get("required_parameters") or []) or "deterministic browser capability"
+        raise ValueError(f"TradingView template is not executable yet; required: {missing}")
     result = execute_tradingview_chart_action(merged_payload)
     result["template_key"] = template_key
     result["template_name"] = template.get("template_name")
     result["template_status"] = template.get("status")
     audit_api_write("ai_os_api_execute_tradingview_template_action", "execute_tradingview_template_action", actor, "ops.tradingview_tasks", result, payload)
+    return result
+
+
+def resolve_tradingview_template_approval(payload: dict) -> dict:
+    try:
+        approval_id = int(payload.get("approval_id") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approval_id is required and must be an integer") from exc
+    status = str(payload.get("status") or payload.get("decision") or "").strip().lower()
+    if status not in {"approved", "rejected"}:
+        raise ValueError("status must be approved or rejected")
+    actor = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
+    approval_rows = run_psql_json(
+        f"""
+        SELECT id, status, requested_action
+        FROM agent.approvals
+        WHERE id={approval_id} AND approval_type='tradingview_template_action' AND status='pending'
+        LIMIT 1
+        """
+    )
+    if not approval_rows:
+        raise ValueError("pending TradingView template approval not found")
+    requested_action = approval_rows[0].get("requested_action") if isinstance(approval_rows[0].get("requested_action"), dict) else {}
+    task_id = requested_action.get("tradingview_task_id")
+    if not task_id:
+        raise ValueError("TradingView approval is missing its linked task")
+    plan = requested_action.get("compiled_plan") if isinstance(requested_action.get("compiled_plan"), dict) else {}
+
+    if status == "rejected":
+        rows = run_psql_json_statement(
+            f"""
+            WITH approval_update AS (
+                UPDATE agent.approvals SET status='rejected', decided_by={sql_literal(actor)}, decided_at=now()
+                WHERE id={approval_id} AND status='pending' RETURNING *
+            ), task_update AS (
+                UPDATE ops.tradingview_tasks SET status='rejected',
+                    result_summary='TradingView template request rejected; chart state was not changed.',
+                    metadata=metadata || {sql_jsonb({'approval_id': approval_id, 'approval_status': 'rejected'})},
+                    completed_at=now(), updated_at=now()
+                WHERE id={int(task_id)} RETURNING id, status, result_summary
+            ), inbox_update AS (
+                UPDATE agent.inbox_items SET status='blocked', updated_at=now()
+                WHERE evidence @> jsonb_build_array(jsonb_build_object('table','agent.approvals','id',{approval_id}))
+                RETURNING id, status
+            )
+            SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json)::text FROM (
+                SELECT (SELECT row_to_json(approval_update) FROM approval_update) approval,
+                       (SELECT row_to_json(task_update) FROM task_update) task,
+                       (SELECT coalesce(json_agg(row_to_json(inbox_update)),'[]'::json) FROM inbox_update) inbox_items
+            ) rows
+            """
+        )
+        result = rows[0] if rows else {"approval_id": approval_id, "status": "rejected"}
+        audit_api_write("ai_os_api_resolve_tradingview_template_approval", "reject_tradingview_template", actor, "agent.approvals", result, payload)
+        return result
+
+    if not plan.get("execution_ready"):
+        missing = ", ".join(plan.get("required_parameters") or []) or "deterministic browser capability"
+        raise ValueError(f"Approved request cannot execute safely; required: {missing}")
+    claimed = run_psql_json_statement(
+        f"""
+        WITH approval_update AS (
+            UPDATE agent.approvals SET status='approved', decided_by={sql_literal(actor)}, decided_at=now()
+            WHERE id={approval_id} AND status='pending' RETURNING id
+        ), task_update AS (
+            UPDATE ops.tradingview_tasks SET status='in_progress',
+                metadata=metadata || {sql_jsonb({'approval_id': approval_id, 'approval_status': 'approved', 'execution_started_by': actor})},
+                updated_at=now()
+            WHERE id={int(task_id)} AND EXISTS (SELECT 1 FROM approval_update)
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(task_update)), '[]'::json)::text FROM task_update
+        """
+    )
+    if not claimed:
+        raise ValueError("TradingView template approval could not be claimed")
+    try:
+        result = execute_tradingview_chart_action({**requested_action, "task_id": int(task_id), "actor": actor})
+    except Exception:
+        run_psql_text(
+            f"UPDATE agent.inbox_items SET status='blocked', updated_at=now() WHERE evidence @> jsonb_build_array(jsonb_build_object('table','agent.approvals','id',{approval_id}));"
+        )
+        raise
+    run_psql_text(
+        f"UPDATE agent.inbox_items SET status='done', updated_at=now() WHERE evidence @> jsonb_build_array(jsonb_build_object('table','agent.approvals','id',{approval_id}));"
+    )
+    result["approval_id"] = approval_id
+    result["approval_status"] = "approved"
+    result["compiled_plan"] = plan
+    audit_api_write("ai_os_api_resolve_tradingview_template_approval", "approve_and_execute_tradingview_template", actor, "ops.tradingview_tasks", result, payload)
     return result
 
 
@@ -7057,8 +7306,9 @@ def resolve_approval(payload: dict) -> dict:
     if guarded and guarded[0].get("approval_type") in {
         "client_onboarding", "account_change", "holding_update",
         "client_cash_entry", "client_report_send",
+        "tradingview_template_action",
     }:
-        raise ValueError("Client Office approvals must use their dedicated resolve endpoint so the governed state change is atomic")
+        raise ValueError("This approval must use its dedicated resolve endpoint so the governed state change and side effects remain linked")
     rows = run_psql_json_statement(
         f"""
         WITH updated AS (
@@ -11697,6 +11947,28 @@ def run_agent_worker(payload: dict) -> dict:
     return result
 
 
+def materialize_agent_schedules(payload: dict) -> dict:
+    try:
+        limit = int(payload.get("limit") or 10)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    limit = max(1, min(limit, 50))
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    rows = run_psql_json_statement(
+        f"SELECT jsonb_build_array(agent.materialize_due_workflow_schedules({limit}, {sql_literal(actor)}))::text"
+    )
+    result = rows[0] if rows else {"processed": 0, "results": []}
+    audit_api_write(
+        "ai_os_api_materialize_agent_schedules",
+        "materialize_agent_schedules",
+        actor,
+        "agent.workflow_schedule_runs",
+        result,
+        payload,
+    )
+    return result
+
+
 class AiOsApiHandler(BaseHTTPRequestHandler):
     server_version = "AiOsApi/0.1"
 
@@ -11829,6 +12101,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/tradingview/template-actions":
                 self._send_json(execute_tradingview_template_action(payload), 201)
+                return
+            if self.path == "/api/tradingview/template-approvals/resolve":
+                self._send_json(resolve_tradingview_template_approval(payload), 200)
                 return
             if self.path == "/api/tradingview/alert-requests/resolve":
                 self._send_json(resolve_tradingview_alert_request(payload), 201)
@@ -12168,6 +12443,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/agents/worker/run":
                 self._send_json(run_agent_worker(payload), 201)
+                return
+            if self.path == "/api/agents/schedules/run":
+                self._send_json(materialize_agent_schedules(payload), 201)
                 return
             if self.path == "/api/chat":
                 self._send_json(chat_with_charlie(payload), 201)

@@ -15,12 +15,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createTradingViewTask,
   engageGlobalKillSwitch,
+  executeTradingViewTemplateAction,
   recordManualTrade,
   recordPaperTrade,
   refreshPortfolioRiskEvents,
   runInstitutionalPortfolioRisk,
   runModelValidationSweep,
   runStrategyQuantAnalytics,
+  resolveTradingViewTemplateApproval,
   type LiveRow
 } from "../api/live";
 import { fetchTradingQuantRiskSnapshot, type TradingQuantRiskSnapshot } from "../api/tradingQuantRisk";
@@ -30,6 +32,12 @@ type ConnectionStatus = "loading" | "online" | "offline";
 type Mode = "trading" | "quant" | "risk";
 
 interface Props { mode: Mode; onStatusChange: (status: ConnectionStatus) => void; }
+
+const deterministicTradingViewTemplates = new Set([
+  "open_symbol_chart", "capture_chart_snapshot", "capture_symbol_watchlist",
+  "relative_strength_ratio_chart", "spread_pair_formula_chart",
+  "open_option_straddle_layout", "option_straddle_four_pane"
+]);
 
 function value(row: LiveRow | undefined, key: string, fallback = "-"): string {
   const raw = row?.[key];
@@ -83,6 +91,11 @@ export default function TradingQuantRiskWorkspace({ mode, onStatusChange }: Prop
   const [notice, setNotice] = useState("");
   const [actionBusy, setActionBusy] = useState("");
   const [chart, setChart] = useState({ symbol: "", timeframe: "1D", instruction: "Open chart and capture a decision-ready screenshot" });
+  const [templateRequest, setTemplateRequest] = useState({
+    templateKey: "relative_strength_ratio_chart", symbol: "", benchmark: "NSE:NIFTY",
+    legA: "", legB: "", hedgeRatio: "1", underlying: "", expiry: "", strike: "",
+    callSymbol: "", putSymbol: "", timeframe: "D"
+  });
   const [trade, setTrade] = useState({ mode: "manual", symbol: "", side: "buy", quantity: "", price: "", strategy: "", thesis: "" });
 
   const refresh = useCallback(async () => {
@@ -123,6 +136,7 @@ export default function TradingQuantRiskWorkspace({ mode, onStatusChange }: Prop
   const riskBreaches = snapshot?.risk_limits.filter((row) => value(row, "check_status", "") === "breach").length ?? 0;
   const warnings = snapshot?.risk_limits.filter((row) => value(row, "check_status", "") === "warning").length ?? 0;
   const realizedPaperPnl = useMemo(() => snapshot?.paper_trade_summary.reduce((sum, row) => sum + Number(row.realized_pnl ?? 0), 0) ?? 0, [snapshot]);
+  const pendingTemplateApprovals = useMemo(() => (snapshot?.tradingview_template_approvals ?? []).filter((row) => value(row, "status") === "pending"), [snapshot]);
 
   const runSafeAction = async (key: string, action: () => Promise<unknown>, success: string) => {
     setActionBusy(key); setError(""); setNotice("");
@@ -155,6 +169,38 @@ export default function TradingQuantRiskWorkspace({ mode, onStatusChange }: Prop
     setTrade((current) => ({ ...current, symbol: "", quantity: "", price: "", thesis: "" }));
   };
 
+  const submitTemplate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const symbol = templateRequest.symbol || templateRequest.legA || templateRequest.underlying;
+    await runSafeAction("template", () => executeTradingViewTemplateAction({
+      template_key: templateRequest.templateKey,
+      actor: "Devarsh",
+      requested_by: "Devarsh",
+      symbol: symbol.toUpperCase(),
+      symbols: symbol ? [symbol.toUpperCase()] : [],
+      exchange: "NSE",
+      timeframe: templateRequest.timeframe,
+      source_ref: "trading_quant_risk_chart_workflow_builder",
+      metadata: {
+        benchmark: templateRequest.benchmark.toUpperCase(),
+        leg_a: templateRequest.legA.toUpperCase(),
+        leg_b: templateRequest.legB.toUpperCase(),
+        hedge_ratio: templateRequest.hedgeRatio,
+        underlying: templateRequest.underlying.toUpperCase(),
+        expiry: templateRequest.expiry,
+        strike: templateRequest.strike,
+        call_symbol: templateRequest.callSymbol.toUpperCase(),
+        put_symbol: templateRequest.putSymbol.toUpperCase()
+      }
+    }), "TradingView workflow compiled. Deterministic actions were executed or queued for dedicated approval; no broker order was created.");
+  };
+
+  const resolveTemplate = (approvalId: string, decision: "approved" | "rejected") => runSafeAction(
+    `template-${approvalId}`,
+    () => resolveTradingViewTemplateApproval({ approval_id: approvalId, status: decision, decided_by: "Devarsh" }),
+    decision === "approved" ? "Approved TradingView plan executed and evidence captured." : "TradingView plan rejected without changing chart state."
+  );
+
   const metricLabel = mode === "quant" ? "Quant Candidates" : mode === "trading" ? "Signals" : "Risk Breaches";
   const metricValue = mode === "quant" ? snapshot?.quant_lab.length ?? 0 : mode === "trading" ? snapshot?.signals.length ?? 0 : riskBreaches;
 
@@ -180,7 +226,9 @@ export default function TradingQuantRiskWorkspace({ mode, onStatusChange }: Prop
 
     {mode === "trading" ? <section className="dashboard-grid">
       <Panel className="span-5" icon={<BarChart3 size={17}/>} title="TradingView Request"><form className="operator-form" onSubmit={submitChart}><label><span>Symbol</span><input required value={chart.symbol} onChange={(event)=>setChart({...chart,symbol:event.target.value.toUpperCase()})}/></label><label><span>Timeframe</span><select value={chart.timeframe} onChange={(event)=>setChart({...chart,timeframe:event.target.value})}><option>5m</option><option>15m</option><option>1H</option><option>1D</option><option>1W</option></select></label><label className="span-form"><span>Instruction</span><input required value={chart.instruction} onChange={(event)=>setChart({...chart,instruction:event.target.value})}/></label><button className="primary-button span-form" disabled={Boolean(actionBusy)} type="submit"><BarChart3 size={15}/>{actionBusy === "chart" ? "Queueing" : "Queue chart task"}</button></form></Panel>
-      <Panel className="span-7" icon={<Workflow size={17}/>} title="Advanced Chart Templates" action={<span>{snapshot?.tradingview_templates.length ?? 0} templates</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.tradingview_templates.map((row)=><article className="source-check-row" key={value(row,"template_key")}><div><strong>{value(row,"template_name")}</strong><p>{value(row,"description")} · {value(row,"default_chart_layout")}</p></div><StatusPill status={value(row,"status","gated")}/><span>{value(row,"category")}</span><time>{value(row,"approval_required","false") === "true" ? "approval" : "read only"}</time></article>)}{!snapshot?.tradingview_templates.length?<Empty>No TradingView templates registered.</Empty>:null}</div></Panel>
+      <Panel className="span-7" icon={<Workflow size={17}/>} title="Chart Workflow Builder" action={<span>{snapshot?.tradingview_templates.length ?? 0} templates</span>}><form className="operator-form" onSubmit={submitTemplate}><label className="span-form"><span>Workflow</span><select value={templateRequest.templateKey} onChange={(event)=>setTemplateRequest({...templateRequest,templateKey:event.target.value})}>{snapshot?.tradingview_templates.map((row)=>{const key=value(row,"template_key");return <option disabled={!deterministicTradingViewTemplates.has(key)} key={key} value={key}>{value(row,"template_name")} {!deterministicTradingViewTemplates.has(key)?"(manual capability pending)":""}</option>;})}</select></label><label><span>Primary symbol</span><input value={templateRequest.symbol} onChange={(event)=>setTemplateRequest({...templateRequest,symbol:event.target.value.toUpperCase()})}/></label><label><span>Timeframe</span><select value={templateRequest.timeframe} onChange={(event)=>setTemplateRequest({...templateRequest,timeframe:event.target.value})}><option value="5">5m</option><option value="15">15m</option><option value="60">1H</option><option value="D">1D</option><option value="W">1W</option></select></label>{templateRequest.templateKey==="relative_strength_ratio_chart"?<label className="span-form"><span>Benchmark or peer</span><input required value={templateRequest.benchmark} onChange={(event)=>setTemplateRequest({...templateRequest,benchmark:event.target.value.toUpperCase()})}/></label>:null}{templateRequest.templateKey==="spread_pair_formula_chart"?<><label><span>Leg A</span><input required value={templateRequest.legA} onChange={(event)=>setTemplateRequest({...templateRequest,legA:event.target.value.toUpperCase()})}/></label><label><span>Leg B</span><input required value={templateRequest.legB} onChange={(event)=>setTemplateRequest({...templateRequest,legB:event.target.value.toUpperCase()})}/></label><label className="span-form"><span>Hedge ratio</span><input inputMode="decimal" min="0.0001" required step="0.0001" type="number" value={templateRequest.hedgeRatio} onChange={(event)=>setTemplateRequest({...templateRequest,hedgeRatio:event.target.value})}/></label></>:null}{["open_option_straddle_layout","option_straddle_four_pane"].includes(templateRequest.templateKey)?<><label><span>Underlying</span><input required value={templateRequest.underlying} onChange={(event)=>setTemplateRequest({...templateRequest,underlying:event.target.value.toUpperCase()})}/></label><label><span>Expiry</span><input placeholder="2026-07-30" required value={templateRequest.expiry} onChange={(event)=>setTemplateRequest({...templateRequest,expiry:event.target.value})}/></label><label><span>Strike</span><input required value={templateRequest.strike} onChange={(event)=>setTemplateRequest({...templateRequest,strike:event.target.value})}/></label><label><span>Call symbol</span><input required value={templateRequest.callSymbol} onChange={(event)=>setTemplateRequest({...templateRequest,callSymbol:event.target.value.toUpperCase()})}/></label><label className="span-form"><span>Put symbol</span><input required value={templateRequest.putSymbol} onChange={(event)=>setTemplateRequest({...templateRequest,putSymbol:event.target.value.toUpperCase()})}/></label></>:null}<button className="primary-button span-form" disabled={Boolean(actionBusy)||!deterministicTradingViewTemplates.has(templateRequest.templateKey)} type="submit"><Workflow size={15}/>{actionBusy==="template"?"Compiling":"Compile and run / request approval"}</button><p className="form-guard span-form">Formula charts execute only after parameter validation and any required human approval. Option workflows currently execute the call-plus-put formula; four-pane synchronization remains marked partial.</p></form></Panel>
+      <Panel className="span-12" icon={<BarChart3 size={17}/>} title="Advanced Chart Templates" action={<span>{snapshot?.tradingview_templates.length ?? 0} registered</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.tradingview_templates.map((row)=>{const key=value(row,"template_key");return <article className="source-check-row" key={key}><div><strong>{value(row,"template_name")}</strong><p>{value(row,"description")} · {value(row,"risk_notes")}</p></div><StatusPill status={deterministicTradingViewTemplates.has(key)?value(row,"status","gated"):"partial"}/><span>{value(row,"category")}</span><time>{deterministicTradingViewTemplates.has(key)?(value(row,"approval_required","false") === "true" ? "approval then execute" : "deterministic capture"):"manual capability pending"}</time></article>;})}{!snapshot?.tradingview_templates.length?<Empty>No TradingView templates registered.</Empty>:null}</div></Panel>
+      <Panel className="span-12" icon={<ShieldCheck size={17}/>} title="Chart Plan Approvals" action={<span>{pendingTemplateApprovals.length} pending</span>}><div className="source-check-list scoped-scroll-list">{pendingTemplateApprovals.map((row)=>{const requested=row.requested_action&&typeof row.requested_action==="object"&&!Array.isArray(row.requested_action)?row.requested_action as Record<string,unknown>:{};const plan=requested.compiled_plan&&typeof requested.compiled_plan==="object"&&!Array.isArray(requested.compiled_plan)?requested.compiled_plan as Record<string,unknown>:{};const ready=String(plan.execution_ready)==="true";return <article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"title")}</strong><p>{String(plan.fulfillment??"manual review")} · {String(plan.symbol_expression??value(row,"symbols"))}</p></div><StatusPill status={ready?"ready":"partial"}/><div className="panel-action-group"><button className="mini-action-button" disabled={Boolean(actionBusy)||!ready} onClick={()=>void resolveTemplate(value(row,"id"),"approved")} type="button">Approve and run</button><button className="danger-button" disabled={Boolean(actionBusy)} onClick={()=>void resolveTemplate(value(row,"id"),"rejected")} type="button">Reject</button></div></article>;})}{!pendingTemplateApprovals.length?<Empty>No TradingView chart plan awaits a decision.</Empty>:null}</div></Panel>
       <Panel className="span-7" icon={<Activity size={17}/>} title="Live Signals" action={<span>{snapshot?.signals.length ?? 0} signals</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.signals.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"symbol")} · {value(row,"strategy")}</strong><p>{value(row,"exchange")} · confidence {value(row,"confidence","-")}</p></div><StatusPill status={value(row,"action","watch")}/><span>{amount(row.price)}</span><time>{date(row.ts)}</time></article>)}{!snapshot?.signals.length?<Empty>No live signal rows.</Empty>:null}</div></Panel>
       <Panel className="span-5" icon={<ClipboardPlus size={17}/>} title="Trade Journal"><form className="operator-form" onSubmit={submitTrade}><label><span>Record type</span><select value={trade.mode} onChange={(event)=>setTrade({...trade,mode:event.target.value})}><option value="manual">Manual trade</option><option value="paper">Paper trade</option></select></label><label><span>Symbol</span><input required value={trade.symbol} onChange={(event)=>setTrade({...trade,symbol:event.target.value.toUpperCase()})}/></label><label><span>Side</span><select value={trade.side} onChange={(event)=>setTrade({...trade,side:event.target.value})}><option value="buy">Buy</option><option value="sell">Sell</option><option value="long">Long</option><option value="short">Short</option><option value="exit">Exit</option></select></label><label><span>Quantity</span><input inputMode="decimal" value={trade.quantity} onChange={(event)=>setTrade({...trade,quantity:event.target.value})}/></label><label><span>Price</span><input inputMode="decimal" value={trade.price} onChange={(event)=>setTrade({...trade,price:event.target.value})}/></label><label><span>Strategy</span><input value={trade.strategy} onChange={(event)=>setTrade({...trade,strategy:event.target.value})}/></label><label className="span-form"><span>Thesis</span><input value={trade.thesis} onChange={(event)=>setTrade({...trade,thesis:event.target.value})}/></label><button className="primary-button span-form" disabled={Boolean(actionBusy)} type="submit"><ClipboardPlus size={15}/>{actionBusy === "trade" ? "Recording" : "Record journal entry"}</button><p className="form-guard span-form">Journal only. This route cannot submit a broker order.</p></form></Panel>
       <Panel className="span-7" icon={<BarChart3 size={17}/>} title="TradingView Controller" action={<span>{snapshot?.tradingview_cdp.available ? "CDP online" : "CDP offline"}</span>}><div className="source-check-list scoped-scroll-list">{snapshot?.tradingview_tasks.map((row)=><article className="source-check-row" key={value(row,"id")}><div><strong>{value(row,"task_title")}</strong><p>{value(row,"symbols")} · {value(row,"timeframe")} · {value(row,"result_summary")}</p></div><StatusPill status={value(row,"status","queued")}/><span>#{value(row,"id")}</span><time>{date(row.updated_at)}</time></article>)}</div></Panel>

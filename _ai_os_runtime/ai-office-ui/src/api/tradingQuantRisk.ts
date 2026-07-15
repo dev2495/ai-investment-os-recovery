@@ -18,6 +18,7 @@ export interface TradingQuantRiskSnapshot {
   alerts: LiveRow[];
   tradingview_tasks: LiveRow[];
   tradingview_templates: LiveRow[];
+  tradingview_template_approvals: LiveRow[];
   trade_activity: LiveRow[];
   paper_trade_summary: LiveRow[];
   risk_summary: LiveRow[];

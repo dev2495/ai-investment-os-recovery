@@ -54,6 +54,22 @@ test("department terminals have no page-level mobile overflow", async ({ page })
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
+test("agent office exposes the complete governed employee operating system", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.goto("/?mode=command&workspace=agents", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 3, name: "Office command and delegation" })).toBeVisible();
+  await expect(page.getByText("Charlie leads · Jarvis runs", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run due schedules" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run workers" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Assign work" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "AI employee roster" })).toBeVisible();
+  await expect(page.locator(".agent-roster-card")).toHaveCount(95);
+  await expect(page.getByText("Operating schedules", { exact: true })).toBeVisible();
+  await expect(page.getByText("Committee constitution", { exact: true })).toBeVisible();
+  await expect(page.locator(".agent-schedule-list article")).toHaveCount(13);
+  await expect(page.locator(".agent-committee-list article")).toHaveCount(11);
+});
+
 test("governance terminal exposes live controls and persistent human authority", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/?mode=command&workspace=governance", { waitUntil: "networkidle" });
@@ -97,9 +113,10 @@ test("research paper ingestion and hypothesis controls are governed and mobile s
 test("advanced TradingView templates are visible and remain approval gated", async ({ page }) => {
   await page.goto("/?mode=command&workspace=trading", { waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "Advanced Chart Templates" })).toBeVisible();
-  await expect(page.getByText("Option Straddle Four Pane", { exact: true })).toBeVisible();
-  await expect(page.getByText("Fundamental Ratio Dashboard", { exact: true })).toBeVisible();
-  await expect(page.getByText("Relative Strength Ratio Chart", { exact: true })).toBeVisible();
+  const templates = page.getByLabel("Advanced Chart Templates");
+  await expect(templates.getByText("Option Straddle Four Pane", { exact: true })).toBeVisible();
+  await expect(templates.getByText("Fundamental Ratio Dashboard", { exact: true })).toBeVisible();
+  await expect(templates.getByText("Relative Strength Ratio Chart", { exact: true })).toBeVisible();
 });
 
 test("risk center exposes real institutional analytics with execution locked", async ({ page }) => {

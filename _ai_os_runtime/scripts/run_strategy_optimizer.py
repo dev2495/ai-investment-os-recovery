@@ -107,46 +107,31 @@ def metrics_for_returns(returns: list[float], timeframe: str) -> dict[str, Any]:
     }
 
 
-def walk_forward_windows(returns: list[float], timeframe: str) -> list[dict[str, Any]]:
-    if not returns:
+def walk_forward_boundaries(total: int, embargo_bars: int) -> list[dict[str, int]]:
+    """Build anchored train/test folds with a gap between selection and evaluation."""
+    if total < 40:
         return []
-    total = len(returns)
-    train_size = max(40, int(total * 0.45))
-    test_size = max(20, int(total * 0.15))
-    step = max(20, int(total * 0.15))
-    if train_size + test_size > total:
-        split = max(1, int(total * 0.6))
-        return [
-            {
-                "fold": 1,
-                "train_start": 0,
-                "train_end": split,
-                "test_start": split,
-                "test_end": total,
-                "train_metrics": metrics_for_returns(returns[:split], timeframe),
-                "test_metrics": metrics_for_returns(returns[split:], timeframe),
-            }
-        ]
-    windows: list[dict[str, Any]] = []
-    start = 0
+    train_size = max(60, int(total * 0.45))
+    test_size = max(20, int(total * 0.12))
+    if train_size + embargo_bars + test_size > total:
+        train_size = max(20, int(total * 0.60))
+        test_start = min(total, train_size + embargo_bars)
+        return [{"fold": 1, "train_start": 0, "train_end": train_size, "test_start": test_start, "test_end": total}] if test_start < total else []
+    windows: list[dict[str, int]] = []
+    train_end = train_size
     fold = 1
-    while start + train_size + test_size <= total and fold <= 8:
-        train_start = start
-        train_end = start + train_size
-        test_start = train_end
-        test_end = test_start + test_size
+    while train_end + embargo_bars + test_size <= total and fold <= 8:
+        test_start = train_end + embargo_bars
         windows.append(
             {
                 "fold": fold,
-                "train_start": train_start,
+                "train_start": 0,
                 "train_end": train_end,
                 "test_start": test_start,
-                "test_end": test_end,
-                "train_metrics": metrics_for_returns(returns[train_start:train_end], timeframe),
-                "test_metrics": metrics_for_returns(returns[test_start:test_end], timeframe),
+                "test_end": test_start + test_size,
             }
         )
-        start += step
+        train_end += test_size
         fold += 1
     return windows
 
@@ -182,7 +167,7 @@ def simulate_params(bars: list[Bar], template: str, params: dict[str, float | in
     by_symbol: dict[str, list[Bar]] = {}
     for bar in bars:
         by_symbol.setdefault(bar.symbol, []).append(bar)
-    all_returns: list[float] = []
+    returns_by_timestamp: dict[str, list[float]] = {}
     trade_count = 0
     total_cost = (cost_bps + slippage_bps) / 10000.0
     symbol_count = 0
@@ -197,33 +182,107 @@ def simulate_params(bars: list[Bar], template: str, params: dict[str, float | in
             turnover = abs(positions[index] - positions[index - 1])
             if turnover:
                 trade_count += 1
-            all_returns.append(positions[index - 1] * raw_return - turnover * total_cost)
+            returns_by_timestamp.setdefault(symbol_bars[index].ts, []).append(
+                positions[index - 1] * raw_return - turnover * total_cost
+            )
+    ordered_timestamps = sorted(returns_by_timestamp)
+    all_returns = [statistics.mean(returns_by_timestamp[ts]) for ts in ordered_timestamps]
     split = max(1, int(len(all_returns) * 0.6))
     train_returns = all_returns[:split]
     test_returns = all_returns[split:]
     metrics = metrics_for_returns(all_returns, timeframe)
     train_metrics = metrics_for_returns(train_returns, timeframe)
     test_metrics = metrics_for_returns(test_returns, timeframe)
-    folds = walk_forward_windows(all_returns, timeframe)
-    wf_summary = walk_forward_summary(folds)
     score = (
-        (wf_summary["average_test_sharpe"] or test_metrics["sharpe_estimate"] or -99.0)
-        + float(wf_summary["average_test_return"]) * 10.0
-        - abs(float(wf_summary["worst_test_drawdown"])) * 4.0
-        + float(wf_summary["test_consistency"])
+        (test_metrics["sharpe_estimate"] or -99.0)
+        + float(test_metrics["total_return"]) * 10.0
+        - abs(float(test_metrics["max_drawdown"])) * 4.0
     )
     return {
         "params": params,
         "metrics": metrics,
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
-        "walk_forward_folds": folds,
-        "walk_forward_summary": wf_summary,
         "score": score,
         "trades_count": trade_count,
         "symbols_tested": symbol_count,
         "returns": all_returns,
+        "timestamps": ordered_timestamps,
     }
+
+
+def training_score(metrics: dict[str, Any]) -> float:
+    return (
+        float(metrics.get("sharpe_estimate") if metrics.get("sharpe_estimate") is not None else -99.0)
+        + float(metrics.get("total_return") or 0.0) * 8.0
+        - abs(float(metrics.get("max_drawdown") or 0.0)) * 4.0
+    )
+
+
+def nested_walk_forward(results: list[dict[str, Any]], timeframe: str, embargo_bars: int) -> dict[str, Any]:
+    """Select parameters only on each training fold, then score the untouched test fold."""
+    if not results:
+        return {"folds": [], "summary": walk_forward_summary([]), "selected_parameter_counts": {}, "parameter_stability": 0.0, "oos_returns": []}
+    total = min(len(row["returns"]) for row in results)
+    folds: list[dict[str, Any]] = []
+    selected_counts: dict[str, int] = {}
+    oos_returns: list[float] = []
+    for boundary in walk_forward_boundaries(total, embargo_bars):
+        ranked = sorted(
+            results,
+            key=lambda row: training_score(
+                metrics_for_returns(row["returns"][boundary["train_start"]:boundary["train_end"]], timeframe)
+            ),
+            reverse=True,
+        )
+        selected = ranked[0]
+        train_slice = selected["returns"][boundary["train_start"]:boundary["train_end"]]
+        test_slice = selected["returns"][boundary["test_start"]:boundary["test_end"]]
+        parameter_key = json.dumps(selected["params"], sort_keys=True)
+        selected_counts[parameter_key] = selected_counts.get(parameter_key, 0) + 1
+        oos_returns.extend(test_slice)
+        folds.append(
+            {
+                **boundary,
+                "embargo_bars": embargo_bars,
+                "selected_params": selected["params"],
+                "train_metrics": metrics_for_returns(train_slice, timeframe),
+                "test_metrics": metrics_for_returns(test_slice, timeframe),
+            }
+        )
+    summary = walk_forward_summary(folds)
+    stability = max(selected_counts.values(), default=0) / len(folds) if folds else 0.0
+    return {
+        "folds": folds,
+        "summary": summary,
+        "selected_parameter_counts": selected_counts,
+        "parameter_stability": stability,
+        "oos_returns": oos_returns,
+    }
+
+
+def cost_stress_summary(
+    bars: list[Bar],
+    template: str,
+    params: dict[str, float | int | str],
+    timeframe: str,
+    cost_bps: float,
+    slippage_bps: float,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for multiplier in (1.0, 1.5, 2.0):
+        run = simulate_params(bars, template, params, timeframe, cost_bps * multiplier, slippage_bps * multiplier)
+        rows.append(
+            {
+                "multiplier": multiplier,
+                "cost_bps": cost_bps * multiplier,
+                "slippage_bps": slippage_bps * multiplier,
+                "test_total_return": run["test_metrics"]["total_return"],
+                "test_sharpe": run["test_metrics"]["sharpe_estimate"],
+                "max_drawdown": run["metrics"]["max_drawdown"],
+            }
+        )
+    return rows
 
 
 def monte_carlo_summary(returns: list[float], runs: int = 200) -> dict[str, Any]:
@@ -256,29 +315,45 @@ def optimize(candidate: dict[str, Any], symbols: list[str], timeframe: str, temp
     grid = parameter_grid(template)
     results = [simulate_params(bars, template, params, timeframe, cost_bps, slippage_bps) for params in grid]
     ranked = sorted(results, key=lambda row: row["score"], reverse=True)
-    best = ranked[0] if ranked else {
+    embargo_bars = max(1, min(12, int(math.sqrt(max(1, min((len(row["returns"]) for row in results), default=0))))))
+    nested = nested_walk_forward(results, timeframe, embargo_bars)
+    selected_parameter_counts = nested["selected_parameter_counts"]
+    if ranked and selected_parameter_counts:
+        best = max(
+            ranked,
+            key=lambda row: (selected_parameter_counts.get(json.dumps(row["params"], sort_keys=True), 0), row["score"]),
+        )
+    else:
+        best = ranked[0] if ranked else {
         "params": {},
         "metrics": metrics_for_returns([], timeframe),
         "train_metrics": metrics_for_returns([], timeframe),
         "test_metrics": metrics_for_returns([], timeframe),
-        "walk_forward_folds": [],
-        "walk_forward_summary": walk_forward_summary([]),
         "score": -99.0,
         "trades_count": 0,
         "symbols_tested": 0,
         "returns": [],
-    }
+        "timestamps": [],
+        }
+    wf_summary = nested["summary"]
+    cost_stress = cost_stress_summary(bars, template, best["params"], timeframe, cost_bps, slippage_bps) if ranked else []
     warnings = []
     if best["test_metrics"]["bars"] < 300:
         warnings.append("Out-of-sample split is too small for production confidence.")
-    if (best["walk_forward_summary"]["average_test_sharpe"] or best["test_metrics"]["sharpe_estimate"] or -99) < 0:
-        warnings.append("Best parameter set has negative walk-forward/test Sharpe; reject until broader data proves otherwise.")
-    if best["walk_forward_summary"]["test_consistency"] < 0.5:
-        warnings.append("Best parameter set is not consistent across walk-forward windows.")
+    if wf_summary["fold_count"] < 3:
+        warnings.append("Fewer than three embargoed walk-forward folds are available; production confidence is not established.")
+    if (wf_summary["average_test_sharpe"] if wf_summary["average_test_sharpe"] is not None else -99) < 0:
+        warnings.append("Nested walk-forward out-of-sample Sharpe is negative; reject until broader data proves otherwise.")
+    if wf_summary["test_consistency"] < 0.5:
+        warnings.append("Nested walk-forward selection is not profitable in at least half of the untouched test folds.")
+    if nested["parameter_stability"] < 0.5:
+        warnings.append("Parameter selection is unstable across folds; treat the apparent optimum as overfit risk.")
     if best["trades_count"] < 20:
         warnings.append("Trade count is low; Monte Carlo and walk-forward results are weak evidence.")
     if len(bars) < 1000:
         warnings.append("OHLCV sample is thin; this run is a robustness pipeline proof.")
+    if cost_stress and float(cost_stress[-1]["test_total_return"]) <= 0:
+        warnings.append("The selected strategy loses money in the 2x transaction-cost stress test.")
     heatmap_rows = [
         {
             "rank": rank + 1,
@@ -289,9 +364,7 @@ def optimize(candidate: dict[str, Any], symbols: list[str], timeframe: str, temp
             "score": row["score"],
             "test_return": row["test_metrics"]["total_return"],
             "test_sharpe": row["test_metrics"]["sharpe_estimate"],
-            "walk_forward_test_return": row["walk_forward_summary"]["average_test_return"],
-            "walk_forward_test_sharpe": row["walk_forward_summary"]["average_test_sharpe"],
-            "walk_forward_consistency": row["walk_forward_summary"]["test_consistency"],
+            "selected_fold_count": selected_parameter_counts.get(json.dumps(row["params"], sort_keys=True), 0),
             "max_drawdown": row["metrics"]["max_drawdown"],
         }
         for rank, row in enumerate(ranked)
@@ -304,9 +377,7 @@ def optimize(candidate: dict[str, Any], symbols: list[str], timeframe: str, temp
             "total_return": row["metrics"]["total_return"],
             "test_total_return": row["test_metrics"]["total_return"],
             "test_sharpe": row["test_metrics"]["sharpe_estimate"],
-            "walk_forward_test_return": row["walk_forward_summary"]["average_test_return"],
-            "walk_forward_test_sharpe": row["walk_forward_summary"]["average_test_sharpe"],
-            "walk_forward_consistency": row["walk_forward_summary"]["test_consistency"],
+            "selected_fold_count": selected_parameter_counts.get(json.dumps(row["params"], sort_keys=True), 0),
             "max_drawdown": row["metrics"]["max_drawdown"],
             "trades_count": row["trades_count"],
             "symbols_tested": row["symbols_tested"],
@@ -330,28 +401,34 @@ def optimize(candidate: dict[str, Any], symbols: list[str], timeframe: str, temp
             "best_total_return": best["metrics"]["total_return"],
             "best_test_total_return": best["test_metrics"]["total_return"],
             "best_test_sharpe": best["test_metrics"]["sharpe_estimate"],
-            "best_walk_forward_test_return": best["walk_forward_summary"]["average_test_return"],
-            "best_walk_forward_test_sharpe": best["walk_forward_summary"]["average_test_sharpe"],
-            "best_walk_forward_consistency": best["walk_forward_summary"]["test_consistency"],
+            "best_walk_forward_test_return": wf_summary["average_test_return"],
+            "best_walk_forward_test_sharpe": wf_summary["average_test_sharpe"],
+            "best_walk_forward_consistency": wf_summary["test_consistency"],
             "best_max_drawdown": best["metrics"]["max_drawdown"],
             "grid_size": len(grid),
             "trades_count": best["trades_count"],
             "symbols_tested": best["symbols_tested"],
             "bars_seen": len(bars),
             "walk_forward": {
-                "method": "rolling chronological train/test windows",
-                "folds": best["walk_forward_folds"],
-                "summary": best["walk_forward_summary"],
+                "method": "anchored nested parameter selection with embargoed chronological test folds",
+                "embargo_bars": embargo_bars,
+                "folds": nested["folds"],
+                "summary": wf_summary,
+                "selected_parameter_counts": selected_parameter_counts,
+                "parameter_stability": nested["parameter_stability"],
             },
-            "monte_carlo": monte_carlo_summary(best["returns"]),
+            "monte_carlo": monte_carlo_summary(nested["oos_returns"] or best["returns"]),
+            "cost_stress": cost_stress,
         },
         "diagnostics": {
-            "engine": "local_strategy_optimizer_v1",
+            "engine": "local_strategy_optimizer_v2",
             "data_source": "trading.ohlcv",
             "cost_bps": cost_bps,
             "slippage_bps": slippage_bps,
-            "walk_forward_method": "rolling chronological train/test windows",
-            "monte_carlo_method": "deterministic bootstrap of best parameter return stream",
+            "return_alignment": "equal-weighted by timestamp across tested symbols",
+            "walk_forward_method": "parameters selected on anchored train folds and evaluated after an embargo on untouched test folds",
+            "monte_carlo_method": "deterministic bootstrap of nested out-of-sample returns",
+            "multiple_testing_policy": "parameter choice must recur across folds; full-grid winner is not treated as promotion evidence",
             "paper_first": True,
             "live_execution_allowed": False,
             "warnings": warnings,
@@ -383,6 +460,8 @@ def write_artifact(result: dict[str, Any]) -> Path:
                 f"- Best test return: {metrics['best_test_total_return']:.6f}",
                 f"- Walk-forward folds: {metrics['walk_forward']['summary']['fold_count']}",
                 f"- Walk-forward consistency: {metrics['best_walk_forward_consistency']:.2f}",
+                f"- Parameter stability: {metrics['walk_forward']['parameter_stability']:.2f}",
+                f"- Embargo bars: {metrics['walk_forward']['embargo_bars']}",
                 f"- Monte Carlo p05 return: {mc['p05_total_return'] if mc['p05_total_return'] is not None else 'n/a'}",
                 "",
                 "## Warnings",
@@ -432,7 +511,7 @@ def persist_result(candidate: dict[str, Any], result: dict[str, Any]) -> dict[st
             {candidate_id},
             {backtest_id if backtest_id is not None else 'NULL'},
             {sql_literal('Local optimization - ' + str(candidate.get("name")))},
-            'parameter_search_walk_forward_bootstrap',
+            'nested_walk_forward_embargo_cost_stress_v2',
             {sql_literal(result["status"])},
             'Maximize out-of-sample risk-adjusted return while preserving paper-first guardrails.',
             {sql_jsonb(result["parameter_space"])},
@@ -463,8 +542,8 @@ def persist_result(candidate: dict[str, Any], result: dict[str, Any]) -> dict[st
             'unchecked',
             CASE WHEN {sql_jsonb(warnings)}::jsonb <> '[]'::jsonb THEN 'high' ELSE 'medium' END,
             {sql_literal('Optimizer included transaction cost and slippage in every parameter run.')},
-            {sql_literal('Walk-forward is a simple chronological split; broader historical data is required.')},
-            ARRAY['Review optimizer selection bias','Run broader data sample','Run independent walk-forward windows','Review Monte Carlo/bootstrap tails','Approve or reject paper monitoring']::text[],
+            {sql_literal('Parameters are selected inside anchored training folds, separated from untouched test folds by an embargo; broader historical data is still required.')},
+            ARRAY['Review nested walk-forward selection bias','Run broader data sample','Review parameter stability across folds','Review 1x/1.5x/2x cost stress','Review Monte Carlo/bootstrap tails','Approve or reject paper monitoring']::text[],
             {sql_jsonb([{"severity": "high", "issue": warning} for warning in warnings])},
             jsonb_build_array(jsonb_build_object('optimization_artifact', {sql_literal(result.get("artifact_path"))}))
         FROM inserted_opt

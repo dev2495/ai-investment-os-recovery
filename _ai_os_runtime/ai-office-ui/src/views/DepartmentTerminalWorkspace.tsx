@@ -1,9 +1,9 @@
-import { Activity, FileSearch, Play, RefreshCw, Scale, ShieldAlert } from "lucide-react";
-import type { FormEvent } from "react";
+import { Activity, Clock3, FileSearch, Mail, Network, Play, RefreshCw, Scale, Send, ShieldAlert, Users } from "lucide-react";
+import type { CSSProperties, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EvidenceSelection } from "../api/evidence";
-import type { LiveRow } from "../api/live";
-import { decideCapitalCommittee, fetchDepartmentTerminal, proposeCapitalPolicy, runCapitalAllocationAnalysis, type DepartmentTerminalSnapshot, type TerminalWorkspace } from "../api/terminal";
+import { createAgentMessage, runAgentWorker, type LiveRow } from "../api/live";
+import { decideCapitalCommittee, fetchDepartmentTerminal, materializeAgentSchedules, proposeCapitalPolicy, runCapitalAllocationAnalysis, type DepartmentTerminalSnapshot, type TerminalWorkspace } from "../api/terminal";
 import EvidenceDrawer from "../components/EvidenceDrawer";
 import WorkspaceFreshness from "../components/WorkspaceFreshness";
 
@@ -103,6 +103,106 @@ function TerminalRows({ mode, rows, onEvidence }: { mode: TerminalWorkspace; row
       {!rows.length ? <div className="empty-state">No live records in this queue. No placeholder rows were inserted.</div> : null}
     </div>
   );
+}
+
+function jsonRows(value: unknown): LiveRow[] {
+  return Array.isArray(value) ? value.filter((item): item is LiveRow => Boolean(item) && typeof item === "object") : [];
+}
+
+function textList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function AgentOfficeControl({ snapshot, refresh, setError, setNotice }: {
+  snapshot: DepartmentTerminalSnapshot;
+  refresh: () => Promise<void>;
+  setError: (value: string) => void;
+  setNotice: (value: string) => void;
+}) {
+  const [department, setDepartment] = useState("all");
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [priority, setPriority] = useState<"low" | "medium" | "high" | "critical">("medium");
+  const [skillKey, setSkillKey] = useState("");
+  const [busy, setBusy] = useState("");
+  const employees = useMemo(() => snapshot.primary.filter((row) => department === "all" || text(row, "department", "") === department), [department, snapshot.primary]);
+  const selected = snapshot.primary.find((row) => text(row, "agent_name", "") === selectedAgent) ?? employees[0];
+  const selectedName = text(selected, "agent_name", "");
+  const selectedSkills = useMemo(() => jsonRows(selected?.skills), [selected]);
+
+  useEffect(() => {
+    if (!selectedName) return;
+    if (selectedAgent !== selectedName) setSelectedAgent(selectedName);
+  }, [selectedAgent, selectedName]);
+
+  useEffect(() => {
+    const nextSkill = text(selectedSkills[0], "skill_key", "");
+    setSkillKey(nextSkill);
+  }, [selectedName]);
+
+  const assignWork = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedName) return;
+    setBusy("message"); setError(""); setNotice("");
+    try {
+      await createAgentMessage({ from_agent: "Charlie Munger", to_agent: selectedName, subject, body, priority, related_skill_key: skillKey || undefined, metadata: { source: "agent_office_operator", human_authority: "Devarsh" } });
+      setSubject(""); setBody("");
+      setNotice(`Charlie assigned work to ${selectedName}. Jarvis will create the durable task and inbox handoff.`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Agent assignment failed"); }
+    finally { setBusy(""); }
+  };
+
+  const runSchedules = async () => {
+    setBusy("schedules"); setError(""); setNotice("");
+    try {
+      const result = await materializeAgentSchedules({ actor: "Jarvis", limit: 20 });
+      setNotice(`Schedule pass completed. ${text(result, "processed", "0")} due workflows processed.`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Schedule pass failed"); }
+    finally { setBusy(""); }
+  };
+
+  const runWorkers = async () => {
+    setBusy("workers"); setError(""); setNotice("");
+    try {
+      const result = await runAgentWorker({ actor: "Jarvis", limit: 5 });
+      setNotice(`Worker pass completed. ${text(result, "count", "0")} queue records inspected.`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Worker pass failed"); }
+    finally { setBusy(""); }
+  };
+
+  return <>
+    <section className="terminal-pane agent-office-command">
+      <header><div><Network size={15}/><h3>Office command and delegation</h3></div><strong>Charlie leads · Jarvis runs</strong></header>
+      <div className="agent-office-toolbar">
+        <label><span>Department</span><select value={department} onChange={(event) => { setDepartment(event.target.value); setSelectedAgent(""); }}><option value="all">All departments</option>{(snapshot.departments ?? []).map((row) => <option key={text(row, "department_key")} value={text(row, "department_key")}>{text(row, "department_name")}</option>)}</select></label>
+        <label><span>Employee</span><select value={selectedName} onChange={(event) => setSelectedAgent(event.target.value)}>{employees.map((row) => <option key={text(row, "agent_name")} value={text(row, "agent_name")}>{text(row, "display_title")} · {text(row, "agent_name")}</option>)}</select></label>
+        <button className="mini-action-button" disabled={Boolean(busy)} onClick={() => void runSchedules()} type="button"><Clock3 size={14}/>{busy === "schedules" ? "Scheduling" : "Run due schedules"}</button>
+        <button className="mini-action-button" disabled={Boolean(busy)} onClick={() => void runWorkers()} type="button"><Play size={14}/>{busy === "workers" ? "Working" : "Run workers"}</button>
+      </div>
+      {selected ? <div className="agent-office-selected" style={{ "--agent-color": text(selected, "color_token", "#0f766e") } as CSSProperties}>
+        <div className="agent-profile-identity"><span>{text(selected, "character_name", selectedName).slice(0, 2).toUpperCase()}</span><div><small>{text(selected, "department_name")}</small><h3>{text(selected, "display_title")}</h3><p>{selectedName} · reports to {text(selected, "reports_to_agent")}</p></div></div>
+        <div className="agent-profile-facts"><div><span>Status</span><strong>{text(selected, "live_state").replace(/_/g, " ")}</strong></div><div><span>Readiness</span><strong>{text(selected, "operating_readiness_score")}%</strong></div><div><span>Model</span><strong>{text(selected, "assigned_model")}</strong></div><div><span>Route</span><strong>{text(selected, "primary_route").replace(/_/g, " ")}</strong></div><div><span>Mailbox</span><strong>{text(selected, "mailbox_address")}</strong></div></div>
+        <p className="agent-profile-mandate">{text(selected, "role_scope")}</p>
+        <p className="agent-profile-persona">{text(selected, "persona")}</p>
+        <div className="agent-profile-tags">{textList(selected.mental_models).map((item) => <span key={item}>{item.replace(/_/g, " ")}</span>)}{selectedSkills.map((item) => <span key={text(item, "skill_key")}>{text(item, "skill_name")}</span>)}</div>
+      </div> : null}
+      <form className="agent-assignment-form" onSubmit={assignWork}>
+        <div><Mail size={15}/><strong>Assign through Charlie</strong><small>Creates an internal message, then Jarvis materializes the role-scoped task.</small></div>
+        <input aria-label="Assignment subject" onChange={(event) => setSubject(event.target.value)} placeholder="Assignment subject" required value={subject}/>
+        <textarea aria-label="Assignment objective" onChange={(event) => setBody(event.target.value)} placeholder="Objective, required evidence, output, deadline, and decision boundary" required rows={3} value={body}/>
+        <div><select aria-label="Assignment skill" onChange={(event) => setSkillKey(event.target.value)} value={skillKey}><option value="">Automatic skill routing</option>{selectedSkills.map((item) => <option key={text(item, "skill_key")} value={text(item, "skill_key")}>{text(item, "skill_name")}</option>)}</select><select aria-label="Assignment priority" onChange={(event) => setPriority(event.target.value as typeof priority)} value={priority}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select><button className="primary-button" disabled={!selectedName || Boolean(busy)} type="submit"><Send size={14}/>{busy === "message" ? "Routing" : "Assign work"}</button></div>
+      </form>
+    </section>
+    <section className="terminal-pane agent-roster-pane"><header><div><Users size={15}/><h3>AI employee roster</h3></div><strong>{employees.length} visible</strong></header><div className="agent-roster-grid">{employees.map((row) => <button className={`agent-roster-card ${text(row, "agent_name") === selectedName ? "is-selected" : ""}`} key={text(row, "agent_name")} onClick={() => setSelectedAgent(text(row, "agent_name"))} style={{ "--agent-color": text(row, "color_token", "#0f766e") } as CSSProperties} type="button"><span className={`status-dot status-${tone(text(row, "readiness_status"))}`}/><div><strong>{text(row, "display_title")}</strong><small>{text(row, "agent_name")} · {text(row, "department_name")}</small><p>{text(row, "current_work_title", text(row, "role_scope"))}</p></div><b>{text(row, "operating_readiness_score")}%</b></button>)}</div></section>
+    <div className="agent-governance-grid">
+      <section className="terminal-pane"><header><div><Clock3 size={15}/><h3>Operating schedules</h3></div><strong>{snapshot.schedules?.length ?? 0}</strong></header><div className="agent-schedule-list">{(snapshot.schedules ?? []).map((row) => <article key={text(row, "schedule_key")}><div><strong>{text(row, "schedule_name")}</strong><small>{text(row, "owner_agent")} · {text(row, "skill_name")}</small></div><span className={`status-pill status-${tone(text(row, "schedule_state"))}`}>{text(row, "schedule_state").replace(/_/g, " ")}</span><time>{rowTime(row)}</time></article>)}</div></section>
+      <section className="terminal-pane"><header><div><Scale size={15}/><h3>Committee constitution</h3></div><strong>{snapshot.committees?.length ?? 0}</strong></header><div className="agent-committee-list">{(snapshot.committees ?? []).map((row) => <article key={text(row, "committee_key")}><div><strong>{text(row, "committee_name")}</strong><small>Chair: {text(row, "chair_agent")} · quorum {text(row, "quorum")} · {text(row, "member_count")} members</small><p>{text(row, "mandate")}</p></div><span>{text(row, "human_final_required", "true") === "true" ? "human final" : "advisory"}</span></article>)}</div></section>
+    </div>
+  </>;
 }
 
 export default function DepartmentTerminalWorkspace({ mode, onStatusChange }: Props) {
@@ -246,10 +346,10 @@ export default function DepartmentTerminalWorkspace({ mode, onStatusChange }: Pr
           <div className="capital-policy-actions"><button className="primary-button" disabled={Boolean(actionBusy)} type="submit"><Scale size={15}/>{actionBusy === "policy" ? "Routing" : "Propose policy"}</button><button className="mini-action-button" disabled={!selectedProposalId || Boolean(actionBusy)} onClick={() => void runCapitalAnalysis()} type="button"><Play size={14}/>{actionBusy === "analysis" ? "Analyzing" : "Run risk analysis"}</button>{selectedReviewId ? <><button className="mini-action-button" disabled={Boolean(actionBusy)} onClick={() => void recordCapitalDecision("defer")} type="button">Defer</button><button className="mini-action-button" disabled={Boolean(actionBusy)} onClick={() => void recordCapitalDecision("revise")} type="button">Request revision</button></> : null}</div>
         </form>
       </section> : null}
-      <section className="terminal-pane terminal-primary-pane">
+      {mode === "agents" && snapshot ? <AgentOfficeControl refresh={refresh} setError={setError} setNotice={setNotice} snapshot={snapshot}/> : <section className="terminal-pane terminal-primary-pane">
         <header><div><Activity size={15} /><h3>{definition.primary}</h3></div><strong>{snapshot?.primary.length ?? 0}</strong></header>
         <TerminalRows mode={mode} onEvidence={setEvidence} rows={snapshot?.primary ?? []} />
-      </section>
+      </section>}
       {definition.secondary ? <section className="terminal-pane"><header><h3>{definition.secondary}</h3><strong>{snapshot?.secondary?.length ?? 0}</strong></header><TerminalRows mode={mode} onEvidence={setEvidence} rows={snapshot?.secondary ?? []} /></section> : null}
       {definition.tertiary ? <section className="terminal-pane"><header><h3>{definition.tertiary}</h3><strong>{snapshot?.tertiary?.length ?? 0}</strong></header><TerminalRows mode={mode} onEvidence={setEvidence} rows={snapshot?.tertiary ?? []} /></section> : null}
       <EvidenceDrawer onChanged={refresh} onClose={() => setEvidence(null)} selection={evidence} />

@@ -14,6 +14,9 @@ export interface DepartmentTerminalSnapshot {
   primary: LiveRow[];
   secondary?: LiveRow[];
   tertiary?: LiveRow[];
+  departments?: LiveRow[];
+  schedules?: LiveRow[];
+  committees?: LiveRow[];
 }
 
 export interface WorkspaceProfile {
@@ -76,6 +79,10 @@ export function runCapitalAllocationAnalysis(input: Record<string, unknown>): Pr
 
 export function decideCapitalCommittee(input: Record<string, unknown>): Promise<LiveRow> {
   return request("/api/capital/committee/decision", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function materializeAgentSchedules(input: { actor?: string; limit?: number } = {}): Promise<LiveRow> {
+  return request("/api/agents/schedules/run", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function fetchWorkspaceConfig(profileKey = "devarsh"): Promise<WorkspaceConfig> {

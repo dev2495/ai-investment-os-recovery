@@ -78,6 +78,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "source_freshness_scheduler",
         "strategy_discovery_scheduler",
         "market_news_ingestion",
+        "workflow_schedule_materializer",
     ):
         payload = result.get(key)
         if isinstance(payload, dict):
@@ -532,6 +533,21 @@ def run_market_news_ingestion(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
+def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
+    rows = psql_json(
+        f"""
+        SELECT agent.materialize_due_workflow_schedules(
+            {max(1, min(50, int(limit)))},
+            'Jarvis'
+        ) AS result
+        """
+    )
+    payload = rows[0].get("result") if rows else None
+    if not isinstance(payload, dict):
+        return {"status": "failed", "error": "workflow schedule materializer returned no result"}
+    return {"status": "success", **payload}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI OS agent mailbox daemon.")
     parser.add_argument("--once", action="store_true", help="Run one pass and exit.")
@@ -582,6 +598,14 @@ def main() -> int:
         help="Dedicated market-news ingestion interval in seconds.",
     )
     parser.add_argument("--market-news-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_NEWS_TIMEOUT_SECONDS", "240")))
+    parser.add_argument("--disable-workflow-scheduler", action="store_true", help="Disable governed agent workflow schedule materialization.")
+    parser.add_argument(
+        "--workflow-scheduler-interval",
+        type=int,
+        default=int(os.environ.get("AI_OS_WORKFLOW_SCHEDULER_INTERVAL_SECONDS", "60")),
+        help="Agent workflow schedule materialization interval in seconds.",
+    )
+    parser.add_argument("--workflow-scheduler-limit", type=int, default=int(os.environ.get("AI_OS_WORKFLOW_SCHEDULER_LIMIT", "10")))
     parser.add_argument(
         "--strategy-discovery-scheduler-interval",
         type=int,
@@ -604,12 +628,15 @@ def main() -> int:
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
     market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
     market_news_interval = max(300, int(args.market_news_interval))
+    workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
+    workflow_scheduler_interval = max(30, int(args.workflow_scheduler_interval))
     last_source_freshness_run = 0.0
     last_tradingview_cdp_run = 0.0
     last_ohlcv_aggregation_run = 0.0
     last_tradingview_quote_refresh_run = 0.0
     last_strategy_discovery_run = 0.0
     last_market_news_run = 0.0
+    last_workflow_scheduler_run = 0.0
     daemon_started_at = datetime.now().astimezone()
     daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
     enabled_workloads = {
@@ -620,6 +647,7 @@ def main() -> int:
         "tradingview_quote_refresh": tradingview_quote_refresh_enabled,
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
+        "workflow_scheduler": workflow_scheduler_enabled,
     }
 
     record_daemon_heartbeat(
@@ -642,6 +670,12 @@ def main() -> int:
                 "worker": {"count": 0, "status": "failed"},
                 "daemon_pass": {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)},
             }
+        if workflow_scheduler_enabled and (last_workflow_scheduler_run == 0.0 or time.monotonic() - last_workflow_scheduler_run >= workflow_scheduler_interval):
+            try:
+                result["workflow_schedule_materializer"] = run_workflow_schedule_materializer(max(1, int(args.workflow_scheduler_limit)))
+            except Exception as exc:  # noqa: BLE001
+                result["workflow_schedule_materializer"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_workflow_scheduler_run = time.monotonic()
         if market_news_enabled and (last_market_news_run == 0.0 or time.monotonic() - last_market_news_run >= market_news_interval):
             try:
                 result["market_news_ingestion"] = run_market_news_ingestion(max(60, int(args.market_news_timeout)))
@@ -715,6 +749,7 @@ def main() -> int:
             tradingview_quotes = result.get("tradingview_quote_refresh") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
+            workflow_scheduler = result.get("workflow_schedule_materializer") or {}
             print(
                 f"{result['generated_at']} messages={result['messages_processed']} "
                 f"worker_runs={result['worker']['count']} "
@@ -723,6 +758,7 @@ def main() -> int:
                 f"tradingview_cdp={tradingview_cdp.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
+                f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
                 f"strategy_discovery={strategy_discovery.get('status', 'skipped')}",
                 flush=True,
             )

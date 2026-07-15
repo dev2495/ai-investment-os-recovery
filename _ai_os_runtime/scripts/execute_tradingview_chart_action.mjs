@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 
@@ -27,6 +28,22 @@ function parseArgs() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function activateTradingViewDesktop(enabled) {
+  if (!enabled || process.platform !== "darwin") {
+    return enabled ? "native_activation_unsupported" : "native_activation_disabled";
+  }
+  const completed = spawnSync(
+    "/usr/bin/osascript",
+    ["-e", "tell application \"TradingView\" to activate"],
+    { encoding: "utf8", timeout: 6000 }
+  );
+  if (completed.status !== 0) {
+    const error = String(completed.stderr || completed.error?.message || "unknown error").trim();
+    return `native_activation_failed:${error.slice(0, 180)}`;
+  }
+  return "native_activation_succeeded";
 }
 
 function slug(value) {
@@ -294,6 +311,168 @@ class CdpClient {
   }
 }
 
+async function resetChartView(client) {
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Alt",
+    code: "AltLeft",
+    windowsVirtualKeyCode: 18,
+    modifiers: 1
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "rawKeyDown",
+    key: "r",
+    code: "KeyR",
+    windowsVirtualKeyCode: 82,
+    modifiers: 1
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "r",
+    code: "KeyR",
+    windowsVirtualKeyCode: 82,
+    modifiers: 1
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Alt",
+    code: "AltLeft",
+    windowsVirtualKeyCode: 18,
+    modifiers: 0
+  });
+  return "reset_chart_alt_r";
+}
+
+async function enableAutoScale(client) {
+  const candidate = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const nodes = [...document.querySelectorAll('button,[role="button"]')];
+      const node = nodes.find((item) => {
+        const label = [item.getAttribute('aria-label'), item.getAttribute('title'), item.textContent]
+          .filter(Boolean).join(' ').toLowerCase();
+        const rect = item.getBoundingClientRect();
+        const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return label.includes('auto scale') && rect.width > 0 && rect.height > 0 && top && item.contains(top);
+      });
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        pressed: node.getAttribute('aria-pressed'),
+        label: node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent
+      };
+    })()`,
+    returnByValue: true
+  });
+  const value = candidate.result?.value;
+  if (!value) {
+    return "auto_scale_control_not_found";
+  }
+  if (String(value.pressed).toLowerCase() === "true") {
+    return "auto_scale_already_enabled";
+  }
+  await client.call("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: value.x,
+    y: value.y,
+    button: "left",
+    clickCount: 1
+  });
+  await client.call("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: value.x,
+    y: value.y,
+    button: "left",
+    clickCount: 1
+  });
+  return `enabled_auto_scale:${String(value.label || "control").trim()}`;
+}
+
+async function clickPoint(client, value) {
+  await client.call("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: value.x,
+    y: value.y,
+    button: "left",
+    clickCount: 1
+  });
+  await client.call("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: value.x,
+    y: value.y,
+    button: "left",
+    clickCount: 1
+  });
+}
+
+async function setChartStyle(client, requestedStyle) {
+  const desired = String(requestedStyle || "").trim();
+  if (!desired) {
+    return "chart_style_not_requested";
+  }
+  await client.call("Input.dispatchKeyEvent", {
+    type: "rawKeyDown",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27
+  });
+  await sleep(300);
+  const styleButton = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const knownStyles = new Set(['bars', 'candles', 'hollow candles', 'columns', 'line', 'line with markers', 'step line', 'area', 'hlc area', 'baseline', 'high-low', 'heikin ashi', 'renko', 'line break', 'kagi', 'point & figure', 'range']);
+      const node = [...document.querySelectorAll('button,[role="button"]')].find((item) => {
+        const label = (item.getAttribute('aria-label') || item.getAttribute('title') || '').trim().toLowerCase();
+        const rect = item.getBoundingClientRect();
+        const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return knownStyles.has(label) && rect.width > 0 && rect.height > 0 && top && item.contains(top);
+      });
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, label: node.getAttribute('aria-label') || node.getAttribute('title') || '' };
+    })()`,
+    returnByValue: true
+  });
+  const button = styleButton.result?.value;
+  if (!button) {
+    return "chart_style_control_not_found";
+  }
+  if (String(button.label).trim().toLowerCase() === desired.toLowerCase()) {
+    return `chart_style_already_${slug(desired)}`;
+  }
+  await clickPoint(client, button);
+  await sleep(700);
+  const menuItem = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const desired = ${JSON.stringify(desired.toLowerCase())};
+      const nodes = [...document.querySelectorAll('[role="menuitem"],[role="option"],button,div')];
+      const node = nodes.find((item) => {
+        const label = (item.getAttribute('aria-label') || item.getAttribute('title') || item.textContent || '').trim().toLowerCase();
+        const rect = item.getBoundingClientRect();
+        const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return label === desired && rect.width > 0 && rect.height > 0 && rect.width < 700 && rect.height < 100 && top && item.contains(top);
+      });
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, label: (node.getAttribute('aria-label') || node.textContent || '').trim() };
+    })()`,
+    returnByValue: true
+  });
+  const item = menuItem.result?.value;
+  if (!item) {
+    return `chart_style_option_not_found:${slug(desired)}`;
+  }
+  await clickPoint(client, item);
+  await sleep(1400);
+  return `chart_style_set:${slug(desired)}`;
+}
+
 async function main() {
   const payload = parseArgs();
   if (payload.analyze_file || payload.analyzeFile) {
@@ -306,7 +485,11 @@ async function main() {
   const qualityCheckEnabled = payload.quality_check !== false && payload.qualityCheck !== false;
   const maxQualityAttempts = Math.max(1, Number(payload.max_quality_attempts || payload.maxQualityAttempts || 3));
   const targetUrl = payload.target_url || payload.targetUrl || buildTradingViewUrl(payload);
+  const skipNavigation = payload.skip_navigation === true || payload.skipNavigation === true;
+  const includeControls = payload.include_controls === true || payload.includeControls === true;
   const startedAt = new Date().toISOString();
+  const nativeActivation = activateTradingViewDesktop(payload.activate_app !== false && payload.activateApp !== false);
+  await sleep(nativeActivation === "native_activation_succeeded" ? 1200 : 0);
   const target = await chooseTradingViewTarget(port);
   const client = new CdpClient(target.webSocketDebuggerUrl);
   await client.connect();
@@ -316,16 +499,43 @@ async function main() {
   let pageContext = {};
   let quality = null;
   let attempts = 0;
+  const recoveryActions = [];
+  const setupActions = [];
+  let postNavigationActivation = null;
   try {
     await client.call("Page.enable");
     await client.call("Runtime.enable");
     await client.call("Page.bringToFront");
-    await client.call("Page.navigate", { url: targetUrl });
+    if (!skipNavigation) {
+      await client.call("Page.navigate", { url: targetUrl });
+      await sleep(800);
+      postNavigationActivation = activateTradingViewDesktop(payload.activate_app !== false && payload.activateApp !== false);
+      await sleep(postNavigationActivation === "native_activation_succeeded" ? 1400 : 0);
+    }
     for (let attempt = 1; attempt <= (captureScreenshot ? maxQualityAttempts : 1); attempt += 1) {
       attempts = attempt;
       await sleep(waitMs + (attempt - 1) * 4000);
+      if (attempt === 1 && (payload.chart_style || payload.chartStyle)) {
+        setupActions.push(await setChartStyle(client, payload.chart_style || payload.chartStyle));
+      }
       pageContext = await client.call("Runtime.evaluate", {
-        expression: "({ title: document.title, url: location.href, text: (document.body && document.body.innerText || '').slice(0, 1200) })",
+        expression: `(() => ({
+          title: document.title,
+          url: location.href,
+          text: (document.body && document.body.innerText || '').slice(0, 1200),
+          controls: ${includeControls ? `[...document.querySelectorAll('button,[role="button"]')]
+            .map((item) => {
+              const rect = item.getBoundingClientRect();
+              return {
+                label: item.getAttribute('aria-label') || item.getAttribute('title') || '',
+                data_name: item.getAttribute('data-name') || '',
+                pressed: item.getAttribute('aria-pressed'),
+                visible: rect.width > 0 && rect.height > 0
+              };
+            })
+            .filter((item) => item.visible && (item.label || item.data_name))
+            .slice(0, 160)` : "[]"}
+        }))()`,
         returnByValue: true
       });
       if (!captureScreenshot) {
@@ -350,6 +560,11 @@ async function main() {
         break;
       }
       await client.call("Page.bringToFront");
+      if (attempt === 1) {
+        recoveryActions.push(await resetChartView(client));
+      } else if (attempt === 2) {
+        recoveryActions.push(await enableAutoScale(client));
+      }
       await client.call("Runtime.evaluate", { expression: "window.dispatchEvent(new Event('resize')); true", returnByValue: true });
     }
   } finally {
@@ -364,11 +579,14 @@ async function main() {
     page_url: value.url || targetUrl,
     page_title: value.title || null,
     extracted_text_preview: value.text || "",
+    chart_controls: value.controls || [],
     screenshot_path: screenshotPath,
     screenshot_bytes: screenshotBytes,
     artifact_quality_status: quality?.status || "not_checked",
     artifact_quality: quality,
     quality_attempts: attempts,
+    chart_setup_actions: setupActions,
+    quality_recovery_actions: recoveryActions,
     cdp_target_id: target.id,
     cdp_target_title: target.title,
     started_at: startedAt,
@@ -376,7 +594,10 @@ async function main() {
     symbols: normalizeSymbols(payload.symbols),
     exchange: payload.exchange || null,
     timeframe: payload.timeframe || null,
-    chart_layout: payload.chart_layout || payload.chartLayout || null
+    chart_layout: payload.chart_layout || payload.chartLayout || null,
+    chart_style: payload.chart_style || payload.chartStyle || null,
+    native_activation: nativeActivation,
+    post_navigation_activation: postNavigationActivation
   };
   console.log(JSON.stringify(result, null, 2));
 }

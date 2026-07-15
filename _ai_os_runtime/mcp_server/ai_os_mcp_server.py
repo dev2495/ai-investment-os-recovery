@@ -156,6 +156,14 @@ def list_active_agents(arguments: dict) -> dict:
     )
 
 
+def materialize_agent_schedules(arguments: dict) -> dict:
+    payload = {
+        "actor": arguments.get("actor") or "Jarvis",
+        "limit": limit_arg(arguments, default=10, maximum=50),
+    }
+    return tool_result(post_api_json("/api/agents/schedules/run", payload))
+
+
 def list_open_tasks(arguments: dict) -> dict:
     limit = limit_arg(arguments)
     return tool_result(
@@ -3423,6 +3431,29 @@ def execute_tradingview_template_action(arguments: dict) -> dict:
     return tool_result(result)
 
 
+def resolve_tradingview_template_approval(arguments: dict) -> dict:
+    result = post_api_json(
+        "/api/tradingview/template-approvals/resolve",
+        {
+            "approval_id": arguments.get("approval_id") or arguments.get("approvalId") or arguments.get("id"),
+            "status": arguments.get("status") or arguments.get("decision"),
+            "decided_by": arguments.get("decided_by") or arguments.get("decidedBy") or arguments.get("actor") or "Devarsh",
+        },
+        timeout=90.0,
+    )
+    audit_mcp_call(
+        tool_name="ai_os_resolve_tradingview_template_approval",
+        action_type="resolve_tradingview_template_approval",
+        permission_level="human_approval_and_browser_capture",
+        actor=str(arguments.get("decided_by") or arguments.get("actor") or "Devarsh"),
+        target_table="agent.approvals",
+        target_id=arguments.get("approval_id") or arguments.get("approvalId") or arguments.get("id"),
+        request_payload=arguments,
+        result_payload=result,
+    )
+    return tool_result(result)
+
+
 def update_tradingview_task(arguments: dict) -> dict:
     try:
         task_id = int(arguments.get("task_id"))
@@ -5622,6 +5653,17 @@ TOOLS = {
         "inputSchema": {"type": "object", "properties": {}},
         "handler": list_active_agents,
     },
+    "ai_os_materialize_agent_schedules": {
+        "description": "Materialize due role-scoped office schedules into durable agent tasks and inbox items. Open-task dedupe, provider gates, and all capital/execution approvals remain active.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "actor": {"type": "string", "default": "Jarvis"},
+                "limit": {"type": "integer", "default": 10},
+            },
+        },
+        "handler": materialize_agent_schedules,
+    },
     "ai_os_list_open_tasks": {
         "description": "List queued/in-progress/blocked AI OS tasks.",
         "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 25}}},
@@ -6610,6 +6652,19 @@ TOOLS = {
             "required": ["template_key"],
         },
         "handler": execute_tradingview_template_action,
+    },
+    "ai_os_resolve_tradingview_template_approval": {
+        "description": "Approve and execute or reject a compiled TradingView chart plan. Only deterministic chart/formula plans can execute; this never places a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "approval_id": {"type": "integer"},
+                "status": {"type": "string", "enum": ["approved", "rejected"]},
+                "decided_by": {"type": "string", "default": "Devarsh"},
+            },
+            "required": ["approval_id", "status"],
+        },
+        "handler": resolve_tradingview_template_approval,
     },
     "ai_os_tradingview_tasks": {
         "description": "List queued/completed TradingView chart, screener, options, or fundamental-ratio tasks.",
