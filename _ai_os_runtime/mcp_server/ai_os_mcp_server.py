@@ -4073,6 +4073,86 @@ def run_strategy_quant_analytics(arguments: dict) -> dict:
     return tool_result(result)
 
 
+def run_institutional_portfolio_risk(arguments: dict) -> dict:
+    payload = {
+        "run_key": arguments.get("run_key") or arguments.get("runKey"),
+        "lookback_days": arguments.get("lookback_days") or arguments.get("lookbackDays") or 756,
+        "simulations": arguments.get("simulations") or 20_000,
+        "seed": arguments.get("seed") or 20260715,
+        "actor": arguments.get("actor") or "Portfolio Risk Analyst",
+    }
+    result = post_api_json("/api/risk/institutional/run", payload, timeout=320)
+    return tool_result(result)
+
+
+def institutional_portfolio_risk(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=80)
+    return tool_result(
+        {
+            "run": run_psql_json(
+                """
+                SELECT id, run_key, run_status, methodology, lookback_days,
+                       simulation_count, random_seed, position_as_of,
+                       market_data_as_of, source_position_count, source_symbol_count,
+                       covered_symbol_count, uncovered_symbol_count, gross_exposure,
+                       covered_exposure, uncovered_exposure, coverage_pct,
+                       assumptions, warnings, summary, artifact_path,
+                       created_by, started_at, finished_at, error_message
+                FROM risk.v_latest_portfolio_risk_run
+                LIMIT 1
+                """
+            ),
+            "metrics": run_psql_json(
+                f"""
+                SELECT *
+                FROM risk.v_latest_portfolio_risk_metrics
+                ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                         scope_name
+                LIMIT {limit}
+                """
+            ),
+            "stress": run_psql_json(
+                f"""
+                SELECT *
+                FROM risk.v_latest_portfolio_stress_results
+                ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                         stressed_return_pct
+                LIMIT {limit}
+                """
+            ),
+            "liquidity": run_psql_json(
+                f"""
+                SELECT *
+                FROM risk.v_latest_position_liquidity
+                ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                         CASE liquidity_bucket WHEN 'unavailable' THEN 1 ELSE 2 END,
+                         estimated_days_to_liquidate DESC NULLS FIRST,
+                         gross_exposure DESC
+                LIMIT {limit}
+                """
+            ),
+            "factors": run_psql_json(
+                f"""
+                SELECT *
+                FROM risk.v_latest_factor_risk_attribution
+                ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                         contribution_pct DESC NULLS LAST, factor_name
+                LIMIT {limit}
+                """
+            ),
+            "summary": run_psql_json(
+                """
+                SELECT metric, value, interpretation
+                FROM risk.v_institutional_risk_summary
+                ORDER BY metric
+                """
+            ),
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+        }
+    )
+
+
 def strategy_quant_analytics(arguments: dict) -> dict:
     limit = limit_arg(arguments, default=50)
     run_key = str(arguments.get("run_key") or arguments.get("runKey") or "").strip()
@@ -6642,6 +6722,30 @@ TOOLS = {
             },
         },
         "handler": strategy_quant_analytics,
+    },
+    "ai_os_run_institutional_portfolio_risk": {
+        "description": "Run historical, bootstrap Monte Carlo, stress, liquidity, concentration, and market-factor risk analytics on real active book positions. Advisory only; cannot authorize capital or execution.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_key": {"type": "string"},
+                "lookback_days": {"type": "integer", "default": 756},
+                "simulations": {"type": "integer", "default": 20000},
+                "seed": {"type": "integer", "default": 20260715},
+                "actor": {"type": "string", "default": "Portfolio Risk Analyst"},
+            },
+        },
+        "handler": run_institutional_portfolio_risk,
+    },
+    "ai_os_institutional_portfolio_risk": {
+        "description": "Read the latest institutional portfolio VaR/ES, bootstrap paths, stress, liquidity, factor, concentration, coverage, and lineage evidence. Advisory only.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 80},
+            },
+        },
+        "handler": institutional_portfolio_risk,
     },
     "ai_os_run_strategy_portfolio_allocation": {
         "description": "Create a paper-only strategy portfolio allocation and probability-of-ruin metrics from a quant analytics run.",

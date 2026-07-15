@@ -1968,6 +1968,83 @@ def build_trading_quant_risk_snapshot() -> dict:
                 actual_value DESC NULLS LAST
             LIMIT 160
         """,
+        "institutional_risk_run": """
+            SELECT id, run_key, run_status, methodology, lookback_days,
+                   simulation_count, random_seed, position_as_of,
+                   market_data_as_of, source_position_count, source_symbol_count,
+                   covered_symbol_count, uncovered_symbol_count, gross_exposure,
+                   covered_exposure, uncovered_exposure, coverage_pct,
+                   assumptions, warnings, summary, artifact_path,
+                   created_by, started_at, finished_at, error_message
+            FROM risk.v_latest_portfolio_risk_run
+            LIMIT 1
+        """,
+        "institutional_risk_metrics": """
+            SELECT run_id, scope_type, scope_ref, scope_name,
+                   calculation_status, gross_exposure, net_exposure,
+                   covered_exposure, uncovered_exposure, coverage_pct,
+                   observation_count, annualized_volatility_pct,
+                   historical_var_95_pct, historical_var_95_value,
+                   historical_es_95_pct, historical_es_95_value,
+                   historical_var_99_pct, historical_var_99_value,
+                   historical_es_99_pct, historical_es_99_value,
+                   coverage_adjusted_var_99_pct,
+                   coverage_adjusted_var_99_value,
+                   bootstrap_var_99_1d_pct, bootstrap_var_99_1d_value,
+                   bootstrap_es_99_1d_pct, bootstrap_es_99_1d_value,
+                   bootstrap_var_99_10d_pct, bootstrap_var_99_10d_value,
+                   bootstrap_es_99_10d_pct, bootstrap_es_99_10d_value,
+                   probability_loss_5pct_10d, probability_loss_10pct_10d,
+                   maximum_drawdown_pct, market_beta, market_correlation,
+                   market_r_squared, residual_volatility_pct,
+                   concentration_hhi, top_5_exposure_pct,
+                   largest_position_pct, data_freshness_days,
+                   uncovered_shock_assumption_pct, warnings, evidence,
+                   created_at
+            FROM risk.v_latest_portfolio_risk_metrics
+            ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                     scope_name
+            LIMIT 80
+        """,
+        "institutional_stress": """
+            SELECT run_id, scope_type, scope_ref, scenario_key, scenario_name,
+                   scenario_type, description, stressed_pnl_value,
+                   stressed_return_pct, covered_loss_value,
+                   uncovered_loss_value, severity, calculation_status,
+                   assumptions, evidence, created_at
+            FROM risk.v_latest_portfolio_stress_results
+            ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                     stressed_return_pct
+            LIMIT 120
+        """,
+        "institutional_liquidity": """
+            SELECT run_id, scope_type, scope_ref, symbol, gross_exposure,
+                   latest_close, median_daily_volume,
+                   median_daily_traded_value, participation_rate_pct,
+                   estimated_days_to_liquidate, liquidity_bucket,
+                   market_data_observations, market_data_as_of,
+                   calculation_status, warnings, evidence, created_at
+            FROM risk.v_latest_position_liquidity
+            ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                     CASE liquidity_bucket WHEN 'unavailable' THEN 1 ELSE 2 END,
+                     estimated_days_to_liquidate DESC NULLS FIRST,
+                     gross_exposure DESC
+            LIMIT 200
+        """,
+        "institutional_factors": """
+            SELECT run_id, scope_type, scope_ref, factor_key, factor_name,
+                   exposure_value, contribution_pct, calculation_status,
+                   methodology, evidence, created_at
+            FROM risk.v_latest_factor_risk_attribution
+            ORDER BY CASE scope_type WHEN 'portfolio' THEN 1 WHEN 'book' THEN 2 ELSE 3 END,
+                     contribution_pct DESC NULLS LAST, factor_name
+            LIMIT 120
+        """,
+        "institutional_risk_summary": """
+            SELECT metric, value, interpretation
+            FROM risk.v_institutional_risk_summary
+            ORDER BY metric
+        """,
         "limited_live_requests": """
             SELECT id, request_key, strategy_id, strategy_name, instance_id,
                    instance_name, book_key, symbol, requested_mode,
@@ -7820,6 +7897,41 @@ def run_strategy_quant_analytics(payload: dict) -> dict:
     return result
 
 
+def run_institutional_portfolio_risk(payload: dict) -> dict:
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_portfolio_risk_engine.py"),
+        "--lookback-days",
+        str(payload.get("lookback_days") or payload.get("lookbackDays") or 756),
+        "--simulations",
+        str(payload.get("simulations") or 20_000),
+        "--seed",
+        str(payload.get("seed") or 20260715),
+        "--actor",
+        str(payload.get("actor") or "Portfolio Risk Analyst"),
+    ]
+    if payload.get("run_key") or payload.get("runKey"):
+        command.extend(["--run-key", str(payload.get("run_key") or payload.get("runKey"))])
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=300)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "institutional portfolio risk run failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("institutional portfolio risk run returned invalid JSON") from exc
+    actor = str(payload.get("actor") or "Portfolio Risk Analyst").strip()
+    audit_api_write(
+        "ai_os_api_run_institutional_portfolio_risk",
+        "run_institutional_portfolio_risk",
+        actor,
+        "risk.portfolio_risk_runs",
+        result,
+        payload,
+    )
+    return result
+
+
 def run_strategy_portfolio_allocation(payload: dict) -> dict:
     command = [
         sys.executable,
@@ -10244,6 +10356,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/risk/portfolio/refresh-events":
                 self._send_json(refresh_portfolio_risk_events(payload), 201)
+                return
+            if self.path == "/api/risk/institutional/run":
+                self._send_json(run_institutional_portfolio_risk(payload), 201)
                 return
             if self.path == "/api/models/endpoints/register":
                 self._send_json(register_model_endpoint(payload), 201)

@@ -22,6 +22,12 @@ export interface TradingQuantRiskSnapshot {
   paper_trade_summary: LiveRow[];
   risk_summary: LiveRow[];
   risk_limits: LiveRow[];
+  institutional_risk_run: LiveRow[];
+  institutional_risk_metrics: LiveRow[];
+  institutional_stress: LiveRow[];
+  institutional_liquidity: LiveRow[];
+  institutional_factors: LiveRow[];
+  institutional_risk_summary: LiveRow[];
   limited_live_requests: LiveRow[];
   order_intents: LiveRow[];
   execution_control: LiveRow[];

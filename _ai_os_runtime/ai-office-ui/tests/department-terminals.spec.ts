@@ -87,3 +87,26 @@ test("advanced TradingView templates are visible and remain approval gated", asy
   await expect(page.getByText("Fundamental Ratio Dashboard", { exact: true })).toBeVisible();
   await expect(page.getByText("Relative Strength Ratio Chart", { exact: true })).toBeVisible();
 });
+
+test("risk center exposes real institutional analytics with execution locked", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.goto("/?mode=command&workspace=risk", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Institutional Portfolio Risk" })).toBeVisible();
+  await expect(page.getByText("Gross ₹2,34,70,282", { exact: true })).toBeVisible();
+  await expect(page.getByText("Coverage 45.22%", { exact: true })).toBeVisible();
+  await expect(page.getByText("capital changes and broker execution remain blocked", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Stress Scenarios" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Factor Attribution" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Position Liquidity" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run full risk" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/ai-os-institutional-risk-center.png", fullPage: true });
+});
+
+test("institutional risk center has no page-level mobile overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?mode=command&workspace=risk", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Institutional Portfolio Risk" })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: "/tmp/ai-os-institutional-risk-center-mobile.png", fullPage: true });
+});

@@ -360,6 +360,14 @@ export interface RefreshPortfolioRiskEventsInput {
   actor?: string;
 }
 
+export interface RunInstitutionalPortfolioRiskInput {
+  run_key?: string;
+  lookback_days?: string | number;
+  simulations?: string | number;
+  seed?: string | number;
+  actor?: string;
+}
+
 export interface RegisterModelEndpointInput {
   endpoint_key?: string;
   endpoint_name?: string;
@@ -1069,6 +1077,13 @@ export function resolveAgentComment(input: ResolveAgentCommentInput): Promise<Li
 
 export function refreshPortfolioRiskEvents(input: RefreshPortfolioRiskEventsInput = {}): Promise<LiveRow> {
   return requestJson<LiveRow>("/api/risk/portfolio/refresh-events", {
+    body: JSON.stringify(input),
+    method: "POST"
+  });
+}
+
+export function runInstitutionalPortfolioRisk(input: RunInstitutionalPortfolioRiskInput = {}): Promise<LiveRow> {
+  return requestJson<LiveRow>("/api/risk/institutional/run", {
     body: JSON.stringify(input),
     method: "POST"
   });

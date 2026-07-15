@@ -1586,3 +1586,35 @@ Production-safety readiness is derived from current warehouse objects rather tha
 Operational audit is database-enforced append-only. Trigger `trg_mcp_audit_append_only` rejects UPDATE and DELETE on `agent.mcp_audit_log`; API and MCP writes continue to append. A live mutation probe was rejected by PostgreSQL. The same control board is exposed through MCP tools `ai_os_governance_control_board`, `ai_os_request_architecture_change`, and `ai_os_sync_architecture_change`, bringing the full MCP surface to 150 tools.
 
 The first real architecture workflow is pending human ratification: change `#1`, task `#391`, inbox `#894`, approval `#18`. It proposes formal adoption of this control plane and cannot self-approve. Live state at verification contained 11 active policies/templates, 209 append-only audit events, one pending architecture change, seven safety checks, and zero failed safety checks. The UI production build, migration replay, API/MCP checks, 13-case department-terminal regression, 39-case desktop/mobile WCAG gate, and dark/mobile visual review passed. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+
+## 38. Institutional Portfolio Risk Engine - 2026-07-15
+
+The Risk Office now has a deterministic calculation plane over real active book positions rather than narrative-only risk commentary. Each run snapshots the position and market-data as-of dates, source counts, covered and uncovered exposure, assumptions, warnings, lineage, artifact path, actor, seed, path count, and terminal status. A run may be `completed`, `provisional`, or `failed`; incomplete market history or bias controls force `provisional` status.
+
+```text
+books.v_book_positions
+  + trading.ohlcv
+  + NIFTY 50 benchmark
+  + market bias-control readiness
+    -> historical return alignment and outlier disclosure
+    -> portfolio, book, and client risk scopes
+    -> historical VaR and expected shortfall at 95% and 99%
+    -> coverage-adjusted 1-day and 10-day bootstrap paths
+    -> five historical/hypothetical stress scenarios
+    -> position liquidity and participation-rate capacity
+    -> beta, correlation, residual, concentration, and missing-data factors
+    -> append-only run evidence and SSD JSON artifact
+    -> Risk Center, API, and MCP read models
+```
+
+The database contract is `risk.portfolio_risk_runs`, `risk.portfolio_risk_metrics`, `risk.portfolio_stress_results`, `risk.position_liquidity_assessments`, `risk.factor_risk_attribution`, and `risk.stress_scenario_definitions`. Latest-run views expose bounded read models without mixing failed runs into the operating surface. Migration `124_institutional_portfolio_risk_engine_v1.sql` is idempotent and does not create seed market, portfolio, or execution data.
+
+The calculation contract includes historical VaR/ES at 95% and 99%; coverage-adjusted one-day and ten-day 99% bootstrap VaR/ES; 10-day 5% and 10% loss probabilities; annualized volatility; maximum drawdown; NIFTY 50 beta, correlation, R-squared, and residual volatility; HHI, largest-position, and top-five concentration; and 60-day median traded-value liquidity at 10% participation. Stress scenarios cover market down 5%, market down 10%, top-three positions down 20%, a liquidity/gap shock, and replay of the worst covered historical day.
+
+The verified real run `institutional_risk_v1_verified_20260715` used 20,000 deterministic bootstrap paths with seed `20260715`. It measured 71 active positions, three clients, one book, 45 symbols, and INR 23,470,281.79 gross exposure. Only 22 symbols and 45.22% of gross exposure had usable daily history; 23 symbols and INR 12,856,463.90 lacked usable history/liquidity. The run therefore remained `provisional`. Portfolio one-day 99% bootstrap VaR was 3.51%, one-day expected shortfall was 4.28%, ten-day VaR was 8.27%, ten-day expected shortfall was 9.96%, and the worst configured stress was the liquidity/gap shock at a 10.48% modeled loss. These are analytical estimates, not forecasts or trading instructions.
+
+The operating interfaces are `GET /api/trading-quant-risk/snapshot`, `POST /api/risk/institutional/run`, MCP tools `ai_os_institutional_portfolio_risk` and `ai_os_run_institutional_portfolio_risk`, and the responsive Risk Center panels for scope metrics, stress, factors, and position liquidity. API runs append to `agent.mcp_audit_log`. Artifacts remain on `/Volumes/Devarsh SSD/AI OS Data/artifacts/portfolio_risk`; code remains in the internal Git checkout.
+
+Capital and execution authority are explicitly absent. Every artifact and action returns `capital_action_allowed=false` and `live_execution_allowed=false`; the global broker lock remains independent and closed. Missing history uses a separately disclosed proxy rather than being hidden inside covered returns. Corporate-action factors and point-in-time universe history remain unverified, so this engine cannot support strategy promotion, capital allocation, or live orders by itself.
+
+The release gate passed: numerical exposure reconciliation; ES greater than or equal to VaR across all five scopes; five non-positive stress-loss scenarios; 45 unique portfolio-liquidity symbols reconciling to gross exposure; factor-row completeness; global execution lock; SSD artifact checksum; audited API run; 152-tool MCP protocol/read smoke; production build; 15/15 department-terminal browser tests; 39/39 desktop/mobile WCAG A/AA tests; and desktop/mobile visual review. Remaining Risk Office work is the options tail-risk/Greeks model, multi-factor sector/style/rates/FX/commodity risk, correlation clusters, cross-book conflict escalation, formal Risk Committee decisions, override logging, order-risk evidence drawers, and scheduled specialist worker cadence. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].

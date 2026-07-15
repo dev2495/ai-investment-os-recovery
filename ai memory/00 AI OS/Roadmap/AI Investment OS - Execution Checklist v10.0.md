@@ -346,20 +346,20 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Execution gate check ledger.
 - [~] Risk limits table across books/accounts/clients.
 - [~] Risk limits dashboard.
-- [~] Concentration engine.
-- [ ] Liquidity risk engine.
-- [ ] VaR engine.
-- [ ] Expected shortfall engine.
-- [ ] Stress test engine.
-- [ ] Portfolio Monte Carlo paths.
+- [x] Concentration engine. Portfolio, book, and client scopes retain HHI, largest-position, and top-five exposure metrics from real active positions. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+- [x] Liquidity risk engine. Position-level 60-day median traded value, participation-rate capacity, days-to-liquidate, unavailable-history disclosure, and scope reconciliation are live; 23 of 45 current symbols remain data-insufficient. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+- [x] VaR engine. Historical 95/99 and coverage-adjusted bootstrap 1-day/10-day 99% VaR are live across portfolio, book, and client scopes. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+- [x] Expected shortfall engine. Historical 95/99 and bootstrap 1-day/10-day 99% expected shortfall are live with repeatable ES >= VaR validation. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+- [x] Stress test engine. Five portfolio/book/client scenarios cover broad-market shocks, top-position shocks, liquidity gaps, and historical worst-day replay. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+- [x] Portfolio Monte Carlo paths. Deterministic bootstrap simulations run at 1-day and 10-day horizons with configurable path count and seed; the verified run used 20,000 paths. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [ ] Options tail-risk model.
-- [ ] Factor risk model.
+- [~] Factor risk model. NIFTY 50 beta/correlation/R-squared, residual risk, concentration, missing-history, and liquidity factors are live; sector/style/rates/FX/commodity/options-Greeks and correlation-cluster models remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [ ] Book conflict escalation.
 - [ ] Risk Committee workflow.
 - [ ] Risk override logging.
-- [ ] Risk block state dashboard.
-- [ ] Chief Risk Officer agent.
-- [ ] Quant Risk Analyst agent.
+- [x] Risk block state dashboard. The Risk Center combines breach/warning checks, institutional risk status, global execution lock, limited-live requests, order intents, and guarded kill switch. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]], [[2026-07-15-governance-and-production-safety-v1]].
+- [~] Chief Risk Officer agent. The active `Risk Agent` is the independent read-only Risk Officer and can challenge/block through evidence gates; formal CRO hierarchy, committee chairing, and scheduled reporting remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]], [[2026-07-15-institutional-portfolio-risk-engine-v1]].
+- [~] Quant Risk Analyst agent. The active `Portfolio Risk Analyst` owns stress, factor, liquidity, scenario, and cross-book risk and now owns the institutional engine; dedicated scheduled worker cadence and specialist skill pack remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [ ] Stress Testing Agent.
 - [ ] Model Risk Agent.
 - [x] Data Quality Risk Agent. Active as `Data Quality Analyst`, reporting to Data Steward with mandatory escalation of material data failures. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
@@ -497,10 +497,10 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Quant Lab v2: scoped validation, promotion, committee, retirement/drift, allocation/ruin visibility, and safe validation/analytics controls are deployed. Optimizer configuration, paper-monitor lifecycle controls, and evidence drawers remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Trading Desk v2: live signals, TradingView controller tasks, manual/paper journal intake, paper-monitor visibility, and execution lock are deployed. OI/intraday workbench, template execution controls, and broker-gated execution workflow remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Portfolio Office v2: scoped production workspace now provides client filtering, books, positions, multi-book exposure, portfolio intelligence, cross-book conflicts, and readiness remediation. Dedicated thesis packets, performance/factor attribution, and decision drill-downs remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
-- [~] Risk Center v2: live limits, breach/warning summary, execution lock, limited-live requests, order intents, drift, risk refresh, and guarded global kill switch are deployed. Stress/Monte Carlo controls, conflict drill-downs, and order-risk evidence remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
+- [~] Risk Center v2: live limits, breach/warning summary, execution lock, institutional VaR/ES, 20,000-path bootstrap risk, stress scenarios, concentration, liquidity, benchmark-factor attribution, limited-live requests, order intents, drift, refresh, and guarded global kill switch are deployed. Options tail risk, richer multi-factor/correlation models, conflict drill-downs, risk committee decisions, and order-risk evidence remain. Evidence: [[2026-07-13-trading-quant-risk-v2]], [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [~] Research Hub v2: scoped live long-term theses, committee review, filings/news, special situations, output artifacts, valuation models, checklists, and Long-Term Monte Carlo evidence/action are deployed. Long-term committee and output-artifact evidence drawers are live; filing/source-document actions, broader feeds, complete detectors, and remaining valuation calculators remain open. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]], [[2026-07-13-deep-evidence-and-approval-actions-v2]], [[2026-07-13-long-term-decision-lab-v1]].
 - [x] System Health v2: scoped live MCP, source, worker, provider, model, cost, storage, pipeline, blueprint, execution-safety, and recovery state. Evidence: [[2026-07-13-system-health-v2-and-docker-runtime-recovery]].
-- [~] Portfolio Intelligence dashboard v3. Portfolio overview, concentration rows, gross/net exposure, critical/risk-limit breach counts, books, conflicts, and position readiness are live; complete factor/risk attribution and scenario controls remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
+- [~] Portfolio Intelligence dashboard v3. Portfolio overview, concentration, gross/net exposure, critical/risk-limit breach counts, books, conflicts, readiness, institutional VaR/ES, stress, liquidity, and benchmark-factor attribution are live; full sector/style/factor attribution and capital-allocation actions remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]], [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [~] Client Folio dashboard. Live client registry, account-filtered holdings, client-book attribution, P2Cursor reconciliation, and approval-gated manual holding staging are deployed. Client onboarding/editing, suitability, cash flows, performance, and report generation remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
 - [x] Symbol Intelligence dashboard v2. Evidence: [[2026-07-07-symbol-intelligence-v2]].
 - [~] Long-Term Office dashboard v2. Evidence: [[2026-07-08-long-term-coverage-board-v1]]; coverage board is now live inside Long-Term Thesis Control, but full client suitability and decision UI remain open.
@@ -603,5 +603,5 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Implement research/news/filing collector expansion. Dedicated 15-minute RSS freshness plus hourly NSE/BSE, material-first PDF extraction, strategy discovery, daemon health evidence, UI control, and agent routing are live. Evidence: [[2026-07-15-research-intelligence-v1]], [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
 - [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy and six advanced chart-template contracts are registered with approval-gated requests; deterministic execution and verification of every multi-pane/indicator/formula mutation remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [ ] Build Client Folio dashboard.
-- [ ] Build Risk Office v2 with stress tests and portfolio Monte Carlo.
+- [~] Build Risk Office v2 with stress tests and portfolio Monte Carlo. The institutional calculation, API, MCP, audited action, responsive terminal, validation, and SSD-artifact foundation are live; options tail risk, richer factor/correlation models, Risk Committee/override workflows, and automated specialist cadence remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [ ] Build Animated AI Office v1 after core room grid and task arrows are data-backed.
