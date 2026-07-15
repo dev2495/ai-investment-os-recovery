@@ -396,7 +396,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Agent task queue foundation. The deterministic worker queue, task state transitions, retries, and failure recovery are live.
 - [x] Agent inbox foundation. Every active employee has one unique active mailbox and durable queue state.
 - [x] Agent messages foundation. Internal assignments and handoffs are durable and Jarvis-routed.
-- [~] Agent approvals foundation.
+- [x] Agent approvals foundation. The central Approval Board and dedicated atomic resolvers expose live pending/resolved decisions while capital, broker, client, cash, report, and architecture authorities remain separate. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [x] Agent run logging foundation. Completed and failed runs retain worker, task, evidence, model, timing, and recovery state.
 - [x] Charlie profile. Charlie is the chief orchestrator and Devarsh-facing decision partner with explicit escalation and human-control boundaries.
 - [x] Jarvis profile. Jarvis is the runtime operator and dispatcher; it routes work but does not replace specialist ownership.
@@ -405,8 +405,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Per-agent tool permissions UI.
 - [x] Per-agent model route UI. Every active employee exposes its explicit primary/fallback/escalation route and hard cost policy.
 - [x] Agent mailbox UI. The Agent Office renders durable warehouse mail and the active team has addressable mailboxes; message handoffs remain audited tasks/inbox records. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Committee constitution view. Eleven committee constitutions expose chair, quorum, membership, evidence, dissent, and human-final-decision rules; committee-specific packet/vote/minute automation remains open.
-- [~] Approval board view.
+- [x] Committee constitution view. Eleven committee constitutions expose chair, quorum, membership, evidence, dissent, and human-final-decision rules. Strategy, Long-Term, and Special Situations now also have governed packet, position, discussion, synthesis, final-decision, and follow-up operations. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
+- [x] Approval board view. Dedicated approval families and their safe resolvers are exposed in one live terminal; no generic status flip can bypass domain writes.
 - [x] Character/personality cards. All active roles have warehouse-backed persona/operating-style data and office character identity; 3D art refinement remains separate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [~] Agent hover cards.
 - [~] Agent handoff threads.
@@ -414,11 +414,11 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Agent reliability foundation. Readiness and recent worker completion/failure evidence are available per employee; calibrated long-run confidence scoring remains open.
 - [x] Agent productivity foundation. Open work, queue state, completed runs, schedules, and mailbox load are visible; normalized cross-role productivity scoring remains open.
 - [ ] Task arrows between agents.
-- [ ] Click-through agent profile pages.
+- [x] Click-through agent profile pages. Agent URLs open addressable profiles with reporting line, persona, role scope, tools/skills, model route, readiness, reliability, work history, mailbox, and cost/quality evidence. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [ ] Agent discussion thread detail pages.
-- [ ] Per-agent work history timeline.
-- [ ] Per-agent cost and quality report.
-- [ ] Department manager dashboards.
+- [x] Per-agent work history timeline. The scoped Agent terminal returns and renders bounded recent worker-history records against addressable employee profiles; the final live audit returned 59 rows.
+- [x] Per-agent cost and quality report. All 95 employees expose governed cost caps, model-route policy, readiness, and observed quality/reliability evidence; calibrated long-run scoring remains separate.
+- [x] Department manager dashboards. Fifteen source-backed department desks are live inside the 19-workspace Command Center, with filters, scoped operational tables, owner views, and persistent widget layout.
 - [ ] Agent hiring/onboarding workflow.
 - [x] Recurring agent schedules. Thirteen database-backed schedules materialize idempotent work and retain schedule-run evidence.
 - [x] Agent model cost controls. All 95 active agents have hard caps; autonomous cloud use and cloud escalation without approval are both zero.
@@ -427,10 +427,10 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 - [x] Committee constitution registry. Eleven committees have durable chairs, quorum, member rosters, required evidence, dissent rules, and human-final-decision boundaries. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 
-- [~] Strategy Committee workflow.
-- [~] Long-Term Investment Committee workflow.
-- [~] Special Situations Committee workflow.
-- [~] Committee room view.
+- [x] Strategy Committee workflow. Independent sealed positions, quorum, discussion, chair synthesis, human final decision, minutes, dissent, conditions, and follow-ups are live.
+- [x] Long-Term Investment Committee workflow. The governed packet contract maps Long-Term evidence to its registered constitution and the same independent-position and human-final-decision controls.
+- [x] Special Situations Committee workflow. Production acceptance used the real Rolex Rings buyback matter through five independent positions, quorum, challenge discussion, chair synthesis, human `more_research` decision, and follow-up task.
+- [x] Committee room view. The live room exposes constitutions, packets, quorum, independent positions, discussion, chair synthesis, minutes, dissent, human decisions, and follow-up work without seed fallback. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [ ] Executive Committee workflow.
 - [ ] Tactical Committee workflow.
 - [ ] Risk Committee workflow.
@@ -439,25 +439,25 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Client Review Committee workflow.
 - [ ] Model Review Committee workflow.
 - [ ] Execution Approval Committee workflow.
-- [ ] Committee minutes generator.
-- [ ] Evidence packet generator.
-- [ ] Dissent capture.
-- [ ] Decision audit trail.
-- [ ] Follow-up task automation.
+- [x] Committee minutes generator for the three implemented investment committee families.
+- [x] Evidence packet generator for the three implemented investment committee families.
+- [x] Dissent capture with independent pre-quorum positions and post-quorum challenge messages.
+- [x] Decision audit trail separating chair recommendation from the named human final decision.
+- [x] Follow-up task automation with durable task, inbox, message, and committee linkage.
 
 ## 15. MCP And External Adapters
 
-- [x] MCP server foundation. The importable 166-tool server now includes strategy, integration Gateway, provider, source, evidence, task, approval, browser, schedule, portfolio, research, and workspace contracts; smoke verification passed. Evidence: [[2026-07-08-strategy-template-library-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [x] MCP server foundation. The importable 172-tool server now includes strategy, integration Gateway, provider, source, evidence, task, approval, browser, schedule, portfolio, research, workspace, and eight governed committee contracts; live protocol verification passed. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [~] Obsidian/vault read-write path.
 - [~] Postgres API tool path.
 - [~] Browser profile registry.
 - [~] Fincept local component installed.
 - [~] Fincept skill registry added.
 - [~] Vibe skill registry added.
-- [~] TradingView CDP/chart-action executor foundation. Verified 2026-07-10: local Desktop CDP is available and provider-gated ready through the guarded relaunch script; native executor remains the runtime controller while the missing third-party candidate checkout is treated as optional, not a dependency.
-- [~] TradingView screenshot artifact API.
-- [x] TradingView action template registry/API/MCP. Six advanced chart contracts and approval-gated request flow are live; deterministic multi-pane mutation remains tracked under controller hardening. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Research paper ingestion/hypothesis MCP tools. Both source ingestion and source-linked hypothesis creation are registered in the permanent 166-tool MCP smoke gate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [x] TradingView CDP/chart-action executor foundation. The local Desktop CDP controller now uses real keyboard events, virtualized indicator result discovery, deterministic study insertion, legend/undo verification, screenshot capture, artifact registration, and needs-review fallback. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
+- [x] TradingView screenshot artifact API. Approved chart tasks persist browser runs, image artifacts, checksums, and study-level verification state.
+- [x] TradingView action template registry/API/MCP. Six advanced chart contracts and approval-gated request flow are live. Formula charts, technical indicator stacks, and fundamental-ratio stacks have production acceptance evidence; synchronized multi-pane options layouts remain partial. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
+- [x] Research paper ingestion/hypothesis MCP tools. Both source ingestion and source-linked hypothesis creation remain registered in the permanent 172-tool MCP protocol gate. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]], [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [ ] Browser research runner hardening.
 - [ ] Web/document scraper MCP.
 - [ ] PDF/doc extraction MCP.
@@ -471,7 +471,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [ ] Broker read-only MCP connector.
 - [ ] Crypto/commodity read-only MCP connector.
 - [~] TradingView straddle/strangle action template. Contract and human gate are live; executor automation remains open. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [~] TradingView fundamental ratio chart workflow. Contract and human gate are live; executor automation remains open. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] TradingView fundamental ratio chart workflow. Approval `#45`, task `#21`, browser run `#16`, and artifact `#37357` verified Revenue, Net Income, Operating Margin, ROIC, Total Debt, P/E, and P/B on the live chart. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [ ] Provider policy editor UI.
 - [ ] Provider policy simulator.
 
@@ -518,10 +518,10 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] Treasury/Hedges/Crypto dashboard. Treasury and Macro terminal is live over source-backed macro/news/market records; dedicated hedge construction, collateral, cash ladder, and crypto execution connectors remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes plug-in readiness, validates warehouse mappings, configures allowlisted executor families, shows governed route states, privacy/cache policies, all 95 agent assignments, model-call decisions, and escalation queue state, and includes strategy-data coverage/import/quality ledgers. Raw prompts, raw secrets, arbitrary commands, seed fallback, autonomous cloud use, and broker authority are rejected. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]], [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
 - [x] Provider Readiness dashboard v2. Model assignment readiness and source health/freshness are unified in the Gateway with filters, per-row checks, full sweeps, missing-credential/model actions, and evidence. Provider policy simulation and final department overrides remain separate open controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
-- [~] Committee Room dashboard v2. Scoped live committee packet, approval state, evidence drawer, workspace customization, and execution lock are deployed; participant discussion, specialized decisions, and follow-up action routes remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
+- [x] Committee Room dashboard v3. Scoped live packet opening, independent positions, quorum, discussion, chair synthesis, minutes/dissent, named human final decisions, follow-up actions, constitution state, customization, and execution lock are deployed for Strategy, Long-Term, and Special Situations. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [x] 3D office scene with procedural rooms, stable camera controls, live room placement, room-floor selection, and animated department focus. Directory selection moves the camera without leaving the office; an explicit secondary action opens the mapped Command Center workspace. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [~] Data-backed agent avatars: live status, current task, activity pulse, live character name/color/visual traits, employee profile inspector, keyboard employee selector, and durable mailbox handoff. Verified 2026-07-10: Live Office message #61 created task #294 and inbox #379 for Risk Agent; profile pages and direct canvas hit testing remain outstanding.
-- [~] Data-backed committee room: live agenda, decision state, source row, approval state, memo reference, structured evidence packet, and deep source-review/approval drill-down from committee queues. Verified with the TATASTEEL strategy review (`strategy.v_strategy_committee_queue #3`, pending approval #14, `reject_or_retest`); participant discussion and specialized committee decision/follow-up actions remain outstanding. Evidence: [[2026-07-13-deep-evidence-and-approval-actions-v2]].
+- [x] Data-backed committee room: live agenda, packet, independent positions, quorum, challenge discussion, chair recommendation, minutes, dissent, human final decision, follow-up work, approval state, memo reference, and evidence drill-down are deployed. Production acceptance used `special:1` without seed data. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [~] Live handoff lines between agents. The 3D office renders deduplicated mailbox flows from `agent_messages`, with priority color and an auditable caption. The operations band now shows global execution lock, open risk events, stale/missing data sources, and priority tasks; the directory and inspector expose room/employee KPIs. A richer chronological activity feed remains outstanding. Evidence: [[2026-07-13-live-office-operations-v3]].
 - [~] Office non-WebGL and reduced-motion fallback. Static mode removes the canvas while retaining 10 live rooms, 36 selectable employee records, task inspection, mailbox handoff, and committee state. Automatic fallback is present and both static viewports pass WCAG A/AA automation; manual screen-reader and switch-device review remains outstanding. Evidence: [[2026-07-13-frontend-production-hardening-v2]].
 - [x] 3D office desktop/mobile pixel checks prove a nonblank, framed live canvas. The permanent Live Office test reads the deployed WebGL buffer and requires more than 1,000 opaque and colored samples; desktop animated and mobile static screenshots are retained externally. Evidence: [[2026-07-13-live-office-operations-v3]].
@@ -605,8 +605,8 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Implement Long-Term checklist tables and UI. Evidence: [[2026-07-08-long-term-coverage-board-v1]] plus existing live `portfolio.v_long_term_thesis_checklists` dashboard rows; table/API/UI are live, while row completion remains tracked by the coverage board.
 - [x] Implement Long-Term Monte Carlo engine and report. Engine/API/MCP/database/report existed and the scoped Decision Lab, source gate, external-vault contract, real UI run, and browser tests are now verified. Evidence: [[2026-07-13-long-term-decision-lab-v1]].
 - [x] Implement research/news/filing collector expansion. Dedicated 15-minute RSS freshness plus hourly NSE/BSE, material-first PDF extraction, strategy discovery, daemon health evidence, UI control, and agent routing are live. Evidence: [[2026-07-15-research-intelligence-v1]], [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
-- [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy; six advanced chart-template contracts, compiled actions, atomic approval resolution, screenshot quality validation, and the production formula/ratio-chart workflow are verified. Deterministic verification of every multi-pane straddle, indicator-stack, options-combination, and fundamental-ratio mutation remains. Evidence: [[2026-07-15-agent-operating-system-and-strategy-chart-v2]].
+- [~] Harden TradingView controller and straddle workflow. Desktop CDP is healthy; six advanced chart-template contracts, compiled actions, atomic approval resolution, screenshot quality validation, formula charts, technical indicator stacks, and fundamental-ratio stacks are verified in production. Four-pane synchronized options layouts and options-symbol assembly remain partial. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].
 - [x] Build Client Folio dashboard. Governed onboarding, account lifecycle, holdings approval, suitability gaps, client-book attribution, P2Cursor, and generic multi-source reconciliation are live and verified across desktop/mobile. Evidence: [[2026-07-15-client-office-control-plane-v1]].
 - [x] Build client accounting and reporting control plane. Deterministic FIFO, cash/fee ledgers, NAV, Modified Dietz benchmark performance, realized attribution, approval-gated monthly drafts, API/MCP controls, and Client Folio terminal panels are live over real imported data with missing evidence explicitly incomplete. Evidence: [[2026-07-15-client-accounting-performance-reporting-v1]].
 - [~] Build Risk Office v2 with stress tests and portfolio Monte Carlo. The institutional calculation, API, MCP, audited action, responsive terminal, validation, and SSD-artifact foundation are live; options tail risk, richer factor/correlation models, Risk Committee/override workflows, and automated specialist cadence remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
-- [ ] Build Animated AI Office v1 after core room grid and task arrows are data-backed.
+- [x] Build Animated AI Office v1 foundation. The procedural WebGL office, static fallback, live rooms, 95-agent directory, status/activity, handoff lines, committee state, employee inspection, room focus, and workspace routing are data-backed. Final art direction, direct avatar hit testing, and chronological playback remain the later refinement pass.

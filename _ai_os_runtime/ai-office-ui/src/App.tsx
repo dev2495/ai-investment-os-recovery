@@ -159,7 +159,9 @@ import TradingQuantRiskWorkspace from "./views/TradingQuantRiskWorkspace";
 import DepartmentTerminalWorkspace from "./views/DepartmentTerminalWorkspace";
 import StrategyArsenalWorkspace from "./views/StrategyArsenalWorkspace";
 import IntegrationGatewayWorkspace from "./views/IntegrationGatewayWorkspace";
+import DepartmentDeskWorkspace from "./views/DepartmentDeskWorkspace";
 import WorkspaceManager from "./components/WorkspaceManager";
+import WorkspaceWidgetRail from "./components/WorkspaceWidgetRail";
 import { fetchWorkspaceConfig, type TerminalWorkspace, type WorkspaceConfig } from "./api/terminal";
 
 const LiveOffice = lazy(() => import("./office/LiveOffice"));
@@ -175,6 +177,7 @@ const baseWorkspaces: Workspace[] = [
   { id: "command", label: "Command Center" },
   { id: "approvals", label: "Approval Board" },
   { id: "agents", label: "Agent Office" },
+  { id: "departments", label: "Department Desks" },
   { id: "committees", label: "Committee Rooms" },
   { id: "governance", label: "Governance & Safety" },
   { id: "portfolio", label: "Portfolio Office" },
@@ -196,6 +199,7 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   command: CommandIcon,
   approvals: ListChecks,
   agents: UsersRound,
+  departments: BriefcaseBusiness,
   committees: Scale,
   governance: ShieldCheck,
   portfolio: BriefcaseBusiness,
@@ -212,6 +216,14 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   reports: FileText,
   system: DatabaseZap
 };
+
+const workspaceGroups: { label: string; workspaces: WorkspaceId[] }[] = [
+  { label: "Executive", workspaces: ["command", "approvals", "agents", "departments", "committees", "governance"] },
+  { label: "Investing", workspaces: ["portfolio", "clients", "capital", "treasury"] },
+  { label: "Research", workspaces: ["research", "ideas", "reports"] },
+  { label: "Trading", workspaces: ["arsenal", "trading", "quant", "risk"] },
+  { label: "System", workspaces: ["models", "system"] }
+];
 
 const statusLabel: Record<Status, string> = {
   queued: "Queued",
@@ -776,6 +788,7 @@ function liveWorkflowRuns(snapshot: LiveSnapshot | null): LiveRow[] {
 function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, number> {
   return {
     agents: snapshot?.agents.length ?? 0,
+    departments: snapshot?.agent_departments.length ?? 0,
     approvals: snapshot?.approvals.length ?? 0,
     committees: snapshot?.approvals.length ?? 0,
     governance: snapshot?.approvals.filter((approval) => asText(approval, "approval_type") === "architecture_change").length ?? 0,
@@ -8459,7 +8472,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       risk: "aios:trading-quant-risk-refresh",
       reports: "aios:reports-refresh"
     };
-    if (["approvals", "agents", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) {
+    if (["approvals", "agents", "departments", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) {
       window.dispatchEvent(new Event("aios:department-terminal-refresh"));
       return;
     }
@@ -8525,6 +8538,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   if (activeWorkspace === "system") workspaceContent = <SystemHealthWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "command") workspaceContent = <MissionControlWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "models") workspaceContent = <IntegrationGatewayWorkspace onStatusChange={setLiveStatus} />;
+  else if (activeWorkspace === "departments") workspaceContent = <DepartmentDeskWorkspace onStatusChange={setLiveStatus} />;
   else if (["approvals", "agents", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
@@ -8532,17 +8546,24 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   else if (activeWorkspace === "trading" || activeWorkspace === "quant" || activeWorkspace === "risk") workspaceContent = <TradingQuantRiskWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else workspaceContent = <ReportsWorkspace onStatusChange={setLiveStatus} />;
   workspaceContent = <WorkspaceErrorBoundary workspace={activeWorkspaceLabel}>{workspaceContent}</WorkspaceErrorBoundary>;
+  const activeLayout = workspaceConfig?.layouts.find((item) => item.workspace_key === activeWorkspace);
+  const activeWidgets = workspaceConfig?.widgets.filter((item) => String(item.workspace ?? "") === activeWorkspace) ?? [];
 
   return (
     <div className="app-shell app-shell-focused">
       <ScrollableRegionAccessibility />
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><CommandIcon size={18} aria-hidden="true" /></div><div><p>AI Office</p><span>Charlie orchestrator</span></div></div>
-        <nav className="workspace-nav" aria-label="AI Office workspaces">
-          {baseWorkspaces.map((workspace) => {
-            const Icon = workspaceIcons[workspace.id];
-            return <button className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"} key={workspace.id} onClick={() => setActiveWorkspace(workspace.id)} type="button" title={workspace.label}><Icon size={17} aria-hidden="true" /><span>{workspace.label}</span></button>;
-          })}
+        <nav className="workspace-nav workspace-nav-grouped" aria-label="AI Office workspaces">
+          {workspaceGroups.map((group) => <section className="workspace-nav-group" key={group.label}>
+            <span>{group.label}</span>
+            {group.workspaces.map((workspaceId) => {
+              const workspace = baseWorkspaces.find((item) => item.id === workspaceId);
+              if (!workspace) return null;
+              const Icon = workspaceIcons[workspace.id];
+              return <button className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"} key={workspace.id} onClick={() => setActiveWorkspace(workspace.id)} type="button" title={workspace.label}><Icon size={17} aria-hidden="true" /><span>{workspace.label}</span></button>;
+            })}
+          </section>)}
         </nav>
         <div className="sidebar-footer"><div><span className="mini-label">Local mode</span><p>{liveStatus === "online" ? "Live DB linked" : liveStatus === "loading" ? "Connecting" : "Warehouse required"}</p></div><ShieldCheck size={18} aria-hidden="true" /></div>
       </aside>
@@ -8569,6 +8590,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
           {uiError ? <div className="error-strip">{uiError}</div> : null}
           <div className="quick-command-row">{quickCommands.map((quickCommand) => <button key={quickCommand} onClick={() => setCommand(quickCommand)} type="button" title={quickCommand}>{quickCommand}</button>)}</div>
         </section>
+        <WorkspaceWidgetRail columns={activeLayout?.column_count ?? 2} widgets={activeWidgets} workspaceLabel={activeWorkspaceLabel}/>
         {workspaceContent}
       </main>
       {workspaceManagerOpen && workspaceConfig ? <WorkspaceManager config={workspaceConfig} onChanged={setWorkspaceConfig} onClose={() => setWorkspaceManagerOpen(false)} workspace={activeWorkspace} /> : null}

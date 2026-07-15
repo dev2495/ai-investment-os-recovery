@@ -1,7 +1,20 @@
 import type { LiveRow } from "./live";
 
 export type TerminalWorkspace = "approvals" | "agents" | "committees" | "governance" | "capital" | "treasury" | "models";
-export type CustomizableWorkspace = TerminalWorkspace | "arsenal";
+export type CustomizableWorkspace =
+  | TerminalWorkspace
+  | "command"
+  | "departments"
+  | "portfolio"
+  | "clients"
+  | "research"
+  | "ideas"
+  | "arsenal"
+  | "trading"
+  | "quant"
+  | "risk"
+  | "reports"
+  | "system";
 
 export interface DepartmentTerminalSnapshot {
   generated_at: string;
@@ -17,6 +30,11 @@ export interface DepartmentTerminalSnapshot {
   departments?: LiveRow[];
   schedules?: LiveRow[];
   committees?: LiveRow[];
+  worker_history?: LiveRow[];
+  cost_quality?: LiveRow[];
+  followups?: LiveRow[];
+  constitutions?: LiveRow[];
+  discussion?: LiveRow[];
 }
 
 export interface WorkspaceProfile {
@@ -79,6 +97,18 @@ export function runCapitalAllocationAnalysis(input: Record<string, unknown>): Pr
 
 export function decideCapitalCommittee(input: Record<string, unknown>): Promise<LiveRow> {
   return request("/api/capital/committee/decision", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function openCommitteePacket(input: Record<string, unknown>): Promise<LiveRow> {
+  return request("/api/committees/packets/open", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function synthesizeCommitteeSession(input: Record<string, unknown>): Promise<LiveRow> {
+  return request("/api/committees/synthesize", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function recordCommitteeHumanDecision(input: Record<string, unknown>): Promise<LiveRow> {
+  return request("/api/committees/human-decision", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function materializeAgentSchedules(input: { actor?: string; limit?: number } = {}): Promise<LiveRow> {

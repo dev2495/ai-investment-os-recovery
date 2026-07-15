@@ -6,6 +6,7 @@ export type WorkspaceId =
   | "command"
   | "approvals"
   | "agents"
+  | "departments"
   | "committees"
   | "governance"
   | "portfolio"

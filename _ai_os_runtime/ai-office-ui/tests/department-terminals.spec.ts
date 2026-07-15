@@ -37,6 +37,21 @@ test("operator theme and density controls persist through the workspace API", as
   await expect.poll(() => page.locator("html").getAttribute("data-density")).toBe("compact");
 });
 
+test("workspace layout and widget controls change the live terminal", async ({ page }) => {
+  await page.goto("/?mode=command&workspace=quant", { waitUntil: "networkidle" });
+  const rail = page.getByLabel("Quant Lab live widgets");
+  await expect(rail).toBeVisible();
+  await page.getByTitle("Customize workspace").click();
+  const manager = page.getByRole("dialog", { name: "Workspace manager" });
+  await manager.getByRole("button", { name: "3", exact: true }).click();
+  await expect.poll(() => rail.locator(".workspace-live-widget-grid").getAttribute("style")).toContain("--widget-columns: 3");
+  await manager.getByRole("button", { name: "Hide widget" }).click();
+  await expect(rail).toBeHidden();
+  await manager.getByRole("button", { name: "Show widget" }).click();
+  await expect(rail).toBeVisible();
+  await manager.getByRole("button", { name: "2", exact: true }).click();
+});
+
 test("approval evidence opens from the decision queue", async ({ page }) => {
   await page.goto("/?mode=command&workspace=approvals", { waitUntil: "networkidle" });
   const evidenceButtons = page.locator(".terminal-evidence-button");
@@ -68,6 +83,67 @@ test("agent office exposes the complete governed employee operating system", asy
   await expect(page.getByText("Committee constitution", { exact: true })).toBeVisible();
   await expect(page.locator(".agent-schedule-list article")).toHaveCount(13);
   await expect(page.locator(".agent-committee-list article")).toHaveCount(11);
+});
+
+test("agent profiles are addressable and expose reliability, cost, skills, and output history", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/?mode=command&workspace=agents&agent=Head%20of%20Quant", { waitUntil: "networkidle" });
+  await expect(page.locator(".agent-office-selected").getByRole("heading", { level: 3, name: "Head of Quantitative Research" })).toBeVisible();
+  await expect(page.locator(".agent-profile-control").getByText("Reliability", { exact: true })).toBeVisible();
+  await expect(page.locator(".agent-profile-control").getByText("Cost policy", { exact: true })).toBeVisible();
+  await expect(page.locator(".agent-profile-tags").getByText("Quant Research Governance", { exact: true })).toBeVisible();
+  await expect(page.locator(".agent-profile-history article").first()).toBeVisible();
+  await expect(page).toHaveURL(/agent=Head(?:%20|\+)of(?:%20|\+)Quant/);
+});
+
+test("committee room exposes sealed positions, quorum, minutes, follow-ups, and human final state", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.goto("/?mode=command&workspace=committees", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 3, name: "Open decision packet" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open packet and dispatch members" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Session control" })).toBeVisible();
+  await expect(page.locator(".committee-session-metrics").getByText("5 / 5", { exact: true })).toBeVisible();
+  await expect(page.locator(".committee-position-preview article")).toHaveCount(5);
+  await expect(page.getByText("Refresh Rolex Rings buyback decision evidence", { exact: false })).toBeVisible();
+  await expect(page.getByText("more research", { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: "/tmp/ai-os-committee-room.png", fullPage: true });
+});
+
+test("committee room is mobile safe", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?mode=command&workspace=committees", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Committee Rooms" })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("department desks expose every live department with operating history and cost controls", async ({ page }) => {
+  const apiRequests: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("/api/")) apiRequests.push(request.url()); });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/?mode=command&workspace=departments&department=quant", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Quantitative Strategies Office" })).toBeVisible();
+  await expect(page.locator(".department-desk-nav button")).toHaveCount(15);
+  await expect(page.getByRole("heading", { level: 3, name: "Department team" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Live work queue" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Recurring schedules" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Department mail" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Model and cost controls" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: "Recent output history" })).toBeVisible();
+  await expect(page.getByText("Head of Quant", { exact: true }).first()).toBeVisible();
+  expect(apiRequests.some((url) => url.includes("/api/department-terminal/snapshot?workspace=agents"))).toBe(true);
+  expect(apiRequests.some((url) => /\/api\/snapshot(?:\?|$)/.test(url))).toBe(false);
+  await page.screenshot({ path: "/tmp/ai-os-department-desks-quant.png", fullPage: true });
+});
+
+test("department desks preserve an addressable selection and have no mobile overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?mode=command&workspace=departments&department=news", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "News Intelligence" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Research Factory/ })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: "/tmp/ai-os-department-desks-news-mobile.png", fullPage: true });
 });
 
 test("governance terminal exposes live controls and persistent human authority", async ({ page }) => {
@@ -117,6 +193,8 @@ test("advanced TradingView templates are visible and remain approval gated", asy
   await expect(templates.getByText("Option Straddle Four Pane", { exact: true })).toBeVisible();
   await expect(templates.getByText("Fundamental Ratio Dashboard", { exact: true })).toBeVisible();
   await expect(templates.getByText("Relative Strength Ratio Chart", { exact: true })).toBeVisible();
+  await expect(page.locator('select option[value="technical_indicator_stack"]')).toBeEnabled();
+  await expect(page.locator('select option[value="fundamental_ratio_dashboard"]')).toBeEnabled();
 });
 
 test("risk center exposes real institutional analytics with execution locked", async ({ page }) => {

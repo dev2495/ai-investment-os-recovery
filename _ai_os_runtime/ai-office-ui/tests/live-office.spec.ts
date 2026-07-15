@@ -20,7 +20,8 @@ test("Live Office exposes warehouse-backed operating walls and employee detail",
   await expect(runtimeRoom).toHaveAttribute("aria-pressed", "true");
 
   await page.getByLabel("Focus employee").selectOption({ label: "Jarvis" });
-  await expect(page.getByRole("heading", { level: 1, name: "Jarvis" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Runtime Operator" })).toBeVisible();
+  await expect(page.getByText("Jarvis / Runtime Operator", { exact: true })).toBeVisible();
   await expect(page.locator(".office-agent-metrics")).toContainText("Open tasks");
   await expect(page.locator(".office-agent-metrics")).toContainText("Unread");
 
@@ -72,7 +73,7 @@ test("mobile static office keeps room, employee, and operations controls accessi
   await expect(page.locator("canvas")).toHaveCount(0);
   await page.getByRole("button", { name: /Runtime Operations.*active/ }).first().click();
   await page.getByLabel("Focus employee").selectOption({ label: "Jarvis" });
-  await expect(page.getByRole("heading", { level: 1, name: "Jarvis" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Runtime Operator" })).toBeVisible();
   await expect(page.getByText("Global execution locked", { exact: true })).toBeVisible();
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

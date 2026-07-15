@@ -3,12 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const runtimeRoot = path.resolve(__dirname, "..");
+const defaultArtifactRoot = "/Volumes/Devarsh SSD/AI OS Data/artifacts";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -406,6 +403,302 @@ async function clickPoint(client, value) {
   });
 }
 
+async function clickNamedControl(client, requestedLabel) {
+  const desired = String(requestedLabel || "").trim().toLowerCase();
+  if (!desired) return "control_not_requested";
+  const candidate = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const desired = ${JSON.stringify(desired)};
+      const nodes = [...document.querySelectorAll('button,[role="button"]')];
+      const node = nodes.find((item) => {
+        const label = [item.getAttribute('aria-label'), item.getAttribute('title'), item.getAttribute('data-name'), item.textContent]
+          .filter(Boolean).join(' ').trim().toLowerCase();
+        const rect = item.getBoundingClientRect();
+        const top = rect.width > 0 && rect.height > 0
+          ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+          : null;
+        return (label === desired || label.includes(desired)) && rect.width > 0 && rect.height > 0 && top && item.contains(top);
+      });
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      node.click();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, label: node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-name') || node.textContent };
+    })()`,
+    returnByValue: true
+  });
+  const value = candidate.result?.value;
+  if (!value) return `control_not_found:${slug(desired)}`;
+  return `control_clicked:${slug(value.label || desired)}`;
+}
+
+async function openIndicatorsDialog(client) {
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "/",
+    code: "Slash",
+    windowsVirtualKeyCode: 191
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "char",
+    text: "/",
+    unmodifiedText: "/",
+    key: "/",
+    code: "Slash",
+    windowsVirtualKeyCode: 191
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "/",
+    code: "Slash",
+    windowsVirtualKeyCode: 191
+  });
+  await sleep(900);
+  const state = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const input = [...document.querySelectorAll('input')].find((item) => {
+        const rect = item.getBoundingClientRect();
+        const label = [item.placeholder, item.getAttribute('aria-label'), item.getAttribute('data-role')]
+          .filter(Boolean).join(' ').toLowerCase();
+        return rect.width > 0 && rect.height > 0 && label.includes('search');
+      });
+      return input ? { placeholder: input.placeholder || '', ariaLabel: input.getAttribute('aria-label') || '' } : null;
+    })()`,
+    returnByValue: true
+  });
+  return state.result?.value ? "indicator_dialog_opened:slash" : "indicator_dialog_not_open:slash";
+}
+
+async function pressEscape(client) {
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27
+  });
+  await client.call("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27
+  });
+}
+
+async function pressKey(client, key, code, windowsVirtualKeyCode) {
+  await client.call("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode });
+  await client.call("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode });
+}
+
+async function searchIndicatorDialog(client, requestedStudy) {
+  const query = String(requestedStudy || "").trim();
+  if (!query) return { status: "study_not_requested", query };
+  const focused = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const query = ${JSON.stringify(query)};
+      const input = [...document.querySelectorAll('input,[role="searchbox"]')].find((item) => {
+        const rect = item.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && (item.placeholder || '').toLowerCase().includes('search');
+      });
+      if (!input) return false;
+      input.focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (setter) setter.call(input, '');
+      else input.value = '';
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward', data: null }));
+      input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      return true;
+    })()`,
+    returnByValue: true
+  });
+  if (!focused.result?.value) return { status: "indicator_search_not_found", query };
+  for (const character of query) {
+    const codePoint = character.toUpperCase().charCodeAt(0);
+    await client.call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: character,
+      windowsVirtualKeyCode: codePoint
+    });
+    await client.call("Input.dispatchKeyEvent", {
+      type: "char",
+      key: character,
+      text: character,
+      unmodifiedText: character,
+      windowsVirtualKeyCode: codePoint
+    });
+    await client.call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: character,
+      windowsVirtualKeyCode: codePoint
+    });
+  }
+  await sleep(1100);
+  const candidates = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) => {
+        const rect = item.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      if (!dialog) return [];
+      return [...dialog.querySelectorAll('*')]
+        .map((item) => {
+          const rect = item.getBoundingClientRect();
+          const directText = [...item.childNodes]
+            .filter((node) => node.nodeType === Node.TEXT_NODE)
+            .map((node) => node.textContent || '')
+            .join(' ')
+            .replace(/\\s+/g, ' ')
+            .trim();
+          return {
+            tag: item.tagName.toLowerCase(),
+            text: directText.slice(0, 260),
+            aria: item.getAttribute('aria-label') || '',
+            role: item.getAttribute('role') || '',
+            dataName: item.getAttribute('data-name') || '',
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            visible: rect.width > 0 && rect.height > 0
+          };
+        })
+        .filter((item) => item.visible && item.height <= 120 && item.width <= 780 && (item.text || item.aria))
+        .slice(0, 80);
+    })()`,
+    returnByValue: true
+  });
+  await client.call("Accessibility.enable");
+  const accessibilityTree = await client.call("Accessibility.getFullAXTree", { depth: 18 });
+  const loweredQuery = query.toLowerCase();
+  const axNodes = accessibilityTree.nodes || [];
+  const axNodeMap = new Map(axNodes.map((node) => [node.nodeId, node]));
+  const accessibleCandidates = axNodes
+    .map((node) => ({
+      nodeId: node.nodeId,
+      parentId: node.parentId,
+      backendDOMNodeId: node.backendDOMNodeId,
+      role: node.role?.value || "",
+      name: node.name?.value || "",
+      ignored: Boolean(node.ignored),
+      ancestors: (() => {
+        const values = [];
+        let parent = axNodeMap.get(node.parentId);
+        while (parent && values.length < 6) {
+          values.push({
+            nodeId: parent.nodeId,
+            backendDOMNodeId: parent.backendDOMNodeId,
+            role: parent.role?.value || "",
+            name: parent.name?.value || ""
+          });
+          parent = axNodeMap.get(parent.parentId);
+        }
+        return values;
+      })()
+    }))
+    .filter((node) => !node.ignored && node.name && node.name.toLowerCase().includes(loweredQuery))
+    .slice(0, 40);
+  return {
+    status: "indicator_search_complete",
+    query,
+    candidates: candidates.result?.value || [],
+    accessibleCandidates
+  };
+}
+
+function normalizeStudyRequests(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item) => {
+      if (typeof item === "string") {
+        return { name: item.trim(), search: item.trim(), legend: item.trim() };
+      }
+      if (!item || typeof item !== "object") return null;
+      const name = String(item.name || item.study || item.search || "").trim();
+      return name
+        ? {
+            name,
+            search: String(item.search || name).trim(),
+            legend: String(item.legend || item.expected_legend || name).trim()
+          }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+async function clickBackendNode(client, backendDOMNodeId) {
+  if (!backendDOMNodeId) return false;
+  await client.call("DOM.enable");
+  const model = await client.call("DOM.getBoxModel", { backendNodeId: backendDOMNodeId });
+  const quad = model.model?.content || model.model?.border;
+  if (!Array.isArray(quad) || quad.length < 8) return false;
+  const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
+  const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
+  await clickPoint(client, { x, y });
+  return true;
+}
+
+async function applyIndicatorStudy(client, request) {
+  await pressEscape(client);
+  await sleep(250);
+  const dialogState = await openIndicatorsDialog(client);
+  if (!dialogState.startsWith("indicator_dialog_opened")) {
+    return { status: "failed", study: request.name, reason: dialogState };
+  }
+  const searchResult = await searchIndicatorDialog(client, request.search);
+  const desired = request.search.toLowerCase();
+  const matches = searchResult.accessibleCandidates || [];
+  const candidate = matches.find((item) => item.name.toLowerCase() === desired && item.backendDOMNodeId)
+    || matches.find((item) => item.name.toLowerCase().startsWith(desired) && item.backendDOMNodeId)
+    || matches.find((item) => item.backendDOMNodeId);
+  if (!candidate) {
+    await pressEscape(client);
+    return {
+      status: "failed",
+      study: request.name,
+      search: request.search,
+      reason: "accessible_indicator_result_not_found",
+      candidates: matches.map((item) => item.name).slice(0, 12)
+    };
+  }
+  await pressKey(client, "ArrowDown", "ArrowDown", 40);
+  await sleep(180);
+  await pressKey(client, "Enter", "Enter", 13);
+  await sleep(1300);
+  await pressEscape(client);
+  await sleep(500);
+  const verification = await client.call("Runtime.evaluate", {
+    expression: `(() => {
+      const expected = ${JSON.stringify(request.legend.toLowerCase())};
+      const bodyText = (document.body?.innerText || '').toLowerCase();
+      return { matched: bodyText.includes(expected), expected, preview: bodyText.slice(0, 1600) };
+    })()`,
+    returnByValue: true
+  });
+  const postActionTree = await client.call("Accessibility.getFullAXTree", { depth: 14 });
+  const selectedName = candidate.name.toLowerCase();
+  const undoConfirmation = (postActionTree.nodes || []).some((node) => {
+    const name = String(node.name?.value || "").toLowerCase();
+    return name.includes("undo insert") && name.includes(selectedName);
+  });
+  const legendVerified = Boolean(verification.result?.value?.matched);
+  const verified = legendVerified || undoConfirmation;
+  return {
+    status: verified ? "applied" : "needs_review",
+    study: request.name,
+    search: request.search,
+    selected_result: candidate.name,
+    expected_legend: request.legend,
+    legend_verified: legendVerified,
+    insert_confirmation_verified: undoConfirmation,
+    verification_method: undoConfirmation ? "tradingview_undo_insert_action" : legendVerified ? "dom_legend_text" : "none"
+  };
+}
+
+async function applyIndicatorStudies(client, requestedStudies) {
+  const studies = normalizeStudyRequests(requestedStudies);
+  const results = [];
+  for (const study of studies) {
+    results.push(await applyIndicatorStudy(client, study));
+  }
+  return results;
+}
+
 async function setChartStyle(client, requestedStyle) {
   const desired = String(requestedStyle || "").trim();
   if (!desired) {
@@ -487,6 +780,9 @@ async function main() {
   const targetUrl = payload.target_url || payload.targetUrl || buildTradingViewUrl(payload);
   const skipNavigation = payload.skip_navigation === true || payload.skipNavigation === true;
   const includeControls = payload.include_controls === true || payload.includeControls === true;
+  const artifactRoot = path.resolve(
+    payload.artifact_root || payload.artifactRoot || process.env.AI_OS_ARTIFACT_ROOT || defaultArtifactRoot
+  );
   const startedAt = new Date().toISOString();
   const nativeActivation = activateTradingViewDesktop(payload.activate_app !== false && payload.activateApp !== false);
   await sleep(nativeActivation === "native_activation_succeeded" ? 1200 : 0);
@@ -512,6 +808,24 @@ async function main() {
       postNavigationActivation = activateTradingViewDesktop(payload.activate_app !== false && payload.activateApp !== false);
       await sleep(postNavigationActivation === "native_activation_succeeded" ? 1400 : 0);
     }
+    if (payload.inspect_control || payload.inspectControl) {
+      const requestedControl = payload.inspect_control || payload.inspectControl;
+      if (String(requestedControl).toLowerCase().includes("indicator")) {
+        setupActions.push(await openIndicatorsDialog(client));
+      } else {
+        setupActions.push(await clickNamedControl(client, requestedControl));
+      }
+      await sleep(1200);
+    }
+    if (payload.indicator_query || payload.indicatorQuery) {
+      setupActions.push(await searchIndicatorDialog(client, payload.indicator_query || payload.indicatorQuery));
+    }
+    const requestedStudies = payload.studies || payload.indicator_studies || payload.indicatorStudies;
+    if (Array.isArray(requestedStudies) && requestedStudies.length) {
+      if (!skipNavigation) await sleep(3500);
+      const studyResults = await applyIndicatorStudies(client, requestedStudies);
+      setupActions.push({ action: "apply_indicator_studies", results: studyResults });
+    }
     for (let attempt = 1; attempt <= (captureScreenshot ? maxQualityAttempts : 1); attempt += 1) {
       attempts = attempt;
       await sleep(waitMs + (attempt - 1) * 4000);
@@ -535,6 +849,23 @@ async function main() {
             })
             .filter((item) => item.visible && (item.label || item.data_name))
             .slice(0, 160)` : "[]"}
+          ,form_controls: ${includeControls ? `[...document.querySelectorAll('input,[role="searchbox"],[role="option"],[role="dialog"]')]
+            .map((item) => {
+              const rect = item.getBoundingClientRect();
+              return {
+                tag: item.tagName.toLowerCase(),
+                role: item.getAttribute('role') || '',
+                label: item.getAttribute('aria-label') || item.getAttribute('title') || '',
+                placeholder: item.getAttribute('placeholder') || '',
+                value: item.value || '',
+                text: (item.textContent || '').trim().slice(0, 240),
+                visible: rect.width > 0 && rect.height > 0,
+                width: Math.round(rect.width),
+                height: Math.round(rect.height)
+              };
+            })
+            .filter((item) => item.visible)
+            .slice(0, 160)` : "[]"}
         }))()`,
         returnByValue: true
       });
@@ -548,7 +879,7 @@ async function main() {
         ? { ...analyzeScreenshotQuality(screenshotBuffer), attempt }
         : { status: "skipped", reason: "quality_check_disabled", attempt };
       const dateFolder = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-      const artifactDir = path.join(runtimeRoot, "artifacts", "tradingview", dateFolder);
+      const artifactDir = path.join(artifactRoot, "tradingview", dateFolder);
       fs.mkdirSync(artifactDir, { recursive: true });
       const symbols = normalizeSymbols(payload.symbols);
       const qualitySuffix = quality.status === "passed" ? "" : `-${quality.status}`;
@@ -572,6 +903,13 @@ async function main() {
   }
 
   const value = pageContext.result?.value || {};
+  const studyAction = setupActions.find((item) => item && typeof item === "object" && item.action === "apply_indicator_studies");
+  const studyResults = studyAction?.results || [];
+  const studyApplicationStatus = !studyResults.length
+    ? "not_requested"
+    : studyResults.every((item) => item.status === "applied")
+      ? "passed"
+      : "failed";
   const result = {
     status: "done",
     action: payload.action || "open_chart_capture",
@@ -580,12 +918,15 @@ async function main() {
     page_title: value.title || null,
     extracted_text_preview: value.text || "",
     chart_controls: value.controls || [],
+    form_controls: value.form_controls || [],
     screenshot_path: screenshotPath,
     screenshot_bytes: screenshotBytes,
     artifact_quality_status: quality?.status || "not_checked",
     artifact_quality: quality,
     quality_attempts: attempts,
     chart_setup_actions: setupActions,
+    study_results: studyResults,
+    study_application_status: studyApplicationStatus,
     quality_recovery_actions: recoveryActions,
     cdp_target_id: target.id,
     cdp_target_title: target.title,

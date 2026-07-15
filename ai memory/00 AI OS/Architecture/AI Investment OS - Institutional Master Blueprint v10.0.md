@@ -1737,3 +1737,35 @@ Production evidence currently shows two complete FIFO accounts and two incomplet
 Release evidence passed an eight-case numerical validator, including FIFO realized P&L of 560, remaining quantity of three, open cost basis of 360, and Modified Dietz return of 60 percent; production accounting and report validation left zero validation clients, accounts, cash rows, or report rows. Migration replay, Python compilation, 164-tool MCP protocol/read smoke, production UI build, desktop/mobile visual checks, dedicated approval bypass tests, and approval-id routing also passed. The July monthly run created three client-specific Obsidian drafts and three independent pending delivery approvals without external delivery. Evidence: [[2026-07-15-client-accounting-performance-reporting-v1]].
 
 This is an accounting foundation, not a completeness claim. Open gates are source-backed opening cash and liabilities, missing historical transactions and lots, explicit fee/tax ingestion from every broker, recurring NAV snapshots, meaningful multi-period return history, richer factor/sector attribution, reconciled portfolio-change narratives, formatted client-ready report exports, approved delivery channels, and retrospective suitability and mandate evidence.
+
+## 43. Department Terminals, Governed Committees, And Advanced Chart Operations - 2026-07-15
+
+The Bloomberg-style operating surface now covers 19 addressable Command Center workspaces, including 15 department desks. Every desk uses scoped production reads, explicit freshness, the global execution boundary, owner and status filters, and an audited persistent widget rail. Widget visibility, order, density, and column placement are user-managed and can also be changed through Charlie's governed workspace tools. Agent profiles are addressable from the terminal and expose the live reporting line, role scope, persona, mental models, skills, model route, cost cap, readiness, reliability, mailbox, and recent worker history for all 95 employees.
+
+```text
+Devarsh asks Charlie or opens a department desk
+  -> Charlie interprets and delegates through Jarvis
+  -> one role-scoped specialist owns each task
+  -> durable task, inbox, message, worker, artifact, and evidence records
+  -> widgets and department views refresh from scoped APIs
+  -> approval or committee gates remain visible and independent
+  -> no seed fallback and no broker authority
+```
+
+Investment committees now have an operating protocol, not only constitutions. Strategy, Long-Term, and Special Situations can open evidence-linked packets, dispatch one independent position request per registered member, hold positions sealed until quorum, record post-quorum challenge discussion, allow only the registered chair to synthesize a recommendation, retain minutes/dissent/conditions, record the named human's separate final decision, and create linked follow-up tasks. The database contract is `agent.committee_packets`, `agent.committee_positions`, `agent.committee_discussion_messages`, `agent.committee_sessions`, and `agent.committee_followups`. The API and MCP expose packet, position, discussion, synthesis, human-decision, and follow-up operations. Other committee families retain their constitutions but still need family-specific operating adapters before they can be called complete.
+
+Production committee acceptance used the real Rolex Rings buyback matter `special:1`. Packet `#1` collected five independent positions, reached quorum `5/5`, retained three challenge positions and a risk objection, received the registered chair's `more_research` recommendation with minutes and conditions, then recorded Devarsh's separate `more_research` final decision. Follow-up `#1` created task `#435` and inbox `#1278`. Global execution remained locked and the provider gate remained explicit.
+
+TradingView chart control now applies approved studies through the native Desktop CDP controller using documented keyboard behavior, real keyboard events, virtualized result discovery, deterministic study insertion, and legend/undo verification. The terminal accepts operator-edited technical studies and financial fields before approval. Three production paths are proven:
+
+- formula/ratio chart: approval `#43`, task `#19`, browser run `#14`, artifact `#33069`;
+- technical stack: approval `#44`, task `#20`, browser run `#15`, artifact `#37356`, with VWAP, Supertrend, RSI, MACD, ATR, and Volume verified;
+- fundamental stack: approval `#45`, task `#21`, browser run `#16`, artifact `#37357`, with Revenue, Net Income, Operating Margin, ROIC, Total Debt, P/E, and P/B verified.
+
+Chart operations are analysis-only. A failed study assertion moves work to `needs_review`; it is never reported as complete. Formula charts and approved technical/fundamental stacks are production-proven. Four-pane synchronized option layouts, option-contract assembly, and account-alert mutation remain explicitly partial and human-gated.
+
+Release evidence passed the production UI build, Python parse gate, idempotent migration replay, live API and MCP checks, desktop/mobile workspace and WCAG coverage, committee production acceptance, TradingView screenshot inspection, global execution-lock checks, and external-SSD storage verification. The browser suite contains 93 unique cases; environment duration limits required the full suite to be run in bounded shards, with every case covered and no failing shard.
+
+The final MCP protocol gate exposes 172 callable tools, including eight committee tools; the warehouse registry contains 229 enabled internal and external capabilities. These are different counts by design: the registry includes implementation capabilities that are not directly importable as MCP calls.
+
+This closes the operating-foundation phase, not the investment-office product. Remaining phases are real client/source completeness, recurring broker and alternative-data adapters, deeper options/intraday and factor models, remaining committee-family adapters, research/report product depth, remote deployment and authentication, representative local-model quality and thermal benchmarks, and the later 3D office art/interaction refinement. Live broker execution remains disabled until its independent security, risk, compliance, capital, and per-order gates are designed and accepted. Evidence: [[2026-07-15-department-terminals-tradingview-and-committee-operations-v1]].

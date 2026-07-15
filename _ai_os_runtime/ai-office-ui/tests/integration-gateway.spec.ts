@@ -55,15 +55,18 @@ test("integration evidence resolves checks, mappings, jobs, and readiness", asyn
 });
 
 test("governed model runtime exposes complete assignments, privacy, cache, and escalation controls", async ({ page }) => {
+  const snapshotResponse = page.waitForResponse((response) => response.url().includes("/api/integration-gateway/snapshot") && response.ok());
   await page.goto("/?mode=command&workspace=models", { waitUntil: "networkidle" });
+  const snapshot = await (await snapshotResponse).json();
+  const assignmentCount = snapshot.model_agent_assignments.length;
   await expect(page.getByRole("heading", { level: 2, name: "Governed Model Runtime" })).toBeVisible();
-  await expect(page.getByText("49/49", { exact: true })).toBeVisible();
+  await expect(page.getByText(`${assignmentCount}/${assignmentCount}`, { exact: true })).toBeVisible();
   await expect(page.getByText("Autonomous cloud", { exact: true })).toBeVisible();
   await expect(page.getByText("must remain zero", { exact: true })).toBeVisible();
   await expect(page.getByText("Raw prompts are not stored", { exact: false })).toBeVisible();
-  await expect(page.locator(".model-policy-list article")).toHaveCount(4);
-  await expect(page.locator(".model-assignment-table article")).toHaveCount(49);
-  await expect(page.locator(".gateway-route-grid article")).toHaveCount(21);
+  await expect(page.locator(".model-policy-list article")).toHaveCount(snapshot.model_privacy_policies.length);
+  await expect(page.locator(".model-assignment-table article")).toHaveCount(assignmentCount);
+  await expect(page.locator(".gateway-route-grid article")).toHaveCount(snapshot.model_routes.length);
   await expect(page.getByRole("heading", { level: 2, name: "Recent Model Decisions" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Escalation Queue" })).toBeVisible();
   await page.screenshot({ path: "/tmp/ai-os-model-runtime-desktop.png", fullPage: true });

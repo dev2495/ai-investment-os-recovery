@@ -2681,10 +2681,14 @@ TERMINAL_WORKSPACES = {
     "governance",
 }
 
-CUSTOMIZABLE_WORKSPACES = TERMINAL_WORKSPACES | {"arsenal"}
+CUSTOMIZABLE_WORKSPACES = {
+    "command", "approvals", "agents", "departments", "committees", "portfolio",
+    "clients", "research", "ideas", "arsenal", "trading", "quant", "risk",
+    "capital", "treasury", "models", "governance", "reports", "system",
+}
 
 WORKSPACE_KEYS = {
-    "command", "approvals", "agents", "committees", "portfolio", "clients",
+    "command", "approvals", "agents", "departments", "committees", "portfolio", "clients",
     "research", "ideas", "arsenal", "trading", "quant", "risk", "capital", "treasury",
     "models", "governance", "reports", "system",
 }
@@ -2911,10 +2915,17 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "departments": "SELECT * FROM agent.v_agent_departments ORDER BY priority, department_name",
             "schedules": "SELECT * FROM agent.v_workflow_schedule_control ORDER BY CASE schedule_state WHEN 'due' THEN 1 WHEN 'waiting_on_open_task' THEN 2 ELSE 3 END, next_run_at",
             "committees": "SELECT * FROM agent.v_committee_membership_roster ORDER BY committee_name",
+            "worker_history": "SELECT * FROM agent.v_recent_worker_runs ORDER BY finished_at DESC NULLS LAST, started_at DESC LIMIT 120",
+            "cost_quality": "SELECT * FROM agent.v_agent_model_cost_cap_status ORDER BY department, agent_name",
         },
         "committees": {
             "summary": "SELECT * FROM agent.v_committee_room_summary ORDER BY metric",
             "primary": "SELECT * FROM agent.v_committee_room_items ORDER BY priority_rank, latest_activity_at DESC NULLS LAST LIMIT 120",
+            "secondary": "SELECT * FROM agent.v_committee_packet_control ORDER BY CASE packet_status WHEN 'awaiting_human' THEN 1 WHEN 'deliberating' THEN 2 WHEN 'collecting_positions' THEN 3 ELSE 4 END, latest_activity_at DESC LIMIT 120",
+            "tertiary": "SELECT * FROM agent.v_committee_position_control ORDER BY submitted_at DESC LIMIT 160",
+            "followups": "SELECT * FROM agent.v_committee_followup_control ORDER BY CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'queued' THEN 3 ELSE 4 END, due_at NULLS LAST, updated_at DESC LIMIT 120",
+            "constitutions": "SELECT * FROM agent.v_committee_membership_roster ORDER BY committee_name",
+            "discussion": "SELECT discussion.*,packet.packet_key,packet.committee_key FROM agent.committee_discussion_messages discussion JOIN agent.committee_packets packet ON packet.id=discussion.packet_id ORDER BY discussion.created_at DESC LIMIT 160",
         },
         "capital": {
             "summary": "SELECT * FROM books.v_capital_allocation_control_summary ORDER BY metric",
@@ -5355,6 +5366,11 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
         "quality_check": payload.get("quality_check", True),
         "max_quality_attempts": payload.get("max_quality_attempts") or payload.get("maxQualityAttempts") or 3,
         "activate_app": payload.get("activate_app", True),
+        "studies": (
+            payload.get("studies")
+            or ((payload.get("compiled_plan") or {}).get("studies") if isinstance(payload.get("compiled_plan"), dict) else None)
+            or []
+        ),
     }
     action_timeout = max(
         45,
@@ -5401,7 +5417,12 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     content_hash = sha256_file(screenshot_path)
     title = f"TradingView chart screenshot: {', '.join(map(str, symbols[:3]))}"
     quality_status = str(action_result.get("artifact_quality_status") or "not_checked")
-    task_status = "done" if quality_status in {"passed", "skipped", "not_checked"} else "needs_review"
+    study_status = str(action_result.get("study_application_status") or "not_requested")
+    task_status = (
+        "done"
+        if quality_status in {"passed", "skipped", "not_checked"} and study_status in {"passed", "not_requested"}
+        else "needs_review"
+    )
     result_summary = (
         f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
         f"({script_payload['exchange']}, {script_payload['timeframe']}) and captured screenshot evidence."
@@ -5520,6 +5541,62 @@ def tradingview_chart_url(symbol_expression: str, timeframe: object) -> str:
     return f"https://www.tradingview.com/chart/?{params}"
 
 
+TRADINGVIEW_TECHNICAL_STUDIES: dict[str, dict[str, str]] = {
+    "volume": {"name": "Volume", "search": "Volume", "legend": "Volume"},
+    "vwap": {"name": "VWAP", "search": "VWAP", "legend": "VWAP"},
+    "supertrend": {"name": "Supertrend", "search": "Supertrend", "legend": "Supertrend"},
+    "rsi": {"name": "RSI", "search": "Relative Strength Index", "legend": "RSI"},
+    "relative strength index": {"name": "RSI", "search": "Relative Strength Index", "legend": "RSI"},
+    "macd": {"name": "MACD", "search": "MACD", "legend": "MACD"},
+    "atr": {"name": "ATR", "search": "Average True Range", "legend": "ATR"},
+    "average true range": {"name": "ATR", "search": "Average True Range", "legend": "ATR"},
+}
+
+TRADINGVIEW_FUNDAMENTAL_STUDIES: dict[str, dict[str, str]] = {
+    "total_revenue": {"name": "TOTAL_REVENUE", "search": "Revenue", "legend": "Revenue"},
+    "net_income": {"name": "NET_INCOME", "search": "Net Income", "legend": "Net Income"},
+    "operating_margin": {"name": "OPERATING_MARGIN", "search": "Operating Margin", "legend": "Operating Margin"},
+    "return_on_invested_capital": {"name": "RETURN_ON_INVESTED_CAPITAL", "search": "Return on Invested Capital", "legend": "Return on Invested Capital"},
+    "total_debt": {"name": "TOTAL_DEBT", "search": "Total Debt", "legend": "Total Debt"},
+    "price_earnings": {"name": "PRICE_EARNINGS", "search": "Price to earnings ratio", "legend": "Price to earnings ratio"},
+    "price_book": {"name": "PRICE_BOOK", "search": "Price to book ratio", "legend": "Price to book ratio"},
+}
+
+
+def collect_tradingview_technical_indicators(payload: dict) -> list[str]:
+    requested = tradingview_parameter(payload, "indicators", [])
+    values = [str(item).strip() for item in requested] if isinstance(requested, list) else []
+    if not values:
+        panes = payload.get("panes") if isinstance(payload.get("panes"), list) else []
+        for pane in panes:
+            if not isinstance(pane, dict):
+                continue
+            if str(pane.get("type") or "").lower() == "volume":
+                values.append("Volume")
+            for key in ("overlays", "indicators"):
+                entries = pane.get(key) if isinstance(pane.get(key), list) else []
+                values.extend(str(item).strip() for item in entries if str(item).strip())
+    return list(dict.fromkeys(item for item in values if item))
+
+
+def compile_tradingview_studies(requested: list[str], catalog: dict[str, dict[str, str]]) -> tuple[list[dict[str, str]], list[str]]:
+    studies: list[dict[str, str]] = []
+    unsupported: list[str] = []
+    seen: set[str] = set()
+    for item in requested:
+        normalized = str(item).strip().lower().replace("-", "_").replace(" ", "_")
+        direct_key = str(item).strip().lower()
+        study = catalog.get(normalized) or catalog.get(direct_key)
+        if not study:
+            unsupported.append(str(item))
+            continue
+        if study["search"] in seen:
+            continue
+        studies.append(dict(study))
+        seen.add(study["search"])
+    return studies, unsupported
+
+
 def compile_tradingview_template_plan(template: dict, payload: dict, symbols: list[str]) -> dict[str, Any]:
     template_key = str(template["template_key"])
     exchange = str(payload.get("exchange") or template.get("default_exchange") or "NSE").upper()
@@ -5595,16 +5672,31 @@ def compile_tradingview_template_plan(template: dict, payload: dict, symbols: li
                 "remaining_manual_step": "Open and synchronize underlying, call, put, and formula panes; deterministic pane mutation is not yet enabled.",
             })
     elif template_key == "technical_indicator_stack":
+        requested_indicators = collect_tradingview_technical_indicators(payload)
+        studies, unsupported = compile_tradingview_studies(requested_indicators, TRADINGVIEW_TECHNICAL_STUDIES)
         plan.update({
-            "required_parameters": ["symbol", "approved indicator list"],
-            "validated_parameters": {"requested_indicators": tradingview_parameter(payload, "indicators", [])},
-            "remaining_manual_step": "Apply and verify each indicator through the signed-in TradingView dialog.",
+            "execution_ready": bool(primary and studies and not unsupported),
+            "fulfillment": "complete_approved_indicator_stack",
+            "chart_style": "Candles",
+            "studies": studies,
+            "required_parameters": ([] if primary and studies and not unsupported else ["symbol", "supported approved indicator list"]),
+            "validated_parameters": {"requested_indicators": requested_indicators, "unsupported_indicators": unsupported},
         })
     elif template_key == "fundamental_ratio_dashboard":
+        requested_fields = tradingview_parameter(payload, "fields", [])
+        fields = [str(item).strip() for item in requested_fields] if isinstance(requested_fields, list) else []
+        studies, unsupported = compile_tradingview_studies(fields, TRADINGVIEW_FUNDAMENTAL_STUDIES)
         plan.update({
-            "required_parameters": ["symbol", "available TradingView financial fields"],
-            "validated_parameters": {"requested_fields": tradingview_parameter(payload, "fields", [])},
-            "remaining_manual_step": "Apply financial metrics and cross-check each value against the linked filing evidence.",
+            "execution_ready": bool(primary and studies and not unsupported),
+            "fulfillment": "complete_fundamental_metric_stack_with_filing_cross_check",
+            "chart_style": "Candles",
+            "studies": studies,
+            "required_parameters": ([] if primary and studies and not unsupported else ["symbol", "available TradingView financial fields"]),
+            "validated_parameters": {
+                "requested_fields": fields,
+                "unsupported_fields": unsupported,
+                "filing_cross_check_required": bool(payload.get("filing_cross_check_required", True)),
+            },
         })
     elif template_key == "market_regime_four_pane":
         plan.update({
@@ -5859,6 +5951,176 @@ def resolve_tradingview_template_approval(payload: dict) -> dict:
     result["approval_status"] = "approved"
     result["compiled_plan"] = plan
     audit_api_write("ai_os_api_resolve_tradingview_template_approval", "approve_and_execute_tradingview_template", actor, "ops.tradingview_tasks", result, payload)
+    return result
+
+
+def committee_function_result(sql: str, error_message: str) -> dict:
+    rows = run_psql_json_statement(
+        f"WITH action AS ({sql}) SELECT coalesce(json_agg(result), '[]'::json)::text FROM action"
+    )
+    if not rows:
+        raise ValueError(error_message)
+    return rows[0]
+
+
+def open_committee_packet(payload: dict) -> dict:
+    item_key = str(payload.get("committee_item_key") or payload.get("committeeItemKey") or "").strip()
+    question = str(payload.get("decision_question") or payload.get("decisionQuestion") or "").strip()
+    actor = str(payload.get("opened_by") or payload.get("actor") or "Charlie Munger").strip()
+    if not item_key:
+        raise ValueError("committee_item_key is required")
+    if not question:
+        raise ValueError("decision_question is required")
+    due_at = payload.get("due_at") or payload.get("dueAt")
+    result = committee_function_result(
+        f"""
+        SELECT agent.open_committee_packet(
+            {sql_literal(item_key)},
+            {sql_literal(payload.get('title') or '')},
+            {sql_literal(question)},
+            {sql_literal(actor)},
+            {sql_literal(due_at)}::timestamptz,
+            {sql_jsonb(payload.get('evidence') or [])}
+        ) AS result
+        """,
+        "committee packet was not opened",
+    )
+    audit_api_write("ai_os_api_open_committee_packet", "open_committee_packet", actor, "agent.committee_packets", result, payload)
+    return result
+
+
+def submit_committee_position(payload: dict) -> dict:
+    try:
+        packet_id = int(payload.get("packet_id") or payload.get("packetId") or payload.get("id"))
+        confidence = Decimal(str(payload.get("confidence")))
+    except (TypeError, ValueError, InvalidOperation) as exc:
+        raise ValueError("packet_id and numeric confidence are required") from exc
+    agent_name = str(payload.get("agent_name") or payload.get("agentName") or payload.get("actor") or "").strip()
+    stance = str(payload.get("stance") or "").strip().lower()
+    recommendation = str(payload.get("recommendation") or "").strip()
+    thesis = str(payload.get("thesis") or payload.get("rationale") or "").strip()
+    if not all([agent_name, stance, recommendation, thesis]):
+        raise ValueError("agent_name, stance, recommendation, and thesis are required")
+    result = committee_function_result(
+        f"""
+        SELECT agent.submit_committee_position(
+            {packet_id},{sql_literal(agent_name)},{sql_literal(stance)},
+            {sql_literal(recommendation)},{sql_literal(str(confidence))}::numeric,
+            {sql_literal(thesis)},{sql_jsonb(payload.get('evidence') or [])},
+            {sql_jsonb(payload.get('conditions') or [])}
+        ) AS result
+        """,
+        "committee position was not recorded",
+    )
+    audit_api_write("ai_os_api_submit_committee_position", "submit_committee_position", agent_name, "agent.committee_positions", result, payload)
+    return result
+
+
+def add_committee_discussion(payload: dict) -> dict:
+    try:
+        packet_id = int(payload.get("packet_id") or payload.get("packetId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("packet_id is required and must be an integer") from exc
+    actor = str(payload.get("from_agent") or payload.get("fromAgent") or payload.get("actor") or "").strip()
+    body = str(payload.get("body") or payload.get("message") or "").strip()
+    message_type = str(payload.get("message_type") or payload.get("messageType") or "challenge").strip()
+    reply_id = payload.get("reply_to_position_id") or payload.get("replyToPositionId")
+    if not actor or not body:
+        raise ValueError("from_agent and body are required")
+    result = committee_function_result(
+        f"""
+        SELECT agent.add_committee_discussion(
+            {packet_id},{sql_literal(actor)},{sql_literal(message_type)},{sql_literal(body)},
+            {int(reply_id) if reply_id not in (None, '') else 'NULL'},
+            {sql_jsonb(payload.get('evidence') or [])}
+        ) AS result
+        """,
+        "committee discussion message was not recorded",
+    )
+    audit_api_write("ai_os_api_add_committee_discussion", "add_committee_discussion", actor, "agent.committee_discussion_messages", result, payload)
+    return result
+
+
+def synthesize_committee_session(payload: dict) -> dict:
+    try:
+        packet_id = int(payload.get("packet_id") or payload.get("packetId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("packet_id is required and must be an integer") from exc
+    chair = str(payload.get("chair_agent") or payload.get("chairAgent") or payload.get("actor") or "").strip()
+    recommendation = str(payload.get("recommendation") or "").strip()
+    minutes = str(payload.get("minutes") or "").strip()
+    if not all([chair, recommendation, minutes]):
+        raise ValueError("chair_agent, recommendation, and minutes are required")
+    result = committee_function_result(
+        f"""
+        SELECT agent.synthesize_committee_session(
+            {packet_id},{sql_literal(chair)},{sql_literal(recommendation)},
+            {sql_literal(minutes)},{sql_literal(payload.get('dissent_summary') or payload.get('dissentSummary'))},
+            {sql_jsonb(payload.get('conditions') or [])}
+        ) AS result
+        """,
+        "committee session was not synthesized",
+    )
+    audit_api_write("ai_os_api_synthesize_committee_session", "synthesize_committee_session", chair, "agent.committee_sessions", result, payload)
+    return result
+
+
+def record_committee_human_decision(payload: dict) -> dict:
+    try:
+        packet_id = int(payload.get("packet_id") or payload.get("packetId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("packet_id is required and must be an integer") from exc
+    actor = str(payload.get("decided_by") or payload.get("decidedBy") or payload.get("actor") or "Devarsh").strip()
+    decision = str(payload.get("decision") or "").strip()
+    rationale = str(payload.get("rationale") or payload.get("decision_notes") or "").strip()
+    if not decision or not rationale:
+        raise ValueError("decision and rationale are required")
+    result = committee_function_result(
+        f"SELECT agent.record_committee_human_decision({packet_id},{sql_literal(decision)},{sql_literal(actor)},{sql_literal(rationale)}) AS result",
+        "committee human decision was not recorded",
+    )
+    audit_api_write("ai_os_api_record_committee_human_decision", "record_committee_human_decision", actor, "agent.committee_sessions", result, payload)
+    return result
+
+
+def create_committee_followup(payload: dict) -> dict:
+    try:
+        packet_id = int(payload.get("packet_id") or payload.get("packetId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("packet_id is required and must be an integer") from exc
+    owner = str(payload.get("owner_agent") or payload.get("ownerAgent") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    objective = str(payload.get("objective") or "").strip()
+    actor = str(payload.get("actor") or "Committee Secretary").strip()
+    if not all([owner, title, objective]):
+        raise ValueError("owner_agent, title, and objective are required")
+    due_at = payload.get("due_at") or payload.get("dueAt")
+    rows = run_psql_json_statement(
+        f"""
+        WITH task AS (
+            INSERT INTO agent.tasks (title,objective,owner_agent,status,priority,approval_required,source_kind,source_ref,output_format,evidence)
+            VALUES ({sql_literal(title)},{sql_literal(objective)},{sql_literal(owner)},'queued',{sql_literal(payload.get('priority') or 'normal')},false,
+                    'committee_followup',{sql_literal(str(packet_id))},'committee_followup',{sql_jsonb(payload.get('evidence') or [])})
+            RETURNING *
+        ), followup AS (
+            INSERT INTO agent.committee_followups (packet_id,owner_agent,title,objective,due_at,related_task_id,evidence)
+            SELECT {packet_id},{sql_literal(owner)},{sql_literal(title)},{sql_literal(objective)},
+                   {sql_literal(due_at)}::timestamptz,id,{sql_jsonb(payload.get('evidence') or [])} FROM task
+            RETURNING *
+        ), inbox AS (
+            INSERT INTO agent.inbox_items (task_id,title,owner_agent,status,priority,recommended_action,evidence,target_workspace)
+            SELECT related_task_id,title,owner_agent,'queued',{sql_literal(payload.get('priority') or 'normal')},objective,evidence,'committees' FROM followup
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json)::text FROM (
+            SELECT followup.*,(SELECT id FROM inbox) inbox_item_id FROM followup
+        ) rows
+        """
+    )
+    if not rows:
+        raise ValueError("committee follow-up was not created")
+    result = rows[0]
+    audit_api_write("ai_os_api_create_committee_followup", "create_committee_followup", actor, "agent.committee_followups", result, payload)
     return result
 
 
@@ -12122,6 +12384,24 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/agents/comments/resolve":
                 self._send_json(resolve_agent_comment(payload), 200)
+                return
+            if self.path == "/api/committees/packets/open":
+                self._send_json(open_committee_packet(payload), 201)
+                return
+            if self.path == "/api/committees/positions":
+                self._send_json(submit_committee_position(payload), 201)
+                return
+            if self.path == "/api/committees/discussion":
+                self._send_json(add_committee_discussion(payload), 201)
+                return
+            if self.path == "/api/committees/synthesize":
+                self._send_json(synthesize_committee_session(payload), 200)
+                return
+            if self.path == "/api/committees/human-decision":
+                self._send_json(record_committee_human_decision(payload), 200)
+                return
+            if self.path == "/api/committees/followups":
+                self._send_json(create_committee_followup(payload), 201)
                 return
             if self.path == "/api/risk/portfolio/refresh-events":
                 self._send_json(refresh_portfolio_risk_events(payload), 201)

@@ -14,10 +14,10 @@ Client config example:
 _ai_os_runtime/mcp_server/mcp_config.example.json
 ```
 
-Current surface:
+Current verified surface (2026-07-15):
 
-- 47 callable `ai_os_*` MCP tools.
-- 10 internal tool-layer capabilities in `agent.tool_registry`.
+- 172 callable `ai_os_*` MCP tools returned by the live `tools/list` protocol.
+- 229 enabled internal and external capabilities in `agent.tool_registry`; registry entries are not all directly importable MCP calls.
 - DB access uses `docker exec` first and falls back to the published local Postgres port.
 
 Tool groups:
@@ -31,6 +31,7 @@ Tool groups:
 - Research/artifacts/Obsidian: `ai_os_research_outputs`, `ai_os_research_output_detail`, `ai_os_refresh_research_hub`, `ai_os_research_hub_summary`, `ai_os_create_research_idea`, `ai_os_record_raw_artifact`, `ai_os_search_obsidian_notes`, `ai_os_write_obsidian_note`, `ai_os_reindex_obsidian`
 - Browser run logging: `ai_os_start_browser_run`, `ai_os_complete_browser_run`, `ai_os_browser_runs`
 - TradingView tasks and trade ledger: `ai_os_create_tradingview_task`, `ai_os_update_tradingview_task`, `ai_os_tradingview_tasks`, `ai_os_record_manual_trade`, `ai_os_record_paper_trade`, `ai_os_trade_activity`
+- Governed committees: `ai_os_committee_room`, `ai_os_open_committee_packet`, `ai_os_submit_committee_position`, `ai_os_add_committee_discussion`, `ai_os_synthesize_committee_session`, `ai_os_record_committee_human_decision`, `ai_os_create_committee_followup`, `ai_os_capital_committee_decision`
 - Public source checks: `ai_os_run_public_data_source_check`, `ai_os_data_source_checks`
 - Source/component reads: `ai_os_p2cursor_source_summary`, `ai_os_algo_import_summary`, `ai_os_component_inventory`, `ai_os_source_requirements`
 - Trading/Fincept reads: `ai_os_recent_trading_signals`, `ai_os_fincept_component_review`, `ai_os_fincept_install_status`
@@ -69,5 +70,7 @@ _ai_os_runtime/scripts/smoke_mcp_connectors_trade_research_tools.py
 ```
 
 FinceptTerminal is installed as a local external component under `_ai_os_runtime/external_components/FinceptTerminal`. Use `ai_os_fincept_install_status` for the current app bundle, binary path, build status, and installed component map. Launch/build actions that run Qt build tools should be executed outside the Codex sandbox because Qt needs access to macOS `hw.optional.neon`.
+
+The grouped list above is representative. Treat the live `tools/list` response as the canonical callable surface.
 
 Do not expose broker order placement through MCP until approval gates, paper trading, audit logs, and risk checks are complete.

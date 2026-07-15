@@ -1077,6 +1077,30 @@ def committee_room(arguments: dict) -> dict:
     )
 
 
+def open_committee_packet_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/committees/packets/open", arguments, timeout=90))
+
+
+def submit_committee_position_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/committees/positions", arguments, timeout=90))
+
+
+def add_committee_discussion_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/committees/discussion", arguments, timeout=90))
+
+
+def synthesize_committee_session_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/committees/synthesize", arguments, timeout=90))
+
+
+def record_committee_human_decision_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/committees/human-decision", arguments, timeout=90))
+
+
+def create_committee_followup_tool(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/committees/followups", arguments, timeout=90))
+
+
 def employee_profiles(arguments: dict) -> dict:
     agent_name = str(arguments.get("agent_name") or "").strip()
     department = str(arguments.get("department") or "").strip()
@@ -6102,6 +6126,62 @@ TOOLS = {
             },
         },
         "handler": committee_room,
+    },
+    "ai_os_open_committee_packet": {
+        "description": "Open a durable committee packet from a live room item and dispatch sealed role-scoped position assignments.",
+        "inputSchema": {"type": "object", "properties": {
+            "committee_item_key": {"type": "string"}, "title": {"type": "string"},
+            "decision_question": {"type": "string"}, "opened_by": {"type": "string", "default": "Charlie Munger"},
+            "due_at": {"type": "string"}, "evidence": {"type": "array", "items": {"type": "object"}}
+        }, "required": ["committee_item_key", "decision_question"]},
+        "handler": open_committee_packet_tool,
+    },
+    "ai_os_submit_committee_position": {
+        "description": "Submit one committee member's sealed independent position, evidence, confidence, and conditions.",
+        "inputSchema": {"type": "object", "properties": {
+            "packet_id": {"type": "integer"}, "agent_name": {"type": "string"},
+            "stance": {"type": "string", "enum": ["support","oppose","conditional","abstain","request_more_evidence","block"]},
+            "recommendation": {"type": "string"}, "confidence": {"type": "number", "minimum": 0, "maximum": 100},
+            "thesis": {"type": "string"}, "evidence": {"type": "array", "items": {"type": "object"}},
+            "conditions": {"type": "array", "items": {"type": "object"}}
+        }, "required": ["packet_id","agent_name","stance","recommendation","confidence","thesis"]},
+        "handler": submit_committee_position_tool,
+    },
+    "ai_os_add_committee_discussion": {
+        "description": "Add a post-quorum committee challenge or response after the member has submitted an independent position.",
+        "inputSchema": {"type": "object", "properties": {
+            "packet_id": {"type": "integer"}, "from_agent": {"type": "string"},
+            "message_type": {"type": "string", "enum": ["challenge","response","clarification","risk_objection","evidence_update","chair_synthesis"]},
+            "body": {"type": "string"}, "reply_to_position_id": {"type": "integer"},
+            "evidence": {"type": "array", "items": {"type": "object"}}
+        }, "required": ["packet_id","from_agent","body"]},
+        "handler": add_committee_discussion_tool,
+    },
+    "ai_os_synthesize_committee_session": {
+        "description": "After quorum, record the registered chair's recommendation, minutes, dissent, and conditions; no capital or broker action is authorized.",
+        "inputSchema": {"type": "object", "properties": {
+            "packet_id": {"type": "integer"}, "chair_agent": {"type": "string"},
+            "recommendation": {"type": "string"}, "minutes": {"type": "string"},
+            "dissent_summary": {"type": "string"}, "conditions": {"type": "array", "items": {"type": "object"}}
+        }, "required": ["packet_id","chair_agent","recommendation","minutes"]},
+        "handler": synthesize_committee_session_tool,
+    },
+    "ai_os_record_committee_human_decision": {
+        "description": "Record Devarsh's separate final decision on an awaiting-human committee packet without triggering capital or execution.",
+        "inputSchema": {"type": "object", "properties": {
+            "packet_id": {"type": "integer"}, "decision": {"type": "string"},
+            "decided_by": {"type": "string", "default": "Devarsh"}, "rationale": {"type": "string"}
+        }, "required": ["packet_id","decision","rationale"]},
+        "handler": record_committee_human_decision_tool,
+    },
+    "ai_os_create_committee_followup": {
+        "description": "Create a committee follow-up backed by an agent task and inbox assignment.",
+        "inputSchema": {"type": "object", "properties": {
+            "packet_id": {"type": "integer"}, "owner_agent": {"type": "string"},
+            "title": {"type": "string"}, "objective": {"type": "string"}, "priority": {"type": "string"},
+            "due_at": {"type": "string"}, "evidence": {"type": "array", "items": {"type": "object"}}
+        }, "required": ["packet_id","owner_agent","title","objective"]},
+        "handler": create_committee_followup_tool,
     },
     "ai_os_employee_profiles": {
         "description": "Read AI Office employee profiles with role, personality, model route, tools, skills, tasks, messages, outputs, and approvals.",
