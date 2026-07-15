@@ -29,7 +29,7 @@
     <key>AI_OS_VAULT_ROOT</key>
     <string>/Volumes/Devarsh SSD/Obsidian memory </string>
     <key>AI_OS_CRITICAL_BACKUP_ROOT</key>
-    <string>/Users/devarshthakkar/AI_OS_CRITICAL_BACKUP</string>
+    <string>/Volumes/Devarsh SSD/AI OS Data/backups/critical</string>
   </dict>
 </dict>
 </plist>

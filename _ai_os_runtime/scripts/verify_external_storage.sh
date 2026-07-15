@@ -5,6 +5,7 @@ runtime_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 external_prefix="/Volumes/Devarsh SSD"
 vault_root="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memory }"
 ollama_models="${AI_OS_OLLAMA_MODELS:-/Volumes/Devarsh SSD/OllamaModels}"
+critical_backup_root="${AI_OS_CRITICAL_BACKUP_ROOT:-/Volumes/Devarsh SSD/AI OS Data/backups/critical}"
 docker_raw="${HOME}/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
 external_docker_raw="$(find "${external_prefix}" -maxdepth 5 \( -name 'Docker.raw' -o -name '*.raw' \) -print 2>/dev/null | head -n 1 || true)"
 
@@ -29,6 +30,17 @@ fi
 
 echo "OK: vault data is external: ${vault_root}"
 echo "OK: Ollama model data is external: ${ollama_models}"
+
+if [[ ! -d "${critical_backup_root}" ]]; then
+  echo "ERROR: critical backup root is missing: ${critical_backup_root}" >&2
+  exit 1
+fi
+resolved_backup_root="$(cd "${critical_backup_root}" && pwd -P)"
+if [[ "${resolved_backup_root}" != "${external_prefix}"* ]]; then
+  echo "ERROR: critical backup root is not on the external SSD: ${critical_backup_root} -> ${resolved_backup_root}" >&2
+  exit 1
+fi
+echo "OK: critical backup data is external: ${critical_backup_root} -> ${resolved_backup_root}"
 
 persistent_paths=(
   "${runtime_root}/logs"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BACKUP_ROOT="${AI_OS_CRITICAL_BACKUP_ROOT:-${HOME}/AI_OS_CRITICAL_BACKUP}"
+BACKUP_ROOT="${AI_OS_CRITICAL_BACKUP_ROOT:-${SSD_ROOT}/AI OS Data/backups/critical}"
 BACKUP_SET="${AI_OS_BACKUP_SET:-${BACKUP_ROOT}/current}"
 SSD_ROOT="${AI_OS_SSD_ROOT:-/Volumes/Devarsh SSD}"
 DRILL_KEY="restore-drill-$(date -u '+%Y%m%dT%H%M%SZ')-$$"

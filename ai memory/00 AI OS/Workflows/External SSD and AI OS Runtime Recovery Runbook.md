@@ -14,6 +14,8 @@ Safety rule: never format, erase, reset Docker data, delete a named volume, or r
 - Docker disk image: `/Volumes/Devarsh SSD/Docker/DockerDesktop/Docker.raw`
 - Ollama models: `/Volumes/Devarsh SSD/OllamaModels`
 - Heavy runtime state: `/Volumes/Devarsh SSD/AI OS Data`
+- Critical backup generations: `/Volumes/Devarsh SSD/AI OS Data/backups/critical`
+- Compatibility path: `~/AI_OS_CRITICAL_BACKUP` must be a symlink resolving to the external critical-backup root
 - Recoverable source worktree: `/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os`
 
 ## Recovery Sequence
@@ -53,6 +55,16 @@ Safety rule: never format, erase, reset Docker data, delete a named volume, or r
 - Startup storage guards prevent the AI OS from intentionally starting against internal fallback paths.
 - Docker, database volumes, models, and heavy runtime state remain external; source code and Git history remain recoverable internally.
 - The physical disconnect itself cannot be prevented in software. Use a short certified USB 3.x cable, avoid loose hubs, do not move the SSD while active, and eject only after Docker/Ollama/AI OS services are stopped.
-- The daily critical-backup LaunchAgent still needs macOS removable-volume permission before unattended vault backup can be marked complete.
-- Qdrant needs scheduled snapshots, and the isolated Postgres/Qdrant restore test remains open.
+- The daily critical-backup LaunchAgent still needs macOS removable-volume permission before a fresh unattended run can be marked complete. Its configured root must remain external.
+- Full Qdrant snapshots are approximately 2.11 GB and can take several minutes to create. Do not kill or retry the snapshot endpoint repeatedly; inspect `GET /snapshots`, remove only proven orphan snapshots, and retain the last checksum-verified generation until the new rotation completes.
 - A recurring Docker containerd I/O state remains an operational risk even when APFS verifies cleanly. Until root cause is eliminated, treat any executable/blob I/O error as a stop-and-clone event and never attempt repeated container restarts against the stale VM state.
+
+## 2026-07-15 Critical Backup Externalization
+
+- The scheduled plist and scripts were found to default to `~/AI_OS_CRITICAL_BACKUP`, consuming about 4 GB on internal storage across current and previous generations.
+- Both generations were copied to `/Volumes/Devarsh SSD/AI OS Data/backups/critical`.
+- The current generation passed every recorded SHA-256 entry. `diff -qr` returned no differences for either generation.
+- The verified internal duplicate was deleted and replaced by a symlink to the external root, recovering approximately 4 GB of internal capacity.
+- Source defaults, the signed helper wrapper, the LaunchAgent plist, and `verify_external_storage.sh` now enforce the external location.
+- The installed LaunchAgent reports `AI_OS_CRITICAL_BACKUP_ROOT=/Volumes/Devarsh SSD/AI OS Data/backups/critical` and remains scheduled daily at 03:20 local time.
+- A manual fresh backup produced a new Qdrant full snapshot but was stopped before rotation because full snapshot creation exceeded the interactive wait. The orphan snapshot was explicitly removed. The verified 2026-07-13 current/previous generations were not replaced or modified.
