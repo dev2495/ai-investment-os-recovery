@@ -4,6 +4,7 @@ const terminals = [
   ["approvals", "Approval Board"],
   ["agents", "Agent Office"],
   ["committees", "Committee Rooms"],
+  ["governance", "Governance & Safety"],
   ["capital", "Capital Allocation"],
   ["treasury", "Treasury & Macro"]
 ] as const;
@@ -49,6 +50,25 @@ test("department terminals have no page-level mobile overflow", async ({ page })
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/?mode=command&workspace=agents", { waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "Agent Office" })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("governance terminal exposes live controls and persistent human authority", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/?mode=command&workspace=governance", { waitUntil: "networkidle" });
+  await expect(page.getByText("Devarsh retains final investment authority", { exact: true })).toBeVisible();
+  await expect(page.getByText("Broker execution locked by default", { exact: true })).toBeVisible();
+  await expect(page.getByText("Broker Execution Safety Constitution", { exact: true })).toBeVisible();
+  await expect(page.getByText("Ratify Governance and Production Safety Control Plane v1", { exact: true })).toBeVisible();
+  await expect(page.getByText("Production safety readiness", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "/tmp/ai-os-governance-safety-terminal.png", fullPage: true });
+});
+
+test("governance terminal has no page-level mobile overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?mode=command&workspace=governance", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Governance & Safety" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
 });

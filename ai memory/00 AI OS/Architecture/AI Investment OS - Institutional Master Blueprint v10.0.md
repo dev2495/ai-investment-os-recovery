@@ -1568,3 +1568,21 @@ The verified source loop returned 56 news items, 200 NSE/BSE filings, two extrac
 Market-bias controls are explicit. `market.corporate_actions` stores filing-derived action evidence; `market.corporate_action_adjustment_factors` stores separately reviewed factors; `market.v_ohlcv_adjusted` applies only verified/applied factors without mutating raw OHLCV. `market.universe_memberships` stores dated membership evidence and never infers historical membership from the present. The current checkpoint has 127 detected corporate actions, 17 canonical symbol mappings, zero verified/applied factors, and 530 current-snapshot universe rows. Therefore corporate-action readiness is `needs_verification` and point-in-time readiness is `current_snapshot_only`; neither permits strategy promotion or execution.
 
 The Data and Model Gateway shows these controls beside raw market-data readiness. The full MCP surface is 147 tools. Focused Gateway browser regression passed 5/5, System Health/report regression passed 4/4, System Health desktop/mobile WCAG automation passed 2/2, and loaded full-page screenshots showed no overlap or horizontal overflow. Evidence: [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
+
+## 37. Governance And Production Safety Control Plane - 2026-07-15
+
+Governance is a live operating surface, not a folder of aspirational documents. `core.governance_documents` retains active policies and templates; `core.architecture_change_requests` requires objective, proposed change, alternatives, consequences, blast radius, rollback plan, evidence, task, inbox item, and human approval; `core.architecture_decisions` is the accepted decision log. Approved changes synchronize into a decision but never gain trading or capital authority.
+
+The operator terminal is `Governance & Safety`. Its scoped six-query read model exposes policy, architecture change, and production-safety rows without seed data or a broad application snapshot. Every Command Center route also displays the permanent operating boundary:
+
+```text
+Research and decision support
+Devarsh retains final investment authority
+Broker execution locked by default
+```
+
+Production-safety readiness is derived from current warehouse objects rather than hard-coded green labels. The matrix checks global broker lock, order-intent and risk-preview contracts, per-order human approval, kill-switch enforcement, append-only audit, and production/test separation. Secrets policy remains `policy_active` rather than fully enforced until automated secret scanning is installed.
+
+Operational audit is database-enforced append-only. Trigger `trg_mcp_audit_append_only` rejects UPDATE and DELETE on `agent.mcp_audit_log`; API and MCP writes continue to append. A live mutation probe was rejected by PostgreSQL. The same control board is exposed through MCP tools `ai_os_governance_control_board`, `ai_os_request_architecture_change`, and `ai_os_sync_architecture_change`, bringing the full MCP surface to 150 tools.
+
+The first real architecture workflow is pending human ratification: change `#1`, task `#391`, inbox `#894`, approval `#18`. It proposes formal adoption of this control plane and cannot self-approve. Live state at verification contained 11 active policies/templates, 209 append-only audit events, one pending architecture change, seven safety checks, and zero failed safety checks. The UI production build, migration replay, API/MCP checks, 13-case department-terminal regression, 39-case desktop/mobile WCAG gate, and dark/mobile visual review passed. Evidence: [[2026-07-15-governance-and-production-safety-v1]].

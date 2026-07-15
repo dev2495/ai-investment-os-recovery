@@ -20,14 +20,14 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Mark v10.0 as canonical in top-level AI OS index. Evidence: [[AI OS Master Blueprint]].
 - [x] Adopt the Command Center plus 3D Live AI Office frontend delivery contract. Evidence: [[AI OS Command Center and 3D Office Frontend Plan]] and blueprint section 6.1.
 - [x] Convert v10 domains and requirements into database-backed registry rows. Verified 2026-07-11 through parser-backed sync run `blueprint-v10-live-sync-20260711`; zero seed rows were created.
-- [ ] Architecture decision record table/API.
-- [ ] Architecture change-control workflow.
-- [ ] Decision log template.
-- [ ] Committee minutes template.
-- [ ] Evidence standard visible in UI.
-- [ ] Production data vs test data enforcement check.
-- [ ] Investment disclaimer and human-control notice visible in UI.
-- [ ] Broker execution safety constitution visible in UI.
+- [x] Architecture decision record table/API. `core.architecture_decisions` is exposed through the scoped Governance terminal and MCP control board; accepted changes are retained rather than overwritten. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Architecture change-control workflow. Material changes require objective, alternatives, consequences, blast radius, rollback plan, task, inbox item, and human approval before synchronization into the decision log. Live ratification request `#1` created task `#391`, inbox `#894`, and pending approval `#18`. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Decision log template. Active database-backed `architecture_decision_template` requires context, decision, alternatives, consequences, approval, and evidence. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Committee minutes template. Active database-backed `committee_minutes_template` requires agenda, participants, evidence, challenge, decision, dissent, and follow-ups. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Evidence standard visible in UI. The Governance terminal exposes the active evidence policy and the persistent terminal strip identifies the system as research and decision support. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [~] Production data vs test data enforcement check. Every scoped terminal reports `seed_data_allowed=false`, the Governance safety matrix passes the production boundary check, and policy rejects unlabeled synthetic records. Remaining gate: database-level environment/provenance enforcement across every future ingest table. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Investment disclaimer and human-control notice visible in UI. Every Command Center workspace states that Devarsh retains final investment authority; the full policy is queryable in Governance. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Broker execution safety constitution visible in UI. The persistent lock notice and database-backed constitution are live; the current warehouse state remains `read_only_blocked`, globally locked, and broker writes false. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
 - [x] Runtime disaster recovery runbook. Evidence: [[External SSD and AI OS Runtime Recovery Runbook]] and [[2026-07-11-ssd-recovery-blueprint-v10-frontend-contract]].
 
 ## 1. Foundation Runtime
@@ -40,7 +40,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] API server foundation. Verified 2026-07-11 at `http://127.0.0.1:8765/api/health` with Postgres and TradingView CDP checks passing.
 - [x] AI Office dashboard shell. Verified 2026-07-11 at `http://127.0.0.1:5177/` through the deployed LaunchAgent build.
 - [x] Obsidian vault memory surface. Verified 2026-07-11 at `/Volumes/Devarsh SSD/Obsidian memory ` with the runtime symlink preserved.
-- [x] MCP server foundation. Verified 2026-07-15 with 144 importable tools, including scoped integration Gateway, strategy Arsenal, evidence, provider, source, portfolio, research, task, approval, browser, and workspace controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
+- [x] MCP server foundation. Verified 2026-07-15 with 150 importable tools, including scoped integration Gateway, strategy Arsenal, governance/change control, evidence, provider, source, portfolio, research, task, approval, browser, and workspace controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-governance-and-production-safety-v1]].
 - [x] Model endpoint registry. Twenty-one synchronized model-provider plug-ins retain route, endpoint, readiness, cost, capability, and credential-reference contracts; absent models remain non-assignable. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Data-source connector registry. Eighteen source plug-ins synchronize from the connector registry into one readiness contract with health, freshness, mapping, schedule, access, and evidence gates. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Provider readiness board foundation with live model availability checks. Verified 2026-07-11 by readiness run `live-model-readiness-v2-20260711`; installed models are assignable and five absent Qwen routes are degraded/non-assignable.
@@ -54,7 +54,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Restore test. The current backup was restored into isolated temporary services without modifying production: vault bytes matched, Git bundle verified, Timescale/Postgres row counts reconciled across 21 schemas and 457 tables, and all six Qdrant collections matched point counts. Evidence artifact: `/Volumes/Devarsh SSD/AI OS Data/artifacts/restore-drills/restore-drill-20260713T052952Z-33333.json`; note: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
 - [ ] Remote access plan and security model.
 - [~] Local model daily-driver benchmark. `llama3.2:3b` is selected, installed on the SSD, GPU-loaded, returned `LOCAL MODEL READY`, and completed persisted chat turn `#44` with `model_status=called`; a comparative quality/throughput eval set remains open.
-- [ ] Cloud escalation approval workflow.
+- [~] Cloud escalation approval workflow. A local-first, privacy/cost/provider-gated cloud escalation policy is active and visible. Remaining gate: dedicated request/simulation/approval/sync workflow per model call. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
 
 ## 2. Data Spine
 
@@ -493,6 +493,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Focused workspace snapshot profile and payload budget. Reports is 605 KB/0.23 s for 603 rows/12 queries; every UI workspace now uses a scoped contract and broad `/api/snapshot` is never requested by fresh routes. Evidence: [[2026-07-13-reports-v2]].
 - [~] Evidence drawer linking every displayed decision to source/task/artifact/message/approval rows. The reusable v2 drawer and bounded `/api/evidence/entity/{kind}/{key}` contract now cover agent messages, tasks/provider gates, approvals, long-term/strategy committee packets, output artifacts, worker tasks, and source lineage. The live warehouse smoke covered all six whitelisted entity kinds; desktop/mobile approval/artifact/lineage workflows passed inside the 22-test matrix. Portfolio position/conflict and trading/quant/risk-specific drill-downs remain open. Evidence: [[2026-07-13-deep-evidence-and-approval-actions-v2]].
 - [~] Mission Control v2: scoped live workspace now shows Charlie chat, durable delegations, executive inbox, approval queue, latest brief/chat turn, execution/provider gates, widget materialization, worker launch, source-freshness alerts, and task/message/approval evidence drawers. Pending approval decisions are live and explicitly do not grant broker authority. Scheduled daily-brief generation remains open. Evidence: [[2026-07-13-mission-control-v2-scoped-workspace]], [[2026-07-13-deep-evidence-and-approval-actions-v2]].
+- [x] Governance and Safety terminal v1. Eleven active policies/templates, approval-backed architecture change control, live production-safety checks, immutable audit evidence, workspace customization, and persistent human-control/execution notices are deployed from a six-query scoped read model. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
 - [~] Quant Lab v2: scoped validation, promotion, committee, retirement/drift, allocation/ruin visibility, and safe validation/analytics controls are deployed. Optimizer configuration, paper-monitor lifecycle controls, and evidence drawers remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Trading Desk v2: live signals, TradingView controller tasks, manual/paper journal intake, paper-monitor visibility, and execution lock are deployed. OI/intraday workbench, template execution controls, and broker-gated execution workflow remain. Evidence: [[2026-07-13-trading-quant-risk-v2]].
 - [~] Portfolio Office v2: scoped production workspace now provides client filtering, books, positions, multi-book exposure, portfolio intelligence, cross-book conflicts, and readiness remediation. Dedicated thesis packets, performance/factor attribution, and decision drill-downs remain open. Evidence: [[2026-07-13-portfolio-office-and-client-folios-v2]].
@@ -573,20 +574,20 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 19. Production Safety
 
-- [ ] Read-only broker connector policy enforced.
-- [ ] Broker order execution disabled by default.
-- [ ] Order preview schema.
-- [ ] Human approval before any live order.
-- [ ] Kill switch UI.
-- [ ] Kill switch backend enforcement.
-- [ ] Strategy live-enable approval policy.
+- [x] Read-only broker connector policy enforced. Global execution policy is `read_only_blocked`; no current connector may write broker orders. A future broker adapter must pass the separate limited-live constitution. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Broker order execution disabled by default. Live warehouse verification: `global_execution_locked=true`, `limited_live_allowed=false`, and `live_broker_writes_allowed=false`. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Order preview schema. `trading.order_intents` and `trading.order_risk_checks` retain the proposed order, notional, risk result, approval, gate state, and explicit false-by-default broker authority. Evidence: [[2026-07-15-governance-and-production-safety-v1]], [[2026-07-13-trading-quant-risk-v2]].
+- [x] Human approval before any live order. `broker_order_intent` approval is independent from strategy, memo, or committee approval and remains required per order. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Kill switch UI. The Risk Center exposes the guarded global kill-switch action while every terminal displays current execution lock state. Evidence: [[2026-07-13-trading-quant-risk-v2]], [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Kill switch backend enforcement. `trading.engage_global_kill_switch` locks global execution, disables live writes, stops live instances, opens a critical risk event, and creates review work. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Strategy live-enable approval policy. Strategy committee approval cannot enable execution; limited-live request, risk limits, expiry, global policy, per-order approval, and execution/risk checks remain separate gates. Evidence: [[2026-07-13-trading-quant-risk-v2]], [[2026-07-15-governance-and-production-safety-v1]].
 - [x] Client-report send approval policy. Scheduled client output is draft-only and run `#20` created pending human approval `#16`; no external-send or broker authority is granted.
-- [ ] External-message approval policy.
-- [ ] Data deletion approval policy.
-- [ ] Secrets management policy.
-- [ ] Audit log immutability.
+- [~] External-message approval policy. Active policy requires preview, named human approval, channel allowlist, retained payload, and immutable audit. Remaining gate: enforce it in future email/social/client-message adapters. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [~] Data deletion approval policy. Active policy requires scope preview, retention check, backup evidence, approval, quarantine, and audit. Remaining gate: one database-backed quarantine/delete executor. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [~] Secrets management policy. Active policy requires credential references, least privilege, rotation, and redacted health checks. Remaining gate: automated repository and audit-payload secret scanning. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Audit log immutability. PostgreSQL trigger `trg_mcp_audit_append_only` rejects UPDATE and DELETE on `agent.mcp_audit_log`; a live mutation probe failed with the expected append-only exception. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
 - [x] Backup/restore proof. Format-v2 backup and isolated restore drill passed with retained JSON evidence. Evidence: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
-- [ ] Incident response runbook.
+- [~] Incident response runbook. The active governance runbook covers containment, evidence preservation, kill switches, impact assessment, verified restore, postmortem, and reapproval, linked to the SSD recovery runbook. Remaining gate: incident simulation and formal response-time acceptance. Evidence: [[2026-07-15-governance-and-production-safety-v1]], [[External SSD and AI OS Runtime Recovery Runbook]].
 
 ## 20. Immediate Next Implementation Order
 

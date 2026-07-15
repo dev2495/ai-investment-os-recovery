@@ -5140,6 +5140,51 @@ def update_workspace_widget(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/dashboard/widgets/update", arguments))
 
 
+def governance_control_board(arguments: dict) -> dict:
+    return tool_result(
+        {
+            "summary": run_psql_json("SELECT * FROM core.v_governance_control_summary ORDER BY metric"),
+            "policies": run_psql_json(
+                """
+                SELECT document_key, document_type, title, policy_statement,
+                       owner_agent, approval_required, status, controls,
+                       evidence, version, updated_at
+                FROM core.governance_documents
+                ORDER BY document_type, title
+                """
+            ),
+            "architecture_changes": run_psql_json(
+                """
+                SELECT * FROM core.v_architecture_change_board
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT 100
+                """
+            ),
+            "architecture_decisions": run_psql_json(
+                """
+                SELECT id, decision_key, title, decision_status, context,
+                       decision, alternatives, consequences, owner_agent,
+                       approved_by, approval_id, evidence, decided_at, updated_at
+                FROM core.architecture_decisions
+                ORDER BY updated_at DESC
+                LIMIT 100
+                """
+            ),
+            "production_safety": run_psql_json(
+                "SELECT * FROM core.v_production_safety_readiness ORDER BY check_key"
+            ),
+        }
+    )
+
+
+def request_architecture_change(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/governance/architecture-changes/request", arguments))
+
+
+def sync_architecture_change(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/governance/architecture-changes/sync", arguments))
+
+
 def ingest_research_paper(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/research/papers/ingest", arguments, timeout=180.0))
 
@@ -5224,7 +5269,7 @@ TOOLS = {
                 "default_workspace": {"type": "string"},
                 "navigation": {"type": "object"},
                 "preferences": {"type": "object"},
-                "workspace_key": {"type": "string", "enum": ["approvals", "agents", "committees", "capital", "treasury", "models", "arsenal"]},
+                "workspace_key": {"type": "string", "enum": ["approvals", "agents", "committees", "governance", "capital", "treasury", "models", "arsenal"]},
                 "module_order": {"type": "array", "items": {"type": "string"}},
                 "hidden_modules": {"type": "array", "items": {"type": "string"}},
                 "column_count": {"type": "integer", "minimum": 1, "maximum": 4},
@@ -5246,6 +5291,44 @@ TOOLS = {
             "required": ["widget_id"],
         },
         "handler": update_workspace_widget,
+    },
+    "ai_os_governance_control_board": {
+        "description": "Read the live governance board: policies, architecture decisions and change requests, production-safety controls, and evidence.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": governance_control_board,
+    },
+    "ai_os_request_architecture_change": {
+        "description": "Open a material architecture change with a rollback plan, task, inbox item, and mandatory human approval. This never changes execution authority.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "change_type": {"type": "string", "default": "system_change"},
+                "objective": {"type": "string"},
+                "proposed_change": {"type": "string"},
+                "rollback_plan": {"type": "string"},
+                "actor": {"type": "string", "default": "Devarsh"},
+                "owner_agent": {"type": "string", "default": "Jarvis"},
+                "blast_radius": {"type": "string", "enum": ["bounded", "department", "system_wide", "execution", "client_data"]},
+                "alternatives": {"type": "array", "items": {}},
+                "expected_consequences": {"type": "array", "items": {}},
+                "evidence": {"type": "array", "items": {}},
+            },
+            "required": ["title", "objective", "proposed_change", "rollback_plan"],
+        },
+        "handler": request_architecture_change,
+    },
+    "ai_os_sync_architecture_change": {
+        "description": "Synchronize a decided architecture-change approval into the decision log. Pending approvals remain pending and no execution authority is granted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "change_id": {"type": "integer"},
+                "actor": {"type": "string", "default": "Jarvis"},
+            },
+            "required": ["change_id"],
+        },
+        "handler": sync_architecture_change,
     },
     "ai_os_mcp_capabilities": {
         "description": "List MCP tools registered in the warehouse with owners, permission levels, and guardrails.",

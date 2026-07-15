@@ -1,6 +1,6 @@
 import type { LiveRow } from "./live";
 
-export type TerminalWorkspace = "approvals" | "agents" | "committees" | "capital" | "treasury" | "models";
+export type TerminalWorkspace = "approvals" | "agents" | "committees" | "governance" | "capital" | "treasury" | "models";
 export type CustomizableWorkspace = TerminalWorkspace | "arsenal";
 
 export interface DepartmentTerminalSnapshot {

@@ -6,6 +6,7 @@ const workspaces = [
   ["approvals", "Approval Board"],
   ["agents", "Agent Office"],
   ["committees", "Committee Rooms"],
+  ["governance", "Governance & Safety"],
   ["portfolio", "Portfolio Office"],
   ["clients", "Client Folios"],
   ["research", "Holdings Research"],

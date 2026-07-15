@@ -17,6 +17,7 @@ const definitions: Record<TerminalWorkspace, { title: string; purpose: string; p
   approvals: { title: "Approval Board", purpose: "Human decisions, execution gates, and evidence-backed exceptions", primary: "Decision queue", secondary: "Execution gates", tertiary: "" },
   agents: { title: "Agent Office", purpose: "Department hierarchy, employee mandates, work queue, and internal communication", primary: "AI employee roster", secondary: "Worker queue", tertiary: "Agent mail" },
   committees: { title: "Committee Rooms", purpose: "Independent challenge, memos, votes, follow-ups, and capital-action boundaries", primary: "Open committee packets", secondary: "", tertiary: "" },
+  governance: { title: "Governance & Safety", purpose: "Institutional policies, architecture change control, immutable audit, and production safety", primary: "Policies and operating constitution", secondary: "Architecture change control", tertiary: "Production safety readiness" },
   capital: { title: "Capital Allocation", purpose: "Book mandates, gross and net exposure, attribution, and cross-book coordination", primary: "Investment books", secondary: "Symbol exposure", tertiary: "Coordination questions" },
   treasury: { title: "Treasury & Macro", purpose: "Global market watch, commodity and crypto coverage, news, and source freshness", primary: "Crypto and commodity watch", secondary: "Latest macro news", tertiary: "" },
   models: { title: "Model Runtime", purpose: "Provider readiness, task routes, escalation policy, and assignment gates", primary: "Provider readiness", secondary: "Model routes", tertiary: "Assignment gates" }
@@ -54,7 +55,7 @@ function rowTitle(row: LiveRow): string {
 }
 
 function rowDetail(row: LiveRow): string {
-  return first(row, ["requested_action", "role_scope", "objective", "coordination_question", "next_action", "notes", "publisher", "interpretation", "rationale"], "Evidence available in the live warehouse.");
+  return first(row, ["requested_action", "policy_statement", "proposed_change", "role_scope", "objective", "coordination_question", "next_action", "notes", "publisher", "interpretation", "rationale"], "Evidence available in the live warehouse.");
 }
 
 function rowOwner(row: LiveRow): string {

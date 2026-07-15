@@ -2418,6 +2418,7 @@ TERMINAL_WORKSPACES = {
     "capital",
     "treasury",
     "models",
+    "governance",
 }
 
 CUSTOMIZABLE_WORKSPACES = TERMINAL_WORKSPACES | {"arsenal"}
@@ -2425,7 +2426,7 @@ CUSTOMIZABLE_WORKSPACES = TERMINAL_WORKSPACES | {"arsenal"}
 WORKSPACE_KEYS = {
     "command", "approvals", "agents", "committees", "portfolio", "clients",
     "research", "ideas", "arsenal", "trading", "quant", "risk", "capital", "treasury",
-    "models", "reports", "system",
+    "models", "governance", "reports", "system",
 }
 
 
@@ -2669,6 +2670,12 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "secondary": "SELECT * FROM agent.model_routes ORDER BY route_name",
             "tertiary": "SELECT * FROM core.v_provider_assignment_gate_checks ORDER BY created_at DESC NULLS LAST LIMIT 80",
         },
+        "governance": {
+            "summary": "SELECT * FROM core.v_governance_control_summary ORDER BY metric",
+            "primary": "SELECT document_key AS id, title, document_type, policy_statement, owner_agent, approval_required, status, controls, evidence, version, updated_at FROM core.governance_documents ORDER BY document_type, title",
+            "secondary": "SELECT * FROM core.v_architecture_change_board ORDER BY updated_at DESC NULLS LAST LIMIT 100",
+            "tertiary": "SELECT check_key AS id, title, status, severity, owner_agent, evidence, next_action, checked_at AS updated_at FROM core.v_production_safety_readiness ORDER BY CASE status WHEN 'failed' THEN 1 WHEN 'policy_active' THEN 2 ELSE 3 END, severity, check_key",
+        },
     }
     queries = {**shared, **queries_by_workspace[workspace]}
     data = run_psql_json_object(queries)
@@ -2679,6 +2686,54 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
         "payload_profile": {"query_count": len(queries), "row_count": sum(len(rows) for rows in data.values())},
         **data,
     }
+
+
+def request_architecture_change(payload: dict) -> dict:
+    title = str(payload.get("title") or "").strip()
+    change_type = str(payload.get("change_type") or payload.get("changeType") or "system_change").strip()
+    objective = str(payload.get("objective") or "").strip()
+    proposed_change = str(payload.get("proposed_change") or payload.get("proposedChange") or "").strip()
+    rollback_plan = str(payload.get("rollback_plan") or payload.get("rollbackPlan") or "").strip()
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    owner_agent = str(payload.get("owner_agent") or payload.get("ownerAgent") or "Jarvis").strip() or "Jarvis"
+    blast_radius = str(payload.get("blast_radius") or payload.get("blastRadius") or "bounded").strip() or "bounded"
+    alternatives = payload.get("alternatives") or []
+    consequences = payload.get("expected_consequences") or payload.get("expectedConsequences") or []
+    evidence = payload.get("evidence") or []
+    if not title or not objective or not proposed_change or not rollback_plan:
+        raise ValueError("title, objective, proposed_change, and rollback_plan are required")
+    if blast_radius not in {"bounded", "department", "system_wide", "execution", "client_data"}:
+        raise ValueError("blast_radius must be bounded, department, system_wide, execution, or client_data")
+    for field_name, value in (("alternatives", alternatives), ("expected_consequences", consequences), ("evidence", evidence)):
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be an array")
+    rows = run_psql_json_statement(
+        f"""
+        SELECT jsonb_build_array(core.request_architecture_change(
+            {sql_literal(title)}, {sql_literal(change_type)}, {sql_literal(objective)},
+            {sql_literal(proposed_change)}, {sql_literal(rollback_plan)}, {sql_literal(actor)},
+            {sql_literal(owner_agent)}, {sql_literal(blast_radius)}, {sql_jsonb(alternatives)},
+            {sql_jsonb(consequences)}, {sql_jsonb(evidence)}
+        ))::text
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_request_architecture_change", "request_architecture_change", actor, "core.architecture_change_requests", result, payload)
+    return result
+
+
+def sync_architecture_change(payload: dict) -> dict:
+    try:
+        change_id = int(payload.get("change_id") or payload.get("changeId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("change_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    rows = run_psql_json_statement(
+        f"SELECT jsonb_build_array(core.sync_architecture_change({change_id}, {sql_literal(actor)}))::text"
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_sync_architecture_change", "sync_architecture_change", actor, "core.architecture_change_requests", result, payload)
+    return result
 
 
 def build_blueprint_registry(
@@ -10450,6 +10505,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/workspaces/config/update":
                 self._send_json(update_workspace_config(payload), 200)
+                return
+            if self.path == "/api/governance/architecture-changes/request":
+                self._send_json(request_architecture_change(payload), 201)
+                return
+            if self.path == "/api/governance/architecture-changes/sync":
+                self._send_json(sync_architecture_change(payload), 200)
                 return
             if self.path == "/api/agents/worker/run":
                 self._send_json(run_agent_worker(payload), 201)

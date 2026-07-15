@@ -176,6 +176,7 @@ const baseWorkspaces: Workspace[] = [
   { id: "approvals", label: "Approval Board" },
   { id: "agents", label: "Agent Office" },
   { id: "committees", label: "Committee Rooms" },
+  { id: "governance", label: "Governance & Safety" },
   { id: "portfolio", label: "Portfolio Office" },
   { id: "clients", label: "Client Folios" },
   { id: "research", label: "Holdings Research" },
@@ -196,6 +197,7 @@ const workspaceIcons: Record<WorkspaceId, typeof CommandIcon> = {
   approvals: ListChecks,
   agents: UsersRound,
   committees: Scale,
+  governance: ShieldCheck,
   portfolio: BriefcaseBusiness,
   clients: Building2,
   research: Landmark,
@@ -776,6 +778,7 @@ function workspaceCounts(snapshot: LiveSnapshot | null): Record<WorkspaceId, num
     agents: snapshot?.agents.length ?? 0,
     approvals: snapshot?.approvals.length ?? 0,
     committees: snapshot?.approvals.length ?? 0,
+    governance: snapshot?.approvals.filter((approval) => asText(approval, "approval_type") === "architecture_change").length ?? 0,
     capital: (snapshot?.book_positions.length ?? 0) + (snapshot?.cross_book_conflicts.length ?? 0),
     clients: snapshot?.clients.length ?? 0,
     command: (snapshot?.inbox.length ?? 0) + (snapshot?.agent_jobs.length ?? 0) + (snapshot?.agent_worker_queue.length ?? 0),
@@ -8456,7 +8459,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
       risk: "aios:trading-quant-risk-refresh",
       reports: "aios:reports-refresh"
     };
-    if (["approvals", "agents", "committees", "capital", "treasury"].includes(activeWorkspace)) {
+    if (["approvals", "agents", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) {
       window.dispatchEvent(new Event("aios:department-terminal-refresh"));
       return;
     }
@@ -8522,7 +8525,7 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
   if (activeWorkspace === "system") workspaceContent = <SystemHealthWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "command") workspaceContent = <MissionControlWorkspace onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "models") workspaceContent = <IntegrationGatewayWorkspace onStatusChange={setLiveStatus} />;
-  else if (["approvals", "agents", "committees", "capital", "treasury"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
+  else if (["approvals", "agents", "committees", "governance", "capital", "treasury"].includes(activeWorkspace)) workspaceContent = <DepartmentTerminalWorkspace mode={activeWorkspace as TerminalWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "portfolio" || activeWorkspace === "clients") workspaceContent = <PortfolioOfficeWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "research" || activeWorkspace === "ideas") workspaceContent = <ResearchIdeasWorkspace mode={activeWorkspace} onStatusChange={setLiveStatus} />;
   else if (activeWorkspace === "arsenal") workspaceContent = <StrategyArsenalWorkspace onStatusChange={setLiveStatus} />;
@@ -8555,6 +8558,11 @@ function ScopedCommandCenterApp({ activeWorkspace, setActiveWorkspace, setInterf
             <button className="icon-button" type="button" title="Approval queue"><Bell size={18} aria-hidden="true" /></button>
           </div>
         </header>
+        <section className="institutional-control-strip" aria-label="Investment and execution control notice">
+          <span><ShieldCheck size={14} aria-hidden="true" />Research and decision support</span>
+          <span>Devarsh retains final investment authority</span>
+          <strong><LockKeyhole size={13} aria-hidden="true" />Broker execution locked by default</strong>
+        </section>
         <section className="command-panel" aria-label="Charlie Munger command bar">
           <div className="command-copy"><div className="jarvis-avatar"><Sparkles size={18} aria-hidden="true" /></div><div><p>Charlie Munger</p><span>Routes work through Jarvis runtime, agents, SQL, and Obsidian write-back.</span></div></div>
           <form className="command-form" onSubmit={submitCommand}><input aria-label="Command Charlie Munger" onChange={(event) => setCommand(event.target.value)} placeholder="Ask Charlie to review portfolios, research holdings, inspect signals, or open a task..." value={command}/><button className="primary-button" disabled={commandBusy} type="submit"><Plus size={16} aria-hidden="true" />{commandBusy ? "Queueing" : "Assign"}</button></form>
