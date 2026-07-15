@@ -4175,6 +4175,45 @@ def capital_allocation_control_board(arguments: dict) -> dict:
     )
 
 
+def model_runtime_control(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=100)
+    return tool_result(
+        {
+            "summary": run_psql_json(
+                "SELECT metric, value, interpretation FROM agent.v_model_runtime_control_summary ORDER BY metric"
+            ),
+            "routes": run_psql_json(
+                "SELECT * FROM agent.v_model_route_runtime_control ORDER BY runtime_status, route_name"
+            ),
+            "privacy_policies": run_psql_json(
+                "SELECT * FROM agent.model_privacy_policies ORDER BY privacy_class"
+            ),
+            "agent_assignments": run_psql_json(
+                f"SELECT * FROM agent.v_agent_model_matrix ORDER BY department, agent_name LIMIT {limit}"
+            ),
+            "cost_caps": run_psql_json(
+                f"SELECT * FROM agent.v_agent_model_cost_cap_status ORDER BY department, agent_name LIMIT {limit}"
+            ),
+            "call_decisions": run_psql_json(
+                f"SELECT * FROM agent.v_model_call_control ORDER BY created_at DESC LIMIT {limit}"
+            ),
+            "raw_prompt_exposed": False,
+            "autonomous_cloud_allowed": False,
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+        }
+    )
+
+
+def request_model_escalation(arguments: dict) -> dict:
+    payload = {
+        "decision_id": arguments.get("decision_id") or arguments.get("decisionId"),
+        "reason": arguments.get("reason") or "Local model quality or capability was insufficient for this task.",
+        "actor": arguments.get("actor") or "Devarsh",
+    }
+    return tool_result(post_api_json("/api/models/escalations/request", payload, timeout=90))
+
+
 def propose_capital_policy(arguments: dict) -> dict:
     payload = dict(arguments)
     payload.setdefault("actor", "Capital Allocation Agent")
@@ -6802,6 +6841,27 @@ TOOLS = {
             "properties": {"limit": {"type": "integer", "default": 120}},
         },
         "handler": capital_allocation_control_board,
+    },
+    "ai_os_model_runtime_control": {
+        "description": "Read local-first route readiness, all-agent assignments, privacy and cache policy, cost caps, call decisions, and escalation state without exposing raw prompts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 100}},
+        },
+        "handler": model_runtime_control,
+    },
+    "ai_os_request_model_escalation": {
+        "description": "Request a privacy-checked, human-approved higher-cost model escalation for an existing model-call decision. Never invokes a cloud model or trading action.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["decision_id", "reason"],
+            "properties": {
+                "decision_id": {"type": "integer"},
+                "reason": {"type": "string"},
+                "actor": {"type": "string", "default": "Devarsh"},
+            },
+        },
+        "handler": request_model_escalation,
     },
     "ai_os_propose_capital_policy": {
         "description": "Create an operator-supplied client capital/risk policy covering every active book and totaling 100%. Routes independent risk review; no capital or broker authority.",

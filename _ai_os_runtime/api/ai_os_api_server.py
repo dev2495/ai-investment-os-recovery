@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2256,6 +2257,67 @@ def build_integration_gateway_snapshot() -> dict:
             FROM agent.model_routes
             ORDER BY route_name
         """,
+        "model_runtime_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_model_runtime_control_summary
+            ORDER BY metric
+        """,
+        "model_route_control": """
+            SELECT route_name, task_class, default_provider, default_model,
+                   escalation_provider, escalation_model, max_cost_tier,
+                   endpoint_key, endpoint_status,
+                   health_status AS endpoint_health_status,
+                   last_checked_at AS endpoint_last_checked_at,
+                   last_latency_ms AS endpoint_last_latency_ms,
+                   runtime_status, next_required_action AS runtime_reason
+            FROM agent.v_model_route_runtime_control
+            ORDER BY runtime_status, route_name
+        """,
+        "model_privacy_policies": """
+            SELECT privacy_class, local_model_allowed, cloud_model_allowed,
+                   cache_allowed, retention_days, max_context_chars,
+                   policy_statement AS policy_notes, updated_at
+            FROM agent.model_privacy_policies
+            ORDER BY privacy_class
+        """,
+        "model_agent_assignments": """
+            SELECT agent_name, department, display_title, primary_route,
+                   assigned_provider, assigned_model, model_status,
+                   fallback_route, escalation_route, context_policy,
+                   cost_policy, max_autonomous_cost_tier, escalation_triggers,
+                   updated_at
+            FROM agent.v_agent_model_matrix
+            ORDER BY department, agent_name
+        """,
+        "model_call_decisions": """
+            SELECT id, decision_key, agent_name, department_key, source_kind,
+                   source_ref, requested_route, selected_route,
+                   selected_provider, selected_model, privacy_class,
+                   contains_client_data, prompt_hash, prompt_chars,
+                   decision_status, cache_status, approval_id, block_reasons,
+                   latency_ms, error_message, escalation_id,
+                   escalation_status, privacy_review_status,
+                   cost_review_status, created_at, finished_at
+            FROM agent.v_model_call_control
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "model_escalations": """
+            SELECT escalation.id, escalation.escalation_key,
+                   escalation.decision_id, decision.agent_name,
+                   decision.privacy_class, escalation.requested_provider,
+                   escalation.requested_model, escalation.requested_cost_tier,
+                   escalation.reason, escalation.privacy_review_status,
+                   escalation.cost_review_status, escalation.status,
+                   escalation.approval_id, approval.status AS approval_status,
+                   escalation.requested_by, escalation.created_at,
+                   escalation.updated_at
+            FROM agent.model_escalation_requests escalation
+            JOIN agent.model_call_decisions decision ON decision.id=escalation.decision_id
+            LEFT JOIN agent.approvals approval ON approval.id=escalation.approval_id
+            ORDER BY escalation.created_at DESC
+            LIMIT 50
+        """,
         "provider_readiness": """
             SELECT provider_kind, provider_key, provider_name, provider,
                    subject_name, route_or_source, provider_type, status,
@@ -2742,10 +2804,10 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "secondary": "SELECT * FROM market.v_latest_news_items ORDER BY published_at DESC NULLS LAST LIMIT 100",
         },
         "models": {
-            "summary": "SELECT * FROM core.v_provider_readiness_summary ORDER BY metric",
-            "primary": "SELECT * FROM core.v_provider_readiness_board ORDER BY readiness_status, subject_name LIMIT 120",
-            "secondary": "SELECT * FROM agent.model_routes ORDER BY route_name",
-            "tertiary": "SELECT * FROM core.v_provider_assignment_gate_checks ORDER BY created_at DESC NULLS LAST LIMIT 80",
+            "summary": "SELECT * FROM agent.v_model_runtime_control_summary ORDER BY metric",
+            "primary": "SELECT * FROM agent.v_model_route_runtime_control ORDER BY runtime_status, route_name",
+            "secondary": "SELECT * FROM agent.model_privacy_policies ORDER BY CASE privacy_class WHEN 'public' THEN 1 WHEN 'internal' THEN 2 WHEN 'client_private' THEN 3 ELSE 4 END",
+            "tertiary": "SELECT * FROM agent.v_model_call_control ORDER BY created_at DESC LIMIT 100",
         },
         "governance": {
             "summary": "SELECT * FROM core.v_governance_control_summary ORDER BY metric",
@@ -6939,6 +7001,26 @@ def resolve_approval(payload: dict) -> dict:
         result["capital_policy_sync"] = capital_rows
         result["capital_action_allowed"] = False
         result["live_execution_allowed"] = False
+    if result.get("approval_type") == "model_escalation":
+        escalation_rows = run_psql_json_statement(
+            f"""
+            WITH escalation_update AS (
+                UPDATE agent.model_escalation_requests
+                SET status={sql_literal('approved' if status == 'approved' else 'rejected')},
+                    cost_review_status={sql_literal('passed' if status == 'approved' else 'blocked')},
+                    updated_at=now()
+                WHERE approval_id={approval_id}
+                RETURNING id, escalation_key, status, privacy_review_status,
+                          cost_review_status, requested_provider, requested_model
+            )
+            SELECT coalesce(json_agg(row_to_json(escalation_update)), '[]'::json)::text
+            FROM escalation_update
+            """
+        )
+        result["model_escalation_sync"] = escalation_rows
+        result["cloud_call_executed"] = False
+        result["capital_action_allowed"] = False
+        result["live_execution_allowed"] = False
     audit_api_write("ai_os_api_resolve_approval", "resolve_approval", decided_by, "agent.approvals", result, payload)
     return result
 
@@ -10118,6 +10200,311 @@ def get_model_route(route_name: str) -> dict:
     }
 
 
+def get_model_route_strict(route_name: str) -> dict | None:
+    rows = run_psql_json(
+        f"""
+        SELECT route_name, task_class, default_provider, default_model,
+               escalation_provider, escalation_model, max_cost_tier, notes, enabled
+        FROM agent.model_routes
+        WHERE route_name = {sql_literal(route_name)}
+          AND enabled = true
+        LIMIT 1
+        """
+    )
+    return rows[0] if rows else None
+
+
+def choose_chat_model_call(payload: dict, prompt: str) -> dict:
+    agent_name = str(payload.get("assistant_name") or payload.get("assistantName") or "Charlie Munger").strip()
+    privacy_class = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
+    if privacy_class not in {"public", "internal", "client_private", "restricted"}:
+        raise ValueError("privacy_class must be public, internal, client_private, or restricted")
+    contains_client_data = bool(payload.get("contains_client_data", payload.get("containsClientData", True)))
+    assignment_rows = run_psql_json(
+        f"""
+        SELECT profile.agent_name, profile.department,
+               coalesce(assignment.primary_route, profile.default_model_route) AS primary_route,
+               assignment.fallback_route, assignment.escalation_route,
+               assignment.max_autonomous_cost_tier,
+               cap.cloud_requires_approval, cap.autonomous_cloud_allowed,
+               cap.cap_status
+        FROM agent.profiles profile
+        LEFT JOIN agent.agent_model_assignments assignment USING (agent_name)
+        LEFT JOIN agent.v_agent_model_cost_cap_status cap USING (agent_name)
+        WHERE profile.agent_name={sql_literal(agent_name)} AND profile.status='active'
+        LIMIT 1
+        """
+    )
+    if not assignment_rows:
+        raise ValueError(f"active model assignment not found for {agent_name}")
+    assignment = assignment_rows[0]
+    requested_route = str(payload.get("route_name") or payload.get("routeName") or assignment.get("primary_route") or CHAT_MODEL_ROUTE).strip()
+    candidate_names = []
+    for candidate in (requested_route, assignment.get("fallback_route"), CHAT_MODEL_ROUTE):
+        name = str(candidate or "").strip()
+        if name and name not in candidate_names:
+            candidate_names.append(name)
+
+    candidates = []
+    selected: dict | None = None
+    for route_name in candidate_names:
+        route = get_model_route_strict(route_name)
+        if route is None:
+            candidates.append(
+                {
+                    "route_name": route_name,
+                    "provider": None,
+                    "model_name": None,
+                    "available_for_chat": False,
+                    "reason": "route_not_found",
+                }
+            )
+            continue
+        provider = str(route.get("default_provider") or "")
+        model_name = str(route.get("default_model") or "")
+        if provider == "ollama":
+            available = ollama_model_available(model_name)
+            reason = "installed_local_model" if available else "model_unavailable"
+        elif provider in {"local_python", "deterministic", "local_tools"}:
+            available = False
+            reason = "deterministic_tool_route_not_chat_model"
+        else:
+            available = False
+            reason = "external_provider_requires_separate_escalation"
+        candidate_record = {
+            "route_name": route_name, "provider": provider,
+            "model_name": model_name, "available_for_chat": available, "reason": reason,
+        }
+        candidates.append(candidate_record)
+        if selected is None and available:
+            selected = route
+
+    policy = run_psql_json(
+        f"SELECT * FROM agent.model_privacy_policies WHERE privacy_class={sql_literal(privacy_class)} LIMIT 1"
+    )[0]
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8", errors="replace")).hexdigest()
+    block_reasons: list[str] = []
+    if contains_client_data and privacy_class in {"public", "internal"}:
+        block_reasons.append("client_data_requires_client_private_or_restricted_class")
+    if len(prompt) > int(policy["max_context_chars"]):
+        block_reasons.append("context_exceeds_privacy_policy_limit")
+    if selected and str(selected.get("default_provider")) != "ollama":
+        block_reasons.append("nonlocal_provider_not_permitted_by_chat_runtime")
+
+    cache_eligible = bool(policy["cache_allowed"]) and not contains_client_data and not block_reasons and selected is not None
+    cache_key = None
+    cached_response = None
+    cache_status = "bypassed"
+    if cache_eligible:
+        cache_key = hashlib.sha256(
+            f"{selected['route_name']}|{selected['default_model']}|{prompt_hash}".encode("utf-8")
+        ).hexdigest()
+        cache_rows = run_psql_json_statement(
+            f"""
+            WITH hit AS (
+                UPDATE agent.model_response_cache
+                SET hit_count=hit_count+1, last_hit_at=now()
+                WHERE cache_key={sql_literal(cache_key)} AND expires_at>now()
+                RETURNING response_text
+            )
+            SELECT coalesce(json_agg(row_to_json(hit)), '[]'::json)::text FROM hit
+            """
+        )
+        if cache_rows:
+            cached_response = cache_rows[0].get("response_text")
+            cache_status = "hit"
+        else:
+            cache_status = "miss"
+
+    decision_status = "allowed" if selected and not block_reasons else "blocked"
+    decision_key = f"model-call-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+    decision_rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO agent.model_call_decisions (
+                decision_key, agent_name, department_key, source_kind, source_ref,
+                requested_route, selected_route, selected_provider, selected_model,
+                privacy_class, contains_client_data, prompt_hash, prompt_chars,
+                decision_status, cache_key, cache_status, block_reasons,
+                route_candidates, evidence
+            ) VALUES (
+                {sql_literal(decision_key)}, {sql_literal(agent_name)},
+                {sql_literal(assignment['department'])}, 'api_chat',
+                {sql_literal(payload.get('session_key') or payload.get('sessionKey') or 'default')},
+                {sql_literal(requested_route if get_model_route_strict(requested_route) else None)},
+                {sql_literal(selected.get('route_name') if selected else None)},
+                {sql_literal(selected.get('default_provider') if selected else None)},
+                {sql_literal(selected.get('default_model') if selected else None)},
+                {sql_literal(privacy_class)}, {str(contains_client_data).lower()},
+                {sql_literal(prompt_hash)}, {len(prompt)}, {sql_literal(decision_status)},
+                {sql_literal(cache_key)}, {sql_literal(cache_status)}, {sql_jsonb(block_reasons)},
+                {sql_jsonb(candidates)},
+                {sql_jsonb([{'source':'agent.agent_model_assignments','agent_name':agent_name},{'source':'agent.model_privacy_policies','privacy_class':privacy_class},{'raw_prompt_stored':False}])}
+            ) RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text FROM inserted
+        """
+    )
+    decision = decision_rows[0]
+    decision["selected_route_record"] = selected
+    decision["cached_response"] = cached_response
+    decision["cache_retention_days"] = int(policy["retention_days"])
+    return decision
+
+
+def request_model_escalation(payload: dict) -> dict:
+    try:
+        decision_id = int(payload.get("decision_id") or payload.get("decisionId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("decision_id is required and must be an integer") from exc
+    requested_by = str(payload.get("requested_by") or payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    reason = str(payload.get("reason") or "Local model quality or capability was insufficient for this task.").strip()
+    rows = run_psql_json(
+        f"""
+        SELECT decision.id, decision.decision_key, decision.agent_name,
+               decision.department_key, decision.privacy_class,
+               decision.contains_client_data, decision.prompt_hash,
+               assignment.escalation_route, assignment.max_autonomous_cost_tier,
+               policy.cloud_model_allowed,
+               route.default_provider AS requested_provider,
+               route.default_model AS requested_model,
+               route.max_cost_tier AS requested_cost_tier
+        FROM agent.model_call_decisions decision
+        JOIN agent.agent_model_assignments assignment USING (agent_name)
+        JOIN agent.model_privacy_policies policy USING (privacy_class)
+        LEFT JOIN agent.model_routes route ON route.route_name=assignment.escalation_route
+        WHERE decision.id={decision_id}
+        LIMIT 1
+        """
+    )
+    if not rows:
+        raise ValueError("model call decision not found")
+    decision = rows[0]
+    existing = run_psql_json(
+        f"SELECT * FROM agent.model_escalation_requests WHERE decision_id={decision_id} LIMIT 1"
+    )
+    if existing:
+        return {"escalation": existing[0], "created": False, "live_execution_allowed": False}
+
+    cloud_allowed = bool(decision.get("cloud_model_allowed"))
+    requested_provider = str(decision.get("requested_provider") or "codex_or_cloud")
+    requested_model = str(decision.get("requested_model") or "frontier_on_approval")
+    requested_cost_tier = str(decision.get("requested_cost_tier") or "frontier")
+    privacy_status = "passed" if cloud_allowed else "blocked"
+    escalation_status = "pending" if cloud_allowed else "rejected"
+    escalation_key = f"model-escalation-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+
+    result_rows = run_psql_json_statement(
+        f"""
+        WITH approval AS (
+            INSERT INTO agent.approvals (
+                approval_type, title, owner_agent, risk_level, status,
+                requested_action, rationale
+            )
+            SELECT
+                'model_escalation',
+                'Approve model escalation for ' || {sql_literal(decision['agent_name'])},
+                'Devarsh', 'high', 'pending',
+                jsonb_build_object(
+                    'decision_id', {decision_id},
+                    'decision_key', {sql_literal(decision['decision_key'])},
+                    'requested_provider', {sql_literal(requested_provider)},
+                    'requested_model', {sql_literal(requested_model)},
+                    'privacy_class', {sql_literal(decision['privacy_class'])},
+                    'prompt_hash', {sql_literal(decision['prompt_hash'])},
+                    'raw_prompt_stored', false,
+                    'capital_action_allowed', false,
+                    'live_execution_allowed', false
+                ),
+                {sql_literal(reason)}
+            WHERE {str(cloud_allowed).lower()}
+            RETURNING id
+        ), escalation AS (
+            INSERT INTO agent.model_escalation_requests (
+                escalation_key, decision_id, requested_provider,
+                requested_model, requested_cost_tier, reason,
+                privacy_review_status, cost_review_status, status,
+                approval_id, requested_by, evidence
+            ) VALUES (
+                {sql_literal(escalation_key)}, {decision_id},
+                {sql_literal(requested_provider)}, {sql_literal(requested_model)},
+                {sql_literal(requested_cost_tier)}, {sql_literal(reason)},
+                {sql_literal(privacy_status)}, {sql_literal('pending' if cloud_allowed else 'blocked')},
+                {sql_literal(escalation_status)},
+                (SELECT id FROM approval), {sql_literal(requested_by)},
+                jsonb_build_array(
+                    jsonb_build_object('table','agent.model_call_decisions','id',{decision_id}),
+                    jsonb_build_object('privacy_class',{sql_literal(decision['privacy_class'])},'cloud_model_allowed',{str(cloud_allowed).lower()}),
+                    jsonb_build_object('raw_prompt_stored',false,'prompt_hash',{sql_literal(decision['prompt_hash'])})
+                )
+            )
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(escalation)), '[]'::json)::text FROM escalation
+        """
+    )
+    escalation = result_rows[0]
+    result = {
+        "escalation": escalation,
+        "created": True,
+        "approval_required": cloud_allowed,
+        "blocked_by_privacy": not cloud_allowed,
+        "raw_prompt_stored": False,
+        "capital_action_allowed": False,
+        "live_execution_allowed": False,
+    }
+    audit_api_write(
+        "ai_os_api_request_model_escalation",
+        "request_model_escalation",
+        requested_by,
+        "agent.model_escalation_requests",
+        result,
+        {"decision_id": decision_id, "reason": reason},
+    )
+    return result
+
+
+def finish_chat_model_call(decision: dict, response: str, model_status: str, latency_ms: int) -> None:
+    response_hash = hashlib.sha256(response.encode("utf-8", errors="replace")).hexdigest()
+    cache_status = str(decision.get("cache_status") or "bypassed")
+    if cache_status == "miss" and decision.get("cache_key") and model_status == "called":
+        retention_days = max(1, int(decision.get("cache_retention_days") or 1))
+        run_psql_json_statement(
+            f"""
+            WITH upserted AS (
+                INSERT INTO agent.model_response_cache (
+                    cache_key, route_name, provider, model_name, privacy_class,
+                    prompt_hash, response_text, response_hash, expires_at
+                ) VALUES (
+                    {sql_literal(decision['cache_key'])}, {sql_literal(decision['selected_route'])},
+                    {sql_literal(decision['selected_provider'])}, {sql_literal(decision['selected_model'])},
+                    {sql_literal(decision['privacy_class'])}, {sql_literal(decision['prompt_hash'])},
+                    {sql_literal(response)}, {sql_literal(response_hash)}, now()+interval '{retention_days} days'
+                )
+                ON CONFLICT (cache_key) DO UPDATE SET
+                    response_text=EXCLUDED.response_text, response_hash=EXCLUDED.response_hash,
+                    expires_at=EXCLUDED.expires_at
+                RETURNING cache_key
+            ) SELECT coalesce(json_agg(row_to_json(upserted)), '[]'::json)::text FROM upserted
+            """
+        )
+        cache_status = "stored"
+    run_psql_json_statement(
+        f"""
+        WITH updated AS (
+            UPDATE agent.model_call_decisions
+            SET decision_status={sql_literal('completed' if model_status in {'called','cache_hit','deterministic_fallback'} else 'failed')},
+                cache_status={sql_literal(cache_status)}, response_hash={sql_literal(response_hash)},
+                latency_ms={max(0, int(latency_ms))},
+                error_message={sql_literal(None if model_status in {'called','cache_hit','deterministic_fallback'} else model_status)},
+                finished_at=now()
+            WHERE id={int(decision['id'])}
+            RETURNING id
+        ) SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
+        """
+    )
+
+
 def infer_widget_intents(message: str, snapshot_context: dict) -> list[dict]:
     normalized = message.lower()
     intents: list[dict] = []
@@ -10163,7 +10550,7 @@ def infer_widget_intents(message: str, snapshot_context: dict) -> list[dict]:
     return intents
 
 
-def build_chat_context(message: str) -> dict:
+def build_chat_context(message: str, include_client_context: bool = True) -> dict:
     queries = {
         "clients": """
             SELECT client_code, display_name, account_count, latest_position_count,
@@ -10250,6 +10637,9 @@ def build_chat_context(message: str) -> dict:
             LIMIT 12
         """,
     }
+    if not include_client_context:
+        for private_key in ("clients", "latest_positions", "book_summary", "investment_books", "symbol_intelligence"):
+            queries.pop(private_key, None)
     try:
         context = run_psql_json_object(queries)
     except Exception:
@@ -10387,9 +10777,15 @@ def chat_with_charlie(payload: dict) -> dict:
     if not message:
         raise ValueError("message is required")
 
-    route = get_model_route(str(payload.get("route_name") or payload.get("routeName") or CHAT_MODEL_ROUTE))
-    context = build_chat_context(message)
-    retrieval_hits, retrieval_status = qdrant_search(message)
+    include_client_context = bool(payload.get("include_client_context", payload.get("includeClientContext", True)))
+    requested_privacy = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
+    if include_client_context and requested_privacy in {"public", "internal"}:
+        raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
+    context = build_chat_context(message, include_client_context=include_client_context)
+    if include_client_context:
+        retrieval_hits, retrieval_status = qdrant_search(message)
+    else:
+        retrieval_hits, retrieval_status = [], "disabled_for_nonprivate_context"
     widget_intents = infer_widget_intents(message, context)
     tool_intents: list[dict] = []
 
@@ -10404,12 +10800,32 @@ def chat_with_charlie(payload: dict) -> dict:
         f"{json.dumps(widget_intents, default=str)}\n\n"
         "Answer in 4-7 concise lines. Include what you checked, what is missing, and the next action."
     )
-    assistant_message, model_status = ollama_chat(str(route.get("default_model") or "llama3.2:3b"), prompt)
+    started = time.perf_counter()
+    control_payload = dict(payload)
+    control_payload["contains_client_data"] = include_client_context
+    model_decision = choose_chat_model_call(control_payload, prompt)
+    route = model_decision.get("selected_route_record") or get_model_route(
+        str(payload.get("route_name") or payload.get("routeName") or CHAT_MODEL_ROUTE)
+    )
+    cached_response = model_decision.get("cached_response")
+    if cached_response:
+        assistant_message, model_status = str(cached_response), "cache_hit"
+    elif model_decision.get("decision_status") == "allowed":
+        assistant_message, model_status = ollama_chat(str(route.get("default_model") or "llama3.2:3b"), prompt)
+    else:
+        assistant_message, model_status = None, "model_call_blocked"
     if not assistant_message:
         route = {**route, "last_model_status": model_status}
         assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+        model_status = "deterministic_fallback"
 
-    chat_turn = persist_chat_turn(payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
+    finish_chat_model_call(model_decision, assistant_message, model_status, int((time.perf_counter() - started) * 1000))
+
+    persisted_payload = dict(payload)
+    metadata = dict(payload.get("metadata") or {})
+    metadata.update({"api_route": "/api/chat", "model_call_decision_id": model_decision.get("id"), "privacy_class": model_decision.get("privacy_class")})
+    persisted_payload["metadata"] = metadata
+    chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
     materialization = {"count": 0, "materialized": []}
     if widget_intents and chat_turn.get("id"):
         materialization = materialize_widget_intents(
@@ -10424,6 +10840,19 @@ def chat_with_charlie(payload: dict) -> dict:
         "message": assistant_message,
         "route": route,
         "model_status": model_status,
+        "model_call_control": {
+            "decision_id": model_decision.get("id"),
+            "decision_key": model_decision.get("decision_key"),
+            "requested_route": model_decision.get("requested_route"),
+            "selected_route": model_decision.get("selected_route"),
+            "selected_provider": model_decision.get("selected_provider"),
+            "selected_model": model_decision.get("selected_model"),
+            "privacy_class": model_decision.get("privacy_class"),
+            "contains_client_data": model_decision.get("contains_client_data"),
+            "cache_status": model_decision.get("cache_status"),
+            "block_reasons": model_decision.get("block_reasons"),
+            "raw_prompt_stored": False,
+        },
         "retrieval_status": retrieval_status,
         "retrieval_hits": retrieval_hits,
         "widget_intents": widget_intents,
@@ -10648,6 +11077,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/models/usage":
                 self._send_json(record_model_usage(payload), 201)
+                return
+            if self.path == "/api/models/escalations/request":
+                self._send_json(request_model_escalation(payload), 201)
                 return
             if self.path == "/api/data-sources/connectors/register":
                 self._send_json(register_source_connector(payload), 201)

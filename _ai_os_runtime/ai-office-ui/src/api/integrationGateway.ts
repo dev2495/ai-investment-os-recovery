@@ -21,6 +21,12 @@ export interface IntegrationGatewaySnapshot {
   schema_mappings: LiveRow[];
   jobs: LiveRow[];
   model_routes: LiveRow[];
+  model_runtime_summary: LiveRow[];
+  model_route_control: LiveRow[];
+  model_privacy_policies: LiveRow[];
+  model_agent_assignments: LiveRow[];
+  model_call_decisions: LiveRow[];
+  model_escalations: LiveRow[];
   provider_readiness: LiveRow[];
   execution_control: LiveRow[];
   market_data_readiness: LiveRow[];
@@ -119,4 +125,8 @@ export function upsertGatewayJob(input: UpsertIntegrationJobInput): Promise<Live
 
 export function runGatewayJob(jobKey: string): Promise<LiveRow> {
   return post("/api/integrations/jobs/run", { job_key: jobKey, actor: "Jarvis" });
+}
+
+export function requestModelEscalation(decisionId: number, reason: string): Promise<LiveRow> {
+  return post("/api/models/escalations/request", { decision_id: decisionId, reason, actor: "Devarsh" });
 }

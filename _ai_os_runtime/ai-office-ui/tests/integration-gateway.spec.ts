@@ -54,10 +54,27 @@ test("integration evidence resolves checks, mappings, jobs, and readiness", asyn
   await expect(drawer.getByText("Ingestion and provider jobs", { exact: true })).toBeVisible();
 });
 
+test("governed model runtime exposes complete assignments, privacy, cache, and escalation controls", async ({ page }) => {
+  await page.goto("/?mode=command&workspace=models", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { level: 2, name: "Governed Model Runtime" })).toBeVisible();
+  await expect(page.getByText("49/49", { exact: true })).toBeVisible();
+  await expect(page.getByText("Autonomous cloud", { exact: true })).toBeVisible();
+  await expect(page.getByText("must remain zero", { exact: true })).toBeVisible();
+  await expect(page.getByText("Raw prompts are not stored", { exact: false })).toBeVisible();
+  await expect(page.locator(".model-policy-list article")).toHaveCount(4);
+  await expect(page.locator(".model-assignment-table article")).toHaveCount(49);
+  await expect(page.locator(".gateway-route-grid article")).toHaveCount(21);
+  await expect(page.getByRole("heading", { level: 2, name: "Recent Model Decisions" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Escalation Queue" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/ai-os-model-runtime-desktop.png", fullPage: true });
+});
+
 test("Data and Model Gateway has no page-level mobile overflow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/?mode=command&workspace=models", { waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "Data & Model Gateway" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Governed Model Runtime" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: "/tmp/ai-os-model-runtime-mobile.png", fullPage: true });
 });

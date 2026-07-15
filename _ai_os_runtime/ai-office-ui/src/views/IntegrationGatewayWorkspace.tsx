@@ -23,6 +23,7 @@ import {
   fetchIntegrationGateway,
   registerGatewayModel,
   registerGatewaySource,
+  requestModelEscalation,
   runGatewayJob,
   runGatewayReadiness,
   upsertGatewayJob,
@@ -47,6 +48,10 @@ function value(row: LiveRow | undefined, key: string, fallback = "-"): string {
 
 function metric(snapshot: IntegrationGatewaySnapshot | null, key: string): number {
   return Number(snapshot?.summary.find((row) => value(row, "metric") === key)?.value ?? 0);
+}
+
+function modelMetric(snapshot: IntegrationGatewaySnapshot | null, key: string): number {
+  return Number(snapshot?.model_runtime_summary.find((row) => value(row, "metric") === key)?.value ?? 0);
 }
 
 function tone(status: string): string {
@@ -307,8 +312,36 @@ export default function IntegrationGatewayWorkspace({ onStatusChange }: Props) {
         <div className="gateway-compact-list">{snapshot?.jobs.map((row)=><article key={value(row,"job_key")}><div><strong>{value(row,"job_name")}</strong><small>{value(row,"executor_key")} · {value(row,"schedule_cron","manual")} · {value(row,"last_run_status","never run")}</small></div><StatusPill status={value(row,"enabled") === "true" ? "active" : "disabled"}/><button aria-label={`Run ${value(row,"job_name")}`} disabled={Boolean(busy) || value(row,"enabled")!=="true"} onClick={()=>void act(`job-${value(row,"job_key")}`,()=>runGatewayJob(value(row,"job_key")),"Integration job completed and persisted.")} title="Run job now" type="button"><Play size={14}/></button></article>)}</div>
       </Panel>
 
-      <Panel className="span-12" icon={<Route size={17}/>} title="Model Route Matrix" action={<span>{snapshot?.model_routes.length ?? 0} routes</span>}>
-        <div className="gateway-route-grid">{snapshot?.model_routes.map((row)=><article key={value(row,"route_name")}><span>{value(row,"task_class")}</span><strong>{value(row,"route_name")}</strong><p>{value(row,"default_provider")} / {value(row,"default_model")}</p><small>escalate {value(row,"escalation_provider","none")} · ceiling {value(row,"max_cost_tier")}</small></article>)}</div>
+      <Panel className="span-12" icon={<Cpu size={17}/>} title="Governed Model Runtime" action={<StatusPill status={modelMetric(snapshot,"autonomous_cloud_agents") === 0 ? "local first locked" : "review required"}/>}>
+        <div className="model-control-metrics" aria-label="Model runtime controls">
+          <div><span>Assignments</span><strong>{modelMetric(snapshot,"complete_assignments")}/{modelMetric(snapshot,"active_agents")}</strong><small>role scoped</small></div>
+          <div><span>Ready routes</span><strong>{modelMetric(snapshot,"ready_routes")}</strong><small>before task gates</small></div>
+          <div><span>Unavailable</span><strong>{modelMetric(snapshot,"unavailable_routes")}</strong><small>model not installed</small></div>
+          <div><span>Pending escalation</span><strong>{modelMetric(snapshot,"pending_escalations")}</strong><small>human approval</small></div>
+          <div><span>Cache entries</span><strong>{modelMetric(snapshot,"cache_entries")}</strong><small>public/internal only</small></div>
+          <div><span>Autonomous cloud</span><strong>{modelMetric(snapshot,"autonomous_cloud_agents")}</strong><small>must remain zero</small></div>
+        </div>
+        <p className="form-guard">Raw prompts are not stored in the control ledger. Client-private and restricted work stays local, cache is disabled, and every higher-cost route requires a separate approval.</p>
+      </Panel>
+
+      <Panel className="span-12" icon={<Route size={17}/>} title="Model Route Matrix" action={<span>{snapshot?.model_route_control.length ?? 0} routes</span>}>
+        <div className="gateway-route-grid">{snapshot?.model_route_control.map((row)=><article key={value(row,"route_name")}><div className="model-route-state"><span>{value(row,"task_class")}</span><StatusPill status={value(row,"runtime_status")}/></div><strong>{value(row,"route_name")}</strong><p>{value(row,"default_provider")} / {value(row,"default_model")}</p><small>{value(row,"runtime_reason")} · escalate {value(row,"escalation_provider","none")} · ceiling {value(row,"max_cost_tier")}</small></article>)}</div>
+      </Panel>
+
+      <Panel className="span-4" icon={<ShieldCheck size={17}/>} title="Privacy &amp; Cache Policy">
+        <div className="model-policy-list">{snapshot?.model_privacy_policies.map((row)=><article key={value(row,"privacy_class")}><div><strong>{value(row,"privacy_class").replace(/_/g," ")}</strong><small>{value(row,"policy_notes")}</small></div><div className="model-policy-flags"><StatusPill status={value(row,"cloud_model_allowed") === "true" ? "cloud approval" : "local only"}/><span>cache {value(row,"cache_allowed") === "true" ? `${value(row,"retention_days")}d` : "off"}</span><span>{Number(value(row,"max_context_chars","0")).toLocaleString()} chars</span></div></article>)}</div>
+      </Panel>
+
+      <Panel className="span-8" icon={<Cpu size={17}/>} title="Agent Model Assignments" action={<span>{snapshot?.model_agent_assignments.length ?? 0} agents</span>}>
+        <div className="model-assignment-table" role="region" tabIndex={0} aria-label="Agent model assignments"><div className="model-assignment-head"><span>Agent</span><span>Primary</span><span>Fallback</span><span>Escalation</span><span>Status</span></div>{snapshot?.model_agent_assignments.map((row)=><article key={value(row,"agent_name")}><div><strong>{value(row,"agent_name")}</strong><small>{value(row,"department")} · {value(row,"display_title")}</small></div><span>{value(row,"primary_route")}</span><span>{value(row,"fallback_route")}</span><span>{value(row,"escalation_route")}</span><StatusPill status={value(row,"model_status")}/></article>)}</div>
+      </Panel>
+
+      <Panel className="span-7" icon={<Activity size={17}/>} title="Recent Model Decisions" action={<span>{snapshot?.model_call_decisions.length ?? 0} retained</span>}>
+        <div className="model-decision-list">{snapshot?.model_call_decisions.map((row)=>{const privacy=value(row,"privacy_class");const escalationAllowed=["public","internal"].includes(privacy)&&value(row,"escalation_id","")==="";return <article key={value(row,"decision_key")}><div><strong>{value(row,"agent_name")} · {value(row,"selected_model","deterministic")}</strong><small>{value(row,"selected_route",value(row,"requested_route","no route"))} · {privacy.replace(/_/g," ")} · {value(row,"prompt_chars","0")} chars · hash {value(row,"prompt_hash").slice(0,12)}</small></div><div><StatusPill status={value(row,"decision_status")}/><span>cache {value(row,"cache_status")}</span><span>{value(row,"latency_ms","-")} ms</span>{escalationAllowed?<button aria-label={`Request escalation for decision ${value(row,"id")}`} disabled={Boolean(busy)} onClick={()=>void act(`escalate-${value(row,"id")}`,()=>requestModelEscalation(Number(value(row,"id","0")),"Operator requested higher-capability review from the governed Model Runtime workspace."),"Escalation routed for human approval. No cloud call was executed.")} title="Request human-approved escalation" type="button"><Route size={13}/></button>:null}</div></article>})}{!snapshot?.model_call_decisions.length?<p className="empty-state">No model calls recorded yet.</p>:null}</div>
+      </Panel>
+
+      <Panel className="span-5" icon={<ShieldCheck size={17}/>} title="Escalation Queue" action={<span>{snapshot?.model_escalations.length ?? 0} requests</span>}>
+        <div className="model-escalation-list">{snapshot?.model_escalations.map((row)=><article key={value(row,"escalation_key")}><div><strong>{value(row,"agent_name")} → {value(row,"requested_model")}</strong><small>{value(row,"privacy_class").replace(/_/g," ")} · {value(row,"reason")}</small></div><div><StatusPill status={value(row,"status")}/><span>privacy {value(row,"privacy_review_status")}</span><span>cost {value(row,"cost_review_status")}</span></div></article>)}{!snapshot?.model_escalations.length?<p className="empty-state">No escalation requests. Cloud execution remains disabled.</p>:null}</div>
       </Panel>
     </section>
     <EvidenceDrawer onChanged={refresh} onClose={()=>setEvidence(null)} selection={evidence}/>

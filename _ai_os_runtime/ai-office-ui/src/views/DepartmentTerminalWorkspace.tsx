@@ -21,7 +21,7 @@ const definitions: Record<TerminalWorkspace, { title: string; purpose: string; p
   governance: { title: "Governance & Safety", purpose: "Institutional policies, architecture change control, immutable audit, and production safety", primary: "Policies and operating constitution", secondary: "Architecture change control", tertiary: "Production safety readiness" },
   capital: { title: "Capital Allocation", purpose: "Client policy, book budgets, risk limits, drift previews, and human-governed decisions", primary: "Client and book policy control", secondary: "Allocation and risk analysis", tertiary: "Capital Allocation Committee" },
   treasury: { title: "Treasury & Macro", purpose: "Global market watch, commodity and crypto coverage, news, and source freshness", primary: "Crypto and commodity watch", secondary: "Latest macro news", tertiary: "" },
-  models: { title: "Model Runtime", purpose: "Provider readiness, task routes, escalation policy, and assignment gates", primary: "Provider readiness", secondary: "Model routes", tertiary: "Assignment gates" }
+  models: { title: "Model Runtime", purpose: "Local-first routes, privacy policy, cost controls, cache, and escalation evidence", primary: "Model route readiness", secondary: "Privacy and retention policy", tertiary: "Recent model-call decisions" }
 };
 
 function text(row: LiveRow | undefined, key: string, fallback = "-"): string {
@@ -41,7 +41,7 @@ function first(row: LiveRow, keys: string[], fallback = "-"): string {
 }
 
 function status(row: LiveRow): string {
-  return first(row, ["control_status", "proposal_status", "approval_status", "review_status", "risk_review_status", "task_status", "readiness_status", "gate_status", "health_status", "status", "room_state", "severity"], "recorded");
+  return first(row, ["control_status", "proposal_status", "approval_status", "review_status", "risk_review_status", "decision_status", "runtime_status", "task_status", "readiness_status", "gate_status", "health_status", "status", "room_state", "severity"], "recorded");
 }
 
 function tone(value: string): string {
@@ -52,7 +52,7 @@ function tone(value: string): string {
 }
 
 function rowTitle(row: LiveRow): string {
-  return first(row, ["title", "agent_name", "book_name", "subject_name", "provider_name", "route_name", "normalized_symbol", "source_name", "metric"], "Live record");
+  return first(row, ["title", "agent_name", "book_name", "subject_name", "provider_name", "route_name", "privacy_class", "normalized_symbol", "source_name", "metric"], "Live record");
 }
 
 function rowDetail(row: LiveRow): string {
@@ -60,7 +60,7 @@ function rowDetail(row: LiveRow): string {
 }
 
 function rowOwner(row: LiveRow): string {
-  return first(row, ["owner_agent", "task_owner_agent", "lead_agent", "department_name", "provider", "created_by"], "AI Office");
+  return first(row, ["owner_agent", "agent_name", "task_owner_agent", "lead_agent", "department_name", "provider", "created_by"], "AI Office");
 }
 
 function rowTime(row: LiveRow): string {

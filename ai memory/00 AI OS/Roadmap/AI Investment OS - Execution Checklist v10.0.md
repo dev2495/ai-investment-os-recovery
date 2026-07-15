@@ -40,12 +40,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] API server foundation. Verified 2026-07-11 at `http://127.0.0.1:8765/api/health` with Postgres and TradingView CDP checks passing.
 - [x] AI Office dashboard shell. Verified 2026-07-11 at `http://127.0.0.1:5177/` through the deployed LaunchAgent build.
 - [x] Obsidian vault memory surface. Verified 2026-07-11 at `/Volumes/Devarsh SSD/Obsidian memory ` with the runtime symlink preserved.
-- [x] MCP server foundation. Verified 2026-07-15 with 150 importable tools, including scoped integration Gateway, strategy Arsenal, governance/change control, evidence, provider, source, portfolio, research, task, approval, browser, and workspace controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-governance-and-production-safety-v1]].
+- [x] MCP server foundation. Verified 2026-07-15 with 158 importable tools, including governed model-runtime/cache/escalation controls plus scoped integration Gateway, strategy Arsenal, governance/change control, evidence, provider, source, portfolio, research, task, approval, browser, and workspace controls. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-governance-and-production-safety-v1]].
 - [x] Model endpoint registry. Twenty-one synchronized model-provider plug-ins retain route, endpoint, readiness, cost, capability, and credential-reference contracts; absent models remain non-assignable. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Data-source connector registry. Eighteen source plug-ins synchronize from the connector registry into one readiness contract with health, freshness, mapping, schedule, access, and evidence gates. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Provider readiness board foundation with live model availability checks. Verified 2026-07-11 by readiness run `live-model-readiness-v2-20260711`; installed models are assignable and five absent Qwen routes are degraded/non-assignable.
 - [x] Provider assignment gate foundation. Verified 2026-07-11 by Command Center task `#327` and provider gate inbox `#413`; approval policy held the task at `needs_review`.
-- [~] Department-level provider policy controls.
+- [x] Department-level provider policy controls. All 49 active role-scoped agents have explicit primary, fallback, escalation, context, and zero-autonomous-cloud cost-cap records; the Gateway exposes the matrix. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
 - [x] Blueprint v9 operating-model registry. Evidence: [[2026-07-07-blueprint-v9-operating-model-registry-v1]].
 - [x] Blueprint v10 operating-model registry. Verified 2026-07-11 through `core.v_os_blueprint_summary`, `core.v_os_blueprint_domains`, `core.v_os_blueprint_requirements`, API blueprint routes, and MCP tools `ai_os_blueprint_summary` and `ai_os_blueprint_requirements`.
 - [x] Worker daemon health monitor. The 24/7 agent daemon now persists instance, PID, host, cadence, enabled workloads, last-pass status, error, and heartbeat age in `core.runtime_daemon_heartbeats`; SQL derives healthy/degraded/stale state for scoped System Health and MCP. Live LaunchAgent verification showed `running`, `healthy`, and a five-second heartbeat age after a complete source-intelligence pass. Evidence: [[2026-07-15-runtime-source-intelligence-and-bias-controls-v1]].
@@ -54,7 +54,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Restore test. The current backup was restored into isolated temporary services without modifying production: vault bytes matched, Git bundle verified, Timescale/Postgres row counts reconciled across 21 schemas and 457 tables, and all six Qdrant collections matched point counts. Evidence artifact: `/Volumes/Devarsh SSD/AI OS Data/artifacts/restore-drills/restore-drill-20260713T052952Z-33333.json`; note: [[2026-07-13-backup-restore-and-scheduled-reports-v1]].
 - [ ] Remote access plan and security model.
 - [~] Local model daily-driver benchmark. `llama3.2:3b` is selected, installed on the SSD, GPU-loaded, returned `LOCAL MODEL READY`, and completed persisted chat turn `#44` with `model_status=called`; a comparative quality/throughput eval set remains open.
-- [~] Cloud escalation approval workflow. A local-first, privacy/cost/provider-gated cloud escalation policy is active and visible. Remaining gate: dedicated request/simulation/approval/sync workflow per model call. Evidence: [[2026-07-15-governance-and-production-safety-v1]].
+- [x] Cloud escalation approval workflow. Every request binds to a hashed model-call decision. Client-private/restricted requests are rejected without creating approval; public/internal requests create a high-risk human approval, and approval resolution synchronizes state without executing a cloud call. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
 
 ## 2. Data Spine
 
@@ -512,7 +512,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [~] News and Filings dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Special Situations dashboard. Evidence: [[2026-07-13-holdings-research-and-ideas-v2]].
 - [~] Treasury/Hedges/Crypto dashboard. Treasury and Macro terminal is live over source-backed macro/news/market records; dedicated hedge construction, collateral, cash ladder, and crypto execution connectors remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
-- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes 39 plug-in readiness rows, validates 12 warehouse mappings, configures/runs seven allowlisted executor families, shows 21 routes, resolves integration evidence, and now includes strategy-data coverage/import/quality ledgers. Raw secrets, arbitrary commands, seed fallback, and broker authority are rejected. Evidence: [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]].
+- [x] Data & Model Gateway terminal v1. The scoped terminal registers sources and model endpoints, exposes 39 plug-in readiness rows, validates 12 warehouse mappings, configures/runs seven allowlisted executor families, shows 21 governed route states, four privacy/cache policies, all 49 agent assignments, model-call decisions, and escalation queue state, and includes strategy-data coverage/import/quality ledgers. Raw prompts, raw secrets, arbitrary commands, seed fallback, autonomous cloud use, and broker authority are rejected. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-15-data-model-integration-gateway-v1]], [[2026-07-15-legacy-market-data-spine-v1]].
 - [x] Provider Readiness dashboard v2. Model assignment readiness and source health/freshness are unified in the Gateway with filters, per-row checks, full sweeps, missing-credential/model actions, and evidence. Provider policy simulation and final department overrides remain separate open controls. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [~] Committee Room dashboard v2. Scoped live committee packet, approval state, evidence drawer, workspace customization, and execution lock are deployed; participant discussion, specialized decisions, and follow-up action routes remain. Evidence: [[2026-07-15-terminal-agent-research-foundation-v1]].
 - [x] 3D office scene with procedural rooms, stable camera controls, live room placement, room-floor selection, and animated department focus. Directory selection moves the camera without leaving the office; an explicit secondary action opens the mapped Command Center workspace. Evidence: [[2026-07-13-live-office-operations-v3]].
@@ -558,19 +558,19 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Model endpoint registry foundation. Twenty-one endpoints are synchronized into the canonical integration plug-in manifest and exposed through API, MCP, and the Gateway terminal. Evidence: [[2026-07-15-data-model-integration-gateway-v1]].
 - [x] Local model route foundation. `always_on_daily_driver`, `jarvis_intake`, `jarvis_runtime`, daily brief, research, news, strategy intake, and trade-journal routes can use installed `llama3.2:3b`.
 - [x] Ollama/local model runtime foundation. LaunchAgent startup is enabled by default, bound to `127.0.0.1:11434`, and model files remain under `/Volumes/Devarsh SSD/OllamaModels`.
-- [~] Per-agent model route table.
-- [~] Cost ledger.
+- [x] Per-agent model route table. All 49 active agents have explicit primary, fallback, escalation, context, and cost-policy assignments; validation fails on incomplete coverage. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [x] Cost ledger and per-agent hard caps. All 49 active agents have cost-cap rows; autonomous cloud agents and unapproved cloud events are both zero. Evidence: [[2026-07-15-model-runtime-control-plane-v1]], [[2026-07-06-model-cost-ledger-v1]].
 - [x] Embedding model path. `mxbai-embed-large` is installed on the SSD and six Qdrant collections are registered against the embedding path.
 - [x] Live model availability gate. API and readiness sweeps query Ollama `/api/tags`; installed `llama3.2:3b` is `configured`, while absent `qwen3:8b`/`qwen3:14b` routes are `model_unavailable` and non-assignable. Evidence: health checks `#773` and `#774`.
 - [~] Daily driver model selected and smoke-benchmarked. `llama3.2:3b` direct cold-load verification completed in 9.73 seconds and Charlie chat turn `#44` used the model successfully; formal task-quality and sustained-throughput benchmarks remain open.
-- [ ] Model call cache.
-- [ ] Escalation policy.
-- [ ] Cloud model approval flow.
+- [x] Model call cache. Only public/internal non-client prompts are eligible; cache identity uses route, model, and prompt hash. Client-private/restricted cache is disabled by policy and database constraint. The verified warm hit returned in 195 ms; validation cache rows were removed afterward. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [x] Escalation policy. Higher-capability requests retain decision ID, prompt hash, privacy/cost reviews, approval, and explicit false capital/execution authority without storing raw prompts. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [x] Cloud model approval flow. Public/internal requests create a human approval; private/restricted requests are privacy-blocked before approval. Approval resolution never invokes a provider automatically. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
 - [ ] Model quality eval set.
-- [ ] Local-vs-cloud routing tests.
-- [ ] Context/RAG compression policy.
-- [ ] Privacy restrictions per model route.
-- [ ] Per-department model policies.
+- [x] Local-vs-cloud routing tests. Missing Charlie/Qwen primary route fell back to installed `llama3.2:3b`; unknown routes were controlled rather than foreign-key failures; public cache miss/hit and both escalation privacy branches passed. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [~] Context/RAG compression policy. Client-context inclusion is now authoritative, public/internal cacheable calls omit client/book/position context and disable unscoped vault retrieval, and private calls use bounded local retrieval. Remaining gate: collection-level sensitivity ACLs and retrieval-quality evaluation.
+- [x] Privacy restrictions per model route. Four database policies enforce local/cloud/cache/context/retention rules; private and restricted classes cannot use cloud or cache. Raw prompt columns do not exist in the decision ledger. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
+- [x] Per-department model policies. The 49-agent assignment and cost matrix is visible in the production Gateway and exposed through MCP. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
 
 ## 19. Production Safety
 

@@ -1643,3 +1643,34 @@ The scoped API exposes the Capital terminal plus `POST /api/capital/policies/pro
 A validation-only Naval policy used the real INR 4,978,708.50 gross position basis and the existing institutional risk run. Its 70.96% covered exposure failed the 80% minimum. All six book lines became `blocked_data_quality`, the committee approval route returned HTTP 400, and every capital, broker-order, and live-execution flag remained false. The validation proposal, run, lines, review, and SSD artifact were then deleted; the production tables returned to zero proposals, runs, lines, and reviews. Current production state therefore contains three clients requiring operator policy and no synthetic or assumed approval.
 
 The release gate passed: zero-seed state validation; 18-row client/book completeness; per-client observed allocation totals of 100%; global execution lock; invalid-policy HTTP rejection without writes; real-data blocked-risk workflow and cleanup proof; 156-tool MCP protocol/read smoke; production build; 17/17 department-terminal browser tests; 39/39 desktop/mobile WCAG A/AA tests; and desktop/mobile visual inspection. Remaining capital work is operator policy entry, client suitability and restriction records, complete cash/liability/tax basis, drawdown-aware sizing, strategy-capital integration, opportunity-cost ranking, cash deployment, portfolio optimization, and separately governed rebalance/order workflows. Evidence: [[2026-07-15-capital-allocation-control-plane-v1]].
+
+## 40. Governed Model Runtime Control Plane - 2026-07-15
+
+Model selection is now an enforceable operating decision rather than an informal prompt convention. Every active agent has one explicit primary route, fallback route, escalation route, bounded context policy, cost policy, and hard cap. The current matrix covers all 49 active agents. A missing local model degrades the route and triggers a local fallback; it does not silently become a cloud call.
+
+```text
+Agent and task
+  -> explicit role-scoped model assignment
+  -> requested route and installed-endpoint check
+  -> privacy classification and authoritative context inclusion
+  -> context-size and client-data gate
+  -> local model or deterministic fallback
+  -> public/internal non-client cache only
+  -> hashed decision and latency/result evidence
+  -> optional human-approved escalation request
+  -> no automatic cloud invocation
+```
+
+The privacy classes are `public`, `internal`, `client_private`, and `restricted`. Client-private and restricted work is local-only, never cached, and has shorter bounded contexts. Public/internal calls may use cache or request a higher-cost provider only when client context is explicitly excluded. Non-private chat context omits clients, positions, books, and symbol intelligence and disables unscoped vault retrieval. The decision ledger stores prompt hash and character count, never raw prompt text. Collection-level RAG sensitivity ACLs remain an open gate.
+
+The database contract is `agent.model_privacy_policies`, `agent.model_call_decisions`, `agent.model_response_cache`, and `agent.model_escalation_requests`, with `agent.v_model_route_runtime_control`, `agent.v_model_call_control`, and `agent.v_model_runtime_control_summary` as operating views. Database constraints prohibit private cache rows and force model decisions/escalations to retain false capital and live-execution authority.
+
+The runtime path is integrated into Charlie chat. Charlie's configured 14B primary route is currently unavailable, so the installed SSD-backed `llama3.2:3b` daily driver is selected through `always_on_daily_driver`. `mxbai-embed-large` remains the local embedding model. Unknown requested routes are retained in candidate evidence and safely fall back without violating route foreign keys. Deterministic Python remains the authority for reproducible analytics, backtests, optimization, and execution gates.
+
+Higher-capability escalation is a request workflow, not a provider call. A client-private/restricted request is rejected before approval. A public/internal non-client request creates a high-risk human approval containing only decision ID, route/provider/model request, privacy class, and prompt hash. Approval resolution updates privacy/cost/escalation state but explicitly reports `cloud_call_executed=false`. Provider credentials and actual frontier invocation remain separate future configuration.
+
+The production Data & Model Gateway now exposes source-backed model metrics, all 21 route states, four privacy/cache policies, all 49 agent assignments, recent call decisions, and the escalation queue. It can request an eligible escalation but cannot invoke a provider, change capital, or place an order. MCP tools `ai_os_model_runtime_control` and `ai_os_request_model_escalation` bring the full server to 158 tools.
+
+Release evidence passed: 49/49 model assignments; 49/49 cost caps; 14 ready, five unavailable-model, and two blocked-secret routes; zero autonomous-cloud agents; zero unapproved cloud events; zero private cache entries; no raw-prompt schema column; local fallback; public cache miss/hit; controlled unknown route; HTTP 400 rejection of public/internal requests that ask for client context without creating a decision row; both escalation privacy branches; approval rejection synchronization; production-row cleanup; Python compile; production UI build; MCP protocol/read smoke; 6/6 Gateway browser tests; 17/17 department regressions; 39/39 WCAG A/AA checks; and desktop/mobile visual inspection. Production operational state was returned to zero validation chats, model decisions, cache entries, and escalation requests while append-only API audit evidence remained.
+
+This does not complete model strategy. Remaining gates are a representative task-quality evaluation set, sustained throughput/thermal benchmarks, collection-level retrieval ACLs and quality evaluation, installation or removal of unavailable Qwen routes, cloud-provider secret references, approved provider invocation, budget alerts, and machine-aware routing between the MacBook and future 24/7 host. Evidence: [[2026-07-15-model-runtime-control-plane-v1]].
