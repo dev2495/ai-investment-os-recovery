@@ -18,16 +18,16 @@ from typing import Any
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 QDRANT_BASE_URL = "http://127.0.0.1:6333"
 OLLAMA_EMBED_URL = "http://127.0.0.1:11434/api/embed"
-OLLAMA_MODEL = "mxbai-embed-large"
+OLLAMA_MODEL = "qwen3-embedding:0.6b"
 VECTOR_SIZE = 1024
 
 COLLECTIONS = {
-    "obsidian_notes_mxbai_embed_large": "Obsidian notes and AI OS writebacks",
-    "corporate_filings_mxbai_embed_large": "Corporate filings and exchange announcements",
-    "trade_journals_mxbai_embed_large": "Trade journals and post-trade notes",
-    "news_social_mxbai_embed_large": "News and social feed captures",
-    "research_reports_mxbai_embed_large": "AI research reports and dashboard artifacts",
-    "strategy_artifacts_mxbai_embed_large": "Strategy ideas, candidates, and backtest artifacts",
+    "obsidian_notes_qwen3_embedding_0_6b": "Obsidian notes and AI OS writebacks",
+    "corporate_filings_qwen3_embedding_0_6b": "Corporate filings and exchange announcements",
+    "trade_journals_qwen3_embedding_0_6b": "Trade journals and post-trade notes",
+    "news_social_qwen3_embedding_0_6b": "News and social feed captures",
+    "research_reports_qwen3_embedding_0_6b": "AI research reports and dashboard artifacts",
+    "strategy_artifacts_qwen3_embedding_0_6b": "Strategy ideas, candidates, and backtest artifacts",
 }
 
 
@@ -187,40 +187,29 @@ class Embedder:
             return True
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
-            self.provider = "local_hashing_1024"
-            return False
+            raise RuntimeError(f"required embedding model is unavailable: {self.last_error}") from exc
 
     def embed(self, text: str) -> list[float]:
-        if self._ollama_available:
-            try:
-                self.provider = OLLAMA_MODEL
-                return self._ollama_request(text, timeout=60)
-            except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                self.fallback_count += 1
-        self.provider = "local_hashing_1024"
-        return local_hash_embedding(text)
+        try:
+            self.provider = OLLAMA_MODEL
+            return self._ollama_request(text, timeout=60)
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            raise RuntimeError(f"embedding failed; refusing mixed or fake index: {self.last_error}") from exc
 
     def embed_many(self, texts: list[str]) -> list[tuple[list[float], str]]:
         if not texts:
             return []
-        if self._ollama_available:
-            try:
-                vectors = self._ollama_batch_request(texts, timeout=max(180, len(texts) * 20))
-                self.provider = OLLAMA_MODEL
-                return [(vector, OLLAMA_MODEL) for vector in vectors]
-            except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                self.fallback_count += len(texts)
-        self.provider = "local_hashing_1024"
-        return [(local_hash_embedding(text), "local_hashing_1024") for text in texts]
+        try:
+            vectors = self._ollama_batch_request(texts, timeout=max(180, len(texts) * 20))
+            self.provider = OLLAMA_MODEL
+            return [(vector, OLLAMA_MODEL) for vector in vectors]
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            raise RuntimeError(f"embedding batch failed; refusing mixed or fake index: {self.last_error}") from exc
 
     def summary_provider(self) -> str:
-        if self._ollama_available and self.fallback_count == 0:
-            return OLLAMA_MODEL
-        if self._ollama_available:
-            return f"mixed:{OLLAMA_MODEL}+local_hashing_1024"
-        return "local_hashing_1024"
+        return OLLAMA_MODEL
 
 
 def source_obsidian_notes() -> list[SourceDocument]:
@@ -237,7 +226,7 @@ def source_obsidian_notes() -> list[SourceDocument]:
         body = read_text_file(note_path) or clean_text(row.get("body_summary"))
         docs.append(
             SourceDocument(
-                collection_name="obsidian_notes_mxbai_embed_large",
+                collection_name="obsidian_notes_qwen3_embedding_0_6b",
                 source_table="knowledge.obsidian_notes",
                 source_id=str(row["id"]),
                 title=row.get("title") or row.get("note_path") or f"note-{row['id']}",
@@ -278,7 +267,7 @@ def source_research_reports() -> list[SourceDocument]:
         ]
         docs.append(
             SourceDocument(
-                collection_name="research_reports_mxbai_embed_large",
+                collection_name="research_reports_qwen3_embedding_0_6b",
                 source_table="core.raw_artifacts",
                 source_id=str(row["id"]),
                 title=row.get("title") or f"artifact-{row['id']}",
@@ -316,7 +305,7 @@ def source_trade_journals() -> list[SourceDocument]:
         )
         docs.append(
             SourceDocument(
-                collection_name="trade_journals_mxbai_embed_large",
+                collection_name="trade_journals_qwen3_embedding_0_6b",
                 source_table="trading.trade_journals",
                 source_id=str(row["id"]),
                 title=f"{row.get('symbol') or 'Trade journal'} {row.get('journal_ts') or ''}".strip(),
@@ -341,7 +330,7 @@ def source_filings() -> list[SourceDocument]:
     for row in rows:
         docs.append(
             SourceDocument(
-                collection_name="corporate_filings_mxbai_embed_large",
+                collection_name="corporate_filings_qwen3_embedding_0_6b",
                 source_table="research.corporate_filings",
                 source_id=str(row["id"]),
                 title=row.get("title") or f"filing-{row['id']}",
@@ -376,7 +365,7 @@ def source_news_social() -> list[SourceDocument]:
         source_table = row.pop("source_table")
         docs.append(
             SourceDocument(
-                collection_name="news_social_mxbai_embed_large",
+                collection_name="news_social_qwen3_embedding_0_6b",
                 source_table=source_table,
                 source_id=str(row["id"]),
                 title=row.get("title") or f"feed-{row['id']}",
@@ -421,7 +410,7 @@ def source_strategy_artifacts() -> list[SourceDocument]:
         )
         docs.append(
             SourceDocument(
-                collection_name="strategy_artifacts_mxbai_embed_large",
+                collection_name="strategy_artifacts_qwen3_embedding_0_6b",
                 source_table="strategy.strategy_candidates",
                 source_id=str(row["id"]),
                 title=row.get("name") or f"strategy-{row['id']}",
@@ -441,7 +430,7 @@ def source_strategy_artifacts() -> list[SourceDocument]:
         )
         docs.append(
             SourceDocument(
-                collection_name="strategy_artifacts_mxbai_embed_large",
+                collection_name="strategy_artifacts_qwen3_embedding_0_6b",
                 source_table="strategy.idea_dossiers",
                 source_id=str(row["id"]),
                 title=row.get("title") or f"idea-dossier-{row['id']}",
@@ -511,8 +500,8 @@ ON CONFLICT (collection_name, qdrant_point_id) DO UPDATE SET
 
 
 def index_documents() -> dict[str, Any]:
-    ensure_collections()
     embedder = Embedder()
+    ensure_collections()
     docs = all_source_documents()
     points_by_collection: dict[str, list[dict[str, Any]]] = {collection: [] for collection in COLLECTIONS}
     registry_rows: list[dict[str, Any]] = []

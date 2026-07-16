@@ -30,8 +30,13 @@ PSQL_BIN = os.environ.get("AI_OS_PSQL_BIN", "/opt/homebrew/opt/postgresql@15/bin
 DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/usr/local/bin/docker")
 QDRANT_BASE_URL = os.environ.get("AI_OS_QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
 OLLAMA_BASE_URL = os.environ.get("AI_OS_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+MLX_BASE_URL = os.environ.get("AI_OS_MLX_URL", "http://127.0.0.1:11435/v1").rstrip("/")
+MLX_REQUEST_MODEL = os.environ.get(
+    "AI_OS_MLX_REQUEST_MODEL",
+    "/Volumes/Devarsh SSD/AI OS Data/mlx/models/qwen3.5-9b-4bit-20353927",
+)
 TRADINGVIEW_CDP_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
-EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "mxbai-embed-large")
+EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "always_on_daily_driver")
 ALLOWED_ORIGINS = {
     origin.strip()
@@ -47,12 +52,12 @@ DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/
 PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
 
 QDRANT_COLLECTIONS = [
-    "obsidian_notes_mxbai_embed_large",
-    "research_reports_mxbai_embed_large",
-    "strategy_artifacts_mxbai_embed_large",
-    "trade_journals_mxbai_embed_large",
-    "corporate_filings_mxbai_embed_large",
-    "news_social_mxbai_embed_large",
+    "obsidian_notes_qwen3_embedding_0_6b",
+    "research_reports_qwen3_embedding_0_6b",
+    "strategy_artifacts_qwen3_embedding_0_6b",
+    "trade_journals_qwen3_embedding_0_6b",
+    "corporate_filings_qwen3_embedding_0_6b",
+    "news_social_qwen3_embedding_0_6b",
 ]
 
 
@@ -986,21 +991,73 @@ def ollama_tags() -> list[dict]:
 
 
 def ollama_model_available(model_name: str) -> bool:
-    normalized = model_name.split(":", 1)[0]
+    requested = model_name.strip()
+    if not requested:
+        return False
     for model in ollama_tags():
         name = str(model.get("name") or "")
-        model_base = name.split(":", 1)[0]
-        if name == model_name or model_base == normalized:
+        if name == requested:
+            return True
+        if ":" not in requested and name in {requested, f"{requested}:latest"}:
             return True
     return False
 
 
-def ollama_embed(text: str) -> list[float] | None:
+def mlx_model_available(model_name: str) -> bool:
     try:
+        with urllib.request.urlopen(f"{MLX_BASE_URL}/models", timeout=3.0) as response:
+            return int(response.status) == 200
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return False
+
+
+def local_model_governance(model_name: str) -> dict:
+    try:
+        rows = run_psql_json(
+            f"""
+            SELECT model_name, deployment_tier, context_tokens, eval_suite,
+                   promotion_status, allowed_task_classes, last_eval_run_key,
+                   last_eval_score, last_eval_at
+            FROM agent.local_model_registry
+            WHERE model_name={sql_literal(model_name)}
+            LIMIT 1
+            """
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"model_name": model_name, "assignable": False, "reason": f"registry_unavailable:{type(exc).__name__}"}
+    if not rows:
+        return {"model_name": model_name, "assignable": False, "reason": "model_not_registered"}
+    record = rows[0]
+    status = str(record.get("promotion_status") or "candidate")
+    record["assignable"] = status == "approved"
+    record["reason"] = "evaluation_approved" if record["assignable"] else f"promotion_status_{status}"
+    return record
+
+
+def model_runtime_options(model_name: str) -> dict[str, int | float]:
+    governance = local_model_governance(model_name)
+    configured_context = int(governance.get("context_tokens") or 8192)
+    if model_name == "qwen3.5:9b":
+        return {"num_ctx": min(configured_context, 16384), "num_predict": 1200, "temperature": 1.0, "top_p": 1.0, "top_k": 20, "presence_penalty": 2.0, "repeat_penalty": 1.0}
+    if model_name in {"gemma3:4b", "gemma4:e2b"}:
+        return {"num_ctx": min(configured_context, 8192), "num_predict": 900, "temperature": 0.2, "top_p": 0.9}
+    return {"num_ctx": min(configured_context, 8192), "num_predict": 600, "temperature": 1.0, "top_p": 1.0, "top_k": 20, "presence_penalty": 2.0, "repeat_penalty": 1.0}
+
+
+def ollama_embed(text: str) -> list[float] | None:
+    if not ollama_model_available(EMBEDDING_MODEL):
+        return None
+    if not local_model_governance(EMBEDDING_MODEL).get("assignable"):
+        return None
+    try:
+        query_text = (
+            "Instruct: Retrieve source passages that directly support an evidence-bound investment-office answer.\n"
+            f"Query: {text[:7000]}"
+        )
         payload = http_json(
             "POST",
             f"{OLLAMA_BASE_URL}/api/embed",
-            {"model": EMBEDDING_MODEL, "input": text[:4000], "truncate": True, "keep_alive": "10m"},
+            {"model": EMBEDDING_MODEL, "input": query_text, "truncate": True, "keep_alive": "10m"},
             timeout=30,
         )
         embeddings = payload.get("embeddings")
@@ -1015,6 +1072,9 @@ def ollama_embed(text: str) -> list[float] | None:
 def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
     if not ollama_model_available(model_name):
         return None, "model_unavailable"
+    governance = local_model_governance(model_name)
+    if not governance.get("assignable"):
+        return None, str(governance.get("reason") or "model_not_promoted")
     try:
         payload = http_json(
             "POST",
@@ -1024,19 +1084,17 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "stream": False,
                 "think": False,
                 "keep_alive": "10m",
-                "options": {
-                    "num_ctx": 4096,
-                    "num_predict": 220,
-                    "temperature": 0.2,
-                    "top_p": 0.85,
-                },
+                "options": model_runtime_options(model_name),
                 "messages": [
                     {
                         "role": "system",
                         "content": (
                             "You are Charlie Munger, the main orchestrator for a private AI portfolio office. "
-                            "Be direct, evidence-first, risk-aware, and concise. Never invent market facts. "
-                            "When data is missing, say what evidence is missing and route the next action. "
+                            "Be direct, evidence-first, risk-aware, and concise. Never invent market facts, sources, calculations, trades, or actions. "
+                            "Separate VERIFIED observations from INFERRED conclusions and UNVERIFIED claims. "
+                            "Use only evidence present in the bounded context, include its as-of date, and state contradictory or missing evidence. "
+                            "Numerical P&L, exposure, valuation, risk, and backtest calculations belong to deterministic SQL or Python tools. "
+                            "Never claim that an order, approval, dashboard mutation, or external action occurred unless tool evidence explicitly confirms it. "
                             "Do not include hidden reasoning or chain-of-thought."
                         ),
                     },
@@ -1046,6 +1104,48 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
             timeout=180,
         )
         message = payload.get("message") if isinstance(payload, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        return str(content).strip() if content else None, "called"
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return None, f"call_failed:{type(exc).__name__}"
+
+
+def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+    if not mlx_model_available(model_name):
+        return None, "model_unavailable"
+    governance = local_model_governance(model_name)
+    if not governance.get("assignable"):
+        return None, str(governance.get("reason") or "model_not_promoted")
+    try:
+        payload = http_json(
+            "POST",
+            f"{MLX_BASE_URL}/chat/completions",
+            {
+                "model": MLX_REQUEST_MODEL,
+                "stream": False,
+                "temperature": 1.0,
+                "top_p": 1.0,
+                "max_tokens": 1200,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Charlie Munger, the main orchestrator for a private AI portfolio office. "
+                            "Be direct, evidence-first, risk-aware, and concise. Never invent market facts, sources, calculations, trades, or actions. "
+                            "Separate VERIFIED observations from INFERRED conclusions and UNVERIFIED claims. "
+                            "Use only evidence present in the bounded context, include its as-of date, and state contradictory or missing evidence. "
+                            "Numerical P&L, exposure, valuation, risk, and backtest calculations belong to deterministic SQL or Python tools. "
+                            "Never claim that an order, approval, dashboard mutation, or external action occurred unless tool evidence explicitly confirms it. "
+                            "Do not include hidden reasoning or chain-of-thought."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            },
+            timeout=240,
+        )
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        message = choices[0].get("message") if isinstance(choices, list) and choices else None
         content = message.get("content") if isinstance(message, dict) else None
         return str(content).strip() if content else None, "called"
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
@@ -7077,12 +7177,12 @@ def log_chat_turn_model_usage(chat_turn_id: object, actor: str = "Charlie Munger
                 SELECT
                     chat_usage.*,
                     rate.id AS rate_id,
-                    coalesce(rate.cost_tier, CASE WHEN chat_usage.provider IN ('ollama','mlx','local','lm_studio') THEN 'local' ELSE 'unknown' END) AS cost_tier,
+                    coalesce(rate.cost_tier, CASE WHEN chat_usage.provider IN ('ollama','mlx','local','lm_studio','local_tools','local_python','deterministic') THEN 'local' ELSE 'unknown' END) AS cost_tier,
                     CASE
                         WHEN rate.input_usd_per_1m_tokens IS NOT NULL AND rate.output_usd_per_1m_tokens IS NOT NULL THEN
                             round(((chat_usage.prompt_tokens_est::NUMERIC * rate.input_usd_per_1m_tokens)
                                 + (chat_usage.completion_tokens_est::NUMERIC * rate.output_usd_per_1m_tokens)) / 1000000, 8)
-                        WHEN chat_usage.provider IN ('ollama','mlx','local','lm_studio') THEN 0
+                        WHEN chat_usage.provider IN ('ollama','mlx','local','lm_studio','local_tools','local_python','deterministic') THEN 0
                         ELSE NULL
                     END AS estimated_cost_usd
                 FROM chat_usage
@@ -7116,6 +7216,7 @@ def log_chat_turn_model_usage(chat_turn_id: object, actor: str = "Charlie Munger
                 completion_tokens_est = EXCLUDED.completion_tokens_est,
                 total_tokens_est = EXCLUDED.total_tokens_est,
                 estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                cost_tier = EXCLUDED.cost_tier,
                 rate_id = EXCLUDED.rate_id,
                 updated_at = now()
             """
@@ -12013,9 +12114,14 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             continue
         provider = str(route.get("default_provider") or "")
         model_name = str(route.get("default_model") or "")
-        if provider == "ollama":
-            available = ollama_model_available(model_name)
-            reason = "installed_local_model" if available else "model_unavailable"
+        if provider in {"ollama", "mlx"}:
+            installed = ollama_model_available(model_name) if provider == "ollama" else mlx_model_available(model_name)
+            governance = local_model_governance(model_name)
+            available = installed and bool(governance.get("assignable"))
+            if not installed:
+                reason = "model_unavailable"
+            else:
+                reason = str(governance.get("reason") or "evaluation_required")
         elif provider in {"local_python", "deterministic", "local_tools"}:
             available = False
             reason = "deterministic_tool_route_not_chat_model"
@@ -12026,6 +12132,8 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             "route_name": route_name, "provider": provider,
             "model_name": model_name, "available_for_chat": available, "reason": reason,
         }
+        if provider in {"ollama", "mlx"}:
+            candidate_record["governance"] = governance
         candidates.append(candidate_record)
         if selected is None and available:
             selected = route
@@ -12039,7 +12147,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
         block_reasons.append("client_data_requires_client_private_or_restricted_class")
     if len(prompt) > int(policy["max_context_chars"]):
         block_reasons.append("context_exceeds_privacy_policy_limit")
-    if selected and str(selected.get("default_provider")) != "ollama":
+    if selected and str(selected.get("default_provider")) not in {"ollama", "mlx"}:
         block_reasons.append("nonlocal_provider_not_permitted_by_chat_runtime")
 
     cache_eligible = bool(policy["cache_allowed"]) and not contains_client_data and not block_reasons and selected is not None
@@ -12412,7 +12520,7 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
     lines = [
         "I checked the live warehouse and memory layer.",
     ]
-    if route.get("default_provider") == "ollama" and model:
+    if route.get("default_provider") in {"ollama", "mlx"} and model:
         lines.append(f"Daily driver route is configured for `{model}`, but the model call returned `{route.get('last_model_status') or 'unavailable'}`, so I am using deterministic routing for this turn.")
     if clients:
         total_value = sum(float(row.get("latest_market_value") or 0) for row in clients)
@@ -12451,8 +12559,114 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
         lines.append("Suggested dashboard widgets: " + ", ".join(intent["widget_title"] for intent in widget_intents) + ".")
     else:
         lines.append("No dashboard widget was inferred from the message; I would route this as an agent inbox task if you want action.")
-    lines.append("Next correct move: install the lightweight chat driver, then let this endpoint call it for natural-language synthesis while keeping heavy reasoning gated to Codex/frontier models.")
+    if route.get("last_model_status") in {"promotion_status_candidate", "promotion_status_rejected", "model_not_promoted"}:
+        lines.append("Next action: inspect the local-model evaluation run; this route remains blocked until its exact model digest passes the assigned suite.")
+    elif route.get("last_model_status") == "model_unavailable":
+        lines.append("Next action: install the exact configured local model and run its governed evaluation suite.")
+    else:
+        lines.append("Next action: use the cited evidence and route any missing calculation, research, approval, or execution step to its owning tool or specialist.")
     return "\n".join(lines)
+
+
+def infer_local_chat_route(message: str) -> str:
+    normalized = message.lower()
+    workhorse_terms = {
+        "annual report", "filing", "valuation", "fundamental", "research paper",
+        "strategy", "backtest", "thesis", "demerger", "merger", "arbitrage",
+        "portfolio review", "investment memo", "accounting", "cash flow",
+    }
+    if any(term in normalized for term in workhorse_terms):
+        return "local_workhorse_synthesis"
+    return "always_on_daily_driver"
+
+
+def build_response_truth_envelope(
+    model_status: str,
+    route: dict,
+    retrieval_status: str,
+    retrieval_hits: list[dict],
+    include_client_context: bool,
+) -> dict:
+    source_refs = [
+        {
+            "collection": hit.get("collection"),
+            "source_table": hit.get("source_table"),
+            "source_id": hit.get("source_id"),
+            "title": hit.get("title"),
+            "score": hit.get("score"),
+        }
+        for hit in retrieval_hits[:8]
+    ]
+    missing_evidence: list[str] = []
+    if retrieval_status != "ok":
+        missing_evidence.append(f"retrieval_status:{retrieval_status}")
+    if not source_refs:
+        missing_evidence.append("no_semantic_source_hits")
+    if model_status == "deterministic_fallback":
+        evidence_status = "deterministic_source_snapshot"
+    elif source_refs:
+        evidence_status = "source_backed_unverified"
+    else:
+        evidence_status = "unverified"
+    governance = local_model_governance(str(route.get("default_model") or "")) if route.get("default_provider") in {"ollama", "mlx"} else {}
+    return {
+        "evidence_status": evidence_status,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "source_refs": source_refs,
+        "missing_evidence": missing_evidence,
+        "verification_checks": {
+            "model_status": model_status,
+            "exact_model_promoted": bool(governance.get("assignable")),
+            "model_eval_run_key": governance.get("last_eval_run_key"),
+            "model_eval_score": governance.get("last_eval_score"),
+            "retrieval_status": retrieval_status,
+            "client_context_local_only": include_client_context,
+            "raw_prompt_stored": False,
+            "deterministic_calculations_required": True,
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+        },
+    }
+
+
+def persist_response_truth_envelope(chat_turn: dict, route: dict, envelope: dict) -> dict:
+    chat_turn_id = chat_turn.get("id")
+    if not chat_turn_id:
+        return {}
+    response_hash = hashlib.sha256(str(chat_turn.get("assistant_message") or "").encode("utf-8", errors="replace")).hexdigest()
+    rows = run_psql_json_statement(
+        f"""
+        WITH upserted AS (
+            INSERT INTO agent.response_evidence_ledger (
+                chat_turn_id, evidence_status, response_hash, model_provider,
+                model_name, route_name, as_of, source_refs, missing_evidence,
+                verification_checks, verifier_agent
+            ) VALUES (
+                {int(chat_turn_id)}, {sql_literal(envelope['evidence_status'])},
+                {sql_literal(response_hash)}, {sql_literal(route.get('default_provider') or 'unknown')},
+                {sql_literal(route.get('default_model') or 'unknown')},
+                {sql_literal(route.get('route_name') or CHAT_MODEL_ROUTE)},
+                {sql_literal(envelope['as_of'])}::timestamptz,
+                {sql_jsonb(envelope.get('source_refs') or [])},
+                {sql_jsonb(envelope.get('missing_evidence') or [])},
+                {sql_jsonb(envelope.get('verification_checks') or {})},
+                'Evidence Verification Agent'
+            ) ON CONFLICT (chat_turn_id) DO UPDATE SET
+                evidence_status=EXCLUDED.evidence_status,
+                response_hash=EXCLUDED.response_hash,
+                model_provider=EXCLUDED.model_provider,
+                model_name=EXCLUDED.model_name,
+                route_name=EXCLUDED.route_name,
+                as_of=EXCLUDED.as_of,
+                source_refs=EXCLUDED.source_refs,
+                missing_evidence=EXCLUDED.missing_evidence,
+                verification_checks=EXCLUDED.verification_checks
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(upserted)), '[]'::json)::text FROM upserted
+        """
+    )
+    return rows[0] if rows else {}
 
 
 def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_status: str, retrieval_hits: list[dict], widget_intents: list[dict], tool_intents: list[dict]) -> dict:
@@ -12555,6 +12769,8 @@ def chat_with_charlie(payload: dict) -> dict:
     started = time.perf_counter()
     control_payload = dict(payload)
     control_payload["contains_client_data"] = include_client_context
+    if not control_payload.get("route_name") and not control_payload.get("routeName"):
+        control_payload["route_name"] = infer_local_chat_route(message)
     model_decision = choose_chat_model_call(control_payload, prompt)
     route = model_decision.get("selected_route_record") or get_model_route(
         str(payload.get("route_name") or payload.get("routeName") or CHAT_MODEL_ROUTE)
@@ -12567,7 +12783,11 @@ def chat_with_charlie(payload: dict) -> dict:
     elif cached_response:
         assistant_message, model_status = str(cached_response), "cache_hit"
     elif model_decision.get("decision_status") == "allowed":
-        assistant_message, model_status = ollama_chat(str(route.get("default_model") or "llama3.2:3b"), prompt)
+        selected_model = str(route.get("default_model") or "llama3.2:3b")
+        if route.get("default_provider") == "mlx":
+            assistant_message, model_status = mlx_chat(selected_model, prompt)
+        else:
+            assistant_message, model_status = ollama_chat(selected_model, prompt)
     else:
         assistant_message, model_status = None, "model_call_blocked"
     if not assistant_message:
@@ -12580,8 +12800,11 @@ def chat_with_charlie(payload: dict) -> dict:
     persisted_payload = dict(payload)
     metadata = dict(payload.get("metadata") or {})
     metadata.update({"api_route": "/api/chat", "model_call_decision_id": model_decision.get("id"), "privacy_class": model_decision.get("privacy_class")})
+    truth_envelope = build_response_truth_envelope(model_status, route, retrieval_status, retrieval_hits, include_client_context)
+    metadata["truth_envelope"] = truth_envelope
     persisted_payload["metadata"] = metadata
     chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
+    persisted_truth = persist_response_truth_envelope(chat_turn, route, truth_envelope)
     materialization = {"count": 0, "materialized": []}
     if widget_intents and chat_turn.get("id"):
         materialization = materialize_widget_intents(
@@ -12616,11 +12839,19 @@ def chat_with_charlie(payload: dict) -> dict:
         "dashboard_widgets": [item.get("widget") for item in materialization.get("materialized", []) if item.get("widget")],
         "agent_jobs": [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
         "tool_intents": tool_intents,
+        "truth_envelope": truth_envelope,
+        "truth_ledger_id": persisted_truth.get("id"),
         "model_runtime": {
             "ollama_url": OLLAMA_BASE_URL,
+            "mlx_url": MLX_BASE_URL,
             "embedding_model": EMBEDDING_MODEL,
             "embedding_available": ollama_model_available(EMBEDDING_MODEL),
-            "chat_model_available": ollama_model_available(str(route.get("default_model") or "")),
+            "chat_model_available": (
+                mlx_model_available(str(route.get("default_model") or ""))
+                if route.get("default_provider") == "mlx"
+                else ollama_model_available(str(route.get("default_model") or ""))
+            ),
+            "chat_model_governance": local_model_governance(str(route.get("default_model") or "")),
         },
     }
 

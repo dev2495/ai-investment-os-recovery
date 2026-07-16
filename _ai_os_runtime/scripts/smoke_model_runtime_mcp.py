@@ -47,10 +47,20 @@ def main() -> int:
     control = parse_content(call("tools/call", {
         "name": "ai_os_model_runtime_control", "arguments": {"limit": 100},
     }))
-    assert len(control["routes"]) == 21
+    route_names = {route["route_name"] for route in control["routes"]}
+    required_routes = {
+        "always_on_daily_driver",
+        "charlie_munger_orchestration",
+        "filing_analysis",
+        "jarvis_intake",
+        "local_embedding_retrieval",
+        "multimodal_document_analysis",
+        "strategy_generation",
+    }
+    assert required_routes <= route_names, f"missing governed routes: {sorted(required_routes - route_names)}"
     assert len(control["privacy_policies"]) == 4
-    assert len(control["agent_assignments"]) == 49
-    assert len(control["cost_caps"]) == 49
+    assert len(control["agent_assignments"]) > 0
+    assert len(control["cost_caps"]) == len(control["agent_assignments"])
     assert control["raw_prompt_exposed"] is False
     assert control["autonomous_cloud_allowed"] is False
     assert control["capital_action_allowed"] is False

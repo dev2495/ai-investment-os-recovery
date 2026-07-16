@@ -157,7 +157,7 @@ start_api() {
 
   AI_OS_API_HOST="${API_HOST}" AI_OS_API_PORT="${API_PORT}" AI_OS_RUNTIME_ROOT="${RUNTIME_ROOT}" \
     AI_OS_VAULT_ROOT="/Volumes/Devarsh SSD/Obsidian memory " AI_OS_WORKER_SCRIPT="${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" \
-    AI_OS_TRADINGVIEW_CDP_PORT="${TRADINGVIEW_CDP_PORT}" RUNTIME_ROOT="${RUNTIME_ROOT}" \
+    AI_OS_TRADINGVIEW_CDP_PORT="${TRADINGVIEW_CDP_PORT}" AI_OS_EMBEDDING_MODEL="qwen3-embedding:0.6b" RUNTIME_ROOT="${RUNTIME_ROOT}" \
     nohup bash -c 'cd "$RUNTIME_ROOT"; python3 -u api/ai_os_api_server.py; code=$?; printf "AI OS API exited with code %s\n" "$code" >&2; exit "$code"' \
     > "${LOG_DIR}/ai_os_api.log" 2>&1 < /dev/null &
   echo $! > "${RUN_DIR}/ai_os_api.pid"
@@ -170,7 +170,7 @@ start_ollama_user_session() {
     echo "Ollama already running at ${OLLAMA_HOST_URL}"
     return
   fi
-  OLLAMA_MODELS="/Volumes/Devarsh SSD/AI OS Data/ollama/models" OLLAMA_NO_CLOUD=1 \
+  AI_OS_OLLAMA_MODELS="/Volumes/Devarsh SSD/AI OS Data/ollama/models" OLLAMA_NO_CLOUD=1 \
     nohup bash "${RUNTIME_ROOT}/scripts/start_ollama_foreground.sh" \
     > "${LOG_DIR}/ollama.user-session.log" 2>&1 < /dev/null &
   echo $! > "${RUN_DIR}/ollama.pid"

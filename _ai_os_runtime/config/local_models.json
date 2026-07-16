@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "storage_root": "/Volumes/Devarsh SSD/AI OS Data/ollama/models",
+  "runtime": {
+    "provider": "ollama",
+    "base_url": "http://127.0.0.1:11434",
+    "num_parallel": 1,
+    "keep_alive": "5m"
+  },
+  "models": [
+    {
+      "model": "qwen3.5:2b",
+      "tier": "experimental",
+      "required_profiles": [],
+      "context_tokens": 8192,
+      "max_output_tokens": 768,
+      "eval_suite": "light_v1",
+      "promotion_status": "rejected",
+      "uses": ["evaluation_baseline"]
+    },
+    {
+      "model": "qwen3.5:4b",
+      "tier": "experimental",
+      "required_profiles": [],
+      "context_tokens": 8192,
+      "max_output_tokens": 768,
+      "eval_suite": "light_v1",
+      "promotion_status": "rejected",
+      "uses": ["evaluation_baseline"]
+    },
+    {
+      "model": "gemma3:4b",
+      "tier": "experimental",
+      "required_profiles": [],
+      "context_tokens": 8192,
+      "max_output_tokens": 768,
+      "eval_suite": "light_v1",
+      "promotion_status": "rejected",
+      "uses": ["evaluation_baseline"]
+    },
+    {
+      "model": "qwen3.5:9b",
+      "tier": "experimental",
+      "required_profiles": [],
+      "context_tokens": 16384,
+      "max_output_tokens": 1400,
+      "eval_suite": "mid_v1",
+      "promotion_status": "rejected",
+      "uses": ["ollama_backend_baseline"]
+    },
+    {
+      "model": "DreamFoundries/Qwen3.5-9B-4bit",
+      "provider": "mlx",
+      "revision": "20353927abe35e90c459ee908fac8806e5edd455",
+      "local_path": "/Volumes/Devarsh SSD/AI OS Data/mlx/models/qwen3.5-9b-4bit-20353927",
+      "tier": "mid",
+      "required_profiles": ["macbook"],
+      "context_tokens": 8192,
+      "max_kv_tokens": 4096,
+      "max_output_tokens": 1400,
+      "eval_suite": "mid_v1",
+      "promotion_status": "rejected",
+      "uses": ["filing_analysis", "fundamental_research", "strategy_research", "paper_analysis", "investment_memo"]
+    },
+    {
+      "model": "qwen3-embedding:0.6b",
+      "tier": "retrieval",
+      "required_profiles": ["macbook", "imac"],
+      "context_tokens": 8192,
+      "vector_dimensions": 1024,
+      "eval_suite": "retrieval_v1",
+      "promotion_status": "approved",
+      "uses": ["embedding", "semantic_search", "deterministic_similarity_rerank"]
+    },
+    {
+      "model": "gemma4:e2b",
+      "tier": "specialist",
+      "required_profiles": ["macbook-specialist"],
+      "context_tokens": 8192,
+      "max_output_tokens": 1000,
+      "eval_suite": "multimodal_v1",
+      "promotion_status": "rejected",
+      "uses": ["document_vision", "chart_reading", "scanned_pdf", "audio_document"]
+    },
+    {
+      "model": "llama3.2:3b",
+      "tier": "rollback",
+      "required_profiles": [],
+      "context_tokens": 4096,
+      "eval_suite": "legacy_baseline_v1",
+      "promotion_status": "rollback_only",
+      "uses": ["legacy_comparison"]
+    },
+    {
+      "model": "mxbai-embed-large",
+      "tier": "rollback",
+      "required_profiles": [],
+      "context_tokens": 512,
+      "vector_dimensions": 1024,
+      "eval_suite": "legacy_retrieval_v1",
+      "promotion_status": "rollback_only",
+      "uses": ["legacy_embedding_comparison"]
+    }
+  ],
+  "held_candidates": [
+    {
+      "model": "prism-ml/Bonsai-27B-1bit",
+      "reason": "No pinned production Ollama runtime is approved; evaluate only after the core fleet is stable."
+    },
+    {
+      "model": "Qwen/Qwen3-Reranker-0.6B",
+      "reason": "Ollama has no official rerank endpoint. Use embedding similarity reranking until a pinned local cross-encoder runtime passes privacy and latency gates."
+    }
+  ]
+}

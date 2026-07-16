@@ -42,13 +42,31 @@ def main() -> int:
     routes = run_psql_json(
         "SELECT route_name, runtime_status FROM agent.v_model_route_runtime_control ORDER BY route_name"
     )
+    required_routes = {
+        "agent_worker_deterministic",
+        "always_on_daily_driver",
+        "charlie_munger_orchestration",
+        "daily_brief",
+        "filing_analysis",
+        "jarvis_intake",
+        "jarvis_runtime",
+        "local_embedding_retrieval",
+        "multimodal_document_analysis",
+        "news_curation",
+        "research_company_analysis",
+        "strategy_backtest",
+        "strategy_generation",
+        "strategy_optimizer",
+        "trade_journal_learning",
+    }
+    route_names = {row["route_name"] for row in routes}
+    assert required_routes <= route_names, f"missing governed routes: {sorted(required_routes - route_names)}"
     route_counts: dict[str, int] = {}
     for row in routes:
         route_counts[row["runtime_status"]] = route_counts.get(row["runtime_status"], 0) + 1
-    assert len(routes) == 21, f"expected 21 governed routes, found {len(routes)}"
-    assert route_counts.get("ready") == 14, route_counts
-    assert route_counts.get("model_unavailable") == 5, route_counts
     assert route_counts.get("blocked_secret") == 2, route_counts
+    assert route_counts.get("ready") == len(routes) - 2, route_counts
+    assert not ({"degraded", "endpoint_missing", "model_unavailable"} & route_counts.keys()), route_counts
 
     unsafe = run_psql_json(
         """SELECT

@@ -10,6 +10,8 @@ export AI_OS_WORKER_SCRIPT="${AI_OS_WORKER_SCRIPT:-/Users/devarshthakkar/Library
 export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psql}"
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/usr/local/bin/docker}"
 export AI_OS_TRADINGVIEW_CDP_PORT="${AI_OS_TRADINGVIEW_CDP_PORT:-9333}"
+export AI_OS_EMBEDDING_MODEL="${AI_OS_EMBEDDING_MODEL:-qwen3-embedding:0.6b}"
+export AI_OS_CHAT_MODEL_ROUTE="${AI_OS_CHAT_MODEL_ROUTE:-always_on_daily_driver}"
 
 cd "/Users/devarshthakkar/Library/Application Support/AIOS/service"
 exec python3 -u api/ai_os_api_server.py

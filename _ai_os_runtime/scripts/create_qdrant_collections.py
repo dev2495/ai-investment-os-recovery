@@ -12,12 +12,12 @@ VECTOR_SIZE = 1024
 DISTANCE = "Cosine"
 
 COLLECTIONS = [
-    "obsidian_notes_mxbai_embed_large",
-    "corporate_filings_mxbai_embed_large",
-    "trade_journals_mxbai_embed_large",
-    "news_social_mxbai_embed_large",
-    "research_reports_mxbai_embed_large",
-    "strategy_artifacts_mxbai_embed_large",
+    "obsidian_notes_qwen3_embedding_0_6b",
+    "corporate_filings_qwen3_embedding_0_6b",
+    "trade_journals_qwen3_embedding_0_6b",
+    "news_social_qwen3_embedding_0_6b",
+    "research_reports_qwen3_embedding_0_6b",
+    "strategy_artifacts_qwen3_embedding_0_6b",
 ]
 
 

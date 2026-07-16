@@ -1,80 +1,86 @@
-version: 1
+version: 2
 purpose: >
-  Jarvis model routing map. The GUI/persona calls Jarvis, Jarvis classifies the task,
-  retrieves context from SQL/Qdrant/Obsidian, then selects the cheapest sufficient model.
+  Jarvis model routing map. Charlie delegates to Jarvis, Jarvis classifies the task,
+  retrieves role-scoped evidence, then selects the cheapest promoted model. A model
+  being installed is not sufficient: the exact digest and task suite must pass.
 
 providers:
   ollama:
-    role: cheap_daily_driver
+    role: governed_local_runtime
     base_url: http://127.0.0.1:11434
-    notes: "Use for routing, short summaries, classifications, journal extraction, and routine briefs."
-  lm_studio:
-    role: local_model_test_bench
-    base_url: http://127.0.0.1:1234/v1
-    notes: "Use for testing OpenAI-compatible local models and MLX/GGUF variants."
-  mlx:
-    role: apple_silicon_optimized_runtime
-    base_url: local_python_adapter
-    notes: "Use MLX quantized models when installed; best for Apple Silicon memory efficiency."
+    storage_root: /Volumes/Devarsh SSD/AI OS Data/ollama/models
+    notes: "Concurrency one. Client-private data is local-only. Models never own arithmetic, risk, backtests, approvals, or execution."
   codex:
     role: engineering_escalation
     base_url: codex_desktop
-    notes: "Use for code changes, debugging, architecture changes, repo work, and hard verification."
+    notes: "Use for code changes, debugging, architecture, repo work, and hard verification."
   cloud_optional:
-    role: hard_reasoning_escalation
+    role: approval_gated_reasoning_escalation
     base_url: configured_later
-    notes: "Use selectively for long filings, difficult synthesis, or high-stakes review."
+    notes: "Public or redacted context only after privacy, cost, and human approval."
 
 routes:
-  jarvis_intake:
-    task_class: routing
-    default_provider: ollama
-    default_model: qwen3:8b
-    fallback_provider: lm_studio
-    escalation_provider: codex
+  always_on_daily_driver:
+    task_class: routing_and_routine_work
+    default_provider: local_tools
+    default_model: deterministic_router_v1
+    fallback_route: deterministic_tools
+    escalation_route: local_workhorse_synthesis
     max_cost_tier: local
+    context_tokens: 0
+    status: production
 
-  obsidian_retrieval_summary:
-    task_class: retrieval_summary
-    default_provider: ollama
-    default_model: qwen3:8b
-    fallback_provider: lm_studio
-    max_cost_tier: local
-
-  trade_journal_learning:
-    task_class: pattern_extraction
-    default_provider: ollama
-    default_model: qwen3:8b
-    fallback_provider: mlx
+  local_workhorse_synthesis:
+    task_class: investment_research_synthesis
+    default_provider: mlx
+    default_model: DreamFoundries/Qwen3.5-9B-4bit
+    fallback_route: always_on_daily_driver
     escalation_provider: cloud_optional
-    max_cost_tier: local
+    max_cost_tier: local_plus
+    context_tokens: 16384
+    status: rejected_until_mid_v1_passes
 
   filings_analysis:
-    task_class: financial_reasoning
-    default_provider: ollama
-    default_model: qwen3:14b
-    fallback_provider: lm_studio
+    task_class: filing_analysis
+    default_provider: local_tools
+    default_model: deterministic_filings_pipeline_v1
+    fallback_route: deterministic_tools
     escalation_provider: cloud_optional
-    max_cost_tier: hybrid
-
-  news_curation:
-    task_class: monitoring
-    default_provider: ollama
-    default_model: qwen3:8b
-    fallback_provider: lm_studio
-    max_cost_tier: local
+    max_cost_tier: local_plus
+    context_tokens: 0
+    status: production_deterministic
 
   strategy_generation:
-    task_class: quant_research
-    default_provider: ollama
-    default_model: qwen3:14b
-    fallback_provider: lm_studio
+    task_class: strategy_research
+    default_provider: local_tools
+    default_model: governed_strategy_pipeline_v1
+    fallback_route: deterministic_tools
     escalation_provider: codex
-    max_cost_tier: hybrid
+    max_cost_tier: local_plus
+    context_tokens: 0
+    status: production_deterministic
+
+  multimodal_document_analysis:
+    task_class: multimodal_document_analysis
+    default_provider: local_tools
+    default_model: deterministic_document_extraction_v1
+    fallback_route: deterministic_tools
+    escalation_provider: cloud_optional
+    max_cost_tier: local_plus
+    context_tokens: 0
+    status: rejected_until_multimodal_v1_passes
+
+  local_embedding_retrieval:
+    task_class: embedding
+    default_provider: ollama
+    default_model: qwen3-embedding:0.6b
+    fallback_model: null
+    max_cost_tier: local
+    vector_dimensions: 1024
+    status: production
 
   software_engineering:
     task_class: coding
     default_provider: codex
-    default_model: gpt-5-codex
+    default_model: current_codex
     max_cost_tier: codex
-

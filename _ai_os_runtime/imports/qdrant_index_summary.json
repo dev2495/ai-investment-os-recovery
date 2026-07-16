@@ -1,16 +1,16 @@
 {
-  "documents_seen": 290,
+  "documents_seen": 6122,
   "documents_skipped_empty": 0,
-  "points_indexed": 2212,
-  "embedding_model": "mxbai-embed-large",
+  "points_indexed": 9349,
+  "embedding_model": "qwen3-embedding:0.6b",
   "fallback_chunks": 0,
   "last_embedding_error": null,
   "collections": {
-    "obsidian_notes_mxbai_embed_large": 532,
-    "corporate_filings_mxbai_embed_large": 234,
-    "trade_journals_mxbai_embed_large": 1,
-    "news_social_mxbai_embed_large": 9,
-    "research_reports_mxbai_embed_large": 1393,
-    "strategy_artifacts_mxbai_embed_large": 43
+    "obsidian_notes_qwen3_embedding_0_6b": 1934,
+    "corporate_filings_qwen3_embedding_0_6b": 5297,
+    "trade_journals_qwen3_embedding_0_6b": 1,
+    "news_social_qwen3_embedding_0_6b": 618,
+    "research_reports_qwen3_embedding_0_6b": 1393,
+    "strategy_artifacts_qwen3_embedding_0_6b": 106
   }
 }
