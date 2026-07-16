@@ -55,19 +55,19 @@ def cleanup_smoke_rows() -> dict:
         WHERE title ILIKE '%{MARKER}%'
            OR evidence::text ILIKE '%{MARKER}%'
         RETURNING id
-    ),
-    deleted_audit AS (
-        DELETE FROM agent.mcp_audit_log
-        WHERE request_payload::text ILIKE '%{MARKER}%'
-           OR result_payload::text ILIKE '%{MARKER}%'
-           OR target_id ILIKE '%{MARKER}%'
-        RETURNING id
     )
     SELECT json_build_object(
         'tradingview_tasks', (SELECT count(*) FROM deleted_tv_tasks),
         'trades', (SELECT count(*) FROM deleted_trades),
         'inbox', (SELECT count(*) FROM deleted_inbox),
-        'audit', (SELECT count(*) FROM deleted_audit)
+        'audit_preserved', true,
+        'audit_rows', (
+            SELECT count(*)
+            FROM agent.mcp_audit_log
+            WHERE request_payload::text ILIKE '%{MARKER}%'
+               OR result_payload::text ILIKE '%{MARKER}%'
+               OR target_id ILIKE '%{MARKER}%'
+        )
     )::text;
     """
     return run_sql_json(sql)

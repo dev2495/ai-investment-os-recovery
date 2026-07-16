@@ -3206,14 +3206,29 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
         },
         "agents": {
             "summary": "SELECT * FROM agent.v_agent_operating_summary ORDER BY metric",
-            "primary": """SELECT e.agent_name,e.display_title,e.department,e.department_name,e.role_scope,e.persona,e.operating_style,e.mental_models,e.reports_to_agent,e.hierarchy_level,e.character_name,e.color_token,e.icon_hint,e.mailbox_address,e.live_state,e.current_work_title,e.current_work_detail,e.primary_route,e.assigned_model,e.model_status,e.cost_policy,e.active_skill_count,e.skills,e.open_task_count,e.open_inbox_count,e.worker_run_count,e.completed_worker_run_count,e.latest_activity_at,r.operating_readiness_score,r.reliability_score,r.reliability_confidence,r.readiness_status FROM agent.v_employee_profiles_v1 e JOIN agent.v_agent_operating_readiness r USING(agent_name) ORDER BY e.role_rank,e.agent_name""",
+            "primary": """SELECT e.agent_name,e.display_title,e.department,e.department_name,e.role_scope,e.persona,e.operating_style,e.mental_models,e.reports_to_agent,e.hierarchy_level,e.character_name,e.color_token,e.icon_hint,e.mailbox_address,e.live_state,e.current_work_title,e.current_work_detail,e.primary_route,e.assigned_model,e.model_status,e.cost_policy,e.active_skill_count,e.skills,e.open_task_count,e.open_inbox_count,e.worker_run_count,e.completed_worker_run_count,e.latest_activity_at,r.operating_readiness_score,r.reliability_score,r.reliability_confidence,r.readiness_status,r.operating_mode,r.model_reasoning_ready,r.tools_ready,r.requested_tool_count,r.resolved_tool_count,r.missing_tool_count,r.missing_tools FROM agent.v_employee_profiles_v1 e JOIN agent.v_agent_operating_readiness r USING(agent_name) ORDER BY e.role_rank,e.agent_name""",
             "secondary": "SELECT * FROM agent.v_live_agent_worker_queue ORDER BY updated_at DESC LIMIT 100",
             "tertiary": "SELECT * FROM agent.v_agent_message_threads ORDER BY created_at DESC NULLS LAST LIMIT 80",
             "departments": "SELECT * FROM agent.v_agent_departments ORDER BY priority, department_name",
             "schedules": "SELECT * FROM agent.v_workflow_schedule_control ORDER BY CASE schedule_state WHEN 'due' THEN 1 WHEN 'waiting_on_open_task' THEN 2 ELSE 3 END, next_run_at",
             "committees": "SELECT * FROM agent.v_committee_membership_roster ORDER BY committee_name",
-            "worker_history": "SELECT * FROM agent.v_recent_worker_runs ORDER BY finished_at DESC NULLS LAST, started_at DESC LIMIT 120",
+            "worker_history": """
+                SELECT ranked.*
+                FROM (
+                    SELECT runs.*,
+                           row_number() OVER (
+                               PARTITION BY agent_name
+                               ORDER BY finished_at DESC NULLS LAST, started_at DESC, id DESC
+                           ) AS employee_run_rank
+                    FROM agent.v_recent_worker_runs runs
+                ) ranked
+                WHERE employee_run_rank <= 5
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC, agent_name
+                LIMIT 500
+            """,
             "cost_quality": "SELECT * FROM agent.v_agent_model_cost_cap_status ORDER BY department, agent_name",
+            "function_coverage": "SELECT * FROM agent.v_fund_function_coverage ORDER BY department_key,function_name",
+            "activation_status": "SELECT * FROM agent.v_employee_activation_status ORDER BY updated_at DESC,agent_name",
         },
         "committees": {
             "summary": "SELECT * FROM agent.v_committee_room_summary ORDER BY metric",
@@ -3234,6 +3249,8 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "summary": "SELECT * FROM core.v_latest_data_source_freshness ORDER BY severity, staleness_minutes DESC NULLS LAST LIMIT 80",
             "primary": "SELECT * FROM trading.v_crypto_commodity_watchlist ORDER BY normalized_symbol LIMIT 80",
             "secondary": "SELECT * FROM market.v_latest_news_items ORDER BY published_at DESC NULLS LAST LIMIT 100",
+            "macro_sources": "SELECT * FROM market.v_macro_source_readiness ORDER BY source_key",
+            "macro_observations": "SELECT source_key,source_name,provider,series_key,series_name,geography,observation_date,observation_value,unit,frequency,source_url,retrieved_at FROM market.v_macro_observations ORDER BY observation_date DESC,series_key,geography LIMIT 180",
         },
         "models": {
             "summary": "SELECT * FROM agent.v_model_runtime_control_summary ORDER BY metric",

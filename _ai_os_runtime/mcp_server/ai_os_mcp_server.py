@@ -5232,6 +5232,86 @@ def runtime_daemon_health(arguments: dict) -> dict:
     )
 
 
+def agent_capability_readiness(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=120, maximum=200)
+    return tool_result(
+        {
+            "summary": run_psql_json("SELECT * FROM agent.v_agent_operating_summary ORDER BY metric"),
+            "employees": run_psql_json(
+                f"""
+                SELECT agent_name,display_title,department,readiness_status,operating_mode,
+                       model_reasoning_ready,tools_ready,requested_tool_count,
+                       resolved_tool_count,missing_tool_count,missing_tools,
+                       completed_runs,operating_readiness_score
+                FROM agent.v_agent_operating_readiness
+                ORDER BY department,agent_name
+                LIMIT {limit}
+                """
+            ),
+            "activation": run_psql_json(
+                f"""
+                SELECT campaign_key,agent_name,department,status,operating_mode,
+                       acceptance_checks,worker_run_id,finished_at
+                FROM agent.v_employee_activation_status
+                ORDER BY finished_at DESC NULLS LAST,agent_name
+                LIMIT {limit}
+                """
+            ),
+        }
+    )
+
+
+def fund_function_coverage(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=120, maximum=200)
+    return tool_result(
+        {
+            "coverage": run_psql_json(
+                f"""
+                SELECT function_key,function_name,department_key,function_class,
+                       criticality,objective,human_final_required,
+                       live_execution_allowed,owner_count,reviewer_count,
+                       challenger_count,assigned_agents,coverage_status
+                FROM agent.v_fund_function_coverage
+                ORDER BY department_key,function_name
+                LIMIT {limit}
+                """
+            )
+        }
+    )
+
+
+def macro_source_readiness(arguments: dict) -> dict:
+    limit = limit_arg(arguments, default=100, maximum=500)
+    return tool_result(
+        {
+            "readiness": run_psql_json("SELECT * FROM market.v_macro_source_readiness ORDER BY source_key"),
+            "observations": run_psql_json(
+                f"""
+                SELECT source_key,source_name,provider,series_key,series_name,
+                       geography,observation_date,observation_value,unit,
+                       frequency,source_url,retrieved_at
+                FROM market.v_macro_observations
+                ORDER BY observation_date DESC,series_key,geography
+                LIMIT {limit}
+                """
+            ),
+        }
+    )
+
+
+def ingest_public_macro_data(arguments: dict) -> dict:
+    result = run_command([sys.executable, str(RUNTIME_ROOT / "scripts" / "ingest_public_macro_data.py")])
+    payload: object = result
+    if result.get("stdout"):
+        try:
+            payload = json.loads(str(result["stdout"]))
+        except json.JSONDecodeError:
+            payload = result
+    if result.get("returncode") != 0:
+        raise RuntimeError(result.get("stderr") or result.get("stdout") or "public macro ingestion failed")
+    return tool_result(payload)
+
+
 def run_trade_journal_strategy_mining(arguments: dict) -> dict:
     payload = {
         "run_key": arguments.get("run_key") or arguments.get("runKey") or "journal_mining_mcp",
@@ -7728,6 +7808,26 @@ TOOLS = {
         "description": "Read the persisted heartbeat, cadence, enabled workloads, and latest pass status for the 24/7 AI OS daemon.",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": runtime_daemon_health,
+    },
+    "ai_os_agent_capability_readiness": {
+        "description": "Read evidence-backed employee activation, role tool entitlements, operating mode, and model-readiness separation.",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 120}}},
+        "handler": agent_capability_readiness,
+    },
+    "ai_os_fund_function_coverage": {
+        "description": "Read every hedge-fund and operating-office function with its owner, independent reviewer, risk challenger, and coverage status.",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 120}}},
+        "handler": fund_function_coverage,
+    },
+    "ai_os_macro_source_readiness": {
+        "description": "Read verified World Bank and ECB observations plus credential-gated FRED readiness.",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 100}}},
+        "handler": macro_source_readiness,
+    },
+    "ai_os_ingest_public_macro_data": {
+        "description": "Fetch verified public World Bank and ECB observations and store source lineage and health evidence. No seed data or trading action.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": ingest_public_macro_data,
     },
     "ai_os_run_trade_journal_strategy_mining": {
         "description": "Mine real trade journals and trade activity rows into strategy hypotheses. This never approves live execution.",

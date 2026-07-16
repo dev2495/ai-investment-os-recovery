@@ -86,6 +86,10 @@ def main() -> int:
         "ai_os_market_data_readiness",
         "ai_os_run_legacy_market_data_ingestion",
         "ai_os_runtime_daemon_health",
+        "ai_os_agent_capability_readiness",
+        "ai_os_fund_function_coverage",
+        "ai_os_macro_source_readiness",
+        "ai_os_ingest_public_macro_data",
         "ai_os_client_cash_ledger_control",
         "ai_os_client_accounting_run",
         "ai_os_client_report_delivery_control",
@@ -112,6 +116,15 @@ def main() -> int:
         "model_assignment_completeness": parse_tool_content(call("tools/call", {"name": "ai_os_agent_model_assignment_completeness", "arguments": {"limit": 100}})),
         "market_data": parse_tool_content(call("tools/call", {"name": "ai_os_market_data_readiness", "arguments": {"limit": 10}})),
         "runtime_daemons": parse_tool_content(call("tools/call", {"name": "ai_os_runtime_daemon_health", "arguments": {}})),
+        "agent_capabilities": parse_tool_content(
+            call("tools/call", {"name": "ai_os_agent_capability_readiness", "arguments": {"limit": 100}})
+        ),
+        "fund_functions": parse_tool_content(
+            call("tools/call", {"name": "ai_os_fund_function_coverage", "arguments": {"limit": 100}})
+        ),
+        "macro_sources": parse_tool_content(
+            call("tools/call", {"name": "ai_os_macro_source_readiness", "arguments": {"limit": 20}})
+        ),
         "local_artifacts": parse_tool_content(call("tools/call", {"name": "ai_os_local_artifact_ingestions", "arguments": {"limit": 20}})),
         "legacy_source_resolutions": parse_tool_content(call("tools/call", {"name": "ai_os_legacy_source_resolution_board", "arguments": {"limit": 100}})),
         "client_accounting": parse_tool_content(call("tools/call", {"name": "ai_os_client_accounting_run", "arguments": {"account_code": "p2cursor_account_2", "actor": "MCP smoke validation"}})),
@@ -153,6 +166,15 @@ def main() -> int:
         "market_data_import_rows": len((checks["market_data"] or {}).get("imports", [])),
         "market_bias_control_rows": len((checks["market_data"] or {}).get("bias_controls", [])),
         "runtime_daemon_rows": len((checks["runtime_daemons"] or {}).get("runtime_daemons", [])),
+        "agent_capability_rows": len((checks["agent_capabilities"] or {}).get("employees", [])),
+        "agent_missing_tool_rows": sum(
+            not row.get("tools_ready") for row in (checks["agent_capabilities"] or {}).get("employees", [])
+        ),
+        "fund_function_rows": len((checks["fund_functions"] or {}).get("coverage", [])),
+        "fund_function_uncovered_rows": sum(
+            row.get("coverage_status") != "covered" for row in (checks["fund_functions"] or {}).get("coverage", [])
+        ),
+        "macro_source_rows": len((checks["macro_sources"] or {}).get("readiness", [])),
         "local_artifact_rows": len((checks["local_artifacts"] or {}).get("ingestions", [])),
         "local_artifact_summary_metrics": len((checks["local_artifacts"] or {}).get("summary", [])),
         "legacy_source_resolution_rows": len(checks["legacy_source_resolutions"] or []),

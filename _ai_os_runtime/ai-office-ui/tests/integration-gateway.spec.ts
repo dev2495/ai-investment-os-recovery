@@ -13,7 +13,9 @@ test("Data and Model Gateway uses its scoped live endpoint and preserves safety 
 });
 
 test("gateway exposes source, model, mapping, job, readiness, and route controls", async ({ page }) => {
+  const snapshotResponse = page.waitForResponse((response) => response.url().includes("/api/integration-gateway/snapshot") && response.ok());
   await page.goto("/?mode=command&workspace=models", { waitUntil: "networkidle" });
+  const snapshot = await (await snapshotResponse).json();
   await expect(page.getByRole("heading", { level: 2, name: "Register Data Source" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Register Model Provider" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Plug-in Readiness Board" })).toBeVisible();
@@ -21,7 +23,7 @@ test("gateway exposes source, model, mapping, job, readiness, and route controls
   await expect(page.getByRole("heading", { level: 2, name: "Schema Mapping" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Bounded Ingestion Jobs" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Model Route Matrix" })).toBeVisible();
-  await expect(page.locator(".gateway-plugin-row")).toHaveCount(39);
+  await expect(page.locator(".gateway-plugin-row")).toHaveCount(snapshot.plugins.length);
   await expect(page.locator(".gateway-route-grid article")).toHaveCount(21);
   await expect(page.locator(".gateway-market-grid article")).toHaveCount(7);
   await expect(page.locator(".gateway-import-ledger article")).toHaveCount(6);
@@ -34,13 +36,18 @@ test("gateway exposes source, model, mapping, job, readiness, and route controls
 });
 
 test("gateway readiness filters distinguish sources and models", async ({ page }) => {
+  const snapshotResponse = page.waitForResponse((response) => response.url().includes("/api/integration-gateway/snapshot") && response.ok());
   await page.goto("/?mode=command&workspace=models", { waitUntil: "networkidle" });
+  const snapshot = await (await snapshotResponse).json();
+  const dataSourceCount = snapshot.plugins.filter((row: Record<string, unknown>) => row.plugin_kind === "data_source").length;
+  const modelProviderCount = snapshot.plugins.filter((row: Record<string, unknown>) => row.plugin_kind === "model_provider").length;
+  const gatedModelCount = snapshot.plugins.filter((row: Record<string, unknown>) => row.plugin_kind === "model_provider" && row.gateway_status === "needs_provider_readiness").length;
   await page.getByLabel("Filter plugin kind").selectOption("data_source");
-  await expect(page.locator(".gateway-plugin-row")).toHaveCount(18);
+  await expect(page.locator(".gateway-plugin-row")).toHaveCount(dataSourceCount);
   await page.getByLabel("Filter plugin kind").selectOption("model_provider");
-  await expect(page.locator(".gateway-plugin-row")).toHaveCount(21);
+  await expect(page.locator(".gateway-plugin-row")).toHaveCount(modelProviderCount);
   await page.getByLabel("Filter gateway status").selectOption("needs_provider_readiness");
-  await expect(page.locator(".gateway-plugin-row")).toHaveCount(5);
+  await expect(page.locator(".gateway-plugin-row")).toHaveCount(gatedModelCount);
 });
 
 test("integration evidence resolves checks, mappings, jobs, and readiness", async ({ page }) => {

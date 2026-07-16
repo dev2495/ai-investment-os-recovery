@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -166,12 +167,27 @@ def materiality(text: str) -> tuple[float, float, list[str], str]:
 def read_feed(url: str, per_feed: int, timeout: int) -> tuple[int | None, list[dict[str, Any]], str | None, int]:
     started = time.monotonic()
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml, text/xml, */*"})
-    try:
-        with urllib.request.urlopen(request, timeout=max(5, timeout)) as response:
-            status = int(getattr(response, "status", 200))
-            body = response.read(2_000_000)
-    except Exception as exc:  # noqa: BLE001
-        return None, [], f"{type(exc).__name__}: {exc}", int((time.monotonic() - started) * 1000)
+    status: int | None = None
+    body = b""
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=max(5, timeout)) as response:
+                status = int(getattr(response, "status", 200))
+                body = response.read(2_000_000)
+            last_error = None
+            break
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code not in {429, 500, 502, 503, 504} or attempt == 2:
+                break
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt == 2:
+                break
+        time.sleep(2**attempt)
+    if last_error is not None:
+        return status, [], f"{type(last_error).__name__}: {last_error}", int((time.monotonic() - started) * 1000)
     try:
         root = ET.fromstring(body)
     except ET.ParseError as exc:

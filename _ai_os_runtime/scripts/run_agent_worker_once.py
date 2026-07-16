@@ -13,7 +13,11 @@ from typing import Any
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).resolve().parents[1])
-VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
+VAULT_ROOT = Path(
+    os.environ.get("AI_OS_VAULT_ROOT")
+    or os.environ.get("AI_OS_VAULT_PATH")
+    or RUNTIME_ROOT.parent
+)
 OUTPUT_DIR = VAULT_ROOT / "ai memory" / "00 AI OS" / "Agent Outputs" / "Worker Runs"
 
 
@@ -163,6 +167,17 @@ def profile_for(agent_name: str) -> dict[str, Any]:
         LEFT JOIN agent.v_model_route_runtime_control fallback_runtime
           ON fallback_runtime.route_name=assignment.fallback_route
         WHERE active.agent_name = {sql_literal(agent_name)}
+        """
+    )
+
+
+def capability_for(agent_name: str) -> dict[str, Any]:
+    return psql_one(
+        f"""
+        SELECT requested_tool_count,resolved_tool_count,ready_tool_count,
+               missing_tool_count,missing_tools,tools_ready
+        FROM agent.v_agent_capability_readiness
+        WHERE agent_name={sql_literal(agent_name)}
         """
     )
 
@@ -362,6 +377,7 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
 
 
 def execution_envelope_for(profile: dict[str, Any], skill: dict[str, Any]) -> dict[str, Any]:
+    capability = capability_for(str(profile.get("agent_name") or ""))
     return {
         "mode": "deterministic_evidence_worker",
         "model_invocation": "deferred_until_model_stack",
@@ -374,6 +390,7 @@ def execution_envelope_for(profile: dict[str, Any], skill: dict[str, Any]) -> di
         "tools": profile.get("default_tools") or [],
         "skills": profile.get("primary_skills") or [],
         "required_tools": skill.get("required_tools") or [],
+        "capability_readiness": capability,
         "guardrails": profile.get("guardrails") or {},
         "human_interface": profile.get("human_interface"),
         "evidence_policy": "warehouse_and_source_references_only",
