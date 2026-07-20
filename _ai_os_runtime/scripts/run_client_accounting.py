@@ -18,7 +18,7 @@ RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve(
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 PSQL_BIN = os.environ.get("AI_OS_PSQL_BIN", "/opt/homebrew/opt/postgresql@15/bin/psql")
-DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/usr/local/bin/docker")
+DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN") or next((path for path in ("/opt/homebrew/bin/docker", "/usr/local/bin/docker", "/usr/bin/docker") if Path(path).exists()), "docker")
 
 
 def psql_candidates() -> list[list[str]]:
@@ -33,7 +33,11 @@ def psql_text(sql: str) -> str:
     env = os.environ.copy()
     env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
     for command in psql_candidates():
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        try:
+            completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        except OSError as exc:
+            errors.append(f"{command[0]}: {exc}")
+            continue
         if completed.returncode == 0:
             return completed.stdout.strip()
         errors.append((completed.stderr or completed.stdout).strip())

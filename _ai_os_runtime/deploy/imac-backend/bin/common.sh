@@ -10,8 +10,10 @@ LAUNCHD_ROOT="${HOME}/Library/LaunchAgents"
 LAUNCHD_LOG_ROOT="${HOME}/Library/Logs/AIOS"
 SUPERVISOR_LABEL="com.devarsh.aios.imac.supervisor"
 BACKUP_LABEL="com.devarsh.aios.imac.backup"
+REPORTS_LABEL="com.devarsh.aios.imac.scheduled-reports"
 SUPERVISOR_PLIST="${LAUNCHD_ROOT}/${SUPERVISOR_LABEL}.plist"
 BACKUP_PLIST="${LAUNCHD_ROOT}/${BACKUP_LABEL}.plist"
+REPORTS_PLIST="${LAUNCHD_ROOT}/${REPORTS_LABEL}.plist"
 LAUNCHD_DOMAIN="gui/$(id -u)"
 
 log() {

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.imac.scheduled-reports</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__COMMAND__</string>
+    <string>reports</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AI_OS_IMAC_ENV</key>
+    <string>__ENV_FILE__</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>35</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__LOG_ROOT__/scheduled-reports.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_ROOT__/scheduled-reports.launchd.err</string>
+</dict>
+</plist>
