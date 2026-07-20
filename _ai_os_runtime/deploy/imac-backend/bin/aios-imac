@@ -429,7 +429,7 @@ backup_backend() {
   rsync -a --delete --exclude '_ai_os_runtime/' "${AI_OS_VAULT_ROOT}/" "${staging}/vault/"
   docker exec ai_os_postgres pg_dump -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" -Fc \
     > "${staging}/postgres/ai_os.dump"
-  docker exec ai_os_postgres pg_restore --list < "${staging}/postgres/ai_os.dump" \
+  docker exec -i ai_os_postgres pg_restore --list < "${staging}/postgres/ai_os.dump" \
     > "${staging}/postgres/archive.list"
   rsync -a --delete \
     --exclude 'node_modules/' --exclude 'dist/' --exclude '__pycache__/' --exclude '.env' \
