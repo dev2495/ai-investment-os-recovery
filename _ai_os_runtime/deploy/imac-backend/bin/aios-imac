@@ -142,8 +142,8 @@ ensure_runtime_directories() {
     "${AI_OS_PLAYWRIGHT_BROWSERS_PATH}" \
     "${AI_OS_DATA_ROOT}/colima" \
     "${AI_OS_TRADINGVIEW_BROWSER_PROFILE}" \
-    "${AI_OS_DATA_ROOT}/logs/imac-backend" \
-    "${AI_OS_DATA_ROOT}/run/imac-backend" \
+    "${AI_OS_RUNTIME_LOG_ROOT}" \
+    "${AI_OS_RUNTIME_RUN_ROOT}" \
     "${AI_OS_DATA_ROOT}/evals/local_models"
 }
 
@@ -244,7 +244,7 @@ ensure_embedding_model() {
   local ollama_pid=""
   if ! curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" >/dev/null 2>&1; then
     OLLAMA_MODELS="${AI_OS_OLLAMA_MODELS}" OLLAMA_HOST="127.0.0.1:${AI_OS_OLLAMA_PORT}" \
-      ollama serve >"${AI_OS_DATA_ROOT}/logs/imac-backend/ollama-bootstrap.log" 2>&1 &
+      ollama serve >"${AI_OS_RUNTIME_LOG_ROOT}/ollama-bootstrap.log" 2>&1 &
     ollama_pid=$!
     wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 90
   fi
@@ -407,7 +407,7 @@ reindex_qdrant() {
   wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 30
   log "Rebuilding the governed Qdrant collections; this can take several hours on the M1 iMac"
   "$(runtime_python)" "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/index_qdrant_documents.py" \
-    | tee "${AI_OS_DATA_ROOT}/logs/imac-backend/qdrant-reindex-$(date '+%Y%m%dT%H%M%S').log"
+    | tee "${AI_OS_RUNTIME_LOG_ROOT}/qdrant-reindex-$(date '+%Y%m%dT%H%M%S').log"
   "$(runtime_python)" "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_local_model_evals.py" \
     --model "${AI_OS_EMBEDDING_MODEL}" --persist --promote
 }

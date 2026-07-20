@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 load_env
 
-LOG_ROOT="${AI_OS_DATA_ROOT}/logs/imac-backend"
-RUN_ROOT="${AI_OS_DATA_ROOT}/run/imac-backend"
+LOG_ROOT="${AI_OS_RUNTIME_LOG_ROOT:-${HOME}/Library/Logs/AIOS/runtime}"
+RUN_ROOT="${AI_OS_RUNTIME_RUN_ROOT:-${HOME}/Library/Application Support/AIOS/run}"
 mkdir -p "${LOG_ROOT}" "${RUN_ROOT}"
 
 children=()
