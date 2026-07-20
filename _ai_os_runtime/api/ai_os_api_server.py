@@ -12477,9 +12477,10 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             GROUP BY timeframe
             ORDER BY timeframe
         """,
-        "vectors": """
+        "vectors": f"""
             SELECT collection_name, embedding_model, count(*) AS chunks
             FROM knowledge.vector_documents
+            WHERE embedding_model = {sql_literal(EMBEDDING_MODEL)}
             GROUP BY collection_name, embedding_model
             ORDER BY collection_name, embedding_model
         """,
