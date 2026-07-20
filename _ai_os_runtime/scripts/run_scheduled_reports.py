@@ -22,11 +22,25 @@ API_URL = os.environ.get("AI_OS_API_URL", "http://127.0.0.1:8765").rstrip("/")
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 PSQL_BIN = os.environ.get("AI_OS_PSQL_BIN", "/opt/homebrew/opt/postgresql@15/bin/psql")
-DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/usr/local/bin/docker")
+DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN") or next((path for path in ("/opt/homebrew/bin/docker", "/usr/local/bin/docker", "/usr/bin/docker") if Path(path).exists()), "docker")
 IST = ZoneInfo("Asia/Kolkata")
 
 
 REPORT_SOURCES: dict[str, list[tuple[str, str, str, int]]] = {
+    "daily_investment_letter": [
+        ("mission-control", "filing_summary", "Corporate Filing Summary", 1),
+        ("mission-control", "latest_filings", "Latest Corporate Filings", 12),
+        ("mission-control", "latest_news", "Curated Market News", 12),
+        ("mission-control", "watchlist", "Office Watchlist", 30),
+        ("portfolio-office", "portfolio_intelligence", "Portfolio Intelligence", 20),
+        ("portfolio-office", "cross_book_conflicts", "Cross-Book Conflicts", 12),
+        ("research-ideas", "generated_ideas", "Idea Pipeline", 12),
+        ("research-ideas", "special_situations", "Special Situations", 12),
+        ("trading-quant-risk", "signals", "Signals Requiring Attention", 12),
+        ("trading-quant-risk", "options_surface", "Options Surface", 12),
+        ("trading-quant-risk", "risk_limits", "Risk Limits", 12),
+        ("trading-quant-risk", "execution_control", "Execution Guard", 1),
+    ],
     "daily_market_brief": [
         ("trading-quant-risk", "signals", "Signals", 12),
         ("trading-quant-risk", "tradingview_tasks", "TradingView Work", 12),
@@ -122,7 +136,11 @@ def psql_text(sql: str) -> str:
     env = os.environ.copy()
     env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
     for command in psql_candidates():
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        try:
+            completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        except OSError as exc:
+            errors.append(f"{command[0]}: {exc}")
+            continue
         if completed.returncode == 0:
             return completed.stdout.strip()
         errors.append((completed.stderr or completed.stdout).strip())

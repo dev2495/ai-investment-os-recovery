@@ -1045,6 +1045,8 @@ export interface ChatInput {
   deterministic_only?: boolean;
   include_client_context?: boolean;
   privacy_class?: string;
+  cloud_approved?: boolean;
+  contains_client_data?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -1766,7 +1768,7 @@ export function sendChat(input: ChatInput): Promise<ChatResponse> {
   return requestJson<ChatResponse>("/api/chat", {
     body: JSON.stringify(input),
     method: "POST",
-    signal: AbortSignal.timeout(15_000)
+    signal: AbortSignal.timeout(300_000)
   });
 }
 

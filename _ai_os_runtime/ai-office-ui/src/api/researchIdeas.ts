@@ -31,6 +31,7 @@ export interface ResearchIdeasSnapshot {
   discovery_candidates: LiveRow[];
   idea_dossiers: LiveRow[];
   output_artifacts: LiveRow[];
+  watchlist: LiveRow[];
   execution_control: LiveRow[];
 }
 
@@ -107,5 +108,29 @@ export async function createPaperHypotheses(payload: PaperHypothesisRequest): Pr
   });
   const result = await response.json() as LiveRow & { error?: string };
   if (!response.ok) throw new Error(result.error || `Paper hypothesis API returned ${response.status}`);
+  return result;
+}
+
+export interface WatchlistItemInput {
+  symbol: string;
+  exchange?: string;
+  company_name?: string;
+  item_type?: "research" | "idea" | "catalyst" | "options" | "event" | "technical";
+  priority?: "low" | "medium" | "high" | "critical";
+  thesis?: string;
+  catalyst?: string;
+  invalidation?: string;
+  review_on?: string;
+  actor?: string;
+}
+
+export async function upsertWatchlistItem(payload: WatchlistItemInput): Promise<LiveRow> {
+  const response = await fetch(`${API_URL}/api/watchlist/items/upsert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json() as LiveRow & { error?: string; message?: string };
+  if (!response.ok) throw new Error(result.message || result.error || `Watchlist API returned ${response.status}`);
   return result;
 }

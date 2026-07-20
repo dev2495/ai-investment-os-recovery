@@ -20,6 +20,11 @@ export interface MissionControlSnapshot {
   agent_worker_runs: LiveRow[];
   task_provider_gates: LiveRow[];
   source_freshness: LiveRow[];
+  filing_summary: LiveRow[];
+  latest_filings: LiveRow[];
+  latest_news: LiveRow[];
+  watchlist: LiveRow[];
+  latest_reports: LiveRow[];
   execution_control: LiveRow[];
 }
 

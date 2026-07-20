@@ -31,6 +31,9 @@ export interface TradingQuantRiskSnapshot {
   institutional_risk_summary: LiveRow[];
   limited_live_requests: LiveRow[];
   order_intents: LiveRow[];
+  options_surface: LiveRow[];
+  option_chain: LiveRow[];
+  broker_snapshots: LiveRow[];
   execution_control: LiveRow[];
 }
 

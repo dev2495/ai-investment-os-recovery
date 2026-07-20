@@ -4,7 +4,10 @@ import {
   Bot,
   CheckCircle2,
   ClipboardList,
+  ExternalLink,
+  FileText,
   Inbox,
+  Newspaper,
   MessageSquareText,
   RefreshCw,
   ShieldCheck,
@@ -94,6 +97,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
   const [error, setError] = useState("");
   const [chatDraft, setChatDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
+  const [chatRoute, setChatRoute] = useState<"local" | "fast" | "deep" | "review">("local");
   const [widgetBusy, setWidgetBusy] = useState(false);
   const [workerBusy, setWorkerBusy] = useState(false);
   const [evidenceSelection, setEvidenceSelection] = useState<EvidenceSelection | null>(null);
@@ -133,12 +137,21 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
     setChatBusy(true);
     setError("");
     try {
+      const cloudRoute = chatRoute === "fast"
+        ? "openrouter_research_fast"
+        : chatRoute === "deep"
+          ? "openrouter_research_deep"
+          : "openrouter_research_review";
+      const useCloud = chatRoute !== "local";
       await sendChat({
-        actor: "Devarsh",
-        message,
-        metadata: { workspace: "command", source_surface: "mission_control" },
-        session_key: "ai-office-default",
-        workspace: "command"
+        actor: "Devarsh", message,
+        metadata: { workspace: "command", source_surface: "mission_control", requested_mode: chatRoute },
+        session_key: "ai-office-default", workspace: "command",
+        route_name: useCloud ? cloudRoute : undefined,
+        include_client_context: !useCloud,
+        privacy_class: useCloud ? "internal" : "client_private",
+        contains_client_data: !useCloud,
+        cloud_approved: useCloud
       });
       await refresh();
     } catch (reason) {
@@ -183,6 +196,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
   const sourceIssues = snapshot?.source_freshness.filter((row) => text(row, "status", "fresh") !== "fresh") ?? [];
   const execution = snapshot?.execution_control[0];
   const latestBrief = snapshot?.chat_turns[0];
+  const filingSummary = snapshot?.filing_summary[0];
   const delegatedCount = useMemo(
     () => snapshot?.agent_messages.filter((row) => text(row, "from_agent", "") === "Charlie Munger" && Boolean(row.generated_task_id)).length ?? 0,
     [snapshot]
@@ -208,6 +222,8 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
         <div className="metric-tile"><span>Open Inbox</span><strong>{openInbox.length}</strong><p className={openInbox.length ? "tone-warn" : "tone-good"}>durable work queue</p></div>
         <div className="metric-tile"><span>Pending Approvals</span><strong>{pendingApprovals.length}</strong><p className={pendingApprovals.length ? "tone-warn" : "tone-good"}>human decisions</p></div>
         <div className="metric-tile"><span>Charlie Delegations</span><strong>{delegatedCount}</strong><p className="tone-neutral">recent generated tasks</p></div>
+        <div className="metric-tile"><span>Corporate Filings</span><strong>{text(filingSummary, "filing_count", "0")}</strong><p className="tone-neutral">{text(filingSummary, "special_situation_count", "0")} special situations</p></div>
+        <div className="metric-tile"><span>News / Watchlist</span><strong>{snapshot?.latest_news.length ?? 0} / {snapshot?.watchlist.length ?? 0}</strong><p className="tone-neutral">source-linked live rows</p></div>
         <div className="metric-tile"><span>Execution</span><strong>{text(execution, "global_execution_locked", "true") === "true" ? "Locked" : "Review"}</strong><p className="tone-good">broker writes {text(execution, "live_broker_writes_allowed", "false") === "true" ? "enabled" : "disabled"}</p></div>
       </section>
 
@@ -228,6 +244,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
             </div>
           ) : <Empty>No Charlie brief or chat turn has been recorded.</Empty>}
           <form className="chat-form mission-chat-form" onSubmit={submitChat}>
+            <label><span>Reasoning route</span><select aria-label="Charlie model route" value={chatRoute} onChange={(event) => setChatRoute(event.target.value as typeof chatRoute)}><option value="local">Local private</option><option value="fast">Cloud fast - public/internal only</option><option value="deep">Cloud deep - public/internal only</option><option value="review">Independent cloud review</option></select></label>
             <textarea aria-label="Chat with Charlie in Mission Control" onChange={(event) => setChatDraft(event.target.value)} placeholder="Ask Charlie what changed, what needs approval, or which work to delegate..." rows={3} value={chatDraft} />
             <button className="primary-button" disabled={chatBusy} type="submit"><MessageSquareText size={15} />{chatBusy ? "Thinking" : "Ask Charlie"}</button>
           </form>
@@ -285,7 +302,7 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
           </div>
         </MissionPanel>
 
-        <MissionPanel className="span-5" icon={<Activity size={17} />} title="Freshness Alerts" action={<span>{sourceIssues.length} issues</span>}>
+        <MissionPanel className="span-7" icon={<FileText size={17} />} title="Latest Corporate Filings" action={<span>{snapshot?.latest_filings.length ?? 0} recent</span>}>\n          <div className="source-check-list mission-list">{snapshot?.latest_filings.map((filing) => {const href=text(filing,"attachment_url",text(filing,"source_url",""));return <article className="source-check-row" key={text(filing,"filing_id")}><div><strong>{text(filing,"symbol",text(filing,"company_name"))} · {text(filing,"title")}</strong><p>{text(filing,"source_name")} · {text(filing,"event_type",text(filing,"filing_type"))}</p></div><StatusPill status={text(filing,"extraction_status","pending")}/><span>opp {text(filing,"opportunity_score","-")}</span>{href && href !== "-" ? <a className="icon-button" href={href} rel="noreferrer" target="_blank" title="Open exchange filing"><ExternalLink size={14}/></a> : <time>{date(filing.filed_at)}</time>}</article>;})}{!snapshot?.latest_filings.length?<Empty>No filing rows returned.</Empty>:null}</div>\n        </MissionPanel>\n        <MissionPanel className="span-5" icon={<Newspaper size={17} />} title="Daily Intelligence" action={<span>{snapshot?.latest_reports.length ?? 0} reports</span>}>\n          <div className="source-check-list mission-list">{snapshot?.latest_reports.slice(0,6).map((report)=><article className="source-check-row" key={text(report,"id")}><div><strong>{text(report,"report_name")}</strong><p>{text(report,"summary","Source-backed report run")}</p></div><StatusPill status={text(report,"status","queued")}/><span>{text(report,"output_note_path","pending")}</span><time>{date(report.finished_at ?? report.started_at)}</time></article>)}{!snapshot?.latest_reports.length?<Empty>The daily investment letter has not run yet.</Empty>:null}</div>\n        </MissionPanel>\n\n        <MissionPanel className="span-5" icon={<Activity size={17} />} title="Freshness Alerts" action={<span>{sourceIssues.length} issues</span>}>
           <div aria-label="Freshness alerts" className="source-check-list mission-list" tabIndex={0}>
             {sourceIssues.map((source) => (
               <article className="source-check-row" key={text(source, "source_key")}><div><strong>{text(source, "source_name", text(source, "source_key"))}</strong><p>{text(source, "staleness_minutes", "-")} minutes stale</p></div><StatusPill status={text(source, "status", "unknown")} /><span>{text(source, "severity", "medium")}</span><time>{date(source.created_at)}</time></article>

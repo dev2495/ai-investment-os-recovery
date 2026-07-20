@@ -37,6 +37,8 @@ MLX_REQUEST_MODEL = os.environ.get(
 )
 LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
 LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
+OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
+OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
 TRADINGVIEW_CDP_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
 EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "charlie_munger_orchestration")
@@ -1194,7 +1196,49 @@ def local_openai_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def validate_charlie_model_response(response: str) -> list[str]:
+def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict]:
+    """Call an explicitly selected public/internal cloud route with ZDR enforced."""
+    if not OPENROUTER_API_KEY:
+        return None, "openrouter_key_unavailable", {}
+    try:
+        request = urllib.request.Request(
+            f"{OPENROUTER_BASE_URL}/chat/completions",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://devarshs-imac.tail8dd383.ts.net",
+                "X-Title": "AI Investment OS",
+            },
+            data=json.dumps(
+                {
+                    "model": model_name,
+                    "stream": False,
+                    "temperature": 0.2,
+                    "max_tokens": 1200,
+                    "provider": {"zdr": True, "data_collection": "deny"},
+                    "messages": [
+                        {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                }
+            ).encode("utf-8"),
+        )
+        with urllib.request.urlopen(request, timeout=240) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        message = choices[0].get("message") if isinstance(choices, list) and choices else None
+        content = message.get("content") if isinstance(message, dict) else None
+        usage = payload.get("usage") if isinstance(payload, dict) and isinstance(payload.get("usage"), dict) else {}
+        return (str(content).strip() if content else None), "called", usage
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        return None, f"call_failed:HTTPError:{exc.code}:{detail}", {}
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return None, f"call_failed:{type(exc).__name__}", {}
+
+
+def validate_charlie_model_response(response: str, context: dict | None = None) -> list[str]:
     """Reject model claims that contradict governed runtime state."""
     normalized = " ".join(response.lower().split())
     violations: list[str] = []
@@ -1235,6 +1279,9 @@ def validate_charlie_model_response(response: str) -> list[str]:
                 violations.append("execution_lock_contradiction")
     except Exception as exc:  # noqa: BLE001
         violations.append(f"guardrail_state_unavailable:{type(exc).__name__}")
+    filing_count = int((((context or {}).get("filing_summary") or [{}])[0]).get("filing_count") or 0)
+    if filing_count > 0 and re.search(r"\b(?:zero|no)\s+(?:corporate\s+)?filings?\b|\bno\s+filing\s+data\b", normalized):
+        violations.append("filing_context_contradiction")
     return sorted(set(violations))
 
 
@@ -1548,6 +1595,42 @@ def build_mission_control_snapshot() -> dict:
             ORDER BY
                 CASE status WHEN 'stale' THEN 1 WHEN 'error' THEN 2 WHEN 'missing_check' THEN 3 ELSE 4 END,
                 created_at DESC
+            LIMIT 12
+        """,
+        "filing_summary": """
+            SELECT count(*) AS filing_count,
+                   count(*) FILTER (WHERE event_status NOT IN ('reviewed','closed')) AS open_event_count,
+                   count(*) FILTER (WHERE event_type IN ('merger','demerger','reverse_merger','open_offer','buyback','delisting','scheme_of_arrangement')) AS special_situation_count,
+                   max(filed_at) AS latest_filed_at
+            FROM research.v_corporate_filing_inbox
+        """,
+        "latest_filings": """
+            SELECT filing_id, source_name, exchange, symbol, company_name, title,
+                   filing_type, event_type, filed_at, source_url, attachment_url,
+                   extraction_status, opportunity_score, risk_score, event_status
+            FROM research.v_corporate_filing_inbox
+            ORDER BY filed_at DESC NULLS LAST, event_created_at DESC
+            LIMIT 12
+        """,
+        "latest_news": """
+            SELECT id, source_name, source_url, title, publisher,
+                   published_at, captured_at, symbols, topics, relevance_score
+            FROM market.v_latest_news_items
+            ORDER BY coalesce(published_at,captured_at) DESC, id DESC
+            LIMIT 12
+        """,
+        "watchlist": """
+            SELECT id, watchlist_name, symbol, exchange, company_name,
+                   item_type, status, priority, thesis, catalyst,
+                   invalidation, review_on, owner_agent, updated_at
+            FROM research.v_watchlist_board
+            LIMIT 20
+        """,
+        "latest_reports": """
+            SELECT id, report_key, report_name, report_family, status,
+                   output_note_path, summary, started_at, finished_at
+            FROM ops.v_recent_report_runs
+            ORDER BY started_at DESC, id DESC
             LIMIT 12
         """,
         "execution_control": """
@@ -2092,6 +2175,14 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY latest_activity_at DESC NULLS LAST
             LIMIT 100
         """,
+        "watchlist": """
+            SELECT id, watchlist_key, watchlist_name, purpose, symbol, exchange,
+                   company_name, item_type, status, priority, thesis, catalyst,
+                   invalidation, review_on, owner_agent, source_kind, source_ref,
+                   evidence, updated_at
+            FROM research.v_watchlist_board
+            LIMIT 100
+        """,
         "execution_control": """
             SELECT global_execution_locked, broker_execution_policy,
                    paper_trading_allowed, limited_live_allowed,
@@ -2389,6 +2480,30 @@ def build_trading_quant_risk_snapshot() -> dict:
             FROM trading.v_order_intents
             ORDER BY updated_at DESC
             LIMIT 100
+        """,
+        "options_surface": """
+            SELECT provider, exchange, underlying, expiry, observed_at,
+                   contract_count, call_count, put_count, min_strike, max_strike,
+                   spot_price, call_open_interest, put_open_interest, average_iv,
+                   broker_write_allowed
+            FROM trading.v_options_surface_summary
+            LIMIT 30
+        """,
+        "option_chain": """
+            SELECT provider, exchange, underlying, expiry, observed_at, strike,
+                   option_type, trading_symbol, spot_price, last_price,
+                   bid_price, ask_price, volume, open_interest,
+                   implied_volatility, delta, gamma, theta, vega
+            FROM trading.v_latest_option_chain
+            LIMIT 400
+        """,
+        "broker_snapshots": """
+            SELECT id, run_key, provider, account_ref, dataset,
+                   source_connector_key, row_count, retrieved_at,
+                   broker_write_allowed
+            FROM trading.v_latest_broker_read_snapshots
+            ORDER BY retrieved_at DESC
+            LIMIT 30
         """,
         "execution_control": """
             SELECT state_key, global_execution_locked,
@@ -7152,6 +7267,8 @@ ALLOWED_INTEGRATION_EXECUTORS = {
     "public_source_check",
     "provider_readiness",
     "legacy_market_data_ingestion",
+    "dhan_read_sync",
+    "zerodha_read_sync",
 }
 
 
@@ -7563,6 +7680,103 @@ def validate_integration_schema_mapping(payload: dict) -> dict:
     return result
 
 
+def upsert_watchlist_item(payload: dict) -> dict:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9&._-]{1,40}", symbol):
+        raise ValueError("symbol must be a valid exchange symbol")
+    if not re.fullmatch(r"[A-Z0-9_-]{1,12}", exchange):
+        raise ValueError("exchange must be a valid exchange code")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    watchlist_key = slug_for_text(str(payload.get("watchlist_key") or payload.get("watchlistKey") or "office_watchlist")).replace("-", "_")
+    watchlist_name = str(payload.get("watchlist_name") or payload.get("watchlistName") or "Office Watchlist").strip()
+    item_type = str(payload.get("item_type") or payload.get("itemType") or "research").strip().lower()
+    priority = str(payload.get("priority") or "medium").strip().lower()
+    if item_type not in {"research","idea","catalyst","options","event","technical"}:
+        raise ValueError("invalid watchlist item_type")
+    if priority not in {"low","medium","high","critical"}:
+        raise ValueError("invalid watchlist priority")
+    review_on = payload.get("review_on") or payload.get("reviewOn")
+    review_sql = f"{sql_literal(review_on)}::date" if review_on else "NULL"
+    rows = run_psql_json_statement(
+        f"""
+        WITH list AS (
+            INSERT INTO research.watchlists (watchlist_key,watchlist_name,purpose,owner_agent,created_by,metadata)
+            VALUES ({sql_literal(watchlist_key)},{sql_literal(watchlist_name)},
+                    {sql_literal(payload.get('purpose') or 'Research, catalysts, ideas, and monitored instruments')},
+                    {sql_literal(payload.get('owner_agent') or payload.get('ownerAgent') or 'Research Director')},
+                    {sql_literal(actor)},'{{"source":"operator_api"}}'::jsonb)
+            ON CONFLICT (watchlist_key) DO UPDATE SET watchlist_name=EXCLUDED.watchlist_name,
+                purpose=EXCLUDED.purpose,status='active',updated_at=now()
+            RETURNING id
+        ), item AS (
+            INSERT INTO research.watchlist_items (
+                watchlist_id,symbol,exchange,company_name,item_type,status,priority,
+                thesis,catalyst,invalidation,review_on,owner_agent,source_kind,
+                source_ref,created_by,evidence,metadata)
+            SELECT id,{sql_literal(symbol)},{sql_literal(exchange)},
+                   {sql_literal(payload.get('company_name') or payload.get('companyName'))},
+                   {sql_literal(item_type)},'active',{sql_literal(priority)},
+                   {sql_literal(payload.get('thesis'))},{sql_literal(payload.get('catalyst'))},
+                   {sql_literal(payload.get('invalidation'))},{review_sql},
+                   {sql_literal(payload.get('owner_agent') or payload.get('ownerAgent') or 'Company Analyst')},
+                   {sql_literal(payload.get('source_kind') or payload.get('sourceKind') or 'manual')},
+                   {sql_literal(payload.get('source_ref') or payload.get('sourceRef'))},
+                   {sql_literal(actor)},{sql_jsonb(payload.get('evidence') or [])},
+                   '{{"broker_write_allowed":false}}'::jsonb
+            FROM list
+            ON CONFLICT (watchlist_id,exchange,symbol,item_type) DO UPDATE SET
+                company_name=EXCLUDED.company_name,status='active',priority=EXCLUDED.priority,
+                thesis=EXCLUDED.thesis,catalyst=EXCLUDED.catalyst,
+                invalidation=EXCLUDED.invalidation,review_on=EXCLUDED.review_on,
+                owner_agent=EXCLUDED.owner_agent,source_kind=EXCLUDED.source_kind,
+                source_ref=EXCLUDED.source_ref,evidence=EXCLUDED.evidence,updated_at=now()
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(board)),'[]'::json)::text
+        FROM research.v_watchlist_board board WHERE board.id=(SELECT id FROM item)
+        """
+    )
+    result = rows[0] if rows else {}
+    audit_api_write("ai_os_api_watchlist_upsert","upsert_watchlist_item",actor,"research.watchlist_items",result,payload)
+    return result
+
+
+def _run_zerodha_adapter(arguments: list[str], timeout: int = 150) -> dict:
+    completed = subprocess.run([sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_zerodha_read_only.py"),*arguments],
+        cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=timeout)
+    try:
+        result=json.loads((completed.stdout or "").strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Zerodha adapter returned invalid JSON") from exc
+    if completed.returncode not in {0,2}:
+        raise RuntimeError(str(result.get("error") or completed.stderr or "Zerodha adapter failed"))
+    return result
+
+
+def zerodha_auth_status() -> dict:
+    return _run_zerodha_adapter(["--check-config"],30)
+
+
+def exchange_zerodha_request_token(payload: dict) -> dict:
+    token=str(payload.get("request_token") or payload.get("requestToken") or "").strip()
+    if not token:
+        raise ValueError("request_token is required")
+    result=_run_zerodha_adapter(["--exchange-request-token",token],60)
+    audit_api_write("ai_os_api_zerodha_token_exchange","exchange_zerodha_request_token",str(payload.get("actor") or "Devarsh"),"core.connector_health_checks",{"status":result.get("status")},{"request_token_received":True})
+    return result
+
+
+def sync_zerodha_read_only(payload: dict) -> dict:
+    allowed={"holdings","positions","orders","trades","funds"}
+    datasets=[str(x) for x in (payload.get("datasets") or sorted(allowed)) if str(x) in allowed]
+    if not datasets:
+        raise ValueError("at least one valid read-only Zerodha dataset is required")
+    result=_run_zerodha_adapter(["--datasets",*datasets],150)
+    audit_api_write("ai_os_api_zerodha_read_sync","sync_zerodha_read_only",str(payload.get("actor") or "Data Engineering Agent"),"trading.broker_read_snapshots",result,{"datasets":datasets,"broker_write_allowed":False})
+    return result
+
+
 def upsert_integration_job(payload: dict) -> dict:
     _validate_secret_safe_payload(payload)
     executor_key = str(payload.get("executor_key") or payload.get("executorKey") or "").strip()
@@ -7639,6 +7853,10 @@ def _integration_executor_command(job: dict) -> list[str]:
         ]
     if executor_key == "legacy_market_data_ingestion":
         return [sys.executable, str(RUNTIME_ROOT / "scripts" / "ingest_algo_sqlite.py")]
+    if executor_key == "dhan_read_sync":
+        return [sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_dhan_read_only.py"),"--datasets","holdings","positions","orders","trades","funds"]
+    if executor_key == "zerodha_read_sync":
+        return [sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_zerodha_read_only.py"),"--datasets","holdings","positions","orders","trades","funds"]
     raise ValueError(f"executor_key is not allowlisted: {executor_key}")
 
 
@@ -12158,6 +12376,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
     if privacy_class not in {"public", "internal", "client_private", "restricted"}:
         raise ValueError("privacy_class must be public, internal, client_private, or restricted")
     contains_client_data = bool(payload.get("contains_client_data", payload.get("containsClientData", True)))
+    cloud_approved = bool(payload.get("cloud_approved", payload.get("cloudApproved", False)))
     assignment_rows = run_psql_json(
         f"""
         SELECT profile.agent_name, profile.department,
@@ -12220,6 +12439,16 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                 reason = "model_unavailable"
             else:
                 reason = str(governance.get("reason") or "evaluation_required")
+        elif provider == "openrouter":
+            available = bool(OPENROUTER_API_KEY) and cloud_approved and privacy_class in {"public", "internal"} and not contains_client_data
+            if not OPENROUTER_API_KEY:
+                reason = "openrouter_key_unavailable"
+            elif not cloud_approved:
+                reason = "explicit_cloud_approval_required"
+            elif privacy_class not in {"public", "internal"} or contains_client_data:
+                reason = "cloud_route_blocks_client_private_context"
+            else:
+                reason = "available"
         elif provider in {"local_python", "deterministic", "local_tools"}:
             available = False
             reason = "deterministic_tool_route_not_chat_model"
@@ -12245,7 +12474,14 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
         block_reasons.append("client_data_requires_client_private_or_restricted_class")
     if len(prompt) > int(policy["max_context_chars"]):
         block_reasons.append("context_exceeds_privacy_policy_limit")
-    if selected and str(selected.get("default_provider")) not in {"ollama", "mlx", "local_openai"}:
+    if selected and str(selected.get("default_provider")) == "openrouter":
+        if not bool(policy.get("cloud_model_allowed")):
+            block_reasons.append("privacy_policy_blocks_cloud_model")
+        if not cloud_approved:
+            block_reasons.append("explicit_cloud_approval_required")
+        if contains_client_data or privacy_class not in {"public", "internal"}:
+            block_reasons.append("cloud_route_blocks_client_private_context")
+    elif selected and str(selected.get("default_provider")) not in {"ollama", "mlx", "local_openai"}:
         block_reasons.append("nonlocal_provider_not_permitted_by_chat_runtime")
 
     cache_eligible = bool(policy["cache_allowed"]) and not contains_client_data and not block_reasons and selected is not None
@@ -12589,6 +12825,67 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             WHERE enabled = true
             ORDER BY route_name
         """,
+        "filing_summary": """
+            SELECT count(*) AS filing_count,
+                   count(*) FILTER (WHERE event_status NOT IN ('reviewed','closed')) AS open_event_count,
+                   count(*) FILTER (WHERE event_type IN ('merger','demerger','reverse_merger','open_offer','buyback','delisting','scheme_of_arrangement')) AS special_situation_count,
+                   max(filed_at) AS latest_filed_at
+            FROM research.v_corporate_filing_inbox
+        """,
+        "latest_filings": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   filing_type, filing_event_type, title, filed_at,
+                   source_url, attachment_url, extraction_status,
+                   event_type, opportunity_score, risk_score, urgency, event_status
+            FROM research.v_corporate_filing_inbox
+            ORDER BY filed_at DESC NULLS LAST, event_created_at DESC
+            LIMIT 8
+        """,
+        "latest_news": """
+            SELECT id, source_name, source_url, title, publisher,
+                   published_at, captured_at, symbols, topics,
+                   sentiment, relevance_score
+            FROM market.v_latest_news_items
+            ORDER BY coalesce(published_at, captured_at) DESC, id DESC
+            LIMIT 8
+        """,
+        "watchlist": """
+            SELECT id, watchlist_name, symbol, exchange, company_name,
+                   item_type, status, priority, thesis, catalyst,
+                   invalidation, review_on, owner_agent, source_ref, updated_at
+            FROM research.v_watchlist_board
+            LIMIT 20
+        """,
+        "generated_ideas": """
+            SELECT id, idea_key, title, idea_type, symbols, timeframe,
+                   thesis, edge_hypothesis, status, priority_score,
+                   risk_score, owner_agent, created_at
+            FROM strategy.v_generated_ideas
+            ORDER BY created_at DESC
+            LIMIT 8
+        """,
+        "latest_reports": """
+            SELECT id, report_key, report_name, report_family, status,
+                   output_note_path, summary, started_at, finished_at
+            FROM ops.v_recent_report_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 8
+        """,
+        "options_summary": """
+            SELECT provider, exchange, underlying, expiry, observed_at,
+                   contract_count, call_count, put_count, min_strike,
+                   max_strike, spot_price, call_open_interest,
+                   put_open_interest, average_iv
+            FROM trading.v_options_surface_summary
+            LIMIT 8
+        """,
+        "broker_snapshots": """
+            SELECT provider, connector_key, dataset, captured_at,
+                   row_count, status, source_account_ref, broker_write_allowed
+            FROM trading.v_latest_broker_read_snapshots
+            ORDER BY captured_at DESC
+            LIMIT 12
+        """,
         "widgets": """
             SELECT widget_key, widget_title, widget_type, workspace, status, priority
             FROM ops.v_dashboard_widget_intents
@@ -12598,10 +12895,15 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
     if not include_client_context:
         for private_key in ("clients", "latest_positions", "book_summary", "investment_books", "symbol_intelligence"):
             queries.pop(private_key, None)
-    try:
-        context = run_psql_json_object(queries)
-    except Exception:
-        context = {key: [] for key in queries}
+    context: dict[str, object] = {}
+    context_errors: list[dict[str, str]] = []
+    for key, query in queries.items():
+        try:
+            context[key] = run_psql_json(query)
+        except Exception as exc:  # noqa: BLE001
+            context[key] = []
+            context_errors.append({"section": key, "error": type(exc).__name__})
+    context["context_errors"] = context_errors
     context["message_symbols"] = [symbol for symbol in message.upper().split() if symbol.isalnum() and 2 <= len(symbol) <= 12][:12]
     return context
 
@@ -12615,6 +12917,15 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
     ohlcv = context.get("ohlcv") or []
     vectors = context.get("vectors") or []
     model = route.get("default_model", "llama3.2:3b")
+    normalized = message.lower()
+    filing_summary = (context.get("filing_summary") or [{}])[0]
+    filings = context.get("latest_filings") or []
+    news = context.get("latest_news") or []
+    watchlist = context.get("watchlist") or []
+    ideas = context.get("generated_ideas") or []
+    reports = context.get("latest_reports") or []
+    options = context.get("options_summary") or []
+    broker_snapshots = context.get("broker_snapshots") or []
 
     lines = [
         "I checked the live warehouse and memory layer.",
@@ -12651,6 +12962,46 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
     if vectors:
         total_chunks = sum(int(row.get("chunks") or 0) for row in vectors)
         lines.append(f"Qdrant registry has {total_chunks:,} indexed chunks. Retrieval status: {retrieval_status}.")
+    if any(term in normalized for term in ("filing", "corporate", "announcement", "nse", "bse", "demerger", "merger", "arbitrage")):
+        lines.append(
+            f"Corporate filings: {int(filing_summary.get('filing_count') or 0):,} total, "
+            f"{int(filing_summary.get('open_event_count') or 0):,} open events, and "
+            f"{int(filing_summary.get('special_situation_count') or 0):,} special-situation candidates."
+        )
+        if filings:
+            lines.append("Latest filings: " + "; ".join(
+                f"{row.get('symbol') or row.get('company_name')} - {row.get('title')} [{row.get('attachment_url') or row.get('source_url')}]"
+                for row in filings[:3]
+            ) + ".")
+    if "news" in normalized and news:
+        lines.append("Latest source-linked news: " + "; ".join(
+            f"{row.get('title')} [{row.get('source_url')}]" for row in news[:3]
+        ) + ".")
+    if "watchlist" in normalized:
+        lines.append(f"Watchlist: {len(watchlist)} visible items" + (
+            "; " + ", ".join(f"{row.get('exchange')}:{row.get('symbol')}" for row in watchlist[:8]) if watchlist else ""
+        ) + ".")
+    if any(term in normalized for term in ("idea", "opportunity")):
+        lines.append(f"Idea pipeline: {len(ideas)} recent candidates" + (
+            "; " + "; ".join(str(row.get('title')) for row in ideas[:3]) if ideas else ""
+        ) + ".")
+    if any(term in normalized for term in ("letter", "report", "brief")):
+        lines.append(f"Report ledger: {len(reports)} recent runs" + (
+            "; latest is " + str(reports[0].get('report_name')) + " at " + str(reports[0].get('output_note_path')) if reports else ""
+        ) + ".")
+    if any(term in normalized for term in ("option", "straddle", "chain", "iv", "open interest")):
+        if options:
+            lines.append("Options surfaces: " + "; ".join(
+                f"{row.get('underlying')} {row.get('expiry')} ({row.get('contract_count')} contracts, IV {row.get('average_iv')})"
+                for row in options[:4]
+            ) + ".")
+        else:
+            lines.append("Options surface has no live option-chain snapshot yet; complete Zerodha API setup and the daily interactive login, then run the GET-only sync.")
+    if any(term in normalized for term in ("zerodha", "broker", "holding", "position")) and broker_snapshots:
+        lines.append("Latest broker snapshots: " + ", ".join(
+            f"{row.get('provider')} {row.get('dataset')}={row.get('row_count')} at {row.get('captured_at')}"
+            for row in broker_snapshots[:5]
+        ) + ".")
     if retrieval_hits:
         titles = [str(hit.get("title")) for hit in retrieval_hits[:3] if hit.get("title")]
         lines.append("Most relevant memory hits: " + "; ".join(titles) + ".")
@@ -12670,9 +13021,10 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
 def infer_local_chat_route(message: str) -> str:
     normalized = message.lower()
     workhorse_terms = {
-        "annual report", "filing", "valuation", "fundamental", "research paper",
-        "strategy", "backtest", "thesis", "demerger", "merger", "arbitrage",
-        "portfolio review", "investment memo", "accounting", "cash flow",
+        "run a backtest", "build a valuation model", "write an investment memo",
+        "analyze the full annual report", "analyse the full annual report",
+        "generate a strategy", "optimize this strategy", "optimise this strategy",
+        "perform forensic accounting", "run monte carlo",
     }
     if any(term in normalized for term in workhorse_terms):
         return "local_workhorse_synthesis"
@@ -12846,7 +13198,24 @@ def chat_with_charlie(payload: dict) -> dict:
     if include_client_context and requested_privacy in {"public", "internal"}:
         raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
     context = build_chat_context(message, include_client_context=include_client_context)
-    deterministic_only = bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
+    normalized_message = message.lower()
+    factual_request_terms = (
+        "how many", "show", "list", "latest", "status", "what changed",
+        "where is", "where are", "do we have", "give me", "get me",
+    )
+    factual_domain_terms = (
+        "filing", "announcement", "news", "watchlist", "idea list", "report",
+        "letter", "broker", "zerodha", "option", "position", "holding",
+        "client", "ohlcv", "market data",
+    )
+    auto_factual_retrieval = (
+        any(term in normalized_message for term in factual_request_terms)
+        and any(term in normalized_message for term in factual_domain_terms)
+    )
+    deterministic_only = (
+        bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
+        or auto_factual_retrieval
+    )
     if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
     else:
@@ -12854,12 +13223,26 @@ def chat_with_charlie(payload: dict) -> dict:
     widget_intents = infer_widget_intents(message, context)
     tool_intents: list[dict] = []
     response_guardrail: list[str] = []
+    cloud_usage: dict = {}
+    prompt_limits = {
+        "clients": 5, "latest_positions": 6, "book_summary": 20,
+        "investment_books": 8, "symbol_intelligence": 4, "ohlcv": 8,
+        "vectors": 8, "filing_summary": 1, "latest_filings": 4,
+        "latest_news": 4, "watchlist": 8, "generated_ideas": 4,
+        "latest_reports": 4, "options_summary": 4, "broker_snapshots": 6,
+        "context_errors": 12, "message_symbols": 12,
+    }
+    prompt_context = {
+        key: (value[:prompt_limits[key]] if isinstance(value, list) else value)
+        for key, value in context.items()
+        if key in prompt_limits
+    }
 
     prompt = (
         "User message:\n"
         f"{message}\n\n"
         "Bounded live context JSON:\n"
-        f"{json.dumps(context, default=str)[:3000]}\n\n"
+        f"{json.dumps(prompt_context, default=str)[:7500]}\n\n"
         "Relevant memory hits:\n"
         f"{json.dumps(retrieval_hits[:4], default=str)[:1500]}\n\n"
         "Suggested dashboard widget intents:\n"
@@ -12893,12 +13276,14 @@ def chat_with_charlie(payload: dict) -> dict:
             assistant_message, model_status = mlx_chat(selected_model, prompt)
         elif route.get("default_provider") == "local_openai":
             assistant_message, model_status = local_openai_chat(selected_model, prompt)
+        elif route.get("default_provider") == "openrouter":
+            assistant_message, model_status, cloud_usage = openrouter_chat(selected_model, prompt)
         else:
             assistant_message, model_status = ollama_chat(selected_model, prompt)
     else:
         assistant_message, model_status = None, "model_call_blocked"
     if assistant_message and model_status == "called":
-        response_guardrail = validate_charlie_model_response(assistant_message)
+        response_guardrail = validate_charlie_model_response(assistant_message, context)
         if response_guardrail:
             route = {**route, "last_model_status": "response_guardrail_rejected"}
             assistant_message = deterministic_chat_reply(
@@ -12919,6 +13304,8 @@ def chat_with_charlie(payload: dict) -> dict:
         "model_call_decision_id": model_decision.get("id"),
         "privacy_class": model_decision.get("privacy_class"),
         "response_guardrail": response_guardrail,
+        "cloud_usage": cloud_usage,
+        "auto_factual_retrieval": auto_factual_retrieval,
     })
     truth_envelope = build_response_truth_envelope(model_status, route, retrieval_status, retrieval_hits, include_client_context)
     metadata["truth_envelope"] = truth_envelope
@@ -12966,6 +13353,7 @@ def chat_with_charlie(payload: dict) -> dict:
             "ollama_url": OLLAMA_BASE_URL,
             "mlx_url": MLX_BASE_URL,
             "local_openai_url": LOCAL_OPENAI_BASE_URL,
+            "openrouter_key_available": bool(OPENROUTER_API_KEY),
             "embedding_model": EMBEDDING_MODEL,
             "embedding_available": ollama_model_available(EMBEDDING_MODEL),
             "chat_model_available": (
@@ -12973,6 +13361,8 @@ def chat_with_charlie(payload: dict) -> dict:
                 if route.get("default_provider") == "mlx"
                 else local_openai_model_available(str(route.get("default_model") or ""))
                 if route.get("default_provider") == "local_openai"
+                else bool(OPENROUTER_API_KEY)
+                if route.get("default_provider") == "openrouter"
                 else ollama_model_available(str(route.get("default_model") or ""))
             ),
             "chat_model_governance": local_model_governance(str(route.get("default_model") or "")),
@@ -13198,6 +13588,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/tradingview/cdp-status"):
                 self._send_json(probe_tradingview_cdp())
                 return
+            if request_path == "/api/zerodha/auth/status":
+                self._send_json(zerodha_auth_status())
+                return
             self._send_json({"error": "not_found", "path": self.path}, 404)
         except PermissionError as exc:
             self._send_json({"error": "forbidden", "message": str(exc)}, 403)
@@ -13315,6 +13708,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/integrations/jobs/run":
                 self._send_json(run_integration_job(payload), 201)
+                return
+            if self.path == "/api/watchlist/items/upsert":
+                self._send_json(upsert_watchlist_item(payload), 201)
+                return
+            if self.path == "/api/zerodha/auth/exchange":
+                self._send_json(exchange_zerodha_request_token(payload), 200)
+                return
+            if self.path == "/api/zerodha/sync":
+                self._send_json(sync_zerodha_read_only(payload), 201)
                 return
             if self.path == "/api/providers/assignment-gate/evaluate":
                 self._send_json(evaluate_provider_assignment_gate(payload), 201)

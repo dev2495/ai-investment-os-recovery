@@ -187,7 +187,7 @@ const baseWorkspaces: Workspace[] = [
   { id: "portfolio", label: "Portfolio Office" },
   { id: "clients", label: "Client Folios" },
   { id: "tactical", label: "Tactical Office" },
-  { id: "research", label: "Holdings Research" },
+  { id: "research", label: "Research & Filings" },
   { id: "ideas", label: "Idea Pipeline" },
   { id: "arsenal", label: "Strategy Arsenal" },
   { id: "trading", label: "Trading Desk" },
