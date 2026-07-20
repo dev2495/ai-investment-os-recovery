@@ -63,6 +63,34 @@
       "uses": ["filing_analysis", "fundamental_research", "strategy_research", "paper_analysis", "investment_memo"]
     },
     {
+      "model": "Qwen/Qwen3-8B-MLX-4bit",
+      "provider": "mlx",
+      "revision": "383413e909f3bc5303ce195ebbdf0339c5a1a2a3",
+      "local_path": "default_model",
+      "tier": "mid",
+      "required_profiles": ["macbook"],
+      "context_tokens": 8192,
+      "max_kv_tokens": 4096,
+      "max_output_tokens": 900,
+      "eval_suite": "mid_v1",
+      "promotion_status": "candidate",
+      "uses": ["charlie_conversation", "filing_analysis", "fundamental_research", "strategy_research", "paper_analysis", "investment_memo"]
+    },
+    {
+      "model": "prism-ml/Bonsai-27B-Q1_0",
+      "provider": "local_openai",
+      "revision": "f10afb355f104535e3e3e98cf7ab7795c72bd292",
+      "local_path": "default_model",
+      "tier": "mid",
+      "required_profiles": ["macbook"],
+      "context_tokens": 8192,
+      "max_kv_tokens": 8192,
+      "max_output_tokens": 900,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": ["charlie_conversation", "task_intake", "evidence_bound_summary"]
+    },
+    {
       "model": "qwen3-embedding:0.6b",
       "tier": "retrieval",
       "required_profiles": ["macbook", "imac"],
@@ -103,10 +131,6 @@
     }
   ],
   "held_candidates": [
-    {
-      "model": "prism-ml/Bonsai-27B-1bit",
-      "reason": "No pinned production Ollama runtime is approved; evaluate only after the core fleet is stable."
-    },
     {
       "model": "Qwen/Qwen3-Reranker-0.6B",
       "reason": "Ollama has no official rerank endpoint. Use embedding similarity reranking until a pinned local cross-encoder runtime passes privacy and latency gates."

@@ -61,11 +61,15 @@ export AI_OS_POSTGRES_HOST=127.0.0.1
 export AI_OS_PSQL_BIN="$(psql_bin)"
 export AI_OS_QDRANT_URL="http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}"
 export AI_OS_OLLAMA_URL="http://127.0.0.1:${AI_OS_OLLAMA_PORT}"
+export AI_OS_MLX_URL="${AI_OS_MLX_URL:-http://100.75.156.32:11435/v1}"
+export AI_OS_MLX_REQUEST_MODEL="${AI_OS_MLX_REQUEST_MODEL:-default_model}"
+export AI_OS_LOCAL_OPENAI_URL="${AI_OS_LOCAL_OPENAI_URL:-http://100.75.156.32:11435/v1}"
+export AI_OS_LOCAL_OPENAI_REQUEST_MODEL="${AI_OS_LOCAL_OPENAI_REQUEST_MODEL:-default_model}"
 export AI_OS_API_HOST=127.0.0.1
 export AI_OS_API_PORT
 export AI_OS_ALLOWED_ORIGINS="${AI_OS_ALLOWED_ORIGINS:-http://127.0.0.1:${AI_OS_UI_PORT},http://localhost:${AI_OS_UI_PORT}}"
 export AI_OS_ALLOW_TOKENLESS_LOOPBACK
-export AI_OS_CHAT_MODEL_ROUTE=always_on_daily_driver
+export AI_OS_CHAT_MODEL_ROUTE="${AI_OS_CHAT_MODEL_ROUTE:-charlie_munger_orchestration}"
 
 log "Starting AI OS API"
 "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_server.py" \

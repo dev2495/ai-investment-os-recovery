@@ -148,7 +148,15 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
                 payload = http_json("POST", f"{base_url}/api/chat", request_payload, timeout=180)
                 raw = str((payload.get("message") or {}).get("content") or "")
             else:
-                request_payload.update({"temperature": 1.0, "top_p": 1.0, "max_tokens": min(700, int(model_config.get("max_output_tokens") or 700))})
+                request_payload.update({
+                    "temperature": 0.7,
+                    "top_p": 0.8,
+                    "top_k": 20,
+                    "min_p": 0.0,
+                    "max_tokens": min(700, int(model_config.get("max_output_tokens") or 700)),
+                })
+                if provider == "local_openai":
+                    request_payload["seed"] = 20260720
                 payload = http_json("POST", f"{base_url}/chat/completions", request_payload, timeout=240)
                 choices = payload.get("choices") or []
                 raw = str(((choices[0] if choices else {}).get("message") or {}).get("content") or "")
@@ -431,7 +439,7 @@ def model_digest(base_url: str, model: str) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate and optionally promote pinned local AI OS models.")
     parser.add_argument("--model", action="append", help="Exact Ollama model tag. Repeat for multiple models.")
-    parser.add_argument("--provider", choices=("ollama", "mlx"), default="ollama")
+    parser.add_argument("--provider", choices=("ollama", "mlx", "local_openai"), default="ollama")
     parser.add_argument("--base-url")
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument("--persist", action="store_true")
@@ -447,14 +455,14 @@ def main() -> int:
     else:
         with urllib.request.urlopen(f"{args.base_url}/models", timeout=10) as response:
             if int(response.status) != 200:
-                raise RuntimeError(f"MLX endpoint returned HTTP {response.status}")
+                raise RuntimeError(f"Local OpenAI-compatible endpoint returned HTTP {response.status}")
         installed = set(selected)
     model_configs = {item["model"]: item for item in registry["models"]}
     args.artifact_root.mkdir(parents=True, exist_ok=True)
     overall_passed = True
 
     for model in selected:
-        if not model_installed(model, installed) and not (args.provider == "mlx" and installed):
+        if not model_installed(model, installed) and not (args.provider in {"mlx", "local_openai"} and installed):
             print(json.dumps({"model": model, "status": "not_installed"}, sort_keys=True))
             overall_passed = False
             continue

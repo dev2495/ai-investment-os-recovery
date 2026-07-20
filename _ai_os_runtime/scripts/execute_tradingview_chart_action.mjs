@@ -1276,6 +1276,12 @@ async function main() {
   try {
     await client.call("Page.enable");
     await client.call("Runtime.enable");
+    try {
+      await client.call("Emulation.setFocusEmulationEnabled", { enabled: true });
+      recoveryActions.push("focus_emulation_enabled");
+    } catch (error) {
+      recoveryActions.push(`focus_emulation_unavailable:${error?.name || "error"}`);
+    }
     await client.call("Page.bringToFront");
     if (payload.ensure_automation_layout === true || payload.ensureAutomationLayout === true) {
       setupActions.push(await ensureAutomationLayout(client, payload.automation_layout_name || payload.automationLayoutName));
@@ -1434,11 +1440,25 @@ async function main() {
         break;
       }
       const screenshot = await client.call("Page.captureScreenshot", { format: "png", fromSurface: true });
-      const data = screenshot.data || "";
-      const screenshotBuffer = Buffer.from(data, "base64");
+      let screenshotBuffer = Buffer.from(screenshot.data || "", "base64");
       quality = qualityCheckEnabled
-        ? { ...analyzeScreenshotQuality(screenshotBuffer), attempt }
+        ? { ...analyzeScreenshotQuality(screenshotBuffer), attempt, capture_surface: "compositor" }
         : { status: "skipped", reason: "quality_check_disabled", attempt };
+      if (qualityCheckEnabled && quality.status !== "passed") {
+        const alternate = await client.call("Page.captureScreenshot", { format: "png", fromSurface: false });
+        const alternateBuffer = Buffer.from(alternate.data || "", "base64");
+        const alternateQuality = {
+          ...analyzeScreenshotQuality(alternateBuffer),
+          attempt,
+          capture_surface: "view"
+        };
+        const qualitySignal = (candidate) => Number(candidate.chart_like_ratio || 0) + Number(candidate.saturated_ratio || 0);
+        if (alternateQuality.status === "passed" || qualitySignal(alternateQuality) > qualitySignal(quality)) {
+          screenshotBuffer = alternateBuffer;
+          quality = alternateQuality;
+          recoveryActions.push("alternate_view_surface_capture_selected");
+        }
+      }
       const visibleDialogs = pageContext.result?.value?.visible_dialogs || [];
       if (qualityCheckEnabled && visibleDialogs.length) {
         quality = {

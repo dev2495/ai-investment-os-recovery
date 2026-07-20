@@ -98,10 +98,14 @@ def run_psql_text(sql: str) -> str:
     env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
     errors: list[str] = []
     for command in psql_command_candidates():
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        try:
+            completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        except OSError as exc:
+            errors.append(f"{command[0]}: {type(exc).__name__}: {exc}")
+            continue
         if completed.returncode == 0:
             return completed.stdout.strip()
-        errors.append((completed.stderr or completed.stdout).strip())
+        errors.append(f"{command[0]}: {(completed.stderr or completed.stdout).strip()}")
     raise RuntimeError(" | ".join(errors))
 
 
