@@ -1,0 +1,556 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: aios-imac <command>
+
+Commands:
+  install       Install the package on the iMac and restore the backend
+  preflight     Check hardware, SSD, package, and dependency readiness
+  start         Start the LaunchAgent-supervised backend
+  stop          Stop services, flush writes, and make the SSD safe to eject
+  status        Show service, model, storage, Tailscale, and backup status
+  verify        Run backend acceptance checks
+  tailscale     Configure private Tailscale Serve UI and API endpoints
+  reindex       Rebuild six Qdrant collections with the approved embedding model
+  browser-enable  Install and start the governed TradingView browser worker
+  browser-disable Stop the governed TradingView browser worker
+  browser-verify  Verify and record the TradingView CDP browser heartbeat
+  backup        Create a compact independent backup on iMac internal storage
+EOF
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is missing: $1"
+}
+
+verify_package() {
+  local package_root="${AI_OS_PACKAGE_ROOT:-}"
+  [[ -n "${package_root}" ]] || return 0
+  [[ -f "${package_root}/SHA256SUMS" ]] || die "Package checksum manifest is missing"
+  log "Verifying transfer package checksums"
+  (cd "${package_root}" && shasum -a 256 -c SHA256SUMS)
+}
+
+preflight() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "The iMac backend requires macOS"
+  [[ "$(uname -m)" == "arm64" ]] || die "The iMac backend requires Apple Silicon"
+
+  local memory_bytes
+  memory_bytes="$(sysctl -n hw.memsize)"
+  [[ "${memory_bytes}" -ge 8000000000 ]] || die "At least 8 GB unified memory is required"
+
+  if [[ -f "${ENV_FILE}" ]]; then
+    load_env
+  else
+    export AI_OS_SSD_ROOT="/Volumes/Devarsh SSD"
+    export AI_OS_DATA_ROOT="${AI_OS_SSD_ROOT}/AI OS Data"
+    export AI_OS_VAULT_ROOT="${AI_OS_SSD_ROOT}/Obsidian memory "
+  fi
+  ensure_ssd
+
+  local free_bytes
+  free_bytes="$(df -k "${AI_OS_SSD_ROOT}" | awk 'NR==2 {print $4 * 1024}')"
+  [[ "${free_bytes}" -ge 50000000000 ]] || die "At least 50 GB free is required on Devarsh SSD"
+
+  if [[ -n "${AI_OS_PACKAGE_ROOT:-}" ]]; then
+    verify_package
+  fi
+  log "Preflight passed: $(sw_vers -productVersion), $(uname -m), ${AI_OS_SSD_ROOT}"
+}
+
+install_dependencies() {
+  if ! command -v brew >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+Homebrew is required. Install it from https://brew.sh, then rerun INSTALL_ON_IMAC.command.
+The official command currently shown by Homebrew is:
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+EOF
+    exit 10
+  fi
+  log "Installing lean iMac dependencies"
+  brew install colima docker docker-compose jq node@20 postgresql@16 ollama
+
+  mkdir -p "${HOME}/.docker/cli-plugins"
+  local compose_plugin
+  compose_plugin="$(brew --prefix docker-compose)/bin/docker-compose"
+  ln -sfn "${compose_plugin}" "${HOME}/.docker/cli-plugins/docker-compose"
+
+  export PATH="/opt/homebrew/opt/node@20/bin:/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  require_command colima
+  require_command docker
+  docker compose version >/dev/null
+  require_command jq
+  require_command node
+  require_command npm
+  require_command ollama
+}
+
+deploy_source() {
+  local package_root="${AI_OS_PACKAGE_ROOT:-}"
+  [[ -d "${package_root}/source" ]] || die "Package source directory is missing"
+  local repo_root="${HOME}/AI_OS_NODE/ai-investment-os"
+  mkdir -p "${repo_root}"
+  log "Deploying iMac runtime source to ${repo_root}"
+  rsync -a --delete --exclude '_ai_os_runtime/.env' "${package_root}/source/" "${repo_root}/"
+  chmod +x "${repo_root}/_ai_os_runtime/deploy/imac-backend/bin/"* \
+    "${repo_root}/_ai_os_runtime/deploy/imac-backend/INSTALL_ON_IMAC.command"
+
+  if [[ -s "${package_root}/MACBOOK_SSH_PUBLIC_KEY.txt" ]]; then
+    mkdir -p "${HOME}/.ssh"
+    chmod 700 "${HOME}/.ssh"
+    touch "${HOME}/.ssh/authorized_keys"
+    chmod 600 "${HOME}/.ssh/authorized_keys"
+    if ! grep -Fqx "$(cat "${package_root}/MACBOOK_SSH_PUBLIC_KEY.txt")" "${HOME}/.ssh/authorized_keys"; then
+      cat "${package_root}/MACBOOK_SSH_PUBLIC_KEY.txt" >> "${HOME}/.ssh/authorized_keys"
+      log "Authorized the dedicated MacBook AI OS SSH key"
+    fi
+  fi
+  printf '%s\n' "${repo_root}"
+}
+
+write_environment() {
+  local repo_root="$1"
+  mkdir -p "${CONFIG_ROOT}" "${LAUNCHD_LOG_ROOT}"
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    local password
+    password="$(openssl rand -hex 24)"
+    sed \
+      -e "s|__REPO_ROOT__|${repo_root}|g" \
+      -e "s|__HOME__|${HOME}|g" \
+      -e "s|__GENERATED__|${password}|g" \
+      "${repo_root}/_ai_os_runtime/deploy/imac-backend/imac.env.example" > "${ENV_FILE}"
+    chmod 600 "${ENV_FILE}"
+    log "Created protected iMac environment file"
+  fi
+  load_env
+  [[ "${AI_OS_REPO_ROOT}" == "${repo_root}" ]] || die "Environment repo root does not match deployed source"
+}
+
+ensure_runtime_directories() {
+  mkdir -p \
+    "${AI_OS_IMAC_RUNTIME_DATA}/postgres" \
+    "${AI_OS_IMAC_RUNTIME_DATA}/qdrant" \
+    "${AI_OS_IMAC_RUNTIME_DATA}/redis" \
+    "${AI_OS_DATA_ROOT}/ollama/models" \
+    "${AI_OS_DATA_ROOT}/caches/npm" \
+    "${AI_OS_PLAYWRIGHT_BROWSERS_PATH}" \
+    "${AI_OS_DATA_ROOT}/colima" \
+    "${AI_OS_TRADINGVIEW_BROWSER_PROFILE}" \
+    "${AI_OS_DATA_ROOT}/logs/imac-backend" \
+    "${AI_OS_DATA_ROOT}/run/imac-backend" \
+    "${AI_OS_DATA_ROOT}/evals/local_models"
+}
+
+start_colima() {
+  if ! colima status --profile ai-os >/dev/null 2>&1; then
+    log "Starting Colima with 2 CPU and 3 GB RAM; VM state remains on the SSD"
+    colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs
+  fi
+  docker context use colima-ai-os >/dev/null 2>&1 || true
+  docker version >/dev/null
+}
+
+record_image_lock() {
+  local output="${AI_OS_IMAC_RUNTIME_DATA}/image-lock.json"
+  docker inspect "${AI_OS_TIMESCALE_IMAGE}" "${AI_OS_QDRANT_IMAGE}" "${AI_OS_REDIS_IMAGE}" \
+    --format '{{json .RepoDigests}}' \
+    | jq -s '{captured_at: now | todateiso8601, repo_digests: map(. // []) | add | unique}' > "${output}"
+  chmod 600 "${output}"
+}
+
+critical_backup_root() {
+  printf '%s\n' "${AI_OS_DATA_ROOT}/backups/critical/current"
+}
+
+verify_critical_backup() {
+  local backup_root
+  backup_root="$(critical_backup_root)"
+  [[ -f "${backup_root}/integrity/checksums.sha256" ]] || die "Verified critical backup is missing"
+  log "Verifying recovered critical backup before database restoration"
+  (cd "${backup_root}" && shasum -a 256 -c integrity/checksums.sha256 >/dev/null)
+}
+
+restore_postgres() {
+  local marker="${AI_OS_IMAC_RUNTIME_DATA}/.postgres-restored-v1"
+  [[ -f "${marker}" ]] && return 0
+  if find "${AI_OS_IMAC_RUNTIME_DATA}/postgres" -mindepth 1 -print -quit | grep -q .; then
+    die "Fresh iMac PostgreSQL directory is non-empty without a restore marker"
+  fi
+  compose up -d ai_os_postgres
+  wait_container_healthy ai_os_postgres 180
+
+  local dump_file
+  dump_file="$(critical_backup_root)/postgres/ai_os.dump"
+  log "Restoring PostgreSQL from verified custom dump"
+  docker exec -i ai_os_postgres pg_restore \
+    -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" \
+    --clean --if-exists --no-owner --no-privileges < "${dump_file}"
+
+  local sql_file
+  for sql_file in "${AI_OS_REPO_ROOT}/_ai_os_runtime/postgres/init/"{143,144,145,146,147,148,149,150}_*.sql; do
+    [[ -f "${sql_file}" ]] || continue
+    log "Applying post-backup migration $(basename "${sql_file}")"
+    docker exec -i ai_os_postgres psql -q -U "${AI_OS_POSTGRES_USER}" \
+      -d "${AI_OS_POSTGRES_DB}" -v ON_ERROR_STOP=1 < "${sql_file}"
+  done
+
+  docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" \
+    -d "${AI_OS_POSTGRES_DB}" -v ON_ERROR_STOP=1 \
+    -c "SELECT json_build_object('clients',(SELECT count(*) FROM portfolio.clients),'positions',(SELECT count(*) FROM portfolio.positions),'tables',(SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')));"
+  touch "${marker}"
+}
+
+restore_qdrant() {
+  local marker="${AI_OS_IMAC_RUNTIME_DATA}/.qdrant-restored-v1"
+  [[ -f "${marker}" ]] && return 0
+  compose stop ai_os_qdrant >/dev/null 2>&1 || true
+  if find "${AI_OS_IMAC_RUNTIME_DATA}/qdrant" -mindepth 1 -print -quit | grep -q .; then
+    die "Fresh iMac Qdrant directory is non-empty without a restore marker"
+  fi
+  local snapshot
+  snapshot="$(find "$(critical_backup_root)/qdrant" -maxdepth 1 -name '*.snapshot' -type f -print -quit)"
+  [[ -n "${snapshot}" ]] || die "Qdrant full snapshot is missing"
+  log "Restoring Qdrant from verified full-storage snapshot"
+  docker run --rm --platform linux/arm64 \
+    -v "${AI_OS_IMAC_RUNTIME_DATA}/qdrant:/qdrant/storage" \
+    -v "${snapshot}:/snapshots/backup.snapshot:ro" \
+    "${AI_OS_QDRANT_IMAGE}" ./qdrant --storage-snapshot /snapshots/backup.snapshot
+  touch "${marker}"
+}
+
+bootstrap_data() {
+  load_env
+  ensure_ssd
+  ensure_runtime_directories
+  verify_critical_backup
+  start_colima
+  restore_postgres
+  restore_qdrant
+  compose up -d
+  wait_container_healthy ai_os_postgres 180
+  wait_container_healthy ai_os_redis 120
+  wait_http "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" Qdrant 120
+  record_image_lock
+}
+
+ensure_embedding_model() {
+  load_env
+  local ollama_pid=""
+  if ! curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" >/dev/null 2>&1; then
+    OLLAMA_MODELS="${AI_OS_OLLAMA_MODELS}" OLLAMA_HOST="127.0.0.1:${AI_OS_OLLAMA_PORT}" \
+      ollama serve >"${AI_OS_DATA_ROOT}/logs/imac-backend/ollama-bootstrap.log" 2>&1 &
+    ollama_pid=$!
+    wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 90
+  fi
+  log "Installing the approved embedding model on SSD storage"
+  OLLAMA_MODELS="${AI_OS_OLLAMA_MODELS}" ollama pull "${AI_OS_EMBEDDING_MODEL}"
+  if [[ -n "${ollama_pid}" ]]; then
+    kill "${ollama_pid}" 2>/dev/null || true
+    wait "${ollama_pid}" 2>/dev/null || true
+  fi
+}
+
+set_env_value() {
+  local key="$1" value="$2" temp
+  temp="${ENV_FILE}.tmp.$$"
+  awk -v key="${key}" '$0 !~ "^" key "=" {print}' "${ENV_FILE}" > "${temp}"
+  printf '%s=%q\n' "${key}" "${value}" >> "${temp}"
+  mv "${temp}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+}
+
+install_tradingview_browser() {
+  load_env
+  log "Installing Playwright Chromium into SSD cache"
+  (
+    cd "${AI_OS_REPO_ROOT}/_ai_os_runtime/ai-office-ui"
+    PLAYWRIGHT_BROWSERS_PATH="${AI_OS_PLAYWRIGHT_BROWSERS_PATH}" npx playwright install chromium
+  )
+}
+
+enable_tradingview_browser() {
+  load_env
+  install_tradingview_browser
+  set_env_value AI_OS_ENABLE_TRADINGVIEW_BROWSER 1
+  start_backend
+  wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 120
+  log "Managed TradingView browser started. Sign in once in that window, then run: $(basename "$0") browser-verify"
+}
+
+disable_tradingview_browser() {
+  load_env
+  set_env_value AI_OS_ENABLE_TRADINGVIEW_BROWSER 0
+  start_backend
+  log "Managed TradingView browser worker disabled"
+}
+
+verify_tradingview_browser() {
+  load_env
+  wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 10
+  "$(runtime_python)" "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/check_tradingview_cdp.py" \
+    --port "${AI_OS_TRADINGVIEW_CDP_PORT}" --actor "Automation Engineer"
+  log "TRADINGVIEW_BROWSER_WORKER_VERIFIED_READ_ONLY"
+}
+
+build_ui() {
+  load_env
+  local dns_name api_url allowed_origins
+  dns_name="$(tailnet_dns_name 2>/dev/null || true)"
+  api_url="http://127.0.0.1:${AI_OS_API_PORT}"
+  allowed_origins="http://127.0.0.1:${AI_OS_UI_PORT},http://localhost:${AI_OS_UI_PORT}"
+  if [[ -n "${dns_name}" ]]; then
+    api_url="https://${dns_name}:${AI_OS_TAILSCALE_API_PORT}"
+    allowed_origins="${allowed_origins},https://${dns_name}"
+    set_env_value AI_OS_TAILSCALE_DNS_NAME "${dns_name}"
+    set_env_value AI_OS_ALLOWED_ORIGINS "${allowed_origins}"
+  fi
+  log "Building the operator UI for API ${api_url}"
+  (
+    cd "${AI_OS_REPO_ROOT}/_ai_os_runtime/ai-office-ui"
+    npm_config_cache="${AI_OS_DATA_ROOT}/caches/npm" npm ci
+    VITE_AI_OS_API_URL="${api_url}" npm run build
+  )
+}
+
+render_launchagents() {
+  load_env
+  mkdir -p "${LAUNCHD_ROOT}" "${LAUNCHD_LOG_ROOT}"
+  local deploy_root command supervisor
+  deploy_root="${AI_OS_REPO_ROOT}/_ai_os_runtime/deploy/imac-backend"
+  command="${deploy_root}/bin/aios-imac"
+  supervisor="${deploy_root}/bin/supervisor.sh"
+  sed \
+    -e "s|__SUPERVISOR__|${supervisor}|g" \
+    -e "s|__ENV_FILE__|${ENV_FILE}|g" \
+    -e "s|__LOG_ROOT__|${LAUNCHD_LOG_ROOT}|g" \
+    "${deploy_root}/templates/com.devarsh.aios.imac.supervisor.plist.in" > "${SUPERVISOR_PLIST}"
+  sed \
+    -e "s|__COMMAND__|${command}|g" \
+    -e "s|__ENV_FILE__|${ENV_FILE}|g" \
+    -e "s|__LOG_ROOT__|${LAUNCHD_LOG_ROOT}|g" \
+    "${deploy_root}/templates/com.devarsh.aios.imac.backup.plist.in" > "${BACKUP_PLIST}"
+  plutil -lint "${SUPERVISOR_PLIST}" "${BACKUP_PLIST}"
+}
+
+configure_tailscale() {
+  load_env
+  require_command tailscale
+  require_command jq
+  local dns_name
+  dns_name="$(tailnet_dns_name)"
+  [[ -n "${dns_name}" ]] || die "Tailscale is not signed in or MagicDNS is unavailable"
+
+  log "Publishing UI and API privately to the tailnet"
+  tailscale serve --bg --https="${AI_OS_TAILSCALE_UI_PORT}" "http://127.0.0.1:${AI_OS_UI_PORT}"
+  tailscale serve --bg --https="${AI_OS_TAILSCALE_API_PORT}" "http://127.0.0.1:${AI_OS_API_PORT}"
+  set_env_value AI_OS_TAILSCALE_DNS_NAME "${dns_name}"
+  set_env_value AI_OS_ALLOWED_ORIGINS "http://127.0.0.1:${AI_OS_UI_PORT},http://localhost:${AI_OS_UI_PORT},https://${dns_name}"
+  build_ui
+  tailscale serve status
+  log "Private UI: https://${dns_name}"
+  log "Private API: https://${dns_name}:${AI_OS_TAILSCALE_API_PORT}/api/health"
+}
+
+write_connection_record() {
+  load_env
+  local dns_name="" lan_host
+  dns_name="$(tailnet_dns_name 2>/dev/null || true)"
+  lan_host="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
+  jq -n \
+    --arg generated_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg ssh_user "$(id -un)" \
+    --arg lan_host "${lan_host}.local" \
+    --arg tailnet_dns_name "${dns_name}" \
+    --arg ui "${dns_name:+https://${dns_name}}" \
+    --arg api "${dns_name:+https://${dns_name}:${AI_OS_TAILSCALE_API_PORT}}" \
+    '{generated_at:$generated_at,ssh_user:$ssh_user,lan_host:$lan_host,tailnet_dns_name:$tailnet_dns_name,tailscale_ui:$ui,tailscale_api:$api,ssh_key_on_macbook:"~/.ssh/aios_imac_ed25519"}' \
+    > "${AI_OS_DATA_ROOT}/imac-backend-connection.json"
+  chmod 600 "${AI_OS_DATA_ROOT}/imac-backend-connection.json"
+}
+
+start_backend() {
+  load_env
+  ensure_ssd
+  render_launchagents
+  launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
+  launchctl bootstrap "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}"
+  launchctl kickstart -k "${LAUNCHD_DOMAIN}/${SUPERVISOR_LABEL}"
+  launchctl bootout "${LAUNCHD_DOMAIN}" "${BACKUP_PLIST}" 2>/dev/null || true
+  launchctl bootstrap "${LAUNCHD_DOMAIN}" "${BACKUP_PLIST}"
+  wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/health" "AI OS API" 180
+  wait_http "http://127.0.0.1:${AI_OS_UI_PORT}/" "AI OS UI" 120
+}
+
+stop_backend() {
+  load_env
+  launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
+  if colima status --profile ai-os >/dev/null 2>&1; then
+    compose down --timeout 30 || true
+    colima stop --profile ai-os || true
+  fi
+  pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_server.py" 2>/dev/null || true
+  pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_agent_message_daemon.py" 2>/dev/null || true
+  sync
+  log "SAFE_TO_EJECT: AI OS services and Colima are stopped and writes are flushed"
+}
+
+reindex_qdrant() {
+  load_env
+  ensure_ssd
+  wait_http "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" Qdrant 30
+  wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 30
+  log "Rebuilding the governed Qdrant collections; this can take several hours on the M1 iMac"
+  "$(runtime_python)" "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/index_qdrant_documents.py" \
+    | tee "${AI_OS_DATA_ROOT}/logs/imac-backend/qdrant-reindex-$(date '+%Y%m%dT%H%M%S').log"
+  "$(runtime_python)" "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_local_model_evals.py" \
+    --model "${AI_OS_EMBEDDING_MODEL}" --persist --promote
+}
+
+backup_backend() {
+  load_env
+  ensure_ssd
+  local root current previous staging
+  root="${AI_OS_OFFSITE_BACKUP_ROOT}"
+  current="${root}/current"
+  previous="${root}/previous"
+  mkdir -p "${root}"
+  staging="$(mktemp -d "${root}/.staging.XXXXXX")"
+  (
+  trap 'rm -rf "${staging}"' EXIT
+  mkdir -p "${staging}/postgres" "${staging}/vault" "${staging}/code" "${staging}/integrity"
+
+  log "Creating independent compact backup at ${root}"
+  rsync -a --delete --exclude '_ai_os_runtime/' "${AI_OS_VAULT_ROOT}/" "${staging}/vault/"
+  docker exec ai_os_postgres pg_dump -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" -Fc \
+    > "${staging}/postgres/ai_os.dump"
+  docker exec ai_os_postgres pg_restore --list < "${staging}/postgres/ai_os.dump" \
+    > "${staging}/postgres/archive.list"
+  rsync -a --delete \
+    --exclude 'node_modules/' --exclude 'dist/' --exclude '__pycache__/' --exclude '.env' \
+    "${AI_OS_REPO_ROOT}/" "${staging}/code/source/"
+  printf 'created_at=%s\nsource_commit=%s\nqdrant_rebuildable=true\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    "$(cat "${AI_OS_REPO_ROOT}/DEPLOYED_COMMIT" 2>/dev/null || printf 'package-working-tree')" \
+    > "${staging}/manifest.txt"
+  (
+    cd "${staging}"
+    find code postgres vault -type f -print0 | sort -z | xargs -0 shasum -a 256
+  ) > "${staging}/integrity/checksums.sha256"
+  (cd "${staging}" && shasum -a 256 -c integrity/checksums.sha256 >/dev/null)
+
+  rm -rf "${previous}"
+  [[ ! -d "${current}" ]] || mv "${current}" "${previous}"
+  mv "${staging}" "${current}"
+  trap - EXIT
+  log "Independent backup completed: ${current}"
+  )
+}
+
+assert_loopback_listener() {
+  local port="$1" label="$2" listeners
+  listeners="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print $9}' | sort -u)"
+  [[ -n "${listeners}" ]] || die "${label} has no listener on ${port}"
+  if printf '%s\n' "${listeners}" | grep -Ev '^(127\.0\.0\.1|\[::1\]):' >/dev/null; then
+    printf '%s\n' "${listeners}" >&2
+    die "${label} is not restricted to loopback"
+  fi
+}
+
+verify_backend() {
+  load_env
+  ensure_ssd
+  wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/health" "AI OS API" 10
+  wait_http "http://127.0.0.1:${AI_OS_UI_PORT}/" "AI OS UI" 10
+  wait_http "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" Qdrant 10
+  wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 10
+  wait_container_healthy ai_os_postgres 10
+  wait_container_healthy ai_os_redis 10
+
+  assert_loopback_listener "${AI_OS_POSTGRES_PORT}" PostgreSQL
+  assert_loopback_listener "${AI_OS_QDRANT_HTTP_PORT}" Qdrant
+  assert_loopback_listener "${AI_OS_REDIS_PORT}" Redis
+  assert_loopback_listener "${AI_OS_OLLAMA_PORT}" Ollama
+  assert_loopback_listener "${AI_OS_API_PORT}" "AI OS API"
+  assert_loopback_listener "${AI_OS_UI_PORT}" "AI OS UI"
+
+  local invariants
+  invariants="$(docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" -v ON_ERROR_STOP=1 -c "
+    SELECT json_build_object(
+      'clients',(SELECT count(*) FROM portfolio.clients),
+      'positions',(SELECT count(*) FROM portfolio.positions),
+      'execution_locked',(SELECT NOT COALESCE(bool_or(live_execution_allowed),false) FROM agent.v_local_model_fleet),
+      'agent_tasks',(SELECT count(*) FROM agent.tasks)
+    );")"
+  printf 'DATABASE_INVARIANTS=%s\n' "${invariants}"
+  [[ "$(printf '%s' "${invariants}" | jq -r '.execution_locked')" == "true" ]] || die "Execution lock invariant failed"
+
+  curl -fsS "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" \
+    | jq -e '.result.collections | length >= 6' >/dev/null
+  curl -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" \
+    | jq -e --arg model "${AI_OS_EMBEDDING_MODEL}" '.models | any((.name // .model) == $model)' >/dev/null
+  launchctl print "${LAUNCHD_DOMAIN}/${SUPERVISOR_LABEL}" >/dev/null
+  if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
+    wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 10
+  fi
+  log "IMAC_BACKEND_VERIFIED"
+}
+
+status_backend() {
+  load_env
+  printf 'node_role=%s\nssd=%s\nrepo=%s\nvault=%s\n' \
+    "${AI_OS_NODE_ROLE}" "${AI_OS_SSD_ROOT}" "${AI_OS_REPO_ROOT}" "${AI_OS_VAULT_ROOT}/ai memory"
+  diskutil info "${AI_OS_SSD_ROOT}" 2>/dev/null | egrep 'Volume Name|Mounted|Mount Point|File System Personality|Volume Used Space|Volume Free Space' || true
+  colima status --profile ai-os 2>/dev/null || true
+  compose ps 2>/dev/null || true
+  curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" 2>/dev/null | jq '{status, checked_at, model_runtime, storage}' || true
+  curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" 2>/dev/null | jq -r '.models[]?.name' || true
+  command -v tailscale >/dev/null 2>&1 && tailscale serve status || true
+  [[ ! -f "${AI_OS_OFFSITE_BACKUP_ROOT}/current/manifest.txt" ]] || cat "${AI_OS_OFFSITE_BACKUP_ROOT}/current/manifest.txt"
+}
+
+install_backend() {
+  preflight
+  install_dependencies
+  local repo_root
+  repo_root="$(deploy_source | tail -n 1)"
+  write_environment "${repo_root}"
+  ensure_runtime_directories
+  bootstrap_data
+  ensure_embedding_model
+  build_ui
+  render_launchagents
+  start_backend
+  if command -v tailscale >/dev/null 2>&1 && [[ -n "$(tailnet_dns_name 2>/dev/null || true)" ]]; then
+    configure_tailscale
+    start_backend
+  else
+    log "Tailscale is not ready. Install/sign in, then run: ${repo_root}/_ai_os_runtime/deploy/imac-backend/bin/aios-imac tailscale"
+  fi
+  write_connection_record
+  backup_backend
+  verify_backend
+  log "Installation complete. Run 'aios-imac reindex' to rebuild the approved embedding collections."
+}
+
+command_name="${1:-}"
+case "${command_name}" in
+  install) install_backend ;;
+  preflight) preflight ;;
+  start) load_env; start_backend ;;
+  stop) stop_backend ;;
+  status) status_backend ;;
+  verify) verify_backend ;;
+  tailscale) configure_tailscale; start_backend; verify_backend ;;
+  reindex) reindex_qdrant; verify_backend ;;
+  browser-enable) enable_tradingview_browser ;;
+  browser-disable) disable_tradingview_browser ;;
+  browser-verify) verify_tradingview_browser ;;
+  backup) backup_backend ;;
+  *) usage; exit 2 ;;
+esac

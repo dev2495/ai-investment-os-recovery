@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.imac.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__COMMAND__</string>
+    <string>backup</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AI_OS_IMAC_ENV</key>
+    <string>__ENV_FILE__</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__LOG_ROOT__/backup.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_ROOT__/backup.launchd.err</string>
+</dict>
+</plist>

@@ -1,0 +1,63 @@
+name: ai-os-imac
+
+services:
+  ai_os_postgres:
+    image: ${AI_OS_TIMESCALE_IMAGE:-timescale/timescaledb:latest-pg16}
+    platform: linux/arm64
+    container_name: ai_os_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AI_OS_POSTGRES_USER:-ai_os}
+      POSTGRES_PASSWORD: ${AI_OS_POSTGRES_PASSWORD:?AI_OS_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${AI_OS_POSTGRES_DB:-ai_os}
+      TIMESCALEDB_TELEMETRY: "off"
+      TS_TUNE_MEMORY: 1GB
+      TS_TUNE_NUM_CPUS: "2"
+      TS_TUNE_MAX_CONNS: "40"
+    ports:
+      - "127.0.0.1:${AI_OS_POSTGRES_PORT:-54329}:5432"
+    volumes:
+      - type: bind
+        source: ${AI_OS_IMAC_RUNTIME_DATA:?AI_OS_IMAC_RUNTIME_DATA is required}/postgres
+        target: /var/lib/postgresql/data
+    mem_limit: 1400m
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AI_OS_POSTGRES_USER:-ai_os} -d ${AI_OS_POSTGRES_DB:-ai_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  ai_os_qdrant:
+    image: ${AI_OS_QDRANT_IMAGE:-qdrant/qdrant:v1.18.2}
+    platform: linux/arm64
+    container_name: ai_os_qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${AI_OS_QDRANT_HTTP_PORT:-6333}:6333"
+      - "127.0.0.1:${AI_OS_QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - type: bind
+        source: ${AI_OS_IMAC_RUNTIME_DATA:?AI_OS_IMAC_RUNTIME_DATA is required}/qdrant
+        target: /qdrant/storage
+    mem_limit: 1200m
+    cpus: 1.5
+
+  ai_os_redis:
+    image: ${AI_OS_REDIS_IMAGE:-redis:7-alpine}
+    platform: linux/arm64
+    container_name: ai_os_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:${AI_OS_REDIS_PORT:-63799}:6379"
+    volumes:
+      - type: bind
+        source: ${AI_OS_IMAC_RUNTIME_DATA:?AI_OS_IMAC_RUNTIME_DATA is required}/redis
+        target: /data
+    mem_limit: 192m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
