@@ -108,6 +108,7 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
 
   /* ---- QUANT & STRATEGY ---- */
   { code: "QLAB", path: "/quant/lab", label: "Quant Lab", icon: BarChart3, description: "Strategy candidates, backtests, validation, promotion board", group: "quant", order: 0, status: "beta" },
+  { code: "FACT", path: "/quant/factors", label: "Factor Analysis", icon: Target, description: "Portfolio and strategy factor exposure, contribution, beta and residual alpha", group: "quant", order: 1, status: "beta" },
   { code: "BACK", path: "/quant/backtests", label: "Backtests", icon: LineChart, description: "Backtest runs with explicit data lineage and reproducibility", group: "quant", order: 1, status: "beta" },
   { code: "OPT", path: "/quant/optimizer", label: "Strategy Optimizer", icon: Zap, description: "Walk-forward parameter search on OUR data, robustness heatmaps", group: "quant", order: 2, status: "beta" },
   { code: "MV", path: "/quant/model-validation", label: "Model Validation", icon: Brain, description: "Adversarial review — leakage, overfit, walk-forward, robustness", group: "quant", order: 3, status: "beta" },

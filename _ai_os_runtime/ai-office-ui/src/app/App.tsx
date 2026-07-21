@@ -123,6 +123,7 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/fundamental/coverage": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/fundamental/ideas": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/quant/lab": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
+    "/quant/factors": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
     "/quant/backtests": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
     "/quant/optimizer": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
     "/quant/model-validation": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),

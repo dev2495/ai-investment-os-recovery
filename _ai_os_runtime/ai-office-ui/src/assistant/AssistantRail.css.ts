@@ -328,6 +328,39 @@ export const AssistantRailCss = `
   background: var(--border-strong);
 }
 
+.aios-assistant__actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.aios-assistant__action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-soft));
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.aios-assistant__action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-soft));
+}
+
+.aios-assistant__action:disabled {
+  color: var(--status-ok);
+  cursor: default;
+  opacity: 0.78;
+}
+
 /* Responsive — collapse on small screens */
 @media (max-width: 900px) {
   .aios-assistant {

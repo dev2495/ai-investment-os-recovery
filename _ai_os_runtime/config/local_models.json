@@ -9,6 +9,16 @@
   },
   "models": [
     {
+      "model": "granite4:3b",
+      "tier": "light",
+      "required_profiles": ["imac"],
+      "context_tokens": 8192,
+      "max_output_tokens": 700,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": ["conversation", "task_intake", "tool_selection", "evidence_bound_summary"]
+    },
+    {
       "model": "qwen3.5:2b",
       "tier": "experimental",
       "required_profiles": [],

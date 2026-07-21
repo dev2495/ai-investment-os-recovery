@@ -35,6 +35,7 @@ import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
   { key: "lab", label: "Quant Lab", icon: BarChart3 },
+  { key: "factors", label: "Factor Analysis", icon: Target },
   { key: "backtests", label: "Backtests", icon: LineChart },
   { key: "optimizer", label: "Strategy Optimizer", icon: Zap },
   { key: "model-validation", label: "Model Validation", icon: Brain },
@@ -71,6 +72,7 @@ export default function QuantStrategy({ defaultTab = "lab" }: { defaultTab?: str
       </div>
 
       {tab === "lab" && <LabView />}
+      {tab === "factors" && <FactorAnalysisView />}
       {tab === "backtests" && <BacktestsView />}
       {tab === "optimizer" && <OptimizerView />}
       {tab === "model-validation" && <ValidationView />}
@@ -172,6 +174,69 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
         </Field>
       </div>
     </Drawer>
+  );
+}
+
+/* ============================================================
+ * FACTOR ANALYSIS — portfolio and strategy attribution
+ * ============================================================ */
+function FactorAnalysisView() {
+  const risk = useTradingQuantRisk();
+  const arsenal = useStrategyArsenal();
+  const portfolioFactors = risk.data?.institutional_factors ?? [];
+  const strategyFactors = arsenal.data?.strategy_factor_attribution ?? [];
+  const analyticsRuns = arsenal.data?.quant_analytics_runs ?? [];
+  const loading = risk.isLoading || arsenal.isLoading;
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Portfolio Factors" value={portfolioFactors.length} /></MetricTile>
+        <MetricTile><Metric label="Strategy Factors" value={strategyFactors.length} /></MetricTile>
+        <MetricTile><Metric label="Analytics Runs" value={analyticsRuns.length} /></MetricTile>
+        <MetricTile tone={portfolioFactors.some((r) => text(r, "calculation_status") !== "complete") ? "warn" : "ok"}>
+          <Metric label="Coverage" value={portfolioFactors.length ? "Measured" : "Not run"} />
+        </MetricTile>
+      </div>
+
+      <Panel icon={Target} title="Portfolio & Book Factor Exposure">
+        {loading ? <SkeletonGrid rows={5} /> : portfolioFactors.length === 0 ? (
+          <Empty icon={Target} title="No factor run available" description="Run Institutional Risk to calculate portfolio and book factor exposure from warehouse positions and OHLCV." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "scope", header: "Scope", render: (r) => <strong>{text(r, "scope_ref", text(r, "scope_type", "portfolio"))}</strong> },
+              { key: "factor", header: "Factor", render: (r) => text(r, "factor_name", text(r, "factor_key")) },
+              { key: "exposure", header: "Exposure", align: "right", render: (r) => num(r, "exposure_value", 0).toFixed(3) },
+              { key: "contribution", header: "Risk Contribution", align: "right", render: (r) => formatPercent(num(r, "contribution_pct", 0), { alreadyPercent: true }) },
+              { key: "method", header: "Method", render: (r) => text(r, "methodology", "—") },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "calculation_status", "unknown")} /> },
+            ]}
+            rows={portfolioFactors}
+            rowKey={(r, i) => `${text(r, "scope_type")}-${text(r, "scope_ref")}-${text(r, "factor_key", i)}`}
+          />
+        )}
+      </Panel>
+
+      <Panel icon={Activity} title="Strategy Factor Attribution">
+        {loading ? <SkeletonGrid rows={5} /> : strategyFactors.length === 0 ? (
+          <Empty icon={Activity} title="No strategy attribution available" description="Run Quant Analytics after a reproducible backtest to separate beta, factor loading, and residual alpha." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "candidate_key"))}</strong> },
+              { key: "factor", header: "Factor", render: (r) => text(r, "factor_name") },
+              { key: "exposure", header: "Loading", align: "right", render: (r) => num(r, "exposure", 0).toFixed(3) },
+              { key: "contribution", header: "Contribution", align: "right", render: (r) => formatPercent(num(r, "contribution", 0) * 100, { alreadyPercent: true }) },
+              { key: "method", header: "Method", render: (r) => text(r, "method", "—") },
+              { key: "run", header: "Run", render: (r) => text(r, "run_key", "—") },
+            ]}
+            rows={strategyFactors}
+            rowKey={(r, i) => String(text(r, "id", i))}
+          />
+        )}
+      </Panel>
+    </>
   );
 }
 

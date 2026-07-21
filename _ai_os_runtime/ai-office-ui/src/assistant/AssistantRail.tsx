@@ -63,11 +63,18 @@ interface ChatMessage {
 }
 
 const ROUTES: Array<{ key: ReasoningRoute; label: string; icon: typeof Brain; desc: string }> = [
-  { key: "local", label: "Local", icon: Brain, desc: "Deterministic, on-device, private" },
-  { key: "fast", label: "Fast", icon: Zap, desc: "Quick governed model" },
-  { key: "deep", label: "Deep", icon: Microscope, desc: "Thorough, retrieval-augmented" },
-  { key: "review", label: "Review", icon: ClipboardCheck, desc: "Adversarial self-check" },
+  { key: "local", label: "Private", icon: Brain, desc: "Natural local Charlie with private portfolio context" },
+  { key: "fast", label: "Fast", icon: Zap, desc: "Low-cost cloud model; no client data" },
+  { key: "deep", label: "Deep", icon: Microscope, desc: "Deep cloud research; no client data" },
+  { key: "review", label: "Review", icon: ClipboardCheck, desc: "Independent cloud review; no client data" },
 ];
+
+const ROUTE_CONFIG: Record<ReasoningRoute, { routeName: string; privateContext: boolean }> = {
+  local: { routeName: "charlie_munger_orchestration", privateContext: true },
+  fast: { routeName: "openrouter_research_fast", privateContext: false },
+  deep: { routeName: "openrouter_research_deep", privateContext: false },
+  review: { routeName: "openrouter_research_review", privateContext: false },
+};
 
 const QUICK_ACTIONS = [
   { label: "What do I need to decide today?", icon: ClipboardCheck },
@@ -84,7 +91,12 @@ export function AssistantRail() {
   const openEvidence = useUIStore((s) => s.openEvidence);
 
   const location = useLocation();
+  const navigate = useNavigate();
   const chat = useChat();
+  const proposeArchitecture = useProposeArchitectureChange();
+  const updateWorkspace = useUpdateWorkspaceConfig();
+  const createAgentMessage = useCreateAgentMessage();
+  const materializeWidgets = useMaterializeWidgets();
 
   const [messages, setMessages] = React.useState<ChatMessage[]>(() => {
     try {
@@ -154,18 +166,19 @@ export function AssistantRail() {
 
     const scopedAgent = scope === "charlie" ? "Charlie Munger" : scope.agentName;
     const scopedMessage = scope === "charlie" ? trimmed : `Act as ${scope.agentName}, the requested specialist. Coordinate through Charlie and answer with source-backed evidence. User request: ${trimmed}`;
-    const routeName = route === "local" ? "charlie_munger_orchestration" : route;
+    const routeConfig = ROUTE_CONFIG[route];
     chat.mutate(
       {
         message: scopedMessage,
         session_key: "devarsh-charlie-primary",
         actor: "Devarsh",
         workspace: destContext.toLowerCase().replace(/[^a-z]/g, "_"),
-        route_name: routeName,
-        deterministic_only: route === "local",
-        include_client_context: true,
-        privacy_class: "private_investment_office",
-        contains_client_data: destContext === "Portfolio",
+        route_name: routeConfig.routeName,
+        deterministic_only: false,
+        include_client_context: routeConfig.privateContext,
+        privacy_class: routeConfig.privateContext ? "client_private" : "internal",
+        cloud_approved: !routeConfig.privateContext,
+        contains_client_data: routeConfig.privateContext && destContext === "Portfolio",
         metadata: { assistant_scope: scopedAgent, ui_destination: destContext },
       },
       {
@@ -245,6 +258,66 @@ export function AssistantRail() {
     );
   }
 
+  function executeAction(action: AssistantAction) {
+    if (action.executed) return;
+    const markDone = () => {
+      setMessages((current) => current.map((message) => ({
+        ...message,
+        actions: message.actions?.map((item) => item.id === action.id ? { ...item, executed: true } : item),
+      })));
+    };
+    const fail = (error: Error) => {
+      setMessages((current) => [...current, {
+        id: `e-${Date.now()}`,
+        role: "system",
+        content: `Action failed: ${error.message}`,
+        ts: Date.now(),
+      }]);
+    };
+
+    if (action.kind === "governance") {
+      proposeArchitecture.mutate({
+        title: action.label.replace(/^Propose:\s*/, ""),
+        change_type: "other",
+        description: action.description || "Architecture change proposed through Charlie.",
+        rationale: "Requested from the Charlie operator conversation.",
+        risk_level: "medium",
+        proposed_by: "Devarsh via Charlie",
+        metadata: action.payload,
+      }, { onSuccess: markDone, onError: fail });
+      return;
+    }
+    if (action.kind === "delegate") {
+      createAgentMessage.mutate({
+        to_agent: String(action.payload.to_agent || "Research Analyst"),
+        subject: String(action.payload.task_name || action.label),
+        message: action.description || String(action.payload.task_name || "Review Charlie's delegated task."),
+        priority: "normal",
+        workspace: destContext,
+        metadata: { source: "charlie_conversation", ...action.payload },
+      }, { onSuccess: markDone, onError: fail });
+      return;
+    }
+    if (action.kind === "widget") {
+      materializeWidgets.mutate(
+        { actor: "Devarsh via Charlie", include_existing: false, limit: 20 },
+        { onSuccess: markDone, onError: fail },
+      );
+      return;
+    }
+    if (action.kind === "screen") {
+      updateWorkspace.mutate(
+        { profile_key: "devarsh", preferences: action.payload },
+        { onSuccess: markDone, onError: fail },
+      );
+      return;
+    }
+    if (action.kind === "navigate" && typeof action.payload.path === "string") {
+      navigate(action.payload.path);
+      markDone();
+    }
+  }
+
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -320,7 +393,7 @@ export function AssistantRail() {
           )}
 
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} onEvidence={openEvidence} />
+            <MessageBubble key={msg.id} msg={msg} onEvidence={openEvidence} onAction={executeAction} />
           ))}
 
           {chat.isPending && (
@@ -373,9 +446,11 @@ export function AssistantRail() {
 function MessageBubble({
   msg,
   onEvidence,
+  onAction,
 }: {
   msg: ChatMessage;
   onEvidence: (t: { kind: string; key: string; title: string }) => void;
+  onAction: (action: AssistantAction) => void;
 }) {
   if (msg.role === "system") {
     return (
@@ -406,6 +481,22 @@ function MessageBubble({
       {msg.route && (
         <div className="aios-assistant__msg-meta">
           via {msg.route} · {formatRelative(new Date(msg.ts).toISOString())}
+        </div>
+      )}
+      {msg.actions && msg.actions.length > 0 && (
+        <div className="aios-assistant__actions">
+          {msg.actions.map((action) => (
+            <button
+              key={action.id}
+              className="aios-assistant__action"
+              onClick={() => onAction(action)}
+              disabled={action.executed}
+              title={action.description}
+            >
+              <Sparkles size={12} />
+              <span>{action.executed ? "Accepted" : action.label}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>

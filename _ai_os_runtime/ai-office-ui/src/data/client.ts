@@ -15,7 +15,21 @@
  * TanStack Query in `data/queries/`. This module is intentionally low-level.
  */
 
-const BASE_URL = (import.meta.env.VITE_AI_OS_API_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+function resolveApiBaseUrl(): string {
+  const configured = String(import.meta.env.VITE_AI_OS_API_URL || "").trim();
+  if (configured) return configured.replace(/\/$/, "");
+
+  if (typeof window !== "undefined") {
+    const { hostname, protocol } = window.location;
+    if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
+      return `${protocol}//${hostname}:8443`;
+    }
+  }
+
+  return "http://127.0.0.1:8765";
+}
+
+const BASE_URL = resolveApiBaseUrl();
 const OPERATOR_TOKEN = String(import.meta.env.VITE_AI_OS_OPERATOR_TOKEN || "").trim();
 
 /** Default request timeout (5 min — Charlie chat + model runs can be slow). */

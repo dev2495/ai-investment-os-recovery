@@ -7,7 +7,7 @@ REMOTE_ENV='${HOME}/Library/Application Support/AIOS/imac.env'
 
 usage() {
   cat <<'EOF'
-Usage: SET_OPENROUTER_KEY_FROM_MACBOOK.command [--clipboard|--check]
+Usage: SET_OPENROUTER_KEY_FROM_MACBOOK.command [--clipboard|--stdin|--check]
 
 Run without arguments for a hidden prompt. Use --clipboard after copying the
 OpenRouter key from Notes. The key is sent directly over SSH and is never
@@ -31,6 +31,8 @@ fi
 if [[ "${1:-}" == "--clipboard" ]]; then
   command -v pbpaste >/dev/null 2>&1 || { echo "pbpaste is unavailable." >&2; exit 1; }
   key="$(pbpaste | tr -d '\r\n')"
+elif [[ "${1:-}" == "--stdin" ]]; then
+  IFS= read -r key
 elif [[ -z "${1:-}" ]]; then
   printf 'Paste the OpenRouter key (input hidden), then press Return: '
   IFS= read -r -s key
