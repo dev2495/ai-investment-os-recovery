@@ -64,7 +64,10 @@ WITH usage_rollup AS (
         count(*) FILTER (
             WHERE event_ts >= current_date
               AND estimated_cost_usd IS NULL
-              AND provider NOT IN ('ollama','mlx','local','lm_studio')
+              AND provider NOT IN (
+                  'ollama','mlx','local','lm_studio','local_openai',
+                  'local_python','local_tools','deterministic'
+              )
         )::BIGINT AS rate_missing_events_today
     FROM agent.model_usage_events
     GROUP BY agent_name
