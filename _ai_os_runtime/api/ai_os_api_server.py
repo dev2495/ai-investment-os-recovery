@@ -37,6 +37,8 @@ MLX_REQUEST_MODEL = os.environ.get(
 )
 LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
 LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
+LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "450"))
+LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "180"))
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MAX_COMPLETION_TOKENS = int(os.environ.get("AI_OS_OPENROUTER_MAX_COMPLETION_TOKENS", "1200"))
@@ -68,6 +70,12 @@ CHARLIE_TRUTH_SYSTEM_PROMPT = (
     "Flag future or restated information used before its availability date as look-ahead bias. Turn research papers into a hypothesis for a transaction-cost-aware backtest, not a live strategy. "
     "Do not recommend or describe internal model routes as a next action; the governed router owns model selection. "
     "Never reveal hidden reasoning or chain-of-thought."
+)
+CHARLIE_LOCAL_CONVERSATION_PROMPT = (
+    "You are Charlie Munger, the natural-language chief of staff for a private investment office. "
+    "Use only the verified draft and source snippets supplied by the system. Preserve every number, "
+    "status, caveat, and source; never invent actions, trades, approvals, calculations, or facts. "
+    "State what is missing plainly. Be direct, conversational, and concise. Broker writes are locked."
 )
 
 QDRANT_COLLECTIONS = [
@@ -1181,13 +1189,13 @@ def local_openai_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "temperature": 0.7,
                 "top_p": 0.95,
                 "top_k": 20,
-                "max_tokens": 900,
+                "max_tokens": LOCAL_OPENAI_MAX_TOKENS,
                 "messages": [
-                    {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
+                    {"role": "system", "content": CHARLIE_LOCAL_CONVERSATION_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
             },
-            timeout=240,
+            timeout=LOCAL_OPENAI_TIMEOUT_SECONDS,
         )
         choices = payload.get("choices") if isinstance(payload, dict) else None
         message = choices[0].get("message") if isinstance(choices, list) and choices else None
@@ -13444,7 +13452,16 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
     return context
 
 
-def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[dict], widget_intents: list[dict], route: dict, retrieval_status: str) -> str:
+def deterministic_chat_reply(
+    message: str,
+    context: dict,
+    retrieval_hits: list[dict],
+    widget_intents: list[dict],
+    route: dict,
+    retrieval_status: str,
+    *,
+    include_route_status: bool = True,
+) -> str:
     clients = context.get("clients") or []
     positions = context.get("latest_positions") or []
     book_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("book_summary") or []}
@@ -13532,7 +13549,7 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
     lines = [
         "I checked the live warehouse and memory layer.",
     ]
-    if route.get("default_provider") in {"ollama", "mlx", "local_openai"} and model:
+    if include_route_status and route.get("default_provider") in {"ollama", "mlx", "local_openai"} and model:
         lines.append(f"Daily driver route is configured for `{model}`, but the model call returned `{route.get('last_model_status') or 'unavailable'}`, so I am using deterministic routing for this turn.")
     if clients:
         total_value = sum(float(row.get("latest_market_value") or 0) for row in clients)
@@ -13914,10 +13931,7 @@ def chat_with_charlie(payload: dict) -> dict:
         any(term in normalized_message for term in factual_request_terms)
         and any(term in normalized_message for term in factual_domain_terms)
     )
-    deterministic_only = (
-        bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
-        or auto_factual_retrieval or bool(tool_intents)
-    )
+    deterministic_only = bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
     if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
     else:
@@ -13925,38 +13939,36 @@ def chat_with_charlie(payload: dict) -> dict:
     widget_intents = infer_widget_intents(message, context)
     response_guardrail: list[str] = []
     cloud_usage: dict = {}
-    prompt_limits = {
-        "clients": 5, "latest_positions": 6, "book_summary": 20,
-        "investment_books": 8, "symbol_intelligence": 4, "ohlcv": 8,
-        "vectors": 8, "filing_summary": 1, "latest_filings": 4,
-        "latest_news": 4, "watchlist": 8, "generated_ideas": 4,
-        "latest_reports": 4, "options_summary": 4, "broker_snapshots": 6,
-        "news_brief": 5, "filing_intelligence": 5, "market_events": 8,
-        "market_holidays": 8, "zerodha_market_status": 1, "tool_results": 6,
-        "context_errors": 12, "message_symbols": 12,
-    }
-    prompt_context = {
-        key: (value[:prompt_limits[key]] if isinstance(value, list) else value)
-        for key, value in context.items()
-        if key in prompt_limits
-    }
+    requested_route = str(
+        payload.get("route_name")
+        or payload.get("routeName")
+        or infer_local_chat_route(message)
+    )
+    preview_route = get_model_route(requested_route)
+    verified_draft = deterministic_chat_reply(
+        message,
+        context,
+        retrieval_hits,
+        widget_intents,
+        preview_route,
+        retrieval_status,
+        include_route_status=False,
+    )
 
     prompt = (
         "User message:\n"
         f"{message}\n\n"
-        "Bounded live context JSON:\n"
-        f"{json.dumps(prompt_context, default=str)[:7500]}\n\n"
-        "Relevant memory hits:\n"
-        f"{json.dumps(retrieval_hits[:4], default=str)[:1500]}\n\n"
-        "Suggested dashboard widget intents:\n"
-        f"{json.dumps(widget_intents, default=str)}\n\n"
-        "Answer in 4-7 concise lines. Include what you checked, what is missing, and the next action."
+        "Verified office draft from governed SQL and tools:\n"
+        f"{verified_draft[:1200]}\n\n"
+        "Source-linked memory snippets:\n"
+        f"{json.dumps(retrieval_hits[:2], default=str)[:350]}\n\n"
+        "Rewrite the verified draft as a natural answer in 3-6 concise sentences. Preserve facts and links."
     )
     started = time.perf_counter()
     control_payload = dict(payload)
     control_payload["contains_client_data"] = include_client_context
     if not control_payload.get("route_name") and not control_payload.get("routeName"):
-        control_payload["route_name"] = infer_local_chat_route(message)
+        control_payload["route_name"] = requested_route
     model_decision = choose_chat_model_call(control_payload, prompt)
     route = model_decision.get("selected_route_record") or get_model_route(
         str(

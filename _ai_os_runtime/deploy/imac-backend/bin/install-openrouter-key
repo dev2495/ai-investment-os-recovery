@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/common.sh"
+
+IFS= read -r key
+if [[ ! "${key}" =~ ^sk-or-v1-[A-Za-z0-9_-]{20,}$ ]]; then
+  echo "Invalid OpenRouter API key format." >&2
+  exit 3
+fi
+
+mkdir -p "$(dirname "${ENV_FILE}")"
+umask 077
+tmp_file="$(mktemp "$(dirname "${ENV_FILE}")/imac.env.XXXXXX")"
+trap 'rm -f "${tmp_file}"' EXIT
+if [[ -f "${ENV_FILE}" ]]; then
+  grep -v '^AI_OS_OPENROUTER_API_KEY=' "${ENV_FILE}" > "${tmp_file}" || true
+fi
+printf 'AI_OS_OPENROUTER_API_KEY=%s\n' "${key}" >> "${tmp_file}"
+unset key
+chmod 600 "${tmp_file}"
+mv -f "${tmp_file}" "${ENV_FILE}"
+trap - EXIT
+
+"${SCRIPT_DIR}/aios-imac" start
+echo "OpenRouter key installed and runtime restarted (value not displayed)."

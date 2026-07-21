@@ -77,7 +77,8 @@ log "Starting AI OS API"
 children+=("$!")
 
 log "Starting AI OS UI"
-"$(runtime_python)" -m http.server "${AI_OS_UI_PORT}" --bind 127.0.0.1 \
+"$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/serve_spa.py" \
+  --host 127.0.0.1 --port "${AI_OS_UI_PORT}" \
   --directory "${AI_OS_REPO_ROOT}/_ai_os_runtime/ai-office-ui/dist" \
   >>"${LOG_ROOT}/ui.log" 2>>"${LOG_ROOT}/ui.err" &
 children+=("$!")
