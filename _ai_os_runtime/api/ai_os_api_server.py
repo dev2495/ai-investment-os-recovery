@@ -39,6 +39,7 @@ LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.
 LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
+OPENROUTER_MAX_COMPLETION_TOKENS = int(os.environ.get("AI_OS_OPENROUTER_MAX_COMPLETION_TOKENS", "1200"))
 TRADINGVIEW_CDP_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
 EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "charlie_munger_orchestration")
@@ -1215,7 +1216,7 @@ def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict
                     "model": model_name,
                     "stream": False,
                     "temperature": 0.2,
-                    "max_tokens": 1200,
+                    "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
                     "provider": {"zdr": True, "data_collection": "deny"},
                     "messages": [
                         {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
@@ -12692,6 +12693,49 @@ def get_model_route_strict(route_name: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def estimate_model_call_cost(
+    provider: str,
+    model_name: str,
+    prompt_chars: int,
+    max_completion_tokens: int,
+) -> dict | None:
+    rates = run_psql_json(
+        f"""
+        SELECT id, cost_tier, input_usd_per_1m_tokens, output_usd_per_1m_tokens,
+               rate_source, effective_at
+        FROM agent.model_cost_rates
+        WHERE lower(provider)=lower({sql_literal(provider)})
+          AND model_name={sql_literal(model_name)}
+          AND status='active'
+          AND effective_at<=now()
+        ORDER BY effective_at DESC
+        LIMIT 1
+        """
+    )
+    if not rates:
+        return None
+    rate = rates[0]
+    input_rate = Decimal(str(rate.get("input_usd_per_1m_tokens") or 0))
+    output_rate = Decimal(str(rate.get("output_usd_per_1m_tokens") or 0))
+    prompt_tokens = max(1, (max(0, int(prompt_chars)) + 3) // 4)
+    completion_tokens = max(1, int(max_completion_tokens))
+    estimated_cost = (
+        (Decimal(prompt_tokens) * input_rate)
+        + (Decimal(completion_tokens) * output_rate)
+    ) / Decimal(1_000_000)
+    return {
+        "rate_id": int(rate["id"]),
+        "cost_tier": str(rate.get("cost_tier") or "cloud"),
+        "prompt_tokens_est": prompt_tokens,
+        "completion_tokens_reserved": completion_tokens,
+        "estimated_cost_usd": float(estimated_cost),
+        "input_usd_per_1m_tokens": float(input_rate),
+        "output_usd_per_1m_tokens": float(output_rate),
+        "rate_source": str(rate.get("rate_source") or "unknown"),
+        "rate_effective_at": rate.get("effective_at"),
+    }
+
+
 def choose_chat_model_call(payload: dict, prompt: str) -> dict:
     agent_name = str(payload.get("assistant_name") or payload.get("assistantName") or "Charlie Munger").strip()
     privacy_class = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
@@ -12706,6 +12750,9 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                assignment.fallback_route, assignment.escalation_route,
                assignment.max_autonomous_cost_tier,
                cap.cloud_requires_approval, cap.autonomous_cloud_allowed,
+               cap.hard_stop_on_breach, cap.daily_cap_usd, cap.monthly_cap_usd,
+               cap.cost_today_usd, cap.cost_month_usd,
+               cap.daily_remaining_usd, cap.monthly_remaining_usd,
                cap.cap_status
         FROM agent.profiles profile
         LEFT JOIN agent.agent_model_assignments assignment USING (agent_name)
@@ -12762,13 +12809,42 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             else:
                 reason = str(governance.get("reason") or "evaluation_required")
         elif provider == "openrouter":
-            available = bool(OPENROUTER_API_KEY) and cloud_approved and privacy_class in {"public", "internal"} and not contains_client_data
+            cost_estimate = estimate_model_call_cost(
+                provider,
+                model_name,
+                len(prompt),
+                OPENROUTER_MAX_COMPLETION_TOKENS,
+            )
+            daily_cap = Decimal(str(assignment.get("daily_cap_usd") or 0))
+            monthly_cap = Decimal(str(assignment.get("monthly_cap_usd") or 0))
+            cost_today = Decimal(str(assignment.get("cost_today_usd") or 0))
+            cost_month = Decimal(str(assignment.get("cost_month_usd") or 0))
+            cost_block_reason = None
+            if cost_estimate is None:
+                cost_block_reason = "cost_rate_missing"
+            elif daily_cap <= 0 or monthly_cap <= 0:
+                cost_block_reason = "cloud_budget_disabled"
+            else:
+                estimated_cost = Decimal(str(cost_estimate["estimated_cost_usd"]))
+                if cost_today + estimated_cost > daily_cap:
+                    cost_block_reason = "daily_cost_cap_would_breach"
+                elif cost_month + estimated_cost > monthly_cap:
+                    cost_block_reason = "monthly_cost_cap_would_breach"
+            available = (
+                bool(OPENROUTER_API_KEY)
+                and cloud_approved
+                and privacy_class in {"public", "internal"}
+                and not contains_client_data
+                and cost_block_reason is None
+            )
             if not OPENROUTER_API_KEY:
                 reason = "openrouter_key_unavailable"
             elif not cloud_approved:
                 reason = "explicit_cloud_approval_required"
             elif privacy_class not in {"public", "internal"} or contains_client_data:
                 reason = "cloud_route_blocks_client_private_context"
+            elif cost_block_reason:
+                reason = cost_block_reason
             else:
                 reason = "available"
         elif provider in {"local_python", "deterministic", "local_tools"}:
@@ -12781,11 +12857,21 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             "route_name": route_name, "provider": provider,
             "model_name": model_name, "available_for_chat": available, "reason": reason,
         }
+        if provider == "openrouter":
+            candidate_record["cost_estimate"] = cost_estimate
+            candidate_record["cost_cap"] = {
+                "daily_cap_usd": float(Decimal(str(assignment.get("daily_cap_usd") or 0))),
+                "monthly_cap_usd": float(Decimal(str(assignment.get("monthly_cap_usd") or 0))),
+                "cost_today_usd": float(Decimal(str(assignment.get("cost_today_usd") or 0))),
+                "cost_month_usd": float(Decimal(str(assignment.get("cost_month_usd") or 0))),
+                "hard_stop_on_breach": bool(assignment.get("hard_stop_on_breach", True)),
+                "cap_status": str(assignment.get("cap_status") or "unconfigured"),
+            }
         if provider in {"ollama", "mlx", "local_openai"}:
             candidate_record["governance"] = governance
         candidates.append(candidate_record)
         if selected is None and available:
-            selected = route
+            selected = {**route, "_cost_estimate": cost_estimate if provider == "openrouter" else None}
 
     policy = run_psql_json(
         f"SELECT * FROM agent.model_privacy_policies WHERE privacy_class={sql_literal(privacy_class)} LIMIT 1"
@@ -12854,7 +12940,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                 {sql_literal(prompt_hash)}, {len(prompt)}, {sql_literal(decision_status)},
                 {sql_literal(cache_key)}, {sql_literal(cache_status)}, {sql_jsonb(block_reasons)},
                 {sql_jsonb(candidates)},
-                {sql_jsonb([{'source':'agent.agent_model_assignments','agent_name':agent_name},{'source':'agent.model_privacy_policies','privacy_class':privacy_class},{'raw_prompt_stored':False}])}
+                {sql_jsonb([{'source':'agent.agent_model_assignments','agent_name':agent_name},{'source':'agent.model_privacy_policies','privacy_class':privacy_class},{'source':'agent.v_agent_model_cost_cap_status','cap_status':assignment.get('cap_status'),'daily_remaining_usd':assignment.get('daily_remaining_usd'),'monthly_remaining_usd':assignment.get('monthly_remaining_usd')},{'raw_prompt_stored':False,'explicit_cloud_approval':cloud_approved}])}
             ) RETURNING *
         )
         SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text FROM inserted
@@ -12979,7 +13065,80 @@ def request_model_escalation(payload: dict) -> dict:
     return result
 
 
-def finish_chat_model_call(decision: dict, response: str, model_status: str, latency_ms: int) -> None:
+def record_selected_model_usage(decision: dict, model_status: str, usage: dict | None = None) -> None:
+    if str(decision.get("selected_provider") or "") != "openrouter":
+        return
+    route_record = decision.get("selected_route_record") or {}
+    estimate = route_record.get("_cost_estimate") or {}
+    if not estimate:
+        return
+    usage = usage or {}
+    prompt_tokens_est = int(estimate.get("prompt_tokens_est") or 1)
+    completion_tokens_est = int(estimate.get("completion_tokens_reserved") or OPENROUTER_MAX_COMPLETION_TOKENS)
+    actual_prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    actual_completion_tokens = int(usage.get("completion_tokens") or 0)
+    actual_total_tokens = int(usage.get("total_tokens") or 0)
+    input_rate = Decimal(str(estimate.get("input_usd_per_1m_tokens") or 0))
+    output_rate = Decimal(str(estimate.get("output_usd_per_1m_tokens") or 0))
+    actual_cost_value = usage.get("cost")
+    if actual_cost_value is None and (actual_prompt_tokens or actual_completion_tokens):
+        actual_cost_value = (
+            (Decimal(actual_prompt_tokens) * input_rate)
+            + (Decimal(actual_completion_tokens) * output_rate)
+        ) / Decimal(1_000_000)
+    source_ref = str(decision.get("decision_key") or f"model-call-{decision['id']}")
+    run_psql_json_statement(
+        f"""
+        WITH recorded AS (
+            INSERT INTO agent.model_usage_events (
+                source_kind, source_ref, agent_name, route_name, provider, model_name,
+                task_class, usage_kind, model_status,
+                prompt_tokens_est, completion_tokens_est, total_tokens_est,
+                actual_prompt_tokens, actual_completion_tokens, actual_total_tokens,
+                estimated_cost_usd, actual_cost_usd, cost_tier, estimate_method,
+                rate_id, evidence, metadata, created_by
+            ) VALUES (
+                'model_call_decision', {sql_literal(source_ref)},
+                {sql_literal(decision.get('agent_name'))}, {sql_literal(decision.get('selected_route'))},
+                'openrouter', {sql_literal(decision.get('selected_model'))},
+                'chat', 'chat', {sql_literal(model_status)},
+                {prompt_tokens_est}, {completion_tokens_est}, {prompt_tokens_est + completion_tokens_est},
+                {actual_prompt_tokens if actual_prompt_tokens else 'NULL'},
+                {actual_completion_tokens if actual_completion_tokens else 'NULL'},
+                {actual_total_tokens if actual_total_tokens else 'NULL'},
+                {sql_numeric(estimate.get('estimated_cost_usd'))},
+                {sql_numeric(actual_cost_value)},
+                {sql_literal(estimate.get('cost_tier') or route_record.get('max_cost_tier') or 'cloud')},
+                'pre_call_rate_and_reserved_completion',
+                {int(estimate['rate_id'])},
+                {sql_jsonb([{'table':'agent.model_call_decisions','id':decision.get('id')},{'raw_prompt_stored':False}])},
+                {sql_jsonb({'explicit_cloud_approval':True,'zdr_required':True,'data_collection':'deny','usage':usage})},
+                'AI OS model call control plane'
+            )
+            ON CONFLICT (source_kind, source_ref) WHERE source_ref IS NOT NULL
+            DO UPDATE SET
+                model_status=EXCLUDED.model_status,
+                actual_prompt_tokens=EXCLUDED.actual_prompt_tokens,
+                actual_completion_tokens=EXCLUDED.actual_completion_tokens,
+                actual_total_tokens=EXCLUDED.actual_total_tokens,
+                actual_cost_usd=EXCLUDED.actual_cost_usd,
+                metadata=EXCLUDED.metadata,
+                updated_at=now()
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(recorded)), '[]'::json)::text FROM recorded
+        """
+    )
+
+
+def finish_chat_model_call(
+    decision: dict,
+    response: str,
+    model_status: str,
+    latency_ms: int,
+    usage: dict | None = None,
+) -> None:
+    record_selected_model_usage(decision, model_status, usage)
     response_hash = hashlib.sha256(response.encode("utf-8", errors="replace")).hexdigest()
     cache_status = str(decision.get("cache_status") or "bypassed")
     if cache_status == "miss" and decision.get("cache_key") and model_status == "called":
@@ -13822,7 +13981,13 @@ def chat_with_charlie(payload: dict) -> dict:
         assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
         model_status = "deterministic_fallback"
 
-    finish_chat_model_call(model_decision, assistant_message, model_status, int((time.perf_counter() - started) * 1000))
+    finish_chat_model_call(
+        model_decision,
+        assistant_message,
+        model_status,
+        int((time.perf_counter() - started) * 1000),
+        cloud_usage,
+    )
 
     persisted_payload = dict(payload)
     metadata = dict(payload.get("metadata") or {})
