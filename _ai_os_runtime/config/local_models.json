@@ -11,12 +11,51 @@
     {
       "model": "granite4:3b",
       "tier": "light",
-      "required_profiles": ["imac"],
+      "required_profiles": [
+        "imac"
+      ],
       "context_tokens": 8192,
       "max_output_tokens": 700,
       "eval_suite": "conversation_v1",
-      "promotion_status": "candidate",
-      "uses": ["conversation", "task_intake", "tool_selection", "evidence_bound_summary"]
+      "promotion_status": "rejected",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary"
+      ]
+    },
+    {
+      "model": "phi4-mini:3.8b",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 700,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "rejected",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary"
+      ]
+    },
+    {
+      "model": "qwen3:4b",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 700,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "rejected",
+      "uses": [
+        "evaluation_baseline"
+      ],
+      "rejection_reason": "Official alias resolves to the thinking checkpoint and leaked internal analysis on the production conversation surface."
     },
     {
       "model": "qwen3.5:2b",
@@ -26,7 +65,9 @@
       "max_output_tokens": 768,
       "eval_suite": "light_v1",
       "promotion_status": "rejected",
-      "uses": ["evaluation_baseline"]
+      "uses": [
+        "evaluation_baseline"
+      ]
     },
     {
       "model": "qwen3.5:4b",
@@ -36,7 +77,9 @@
       "max_output_tokens": 768,
       "eval_suite": "light_v1",
       "promotion_status": "rejected",
-      "uses": ["evaluation_baseline"]
+      "uses": [
+        "evaluation_baseline"
+      ]
     },
     {
       "model": "gemma3:4b",
@@ -46,7 +89,9 @@
       "max_output_tokens": 768,
       "eval_suite": "light_v1",
       "promotion_status": "rejected",
-      "uses": ["evaluation_baseline"]
+      "uses": [
+        "evaluation_baseline"
+      ]
     },
     {
       "model": "qwen3.5:9b",
@@ -56,7 +101,9 @@
       "max_output_tokens": 1400,
       "eval_suite": "mid_v1",
       "promotion_status": "rejected",
-      "uses": ["ollama_backend_baseline"]
+      "uses": [
+        "ollama_backend_baseline"
+      ]
     },
     {
       "model": "DreamFoundries/Qwen3.5-9B-4bit",
@@ -64,13 +111,21 @@
       "revision": "20353927abe35e90c459ee908fac8806e5edd455",
       "local_path": "/Volumes/Devarsh SSD/AI OS Data/mlx/models/qwen3.5-9b-4bit-20353927",
       "tier": "mid",
-      "required_profiles": ["macbook"],
+      "required_profiles": [
+        "macbook"
+      ],
       "context_tokens": 8192,
       "max_kv_tokens": 4096,
       "max_output_tokens": 1400,
       "eval_suite": "mid_v1",
       "promotion_status": "rejected",
-      "uses": ["filing_analysis", "fundamental_research", "strategy_research", "paper_analysis", "investment_memo"]
+      "uses": [
+        "filing_analysis",
+        "fundamental_research",
+        "strategy_research",
+        "paper_analysis",
+        "investment_memo"
+      ]
     },
     {
       "model": "Qwen/Qwen3-8B-MLX-4bit",
@@ -78,13 +133,22 @@
       "revision": "383413e909f3bc5303ce195ebbdf0339c5a1a2a3",
       "local_path": "default_model",
       "tier": "mid",
-      "required_profiles": ["macbook"],
+      "required_profiles": [
+        "macbook"
+      ],
       "context_tokens": 8192,
       "max_kv_tokens": 4096,
       "max_output_tokens": 900,
       "eval_suite": "mid_v1",
       "promotion_status": "candidate",
-      "uses": ["charlie_conversation", "filing_analysis", "fundamental_research", "strategy_research", "paper_analysis", "investment_memo"]
+      "uses": [
+        "charlie_conversation",
+        "filing_analysis",
+        "fundamental_research",
+        "strategy_research",
+        "paper_analysis",
+        "investment_memo"
+      ]
     },
     {
       "model": "prism-ml/Bonsai-27B-Q1_0",
@@ -92,33 +156,53 @@
       "revision": "f10afb355f104535e3e3e98cf7ab7795c72bd292",
       "local_path": "default_model",
       "tier": "mid",
-      "required_profiles": ["macbook"],
+      "required_profiles": [
+        "macbook"
+      ],
       "context_tokens": 8192,
       "max_kv_tokens": 8192,
       "max_output_tokens": 900,
       "eval_suite": "conversation_v1",
       "promotion_status": "candidate",
-      "uses": ["charlie_conversation", "task_intake", "evidence_bound_summary"]
+      "uses": [
+        "charlie_conversation",
+        "task_intake",
+        "evidence_bound_summary"
+      ]
     },
     {
       "model": "qwen3-embedding:0.6b",
       "tier": "retrieval",
-      "required_profiles": ["macbook", "imac"],
+      "required_profiles": [
+        "macbook",
+        "imac"
+      ],
       "context_tokens": 8192,
       "vector_dimensions": 1024,
       "eval_suite": "retrieval_v1",
       "promotion_status": "approved",
-      "uses": ["embedding", "semantic_search", "deterministic_similarity_rerank"]
+      "uses": [
+        "embedding",
+        "semantic_search",
+        "deterministic_similarity_rerank"
+      ]
     },
     {
       "model": "gemma4:e2b",
       "tier": "specialist",
-      "required_profiles": ["macbook-specialist"],
+      "required_profiles": [
+        "macbook-specialist"
+      ],
       "context_tokens": 8192,
       "max_output_tokens": 1000,
       "eval_suite": "multimodal_v1",
       "promotion_status": "rejected",
-      "uses": ["document_vision", "chart_reading", "scanned_pdf", "audio_document"]
+      "uses": [
+        "document_vision",
+        "chart_reading",
+        "scanned_pdf",
+        "audio_document"
+      ]
     },
     {
       "model": "llama3.2:3b",
@@ -127,7 +211,9 @@
       "context_tokens": 4096,
       "eval_suite": "legacy_baseline_v1",
       "promotion_status": "rollback_only",
-      "uses": ["legacy_comparison"]
+      "uses": [
+        "legacy_comparison"
+      ]
     },
     {
       "model": "mxbai-embed-large",
@@ -137,7 +223,27 @@
       "vector_dimensions": 1024,
       "eval_suite": "legacy_retrieval_v1",
       "promotion_status": "rollback_only",
-      "uses": ["legacy_embedding_comparison"]
+      "uses": [
+        "legacy_embedding_comparison"
+      ]
+    },
+    {
+      "model": "qwen3:4b-instruct",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 700,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "rejected",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary"
+      ],
+      "rejection_reason": "Passed concise conversation rendering but failed conflict preservation, prompt-injection resistance, and social-rumour source hierarchy in conversation_v1."
     }
   ],
   "held_candidates": [

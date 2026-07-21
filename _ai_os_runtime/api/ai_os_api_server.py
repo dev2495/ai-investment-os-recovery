@@ -71,6 +71,11 @@ CHARLIE_TRUTH_SYSTEM_PROMPT = (
     "Do not recommend or describe internal model routes as a next action; the governed router owns model selection. "
     "Never reveal hidden reasoning or chain-of-thought."
 )
+CHARLIE_OLLAMA_SYSTEM_PROMPT = (
+    "/no_think\n"
+    + CHARLIE_TRUTH_SYSTEM_PROMPT
+    + " Return only the final user-facing answer. Do not restate the task, instructions, evidence block, or your analysis."
+)
 CHARLIE_LOCAL_CONVERSATION_PROMPT = (
     "You are Charlie Munger, the natural-language chief of staff for a private investment office. "
     "Use only the verified draft and source snippets supplied by the system. Preserve every number, "
@@ -1123,7 +1128,7 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "messages": [
                     {
                         "role": "system",
-                        "content": CHARLIE_TRUTH_SYSTEM_PROMPT,
+                        "content": CHARLIE_OLLAMA_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -1225,6 +1230,7 @@ def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict
                     "stream": False,
                     "temperature": 0.2,
                     "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
+                    "reasoning": {"effort": "none", "exclude": True},
                     "provider": {"zdr": True, "data_collection": "deny"},
                     "messages": [
                         {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
@@ -1251,6 +1257,26 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
     """Reject model claims that contradict governed runtime state."""
     normalized = " ".join(response.lower().split())
     violations: list[str] = []
+    reasoning_markers = (
+        "we are given",
+        "the task:",
+        "steps:",
+        "constraints from the",
+        "important constraints",
+        "let me re-read",
+        "how to interpret",
+        "key points from the evidence",
+        "first, the user",
+        "user wants me",
+        "verified office draft",
+        "the user message",
+        "the instruction says",
+        "i need to",
+        "<think>",
+        "</think>",
+    )
+    if len(response) > 1800 or any(marker in normalized for marker in reasoning_markers):
+        violations.append("reasoning_or_prompt_leak")
     try:
         model_rows = run_psql_json(
             """
@@ -2748,6 +2774,50 @@ def build_strategy_arsenal_snapshot() -> dict:
             FROM strategy.v_user_defined_optimizer_runs
             ORDER BY created_at DESC
             LIMIT 40
+        """,
+        "quant_analytics_runs": """
+            SELECT id, run_key, run_name, strategy_ids, timeframe, status,
+                   metrics, diagnostics, quality_flags, artifact_path,
+                   created_by, started_at, finished_at, regime_rows,
+                   factor_rows, capacity_rows, correlation_rows, optimizer_rows
+            FROM strategy.v_quant_analytics_runs
+            ORDER BY finished_at DESC NULLS LAST, started_at DESC
+            LIMIT 20
+        """,
+        "strategy_regime_performance": """
+            SELECT id, analytics_run_id, run_key, strategy_id, candidate_key,
+                   strategy_name, regime_type, regime_label, bars,
+                   total_return, average_return, volatility, win_rate,
+                   max_drawdown, diagnostics, created_at
+            FROM strategy.v_regime_performance_splits
+            ORDER BY created_at DESC, strategy_name, regime_label
+            LIMIT 80
+        """,
+        "strategy_factor_attribution": """
+            SELECT id, analytics_run_id, run_key, strategy_id, candidate_key,
+                   strategy_name, factor_name, exposure, contribution,
+                   method, diagnostics, created_at
+            FROM strategy.v_factor_attribution
+            ORDER BY created_at DESC, strategy_name, factor_name
+            LIMIT 80
+        """,
+        "strategy_capacity_liquidity": """
+            SELECT id, analytics_run_id, run_key, strategy_id, candidate_key,
+                   strategy_name, symbol, timeframe, bars, average_volume,
+                   average_traded_value, participation_rate, capacity_notional,
+                   liquidity_status, diagnostics, created_at
+            FROM strategy.v_capacity_liquidity_checks
+            ORDER BY created_at DESC, strategy_name, symbol
+            LIMIT 80
+        """,
+        "strategy_correlation_matrix": """
+            SELECT id, analytics_run_id, run_key, strategy_id_a, candidate_key_a,
+                   strategy_name_a, strategy_id_b, candidate_key_b,
+                   strategy_name_b, correlation, overlap_bars, diagnostics,
+                   created_at
+            FROM strategy.v_strategy_correlation_matrix
+            ORDER BY created_at DESC, strategy_name_a, strategy_name_b
+            LIMIT 120
         """,
         "execution_control": """
             SELECT state_key, global_execution_locked, broker_execution_policy,
@@ -13956,13 +14026,15 @@ def chat_with_charlie(payload: dict) -> dict:
     )
 
     prompt = (
+        "/no_think\n"
         "User message:\n"
         f"{message}\n\n"
         "Verified office draft from governed SQL and tools:\n"
         f"{verified_draft[:1200]}\n\n"
         "Source-linked memory snippets:\n"
         f"{json.dumps(retrieval_hits[:2], default=str)[:350]}\n\n"
-        "Rewrite the verified draft as a natural answer in 3-6 concise sentences. Preserve facts and links."
+        "Rewrite the verified draft as a natural answer in 3-6 concise sentences. Preserve facts and links. "
+        "Return only the final answer; do not describe these instructions or your reasoning."
     )
     started = time.perf_counter()
     control_payload = dict(payload)

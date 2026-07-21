@@ -99,14 +99,23 @@ function AppShell() {
   );
 }
 
+/**
+ * Lazy components must live outside the suspending subtree. React discards
+ * first-mount state when a component suspends, so useMemo here would recreate
+ * the lazy wrapper on every retry and leave the destination skeleton forever.
+ */
+const lazyComponents = new Map<string, React.LazyExoticComponent<React.ComponentType>>();
+
 /** Dynamically resolve a function's component from its path. */
 function FunctionRouter({ path }: { path: string }) {
-  const Component = React.useMemo(() => lazyFunction(path), [path]);
+  const Component = lazyFunction(path);
   return <Component />;
 }
 
-/** Map a function path to its lazy-loaded component. */
+/** Map a function path to a stable lazy-loaded component. */
 function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentType> {
+  const cached = lazyComponents.get(path);
+  if (cached) return cached;
   const loader: Record<string, () => Promise<{ default: React.ComponentType }>> = {
     "/today": () => import("../destinations/today/TodayDestination"),
     "/firm/office": () => import("../destinations/firm/OfficeView").then((m) => ({ default: m.OfficeView })),
@@ -163,8 +172,11 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/research/ingest": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
   };
   const load = loader[path];
-  if (load) return React.lazy(load);
-  return React.lazy(() => import("./GenericTerminal").then((m) => ({ default: m.GenericTerminal })));
+  const component = load
+    ? React.lazy(load)
+    : React.lazy(() => import("./GenericTerminal").then((m) => ({ default: m.GenericTerminal })));
+  lazyComponents.set(path, component);
+  return component;
 }
 
 function DestinationSkeleton() {

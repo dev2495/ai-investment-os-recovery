@@ -8,7 +8,7 @@
  */
 
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Globe2, TrendingUp, Newspaper, Calendar, Activity, Sparkles } from "lucide-react";
 import { useMissionControl, useResearchIdeas } from "../../data/queries";
 import { useIngestMarketNews } from "../../data/actions";
@@ -27,9 +27,9 @@ const TABS = [
 ];
 
 export default function MacroMarkets({ defaultTab = "dashboard" }: { defaultTab?: string }) {
-  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const tab = params.tab ?? defaultTab;
+  const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
   function setTab(key: string) { navigate(`/macro/${key}`); }
 
   return (

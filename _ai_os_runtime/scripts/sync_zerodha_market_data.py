@@ -37,6 +37,14 @@ def as_number(value: object) -> str:
         return ""
 
 
+def returned_id(raw: str, label: str) -> int:
+    for line in raw.splitlines():
+        candidate = line.strip()
+        if candidate.isdigit():
+            return int(candidate)
+    raise RuntimeError(f"{label} insert did not return an id")
+
+
 def query_json(query: str) -> list[dict]:
     raw = psql(
         "SELECT coalesce(json_agg(row_to_json(rows)),'[]'::json)::text "
@@ -220,6 +228,7 @@ def sync_historical(
 ) -> dict:
     if interval not in VALID_INTERVALS:
         raise ValueError(f"unsupported interval: {interval}")
+    canonical_timeframe = {"day": "1d", "60minute": "1h", "15minute": "15m", "5minute": "5m"}.get(interval, interval)
     instrument = resolve_instrument(exchange, symbol)
     token = int(instrument["instrument_token"])
     query = urllib.parse.urlencode({"from": date_from, "to": date_to, "oi": "1"})
@@ -231,24 +240,24 @@ def sync_historical(
     candles = data.get("candles") if isinstance(data, dict) else []
     if not isinstance(candles, list):
         candles = []
-    source_id = psql(
+    source_id = returned_id(psql(
         "INSERT INTO core.source_systems (name,source_type,location,sensitivity,status,notes) VALUES "
         "('Zerodha Kite read-only market data','broker_market_data_api','https://api.kite.trade','private','active',"
         "'GET-only instruments, quotes and historical candles; broker writes are absent.') "
         "ON CONFLICT (name) DO UPDATE SET status='active' RETURNING id"
-    ).splitlines()[-1]
-    symbol_id = psql(
+    ), "source system")
+    symbol_id = returned_id(psql(
         "INSERT INTO trading.symbols (symbol,exchange,instrument_type,name,currency,active) VALUES ("
         f"{sql_literal(symbol.upper())},{sql_literal(exchange.upper())},{sql_literal(instrument.get('instrument_type'))},"
         f"{sql_literal(instrument.get('name'))},'INR',true) "
         "ON CONFLICT (symbol,exchange,instrument_type) DO UPDATE SET name=EXCLUDED.name,active=true RETURNING id"
-    ).splitlines()[-1]
+    ), "symbol")
     values: list[str] = []
     for candle in candles:
         if not isinstance(candle, list) or len(candle) < 6:
             continue
         values.append(
-            f"({sql_literal(candle[0])}::timestamptz,{int(symbol_id)},{sql_literal(interval)},"
+            f"({sql_literal(candle[0])}::timestamptz,{int(symbol_id)},{sql_literal(canonical_timeframe)},"
             f"{candle[1]},{candle[2]},{candle[3]},{candle[4]},{candle[5]},{int(source_id)})"
         )
     for offset in range(0, len(values), 200):
@@ -259,7 +268,14 @@ def sync_historical(
               "open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,"
               "volume=EXCLUDED.volume,source_system_id=EXCLUDED.source_system_id"
         )
-    return {"status": "completed", "symbol": symbol, "exchange": exchange, "interval": interval, "rows": len(values)}
+    return {
+        "status": "completed",
+        "symbol": symbol,
+        "exchange": exchange,
+        "interval": interval,
+        "timeframe": canonical_timeframe,
+        "rows": len(values),
+    }
 
 
 def sync_options(api_key: str, access_token: str, underlyings: list[str], strike_pairs: int) -> dict:

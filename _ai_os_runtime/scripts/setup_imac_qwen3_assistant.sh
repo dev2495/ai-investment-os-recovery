@@ -1,0 +1,66 @@
+#!/bin/bash
+set -euo pipefail
+
+ENV_FILE="${AI_OS_IMAC_ENV:-${HOME}/Library/Application Support/AIOS/imac.env}"
+if [[ -f "${ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+fi
+
+REPO_ROOT="${AI_OS_REPO_ROOT:-${HOME}/AI_OS_NODE/current}"
+RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-${REPO_ROOT}/_ai_os_runtime}"
+DATA_ROOT="${AI_OS_DATA_ROOT:-/Volumes/Devarsh SSD/AI OS Data}"
+OLLAMA_BIN="${AI_OS_OLLAMA_BIN:-/opt/homebrew/bin/ollama}"
+DOCKER_BIN="${AI_OS_DOCKER_BIN:-/opt/homebrew/bin/docker}"
+MODEL="qwen3:4b"
+
+[[ -x "${OLLAMA_BIN}" ]] || { echo "Ollama is not installed at ${OLLAMA_BIN}." >&2; exit 2; }
+[[ -x "${DOCKER_BIN}" ]] || { echo "Docker is not installed at ${DOCKER_BIN}." >&2; exit 2; }
+[[ -f "${RUNTIME_ROOT}/postgres/init/162_qwen3_4b_imac_assistant.sql" ]] || {
+  echo "Qwen3 model migration is missing from ${RUNTIME_ROOT}." >&2
+  exit 3
+}
+
+export OLLAMA_MODELS="${OLLAMA_MODELS:-${DATA_ROOT}/ollama/models}"
+export AI_OS_DOCKER_BIN="${DOCKER_BIN}"
+mkdir -p "${OLLAMA_MODELS}" "${DATA_ROOT}/evals/local_models"
+
+"${DOCKER_BIN}" exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 \
+  < "${RUNTIME_ROOT}/postgres/init/162_qwen3_4b_imac_assistant.sql"
+
+"${OLLAMA_BIN}" pull "${MODEL}"
+
+python3 "${RUNTIME_ROOT}/scripts/run_local_model_evals.py" \
+  --model "${MODEL}" \
+  --provider ollama \
+  --base-url "http://127.0.0.1:11434" \
+  --artifact-root "${DATA_ROOT}/evals/local_models" \
+  --persist \
+  --promote
+
+"${DOCKER_BIN}" exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM agent.local_model_registry
+    WHERE model_name='qwen3:4b'
+      AND eval_suite='conversation_v1'
+      AND promotion_status='approved'
+      AND coalesce(last_eval_score, 0) >= 0.8
+  ) THEN
+    RAISE EXCEPTION 'Qwen3 activation refused: conversation_v1 promotion evidence is missing';
+  END IF;
+END $$;
+
+UPDATE agent.model_endpoints
+SET status='active', health_status='healthy', last_checked_at=now(),
+    last_error=NULL, updated_at=now()
+WHERE endpoint_key='ollama_qwen3_4b_imac';
+
+UPDATE agent.agent_model_assignments
+SET fallback_route='imac_basic_assistant_qwen3', updated_at=now()
+WHERE agent_name='Charlie Munger';
+SQL
+
+echo "Qwen3 4B is evaluated, approved, and active as Charlie's private fallback."

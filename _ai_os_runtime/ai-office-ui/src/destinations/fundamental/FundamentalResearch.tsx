@@ -12,7 +12,7 @@
  */
 
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen, Microscope, Calculator, ClipboardCheck, Lightbulb,
   FlaskConical, TrendingUp, AlertTriangle, ChevronRight, Sparkles,
@@ -42,9 +42,9 @@ const TABS = [
 ];
 
 export default function FundamentalResearch({ defaultTab = "theses" }: { defaultTab?: string }) {
-  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const tab = params.tab ?? defaultTab;
+  const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
 
   function setTab(key: string) {
     navigate(`/fundamental/${key}`);

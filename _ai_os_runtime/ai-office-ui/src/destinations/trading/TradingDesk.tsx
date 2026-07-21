@@ -13,7 +13,7 @@
  */
 
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   TrendingUp, Notebook, LineChart, Target, Zap, ShieldCheck,
   Plus, Play, AlertTriangle, Activity, ChevronRight,
@@ -39,9 +39,9 @@ const TABS = [
 ];
 
 export default function TradingDesk({ defaultTab = "blotter" }: { defaultTab?: string }) {
-  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const tab = params.tab ?? defaultTab;
+  const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
   function setTab(key: string) { navigate(`/trading/${key}`); }
 
   return (

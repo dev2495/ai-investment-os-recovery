@@ -9,7 +9,7 @@
  */
 
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   FileText, Target, BookOpen, Download, Play, Sparkles, ChevronRight,
   ExternalLink, Microscope,
@@ -35,9 +35,9 @@ const TABS = [
 ];
 
 export default function ResearchFilings({ defaultTab = "filings" }: { defaultTab?: string }) {
-  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const tab = params.tab ?? defaultTab;
+  const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
   function setTab(key: string) { navigate(`/research/${key}`); }
 
   return (

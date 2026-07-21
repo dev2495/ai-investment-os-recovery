@@ -12,7 +12,7 @@
  */
 
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   TrendingDown, BarChart3, LineChart, Brain, Plus, Calculator,
   AlertTriangle, Target, Activity,
@@ -36,9 +36,9 @@ const TABS = [
 ];
 
 export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: string }) {
-  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const tab = params.tab ?? defaultTab;
+  const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
   function setTab(key: string) { navigate(`/options/${key}`); }
 
   return (
