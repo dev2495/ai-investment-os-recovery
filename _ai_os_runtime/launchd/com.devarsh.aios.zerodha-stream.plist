@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.zerodha-stream</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/devarshthakkar/AI_OS_NODE/ai-investment-os/_ai_os_runtime/launchd/aios-zerodha-stream-service.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/devarshthakkar/AI_OS_NODE/ai-investment-os/_ai_os_runtime/scripts</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/zerodha_stream.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/zerodha_stream.launchd.err</string>
+</dict>
+</plist>

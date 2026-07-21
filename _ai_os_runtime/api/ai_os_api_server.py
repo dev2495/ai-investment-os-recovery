@@ -7745,7 +7745,7 @@ def validate_integration_schema_mapping(payload: dict) -> dict:
 def upsert_watchlist_item(payload: dict) -> dict:
     symbol = str(payload.get("symbol") or "").strip().upper()
     exchange = str(payload.get("exchange") or "NSE").strip().upper()
-    if not re.fullmatch(r"[A-Z0-9&._-]{1,40}", symbol):
+    if not re.fullmatch(r"[A-Z0-9&._ -]{1,60}", symbol):
         raise ValueError("symbol must be a valid exchange symbol")
     if not re.fullmatch(r"[A-Z0-9_-]{1,12}", exchange):
         raise ValueError("exchange must be a valid exchange code")
@@ -7837,6 +7837,140 @@ def sync_zerodha_read_only(payload: dict) -> dict:
     result=_run_zerodha_adapter(["--datasets",*datasets],150)
     audit_api_write("ai_os_api_zerodha_read_sync","sync_zerodha_read_only",str(payload.get("actor") or "Data Engineering Agent"),"trading.broker_read_snapshots",result,{"datasets":datasets,"broker_write_allowed":False})
     return result
+
+
+def zerodha_stream_status() -> dict:
+    health = run_psql_json("SELECT * FROM market.v_zerodha_stream_health")
+    session = zerodha_auth_status()
+    return {
+        "status": health[0] if health else {
+            "health_status": "not_started",
+            "connection_state": "disconnected",
+            "quote_count": 0,
+            "live_count": 0,
+            "broker_write_allowed": False,
+        },
+        "session": {
+            "status": session.get("status"),
+            "api_key_configured": bool(session.get("api_key_configured")),
+            "api_secret_configured": bool(session.get("api_secret_configured")),
+            "daily_access_token_available": bool(session.get("daily_access_token_available")),
+            "manual_daily_login_required": True,
+            "renewal_mode": "human_login_with_automatic_callback_exchange",
+            "login_url": session.get("login_url"),
+        },
+        "callback_url": "https://devarshs-imac.tail8dd383.ts.net:8443/api/zerodha/auth/callback",
+        "broker_write_allowed": False,
+    }
+
+
+def live_prices(query: dict[str, list[str]]) -> dict:
+    limit = _bounded_int((query.get("limit") or ["250"])[0], default=250, minimum=1, maximum=1000)
+    scope = str((query.get("scope") or ["all"])[0]).strip().lower()
+    freshness = str((query.get("freshness") or [""])[0]).strip().lower()
+    raw_symbols = str((query.get("symbols") or [""])[0])
+    symbols = [
+        item.strip().upper() for item in raw_symbols.split(",")
+        if re.fullmatch(r"[A-Z0-9&._ -]{1,60}", item.strip().upper())
+    ]
+    filters = ["true"]
+    if scope == "portfolio":
+        filters.append("in_portfolio")
+    elif scope == "watchlist":
+        filters.append("on_watchlist")
+    elif scope == "options":
+        filters.append("instrument_type IN ('CE','PE')")
+    elif scope == "indices":
+        filters.append("(instrument_type='INDICES' OR provider_symbol IN ('NSE:NIFTY 50','NSE:NIFTY BANK','NSE:NIFTY FIN SERVICE','BSE:SENSEX'))")
+    elif scope != "all":
+        raise ValueError("scope must be all, portfolio, watchlist, options, or indices")
+    if freshness:
+        if freshness not in {"live","delayed","stale"}:
+            raise ValueError("freshness must be live, delayed, or stale")
+        filters.append(f"freshness={sql_literal(freshness)}")
+    if symbols:
+        filters.append("upper(symbol) IN (" + ",".join(sql_literal(symbol) for symbol in symbols) + ")")
+    rows = run_psql_json(
+        "SELECT * FROM market.v_live_prices WHERE "
+        + " AND ".join(filters)
+        + " ORDER BY CASE WHEN in_portfolio THEN 0 WHEN on_watchlist THEN 1 ELSE 2 END,"
+          "exchange,symbol LIMIT "
+        + str(limit)
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(rows),
+        "scope": scope,
+        "prices": rows,
+        "stream": (run_psql_json("SELECT * FROM market.v_zerodha_stream_health") or [{}])[0],
+        "broker_write_allowed": False,
+    }
+
+
+def live_price_history(query: dict[str, list[str]]) -> dict:
+    exchange = str((query.get("exchange") or ["NSE"])[0]).strip().upper()
+    symbol = str((query.get("symbol") or [""])[0]).strip().upper()
+    minutes = _bounded_int((query.get("minutes") or ["390"])[0], default=390, minimum=1, maximum=64800)
+    if not re.fullmatch(r"[A-Z0-9_-]{1,12}", exchange):
+        raise ValueError("invalid exchange")
+    if not re.fullmatch(r"[A-Z0-9&._ -]{1,60}", symbol):
+        raise ValueError("valid symbol is required")
+    rows = run_psql_json(
+        "SELECT provider,instrument_token,minute_ts,provider_symbol,symbol,exchange,"
+        "open_price,high_price,low_price,close_price,volume,open_interest,tick_count "
+        "FROM market.live_quote_minute_snapshots "
+        f"WHERE exchange={sql_literal(exchange)} AND upper(symbol)={sql_literal(symbol)} "
+        f"AND minute_ts>=now()-make_interval(mins=>{minutes}) "
+        "ORDER BY minute_ts"
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "exchange": exchange,
+        "symbol": symbol,
+        "minutes": minutes,
+        "count": len(rows),
+        "bars": rows,
+        "broker_write_allowed": False,
+    }
+
+
+def start_zerodha_post_login_sync() -> None:
+    commands = [
+        [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_read_only.py"),
+         "--datasets","holdings","positions","orders","trades","funds"],
+        [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_market_data.py"),
+         "--modes","quotes","options","--underlyings","NIFTY","BANKNIFTY"],
+    ]
+    for command in commands:
+        subprocess.Popen(
+            command,cwd=RUNTIME_ROOT,stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,
+        )
+    try:
+        subprocess.run(
+            ["/bin/launchctl","kickstart","-k",f"gui/{os.getuid()}/com.devarsh.aios.zerodha-stream"],
+            check=False,capture_output=True,text=True,timeout=15,
+        )
+    except (OSError,subprocess.TimeoutExpired):
+        pass
+
+
+def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
+    request_token = str((query.get("request_token") or [""])[0]).strip()
+    status = str((query.get("status") or ["success"])[0]).strip().lower()
+    if status != "success":
+        raise ValueError("Zerodha login was not completed")
+    if not request_token:
+        raise ValueError("Zerodha callback did not include request_token")
+    result = exchange_zerodha_request_token({"request_token":request_token,"actor":"Zerodha OAuth Callback"})
+    start_zerodha_post_login_sync()
+    return {
+        "status": result.get("status"),
+        "access_token_stored": bool(result.get("access_token_stored")),
+        "access_token_expires": result.get("access_token_expires"),
+        "stream_restart_requested": True,
+        "broker_write_allowed": False,
+    }
 
 
 def _run_zerodha_market_adapter(arguments: list[str], timeout: int = 300) -> dict:
@@ -13784,7 +13918,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
     server_version = "AiOsApi/0.1"
 
     def log_message(self, fmt: str, *args: object) -> None:
-        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
+        message = fmt % args
+        message = re.sub(r"(?i)(request_token=)[^&\s]+", r"\1[redacted]", message)
+        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), message))
 
     def _cors_origin(self) -> str:
         origin = self.headers.get("Origin", "").strip()
@@ -13823,6 +13959,16 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_html(self, body: str, status: int = 200) -> None:
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length <= 0:
@@ -13841,10 +13987,23 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         try:
-            self._authorize_request(write=False)
             parsed_path = urllib.parse.urlparse(self.path)
             request_path = parsed_path.path
             query = urllib.parse.parse_qs(parsed_path.query)
+            if request_path == "/api/zerodha/auth/callback":
+                result = exchange_zerodha_callback(query)
+                self._send_html(
+                    "<!doctype html><html><head><meta charset='utf-8'><title>Zerodha connected</title>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'></head>"
+                    "<body style='font:16px system-ui;background:#07110f;color:#e8fff7;padding:40px'>"
+                    "<h1>Zerodha connected</h1><p>The daily token was stored securely. "
+                    "Holdings, quotes, options and the live stream are refreshing now.</p>"
+                    "<p>Broker order writes remain disabled. You can close this tab.</p>"
+                    f"<small>Session expiry: {result.get('access_token_expires') or '6:00 AM next day'}</small>"
+                    "</body></html>"
+                )
+                return
+            self._authorize_request(write=False)
             if request_path in {"/", "/api/health"}:
                 db_rows = safe_query(
                     "db",
@@ -13939,6 +14098,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/zerodha/auth/status":
                 self._send_json(zerodha_auth_status())
                 return
+            if request_path == "/api/zerodha/stream/status":
+                self._send_json(zerodha_stream_status())
+                return
+            if request_path == "/api/market/live-prices":
+                self._send_json(live_prices(query))
+                return
+            if request_path == "/api/market/live-price-history":
+                self._send_json(live_price_history(query))
+                return
             if request_path == "/api/zerodha/market/status":
                 status = _run_zerodha_market_adapter(["--check-config"], 30)
                 status["warehouse"] = run_psql_json(
@@ -13948,6 +14116,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                     "(SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider='Zerodha') latest_option_at,"
                     "false broker_write_allowed"
                 )[0]
+                status["stream"] = (run_psql_json("SELECT * FROM market.v_zerodha_stream_health") or [{}])[0]
                 self._send_json(status)
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)

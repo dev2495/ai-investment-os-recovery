@@ -1,0 +1,4 @@
+kiteconnect==5.2.0
+psycopg[binary]==3.3.4
+# kiteconnect 5.2.0 pins vulnerable autobahn 19.11.2; the iMac installer
+# replaces it with the API-compatible security release before launchd starts.
