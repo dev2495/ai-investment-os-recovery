@@ -36,6 +36,12 @@ stop_children() {
 }
 trap stop_children EXIT INT TERM
 
+# Keep the always-on backend awake while allowing the display to sleep and lock.
+if command -v caffeinate >/dev/null 2>&1; then
+  caffeinate -is -w "$$" &
+  children+=("$!")
+fi
+
 while [[ ! -d "${AI_OS_SSD_ROOT}" ]]; do
   log "Waiting for ${AI_OS_SSD_ROOT}"
   sleep 10
