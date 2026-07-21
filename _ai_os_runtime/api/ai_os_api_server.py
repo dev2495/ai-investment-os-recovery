@@ -13,11 +13,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
@@ -1619,6 +1619,36 @@ def build_mission_control_snapshot() -> dict:
             ORDER BY coalesce(published_at,captured_at) DESC, id DESC
             LIMIT 12
         """,
+        "news_brief": """
+            SELECT id, source_name, source_url, title, publisher,
+                   effective_published_at, matched_symbols, topics,
+                   materiality_score, why_it_matters, owner_agent
+            FROM market.v_curated_news_brief
+            LIMIT 12
+        """,
+        "filing_intelligence": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   title, event_type, filed_at, source_url, attachment_url,
+                   extraction_status, opportunity_score, risk_score,
+                   in_portfolio, on_watchlist, why_it_matters,
+                   evidence_state, priority
+            FROM research.v_filing_intelligence_brief
+            LIMIT 12
+        """,
+        "market_events": """
+            SELECT id, exchange, symbol, company_name, event_date, event_type,
+                   purpose, description, source_url, in_portfolio,
+                   on_watchlist, relevance_scope
+            FROM market.v_upcoming_corporate_events
+            WHERE event_date <= current_date + 45
+            LIMIT 20
+        """,
+        "market_holidays": """
+            SELECT exchange, segment, holiday_date, holiday_name,
+                   session_status, source_url, notes, days_away
+            FROM market.v_upcoming_exchange_holidays
+            LIMIT 8
+        """,
         "watchlist": """
             SELECT id, watchlist_name, symbol, exchange, company_name,
                    item_type, status, priority, thesis, catalyst,
@@ -2018,6 +2048,36 @@ def build_research_ideas_snapshot() -> dict:
             FROM market.v_latest_news_items
             ORDER BY coalesce(published_at, captured_at) DESC, id DESC
             LIMIT 80
+        """,
+        "news_brief": """
+            SELECT id, source_name, source_url, title, publisher,
+                   effective_published_at, matched_symbols, topics,
+                   materiality_score, why_it_matters, owner_agent
+            FROM market.v_curated_news_brief
+            LIMIT 40
+        """,
+        "filing_intelligence": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   title, event_type, filed_at, source_url, attachment_url,
+                   extraction_status, opportunity_score, risk_score,
+                   in_portfolio, on_watchlist, why_it_matters,
+                   evidence_state, priority
+            FROM research.v_filing_intelligence_brief
+            LIMIT 60
+        """,
+        "market_events": """
+            SELECT id, exchange, symbol, company_name, event_date, event_type,
+                   purpose, description, source_url, in_portfolio,
+                   on_watchlist, relevance_scope
+            FROM market.v_upcoming_corporate_events
+            WHERE event_date <= current_date + 60
+            LIMIT 100
+        """,
+        "market_holidays": """
+            SELECT exchange, segment, holiday_date, holiday_name,
+                   session_status, source_url, notes, days_away
+            FROM market.v_upcoming_exchange_holidays
+            LIMIT 16
         """,
         "feed_registry": """
             SELECT feed_key, feed_name, feed_type, provider, url, geography,
@@ -7269,6 +7329,8 @@ ALLOWED_INTEGRATION_EXECUTORS = {
     "legacy_market_data_ingestion",
     "dhan_read_sync",
     "zerodha_read_sync",
+    "zerodha_market_sync",
+    "market_calendar_refresh",
 }
 
 
@@ -7777,6 +7839,83 @@ def sync_zerodha_read_only(payload: dict) -> dict:
     return result
 
 
+def _run_zerodha_market_adapter(arguments: list[str], timeout: int = 300) -> dict:
+    completed = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "sync_zerodha_market_data.py"), *arguments],
+        cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=timeout,
+    )
+    try:
+        result = json.loads((completed.stdout or "").strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Zerodha market adapter returned invalid JSON") from exc
+    if completed.returncode not in {0, 2}:
+        raise RuntimeError(str(result.get("error") or completed.stderr or "Zerodha market adapter failed"))
+    return result
+
+
+def sync_zerodha_market_data(payload: dict) -> dict:
+    allowed_modes = {"instruments", "quotes", "options", "historical"}
+    modes = [str(item) for item in (payload.get("modes") or ["quotes", "options"]) if str(item) in allowed_modes]
+    if not modes:
+        raise ValueError("at least one valid Zerodha market-data mode is required")
+    arguments = ["--modes", *modes]
+    if "instruments" in modes:
+        exchanges = [str(item).upper() for item in (payload.get("exchanges") or ["ALL"])]
+        arguments.extend(["--exchanges", *exchanges])
+    if "options" in modes:
+        underlyings = [str(item).upper() for item in (payload.get("underlyings") or ["NIFTY", "BANKNIFTY"])]
+        arguments.extend(["--underlyings", *underlyings, "--strike-pairs", str(_bounded_int(payload.get("strike_pairs"), default=24, minimum=2, maximum=60))])
+    if "historical" in modes:
+        required = {
+            "historical_exchange": payload.get("exchange"),
+            "historical_symbol": payload.get("symbol"),
+            "from_date": payload.get("from_date"),
+            "to_date": payload.get("to_date"),
+        }
+        if not all(required.values()):
+            raise ValueError("historical mode requires exchange, symbol, from_date, and to_date")
+        arguments.extend([
+            "--historical-exchange", str(required["historical_exchange"]),
+            "--historical-symbol", str(required["historical_symbol"]),
+            "--from-date", str(required["from_date"]),
+            "--to-date", str(required["to_date"]),
+            "--interval", str(payload.get("interval") or "day"),
+        ])
+    result = _run_zerodha_market_adapter(arguments, 420 if "instruments" in modes else 240)
+    audit_api_write(
+        "ai_os_api_zerodha_market_sync", "sync_zerodha_market_data",
+        str(payload.get("actor") or "Market Data Engineer"),
+        "market.zerodha_instruments/market.price_quotes/trading.ohlcv/trading.option_chain_snapshots",
+        result, {"modes": modes, "broker_write_allowed": False},
+    )
+    return result
+
+
+def refresh_market_calendar(payload: dict) -> dict:
+    arguments = [
+        "--lookback-days", str(_bounded_int(payload.get("lookback_days"), default=1, minimum=0, maximum=30)),
+        "--lookahead-days", str(_bounded_int(payload.get("lookahead_days"), default=45, minimum=1, maximum=180)),
+        "--actor", str(payload.get("actor") or "Corporate Events Analyst"),
+    ]
+    completed = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "collect_market_calendar.py"), *arguments],
+        cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=150,
+    )
+    try:
+        result = json.loads((completed.stdout or "").strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("market calendar adapter returned invalid JSON") from exc
+    if completed.returncode != 0:
+        raise RuntimeError(str(result.get("error") or completed.stderr or "market calendar refresh failed"))
+    audit_api_write(
+        "ai_os_api_market_calendar_refresh", "refresh_market_calendar",
+        str(payload.get("actor") or "Corporate Events Analyst"),
+        "market.corporate_event_calendar", result,
+        {"source": "official_nse_event_calendar", "execution_allowed": False},
+    )
+    return result
+
+
 def upsert_integration_job(payload: dict) -> dict:
     _validate_secret_safe_payload(payload)
     executor_key = str(payload.get("executor_key") or payload.get("executorKey") or "").strip()
@@ -7857,6 +7996,10 @@ def _integration_executor_command(job: dict) -> list[str]:
         return [sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_dhan_read_only.py"),"--datasets","holdings","positions","orders","trades","funds"]
     if executor_key == "zerodha_read_sync":
         return [sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_zerodha_read_only.py"),"--datasets","holdings","positions","orders","trades","funds"]
+    if executor_key == "zerodha_market_sync":
+        return [sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_zerodha_market_data.py"),"--modes","quotes","options"]
+    if executor_key == "market_calendar_refresh":
+        return [sys.executable,str(RUNTIME_ROOT / "scripts" / "collect_market_calendar.py"),"--lookback-days","1","--lookahead-days","45","--actor","Integration Gateway"]
     raise ValueError(f"executor_key is not allowlisted: {executor_key}")
 
 
@@ -12849,6 +12992,44 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             ORDER BY coalesce(published_at, captured_at) DESC, id DESC
             LIMIT 8
         """,
+        "news_brief": """
+            SELECT id, source_name, source_url, title, effective_published_at,
+                   matched_symbols, topics, materiality_score,
+                   why_it_matters, owner_agent
+            FROM market.v_curated_news_brief
+            LIMIT 10
+        """,
+        "filing_intelligence": """
+            SELECT filing_id, source_name, exchange, symbol, company_name,
+                   title, event_type, filed_at, source_url, attachment_url,
+                   extraction_status, opportunity_score, risk_score,
+                   in_portfolio, on_watchlist, why_it_matters,
+                   evidence_state, priority
+            FROM research.v_filing_intelligence_brief
+            LIMIT 10
+        """,
+        "market_events": """
+            SELECT exchange, symbol, company_name, event_date, event_type,
+                   purpose, description, source_url, in_portfolio,
+                   on_watchlist, relevance_scope
+            FROM market.v_upcoming_corporate_events
+            WHERE event_date <= current_date + 45
+            LIMIT 20
+        """,
+        "market_holidays": """
+            SELECT exchange, segment, holiday_date, holiday_name,
+                   session_status, source_url, notes, days_away
+            FROM market.v_upcoming_exchange_holidays
+            LIMIT 10
+        """,
+        "zerodha_market_status": """
+            SELECT
+                (SELECT count(*) FROM market.zerodha_instruments WHERE active) AS active_instruments,
+                (SELECT max(last_seen_at) FROM market.zerodha_instruments) AS latest_instrument_at,
+                (SELECT max(quote_ts) FROM market.price_quotes WHERE provider='Zerodha') AS latest_quote_at,
+                (SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider='Zerodha') AS latest_option_at,
+                false AS broker_write_allowed
+        """,
         "watchlist": """
             SELECT id, watchlist_name, symbol, exchange, company_name,
                    item_type, status, priority, thesis, catalyst,
@@ -12926,6 +13107,72 @@ def deterministic_chat_reply(message: str, context: dict, retrieval_hits: list[d
     reports = context.get("latest_reports") or []
     options = context.get("options_summary") or []
     broker_snapshots = context.get("broker_snapshots") or []
+    news_brief = context.get("news_brief") or []
+    filing_intelligence = context.get("filing_intelligence") or []
+    market_events = context.get("market_events") or []
+    market_holidays = context.get("market_holidays") or []
+    zerodha_market_status = (context.get("zerodha_market_status") or [{}])[0]
+    tool_results = context.get("tool_results") or []
+
+    focused: list[str] = []
+    if tool_results:
+        for result in tool_results:
+            focused.append(
+                f"Action: {result.get('tool')} -> {result.get('status')}"
+                + (f" ({result.get('detail')})" if result.get("detail") else "")
+                + "."
+            )
+    if "news" in normalized:
+        if news_brief:
+            focused.append("What matters now from the live, source-linked news queue:")
+            focused.extend(
+                f"- {row.get('title')} | {row.get('why_it_matters')} "
+                f"[{row.get('source_name')}]({row.get('source_url')})"
+                for row in news_brief[:5]
+            )
+        else:
+            focused.append("The ranked news brief is empty; run 'refresh news' and check source health.")
+    if any(term in normalized for term in ("filing", "announcement", "corporate disclosure", "special situation")):
+        if filing_intelligence:
+            focused.append("Highest-priority corporate filing intelligence:")
+            focused.extend(
+                f"- {row.get('symbol') or row.get('company_name')}: {row.get('title')} | "
+                f"{row.get('why_it_matters')} Evidence: {row.get('evidence_state')} "
+                f"[source]({row.get('attachment_url') or row.get('source_url')})"
+                for row in filing_intelligence[:5]
+            )
+        else:
+            focused.append("The filing intelligence queue is empty; run 'refresh filings'.")
+    if any(term in normalized for term in ("result calendar", "results calendar", "event calendar", "board meeting")):
+        if market_events:
+            focused.append("Upcoming NSE company events:")
+            focused.extend(
+                f"- {row.get('event_date')} {row.get('symbol')}: {row.get('purpose')} "
+                f"({row.get('relevance_scope')}) [source]({row.get('source_url')})"
+                for row in market_events[:8]
+            )
+        else:
+            focused.append("The upcoming corporate-event calendar is empty; run 'refresh calendar'.")
+    if any(term in normalized for term in ("holiday", "market closed", "trading holiday")):
+        if market_holidays:
+            focused.append("Upcoming official NSE holidays:")
+            focused.extend(
+                f"- {row.get('holiday_date')}: {row.get('holiday_name')} ({row.get('segment')}) "
+                f"[official circular]({row.get('source_url')})"
+                for row in market_holidays[:8]
+            )
+        else:
+            focused.append("No upcoming exchange holiday is stored for the current year.")
+    if any(term in normalized for term in ("zerodha", "broker data", "instrument cache", "option chain")):
+        focused.append(
+            "Zerodha market-data state: "
+            f"{int(zerodha_market_status.get('active_instruments') or 0):,} cached active instruments; "
+            f"latest quote {zerodha_market_status.get('latest_quote_at') or 'not available'}; "
+            f"latest option snapshot {zerodha_market_status.get('latest_option_at') or 'not available'}. "
+            "Broker writes remain disabled."
+        )
+    if focused:
+        return "\n".join(focused)
 
     lines = [
         "I checked the live warehouse and memory layer.",
@@ -13188,6 +13435,104 @@ def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_
     return chat_turn
 
 
+def execute_charlie_safe_tools(message: str) -> list[dict]:
+    normalized = message.lower()
+    explicit_refresh = any(term in normalized for term in ("refresh", "update", "sync", "collect", "fetch"))
+    results: list[dict] = []
+
+    def invoke(tool: str, callback: Callable[[], dict], detail_key: str | None = None) -> None:
+        try:
+            output = callback()
+            detail_value = output.get(detail_key) if detail_key else None
+            if detail_value is None:
+                detail_value = output.get("rows_upserted") or output.get("rows") or output.get("status")
+            results.append({
+                "tool": tool,
+                "status": str(output.get("status") or "completed"),
+                "detail": str(detail_value) if detail_value is not None else None,
+                "result": output,
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({"tool": tool, "status": "failed", "detail": f"{type(exc).__name__}: {exc}"[:500]})
+
+    if explicit_refresh and "news" in normalized:
+        invoke(
+            "refresh_news",
+            lambda: ingest_market_news({
+                "run_key": "charlie_news_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+                "actor": "Charlie Munger", "feed_limit": 12, "per_feed": 8, "timeout": 12,
+            }),
+            "items_upserted",
+        )
+    if explicit_refresh and any(term in normalized for term in ("filing", "announcement", "corporate disclosure")):
+        today = datetime.now(timezone.utc).date()
+        invoke(
+            "refresh_filings",
+            lambda: run_filing_collector({
+                "source": "all",
+                "date_from": (today-timedelta(days=2)).isoformat(),
+                "date_to": today.isoformat(),
+                "limit": 300,
+                "actor": "Charlie Munger",
+            }),
+            "rows_upserted",
+        )
+    if explicit_refresh and any(term in normalized for term in ("calendar", "result date", "board meeting", "holiday")):
+        invoke(
+            "refresh_market_calendar",
+            lambda: refresh_market_calendar({
+                "lookback_days": 1, "lookahead_days": 45, "actor": "Charlie Munger",
+            }),
+            "rows_upserted",
+        )
+    if explicit_refresh and any(term in normalized for term in ("zerodha", "broker data", "broker account")):
+        invoke(
+            "sync_zerodha_account",
+            lambda: sync_zerodha_read_only({
+                "datasets": ["holdings", "positions", "orders", "trades", "funds"],
+                "actor": "Charlie Munger",
+            }),
+        )
+        invoke(
+            "sync_zerodha_market",
+            lambda: sync_zerodha_market_data({
+                "modes": ["quotes", "options"],
+                "underlyings": ["NIFTY", "BANKNIFTY"],
+                "actor": "Charlie Munger",
+            }),
+        )
+
+    watchlist_match = re.search(
+        r"\badd\s+([A-Za-z0-9&.-]{2,20})\s+(?:to|on)\s+(?:my\s+)?watchlist\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if watchlist_match:
+        symbol = watchlist_match.group(1).upper()
+        exchange_match = re.search(r"\b(NSE|BSE|NFO|BFO|MCX)\b", message, flags=re.IGNORECASE)
+        exchange = exchange_match.group(1).upper() if exchange_match else "NSE"
+        def add_watchlist_symbol() -> dict:
+            existing = run_psql_json(
+                "SELECT id,symbol,exchange,status FROM research.v_watchlist_board "
+                f"WHERE upper(symbol)={sql_literal(symbol)} AND exchange={sql_literal(exchange)} "
+                "AND status='active' LIMIT 1"
+            )
+            if existing:
+                return {"status": "already_exists", **existing[0]}
+            return upsert_watchlist_item({
+                "symbol": symbol, "exchange": exchange, "item_type": "research",
+                "priority": "medium", "source_kind": "charlie_chat",
+                "source_ref": "agent.chat_turns", "actor": "Devarsh",
+                "evidence": [{"source": "Charlie chat command", "message": message[:500]}],
+            })
+        invoke(
+            "upsert_watchlist",
+            add_watchlist_symbol,
+            "id",
+        )
+    return results
+
+
 def chat_with_charlie(payload: dict) -> dict:
     message = str(payload.get("message") or "").strip()
     if not message:
@@ -13197,7 +13542,9 @@ def chat_with_charlie(payload: dict) -> dict:
     requested_privacy = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
     if include_client_context and requested_privacy in {"public", "internal"}:
         raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
+    tool_intents = execute_charlie_safe_tools(message)
     context = build_chat_context(message, include_client_context=include_client_context)
+    context["tool_results"] = tool_intents
     normalized_message = message.lower()
     factual_request_terms = (
         "how many", "show", "list", "latest", "status", "what changed",
@@ -13206,7 +13553,7 @@ def chat_with_charlie(payload: dict) -> dict:
     factual_domain_terms = (
         "filing", "announcement", "news", "watchlist", "idea list", "report",
         "letter", "broker", "zerodha", "option", "position", "holding",
-        "client", "ohlcv", "market data",
+        "client", "ohlcv", "market data", "calendar", "holiday", "result date",
     )
     auto_factual_retrieval = (
         any(term in normalized_message for term in factual_request_terms)
@@ -13214,14 +13561,13 @@ def chat_with_charlie(payload: dict) -> dict:
     )
     deterministic_only = (
         bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
-        or auto_factual_retrieval
+        or auto_factual_retrieval or bool(tool_intents)
     )
     if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
     else:
         retrieval_hits, retrieval_status = [], "disabled_for_deterministic_route" if deterministic_only else "disabled_for_nonprivate_context"
     widget_intents = infer_widget_intents(message, context)
-    tool_intents: list[dict] = []
     response_guardrail: list[str] = []
     cloud_usage: dict = {}
     prompt_limits = {
@@ -13230,6 +13576,8 @@ def chat_with_charlie(payload: dict) -> dict:
         "vectors": 8, "filing_summary": 1, "latest_filings": 4,
         "latest_news": 4, "watchlist": 8, "generated_ideas": 4,
         "latest_reports": 4, "options_summary": 4, "broker_snapshots": 6,
+        "news_brief": 5, "filing_intelligence": 5, "market_events": 8,
+        "market_holidays": 8, "zerodha_market_status": 1, "tool_results": 6,
         "context_errors": 12, "message_symbols": 12,
     }
     prompt_context = {
@@ -13591,6 +13939,17 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/zerodha/auth/status":
                 self._send_json(zerodha_auth_status())
                 return
+            if request_path == "/api/zerodha/market/status":
+                status = _run_zerodha_market_adapter(["--check-config"], 30)
+                status["warehouse"] = run_psql_json(
+                    "SELECT (SELECT count(*) FROM market.zerodha_instruments WHERE active) active_instruments,"
+                    "(SELECT max(last_seen_at) FROM market.zerodha_instruments) latest_instrument_at,"
+                    "(SELECT max(quote_ts) FROM market.price_quotes WHERE provider='Zerodha') latest_quote_at,"
+                    "(SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider='Zerodha') latest_option_at,"
+                    "false broker_write_allowed"
+                )[0]
+                self._send_json(status)
+                return
             self._send_json({"error": "not_found", "path": self.path}, 404)
         except PermissionError as exc:
             self._send_json({"error": "forbidden", "message": str(exc)}, 403)
@@ -13717,6 +14076,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/zerodha/sync":
                 self._send_json(sync_zerodha_read_only(payload), 201)
+                return
+            if self.path == "/api/zerodha/market/sync":
+                self._send_json(sync_zerodha_market_data(payload), 201)
+                return
+            if self.path == "/api/market/calendar/refresh":
+                self._send_json(refresh_market_calendar(payload), 201)
                 return
             if self.path == "/api/providers/assignment-gate/evaluate":
                 self._send_json(evaluate_provider_assignment_gate(payload), 201)

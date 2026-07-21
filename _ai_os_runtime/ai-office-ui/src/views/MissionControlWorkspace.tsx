@@ -2,6 +2,7 @@ import {
   Activity,
   BarChart3,
   Bot,
+  CalendarDays,
   CheckCircle2,
   ClipboardList,
   ExternalLink,
@@ -302,7 +303,42 @@ export default function MissionControlWorkspace({ onStatusChange }: MissionContr
           </div>
         </MissionPanel>
 
-        <MissionPanel className="span-7" icon={<FileText size={17} />} title="Latest Corporate Filings" action={<span>{snapshot?.latest_filings.length ?? 0} recent</span>}>\n          <div className="source-check-list mission-list">{snapshot?.latest_filings.map((filing) => {const href=text(filing,"attachment_url",text(filing,"source_url",""));return <article className="source-check-row" key={text(filing,"filing_id")}><div><strong>{text(filing,"symbol",text(filing,"company_name"))} · {text(filing,"title")}</strong><p>{text(filing,"source_name")} · {text(filing,"event_type",text(filing,"filing_type"))}</p></div><StatusPill status={text(filing,"extraction_status","pending")}/><span>opp {text(filing,"opportunity_score","-")}</span>{href && href !== "-" ? <a className="icon-button" href={href} rel="noreferrer" target="_blank" title="Open exchange filing"><ExternalLink size={14}/></a> : <time>{date(filing.filed_at)}</time>}</article>;})}{!snapshot?.latest_filings.length?<Empty>No filing rows returned.</Empty>:null}</div>\n        </MissionPanel>\n        <MissionPanel className="span-5" icon={<Newspaper size={17} />} title="Daily Intelligence" action={<span>{snapshot?.latest_reports.length ?? 0} reports</span>}>\n          <div className="source-check-list mission-list">{snapshot?.latest_reports.slice(0,6).map((report)=><article className="source-check-row" key={text(report,"id")}><div><strong>{text(report,"report_name")}</strong><p>{text(report,"summary","Source-backed report run")}</p></div><StatusPill status={text(report,"status","queued")}/><span>{text(report,"output_note_path","pending")}</span><time>{date(report.finished_at ?? report.started_at)}</time></article>)}{!snapshot?.latest_reports.length?<Empty>The daily investment letter has not run yet.</Empty>:null}</div>\n        </MissionPanel>\n\n        <MissionPanel className="span-5" icon={<Activity size={17} />} title="Freshness Alerts" action={<span>{sourceIssues.length} issues</span>}>
+        <MissionPanel className="span-7" icon={<FileText size={17} />} title="Filing Intelligence" action={<span>{snapshot?.filing_intelligence.length ?? 0} ranked</span>}>
+          <div className="source-check-list mission-list">
+            {snapshot?.filing_intelligence.map((filing) => {
+              const href = text(filing, "attachment_url", text(filing, "source_url", ""));
+              return <article className="source-check-row" key={text(filing, "filing_id")}><div><strong>{text(filing, "symbol", text(filing, "company_name"))} · {text(filing, "title")}</strong><p>{text(filing, "why_it_matters")} · {text(filing, "evidence_state")}</p></div><StatusPill status={text(filing, "priority", "normal")} /><span>{text(filing, "event_type", "filing")}</span>{href && href !== "-" ? <a className="icon-button" href={href} rel="noreferrer" target="_blank" title="Open exchange filing"><ExternalLink size={14} /></a> : <time>{date(filing.filed_at)}</time>}</article>;
+            })}
+            {!snapshot?.filing_intelligence.length ? <Empty>No filing intelligence rows returned.</Empty> : null}
+          </div>
+        </MissionPanel>
+
+        <MissionPanel className="span-5" icon={<Newspaper size={17} />} title="What Matters Now" action={<span>{snapshot?.news_brief.length ?? 0} ranked</span>}>
+          <div className="source-check-list mission-list">
+            {snapshot?.news_brief.slice(0, 8).map((item) => <article className="source-check-row" key={text(item, "id")}><div><strong>{text(item, "title")}</strong><p>{text(item, "why_it_matters")}</p></div><StatusPill status={Number(item.materiality_score ?? 0) >= 0.8 ? "high" : "review"} /><span>{text(item, "matched_symbols", text(item, "owner_agent"))}</span><a className="icon-button" href={text(item, "source_url")} rel="noreferrer" target="_blank" title="Open news source"><ExternalLink size={14} /></a></article>)}
+            {!snapshot?.news_brief.length ? <Empty>No ranked news items returned.</Empty> : null}
+          </div>
+        </MissionPanel>
+
+        <MissionPanel className="span-7" icon={<CalendarDays size={17} />} title="Results & Event Calendar" action={<span>{snapshot?.market_events.length ?? 0} upcoming</span>}>
+          <div className="source-check-list mission-list">
+            {snapshot?.market_events.slice(0, 12).map((event) => <article className="source-check-row" key={[text(event, "symbol"), text(event, "event_date"), text(event, "purpose")].join("-")}><div><strong>{text(event, "symbol")} · {text(event, "purpose")}</strong><p>{text(event, "description")}</p></div><StatusPill status={text(event, "relevance_scope", "market")} /><span>{text(event, "event_date")}</span><a className="icon-button" href={text(event, "source_url")} rel="noreferrer" target="_blank" title="Open NSE event source"><ExternalLink size={14} /></a></article>)}
+            {!snapshot?.market_events.length ? <Empty>No upcoming company events stored.</Empty> : null}
+          </div>
+        </MissionPanel>
+
+        <MissionPanel className="span-5" icon={<CalendarDays size={17} />} title="Market Holidays" action={<span>{snapshot?.market_holidays.length ?? 0} upcoming</span>}>
+          <div className="source-check-list mission-list">
+            {snapshot?.market_holidays.map((holiday) => <article className="source-check-row" key={[text(holiday, "exchange"), text(holiday, "segment"), text(holiday, "holiday_date")].join("-")}><div><strong>{text(holiday, "holiday_name")}</strong><p>{text(holiday, "exchange")} · {text(holiday, "segment")}</p></div><StatusPill status={text(holiday, "session_status", "closed")} /><span>{text(holiday, "holiday_date")}</span><a className="icon-button" href={text(holiday, "source_url")} rel="noreferrer" target="_blank" title="Open official holiday circular"><ExternalLink size={14} /></a></article>)}
+            {!snapshot?.market_holidays.length ? <Empty>No upcoming exchange holidays stored.</Empty> : null}
+          </div>
+        </MissionPanel>
+
+        <MissionPanel className="span-7" icon={<Newspaper size={17} />} title="Daily Intelligence" action={<span>{snapshot?.latest_reports.length ?? 0} reports</span>}>
+          <div className="source-check-list mission-list">{snapshot?.latest_reports.slice(0, 6).map((report) => <article className="source-check-row" key={text(report, "id")}><div><strong>{text(report, "report_name")}</strong><p>{text(report, "summary", "Source-backed report run")}</p></div><StatusPill status={text(report, "status", "queued")} /><span>{text(report, "output_note_path", "pending")}</span><time>{date(report.finished_at ?? report.started_at)}</time></article>)}{!snapshot?.latest_reports.length ? <Empty>The daily investment letter has not run yet.</Empty> : null}</div>
+        </MissionPanel>
+
+        <MissionPanel className="span-5" icon={<Activity size={17} />} title="Freshness Alerts" action={<span>{sourceIssues.length} issues</span>}>
           <div aria-label="Freshness alerts" className="source-check-list mission-list" tabIndex={0}>
             {sourceIssues.map((source) => (
               <article className="source-check-row" key={text(source, "source_key")}><div><strong>{text(source, "source_name", text(source, "source_key"))}</strong><p>{text(source, "staleness_minutes", "-")} minutes stale</p></div><StatusPill status={text(source, "status", "unknown")} /><span>{text(source, "severity", "medium")}</span><time>{date(source.created_at)}</time></article>

@@ -23,6 +23,10 @@ export interface MissionControlSnapshot {
   filing_summary: LiveRow[];
   latest_filings: LiveRow[];
   latest_news: LiveRow[];
+  news_brief: LiveRow[];
+  filing_intelligence: LiveRow[];
+  market_events: LiveRow[];
+  market_holidays: LiveRow[];
   watchlist: LiveRow[];
   latest_reports: LiveRow[];
   execution_control: LiveRow[];
@@ -37,4 +41,3 @@ export async function fetchMissionControlSnapshot(): Promise<MissionControlSnaps
   }
   return response.json() as Promise<MissionControlSnapshot>;
 }
-

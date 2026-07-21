@@ -16,6 +16,10 @@ export interface ResearchIdeasSnapshot {
   long_term_research_updates: LiveRow[];
   committee_queue: LiveRow[];
   latest_news: LiveRow[];
+  news_brief: LiveRow[];
+  filing_intelligence: LiveRow[];
+  market_events: LiveRow[];
+  market_holidays: LiveRow[];
   feed_registry: LiveRow[];
   news_ingestion_runs: LiveRow[];
   filing_collector_runs: LiveRow[];
