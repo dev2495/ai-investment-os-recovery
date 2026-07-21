@@ -16,6 +16,7 @@ if ! mkdir "${SUPERVISOR_LOCK}" 2>/dev/null; then
   if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
     die "AI OS supervisor is already running as PID ${existing_pid}"
   fi
+  rm -f "${SUPERVISOR_LOCK}/pid"
   rmdir "${SUPERVISOR_LOCK}" 2>/dev/null || die "Cannot recover stale supervisor lock"
   mkdir "${SUPERVISOR_LOCK}"
 fi
