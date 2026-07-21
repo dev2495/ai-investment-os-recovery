@@ -1,0 +1,280 @@
+/*
+ * AI Investment OS — Theme Layer
+ * Maps raw tokens to semantic variables for light + dark themes.
+ *
+ * Components consume ONLY the semantic variables below — never raw tokens.
+ * This lets us re-theme the whole app by switching the data-theme attribute.
+ */
+
+/* ============================================================
+ * LIGHT THEME (default) — warm ivory, institutional, calm
+ * ============================================================ */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #f3f6f5;
+  --bg-sunken: #e9eeec;
+  --surface: #ffffff;
+  --surface-soft: #f7f9f8;
+  --surface-elevated: #ffffff;
+  --surface-overlay: rgba(255, 255, 255, 0.92);
+
+  /* Text */
+  --text: #17201e;
+  --text-secondary: #33413d;
+  --text-muted: #66736f;
+  --text-faint: #89928f;
+  --text-on-accent: #ffffff;
+  --text-on-status: #ffffff;
+
+  /* Borders */
+  --border: #d4dcda;
+  --border-strong: #b9c5c1;
+  --border-subtle: rgba(35, 55, 49, 0.10);
+
+  /* Brand */
+  --accent: var(--raw-teal);
+  --accent-hover: var(--raw-teal-deep);
+  --accent-soft: rgba(15, 118, 110, 0.10);
+  --accent-soft-strong: rgba(15, 118, 110, 0.18);
+
+  /* Status */
+  --status-ok: var(--raw-forest);
+  --status-ok-soft: rgba(45, 122, 79, 0.12);
+  --status-risk: var(--raw-terracotta);
+  --status-risk-soft: rgba(192, 57, 43, 0.10);
+  --status-warn: var(--raw-brass);
+  --status-warn-soft: rgba(212, 160, 40, 0.14);
+  --status-info: var(--raw-slate);
+  --status-info-soft: rgba(91, 107, 122, 0.12);
+  --status-special: var(--raw-violet);
+  --status-special-soft: rgba(109, 74, 138, 0.12);
+
+  /* Shadows */
+  --shadow-1: var(--shadow-xs);
+  --shadow-2: var(--shadow-sm);
+  --shadow-3: var(--shadow-md);
+  --shadow-4: var(--shadow-lg);
+  --shadow-5: var(--shadow-xl);
+
+  /* Office (3D) — brighter in light mode */
+  --office-ambient: 1;
+}
+
+/* ============================================================
+ * DARK THEME — warm espresso, never cold black
+ * ============================================================ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #090d0f;
+  --bg-sunken: #0d1316;
+  --surface: #11181b;
+  --surface-soft: #172024;
+  --surface-elevated: #1b2529;
+  --surface-overlay: rgba(10, 15, 17, 0.95);
+
+  --text: #edf3f1;
+  --text-secondary: #c4cfcc;
+  --text-muted: #8f9d99;
+  --text-faint: #697773;
+  --text-on-accent: #ffffff;
+  --text-on-status: #ffffff;
+
+  --border: #273338;
+  --border-strong: #3b4a4f;
+  --border-subtle: rgba(185, 205, 198, 0.10);
+
+  --accent: var(--raw-teal-soft);
+  --accent-hover: var(--raw-teal);
+  --accent-soft: rgba(20, 184, 166, 0.14);
+  --accent-soft-strong: rgba(20, 184, 166, 0.24);
+
+  --status-ok: var(--raw-forest-dark);
+  --status-ok-soft: rgba(61, 154, 111, 0.16);
+  --status-risk: var(--raw-terracotta-dark);
+  --status-risk-soft: rgba(229, 86, 78, 0.14);
+  --status-warn: var(--raw-brass-dark);
+  --status-warn-soft: rgba(232, 181, 71, 0.16);
+  --status-info: var(--raw-slate-dark);
+  --status-info-soft: rgba(122, 138, 153, 0.14);
+  --status-special: var(--raw-violet-dark);
+  --status-special-soft: rgba(155, 122, 184, 0.16);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-3: 0 4px 12px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-4: 0 12px 28px rgba(0, 0, 0, 0.55), 0 4px 8px rgba(0, 0, 0, 0.35);
+  --shadow-5: 0 24px 56px rgba(0, 0, 0, 0.65), 0 8px 16px rgba(0, 0, 0, 0.4);
+
+  --office-ambient: 0.55;
+}
+
+/* ============================================================
+ * GLOBAL RESET + BASE STYLES
+ * ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text);
+  background: var(--bg);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+  overflow: hidden; /* the app shell manages its own scroll regions */
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Headings use the warm serif display face */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text);
+}
+
+h1 { font-size: var(--text-3xl); }
+h2 { font-size: var(--text-2xl); }
+h3 { font-size: var(--text-xl); }
+h4 { font-size: var(--text-lg); }
+h5 { font-size: var(--text-md); }
+h6 { font-size: var(--text-base); font-family: var(--font-sans); font-weight: var(--weight-semibold); }
+
+p { line-height: var(--leading-normal); }
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+a:hover { color: var(--accent-hover); }
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+}
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+}
+
+/* Tabular numbers everywhere data is shown — opt-in via .tnum */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Micro-label utility (uppercase tracked caps) */
+.micro {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--text-muted);
+}
+
+/* Scrollbars — slim, themed, warm */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: content-box;
+}
+
+/* Focus visibility — keyboard only */
+:focus:not(:focus-visible) { outline: none; }
+:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+  border-radius: var(--radius-xs);
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-soft-strong);
+  color: var(--text);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* App-wide loading shimmer */
+@keyframes aios-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Pulsing risk indicator */
+@keyframes aios-risk-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}

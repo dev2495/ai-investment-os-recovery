@@ -1,0 +1,193 @@
+/*
+ * AI Investment OS — Design Tokens
+ * "Warm Realistic Office" aesthetic
+ *
+ * A premium investment firm you can walk into: warm ivory surfaces, espresso
+ * ink, deep teal accents, forest/terracotta for live/risk states. Light mode
+ * is the default (a real fund's internal tools feel calm and institutional);
+ * dark mode is warm espresso, never cold black.
+ *
+ * Tokens are raw values. theme.css maps them to semantic variables per theme.
+ */
+
+:root {
+  /* ============================================================
+   * COLOR — Raw palette (shared across both themes)
+   * ============================================================ */
+
+  /* Warm neutrals — light */
+  --raw-ivory: #f7f4ef;        /* app background, light */
+  --raw-cream: #ffffff;        /* primary surface, light */
+  --raw-cream-soft: #faf7f1;   /* secondary surface, light */
+  --raw-linen: #f0ebe2;        /* tertiary / sunken surface, light */
+  --raw-stone: #7a6f62;        /* muted text, light */
+  --raw-stone-strong: #5a5048; /* strong muted text, light */
+  --raw-espresso: #1a1714;     /* primary text, light */
+  --raw-espresso-soft: #3a322c;/* secondary text, light */
+  --raw-hairline: #e3ddd2;     /* borders, light */
+  --raw-hairline-strong: #d4ccbe;
+
+  /* Warm neutrals — dark */
+  --raw-espresso-bg: #16110d;  /* app background, dark */
+  --raw-walnut: #221c16;       /* primary surface, dark */
+  --raw-walnut-soft: #2a221b;  /* secondary surface, dark */
+  --raw-walnut-sunken: #120e0a;/* sunken surface, dark */
+  --raw-cream-text: #f2ede5;   /* primary text, dark */
+  --raw-cream-muted: #b8ad9f;  /* muted text, dark */
+  --raw-cream-faint: #8a7f72;  /* faint text, dark */
+  --raw-border-dark: #3a2f25;  /* borders, dark */
+  --raw-border-dark-strong: #4a3d31;
+
+  /* Brand — deep teal (consistent across themes) */
+  --raw-teal: #0f766e;
+  --raw-teal-soft: #14b8a6;
+  --raw-teal-deep: #0a4f49;
+
+  /* Semantic status */
+  --raw-forest: #2d7a4f;       /* live / ok, light */
+  --raw-forest-dark: #3d9a6f;  /* live / ok, dark */
+  --raw-terracotta: #c0392b;   /* risk / breach, light */
+  --raw-terracotta-dark: #e5564e; /* risk / breach, dark */
+  --raw-brass: #d4a028;        /* warn, light */
+  --raw-brass-dark: #e8b547;   /* warn, dark */
+  --raw-slate: #5b6b7a;        /* neutral / informational */
+  --raw-slate-dark: #7a8a99;
+  --raw-violet: #6d4a8a;       /* special / committee */
+  --raw-violet-dark: #9b7ab8;
+
+  /* 3D scene colors */
+  --raw-oak-floor: #b08456;
+  --raw-oak-floor-dark: #8a6440;
+  --raw-glass-tint: #e8e4dc;
+  --raw-concrete: #c8c4be;
+  --raw-brass-metal: #b08d57;
+  --raw-lamp-warm: #ffd9a0;
+
+  /* ============================================================
+   * TYPOGRAPHY
+   * ============================================================ */
+
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+
+  /* Type scale (1.200 minor third, headlines step up faster) */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 28px;
+  --text-4xl: 36px;
+  --text-5xl: 48px;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.45;
+  --leading-relaxed: 1.6;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.08em; /* for micro-labels */
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ============================================================
+   * SPACING (4px base grid)
+   * ============================================================ */
+
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ============================================================
+   * RADII
+   * ============================================================ */
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 22px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  /* ============================================================
+   * ELEVATION (shadows + blur)
+   * Warm-tinted shadows for depth that feels physical, not harsh.
+   * ============================================================ */
+
+  /* Light */
+  --shadow-xs: 0 1px 2px rgba(60, 42, 20, 0.04);
+  --shadow-sm: 0 1px 3px rgba(60, 42, 20, 0.06), 0 1px 2px rgba(60, 42, 20, 0.04);
+  --shadow-md: 0 4px 12px rgba(60, 42, 20, 0.08), 0 2px 4px rgba(60, 42, 20, 0.04);
+  --shadow-lg: 0 12px 28px rgba(60, 42, 20, 0.12), 0 4px 8px rgba(60, 42, 20, 0.06);
+  --shadow-xl: 0 24px 56px rgba(60, 42, 20, 0.18), 0 8px 16px rgba(60, 42, 20, 0.08);
+
+  /* Focus ring (teal, brand-aligned) */
+  --ring-focus: 0 0 0 2px var(--raw-ivory), 0 0 0 4px var(--raw-teal);
+
+  /* ============================================================
+   * MOTION
+   * ============================================================ */
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --duration-slower: 480ms;
+
+  /* ============================================================
+   * LAYOUT
+   * ============================================================ */
+
+  --topbar-height: 52px;
+  --assistant-width: 380px;
+  --assistant-width-collapsed: 0px;
+  --sidebar-width: 0px; /* no left sidebar — top nav + command palette */
+  --content-max: 1600px;
+  --evidence-drawer-width: 560px;
+
+  --z-base: 0;
+  --z-content: 10;
+  --z-sticky: 100;
+  --z-topbar: 1000;
+  --z-assistant: 1100;
+  --z-drawer: 1200;
+  --z-modal: 1300;
+  --z-toast: 1400;
+  --z-palette: 1500;
+  --z-office-hud: 200;
+
+  /* ============================================================
+   * DENSITY (set on document element)
+   * ============================================================ */
+
+  --density-pad-y: 1; /* multiplier */
+  --density-pad-x: 1;
+}
+
+:root[data-density="compact"] {
+  --density-pad-y: 0.7;
+  --density-pad-x: 0.85;
+}

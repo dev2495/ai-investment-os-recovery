@@ -2557,6 +2557,51 @@ def build_trading_quant_risk_snapshot() -> dict:
             FROM trading.v_latest_option_chain
             LIMIT 400
         """,
+        "option_oi_change": """
+            WITH ranked AS (
+                SELECT provider, exchange, underlying, expiry, observed_at,
+                       strike, option_type, trading_symbol, spot_price,
+                       last_price, open_interest, implied_volatility,
+                       lag(open_interest) OVER (
+                           PARTITION BY provider, exchange, underlying, expiry,
+                                        strike, option_type ORDER BY observed_at
+                       ) AS previous_open_interest,
+                       lag(last_price) OVER (
+                           PARTITION BY provider, exchange, underlying, expiry,
+                                        strike, option_type ORDER BY observed_at
+                       ) AS previous_last_price,
+                       row_number() OVER (
+                           PARTITION BY provider, exchange, underlying, expiry,
+                                        strike, option_type ORDER BY observed_at DESC
+                       ) AS recency_rank
+                FROM trading.option_chain_snapshots
+                WHERE provider='Zerodha'
+            )
+            SELECT provider, exchange, underlying, expiry, observed_at, strike,
+                   option_type, trading_symbol, spot_price, last_price,
+                   open_interest, implied_volatility, previous_open_interest,
+                   open_interest-coalesce(previous_open_interest,open_interest)
+                       AS open_interest_change,
+                   previous_last_price,
+                   last_price-coalesce(previous_last_price,last_price)
+                       AS last_price_change
+            FROM ranked
+            WHERE recency_rank=1
+            ORDER BY underlying, expiry, strike, option_type
+            LIMIT 400
+        """,
+        "option_trade_log": """
+            SELECT id, trade_id, trade_status, trade_type, no_of_trades,
+                   client_code, entry_date, stock_ticker, lot_size, contracts,
+                   entry_stock_price, side, call_put, strike_price, delta_value,
+                   option_value, entry_credit_debit, entry_volatility,
+                   margin_required, stop_loss_price, exit_date,
+                   exit_stock_price, exit_option_value, exit_credit_debit,
+                   exit_volatility, imported_at
+            FROM client_data.attached_option_log_transactions
+            ORDER BY entry_date DESC NULLS LAST, id DESC
+            LIMIT 240
+        """,
         "broker_snapshots": """
             SELECT id, run_key, provider, account_ref, dataset,
                    source_connector_key, row_count, retrieved_at,
