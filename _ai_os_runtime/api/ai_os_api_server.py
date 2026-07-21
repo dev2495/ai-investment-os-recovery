@@ -7472,17 +7472,34 @@ def log_chat_turn_model_usage(chat_turn_id: object, actor: str = "Charlie Munger
                     chat.id::TEXT AS source_ref,
                     chat.assistant_name AS agent_name,
                     chat.route_name,
-                    lower(coalesce(chat.model_provider, 'unknown')) AS provider,
-                    coalesce(chat.model_name, 'unknown') AS model_name,
+                    CASE
+                        WHEN chat.model_status IN ('deterministic_fallback','cache_hit') THEN 'deterministic'
+                        ELSE lower(coalesce(chat.model_provider, 'unknown'))
+                    END AS provider,
+                    CASE
+                        WHEN chat.model_status='deterministic_fallback' THEN 'deterministic_router_v1'
+                        WHEN chat.model_status='cache_hit' THEN 'governed_response_cache'
+                        ELSE coalesce(chat.model_name, 'unknown')
+                    END AS model_name,
                     'chat'::TEXT AS usage_kind,
                     chat.model_status,
                     greatest(1, ceil(length(coalesce(chat.user_message, '')) / 4.0))::BIGINT AS prompt_tokens_est,
                     greatest(1, ceil(length(coalesce(chat.assistant_message, '')) / 4.0))::BIGINT AS completion_tokens_est,
                     greatest(2, ceil((length(coalesce(chat.user_message, '')) + length(coalesce(chat.assistant_message, ''))) / 4.0))::BIGINT AS total_tokens_est,
                     jsonb_build_array(jsonb_build_object('source', 'agent.chat_turns', 'id', chat.id, 'model_status', chat.model_status)) AS evidence,
-                    jsonb_build_object('logged_by', 'api.persist_chat_turn', 'session_key', chat.session_key) AS metadata
+                    jsonb_build_object(
+                        'logged_by', 'api.persist_chat_turn',
+                        'session_key', chat.session_key,
+                        'requested_provider', chat.model_provider,
+                        'requested_model', chat.model_name,
+                        'billable_model_call', chat.model_status='called'
+                    ) AS metadata
                 FROM agent.chat_turns chat
                 WHERE chat.id = {chat_id}
+                  AND NOT (
+                      lower(coalesce(chat.model_provider, 'unknown'))='openrouter'
+                      AND chat.model_status='called'
+                  )
             ),
             priced AS (
                 SELECT

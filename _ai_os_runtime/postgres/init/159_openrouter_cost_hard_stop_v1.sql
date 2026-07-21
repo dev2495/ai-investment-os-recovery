@@ -47,6 +47,28 @@ SET daily_cap_usd=1.00,
     updated_at=now()
 WHERE agent_name='Charlie Munger';
 
+UPDATE agent.model_usage_events
+SET provider='deterministic',
+    model_name=CASE
+        WHEN model_status='cache_hit' THEN 'governed_response_cache'
+        ELSE 'deterministic_router_v1'
+    END,
+    estimated_cost_usd=0,
+    actual_cost_usd=0,
+    cost_tier='local',
+    estimate_method='nonbillable_fallback_or_cache',
+    rate_id=NULL,
+    metadata=metadata || jsonb_build_object(
+        'requested_provider', provider,
+        'requested_model', model_name,
+        'billable_model_call', false,
+        'reclassified_at', now()
+    ),
+    updated_at=now()
+WHERE source_kind='chat_turn'
+  AND provider='openrouter'
+  AND model_status IN ('deterministic_fallback','cache_hit');
+
 CREATE OR REPLACE VIEW agent.v_agent_model_cost_cap_status AS
 WITH usage_rollup AS (
     SELECT
