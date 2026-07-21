@@ -58,6 +58,10 @@ WITH usage_rollup AS (
         count(*) FILTER (
             WHERE event_ts >= current_date
               AND cost_tier <> 'local'
+              AND provider NOT IN (
+                  'ollama','mlx','local','lm_studio','local_openai',
+                  'local_python','local_tools','deterministic'
+              )
               AND approval_id IS NULL
               AND NOT coalesce((metadata->>'explicit_cloud_approval')::BOOLEAN, false)
         )::BIGINT AS unapproved_cloud_events_today,
