@@ -10,6 +10,17 @@ LOG_ROOT="${AI_OS_RUNTIME_LOG_ROOT:-${HOME}/Library/Logs/AIOS/runtime}"
 RUN_ROOT="${AI_OS_RUNTIME_RUN_ROOT:-${HOME}/Library/Application Support/AIOS/run}"
 mkdir -p "${LOG_ROOT}" "${RUN_ROOT}"
 
+SUPERVISOR_LOCK="${RUN_ROOT}/supervisor.lock"
+if ! mkdir "${SUPERVISOR_LOCK}" 2>/dev/null; then
+  existing_pid="$(cat "${SUPERVISOR_LOCK}/pid" 2>/dev/null || true)"
+  if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+    die "AI OS supervisor is already running as PID ${existing_pid}"
+  fi
+  rmdir "${SUPERVISOR_LOCK}" 2>/dev/null || die "Cannot recover stale supervisor lock"
+  mkdir "${SUPERVISOR_LOCK}"
+fi
+printf '%s\n' "$$" > "${SUPERVISOR_LOCK}/pid"
+
 children=()
 
 stop_children() {
@@ -19,6 +30,8 @@ stop_children() {
     kill "${pid}" 2>/dev/null || true
   done
   wait 2>/dev/null || true
+  rm -f "${SUPERVISOR_LOCK}/pid"
+  rmdir "${SUPERVISOR_LOCK}" 2>/dev/null || true
 }
 trap stop_children EXIT INT TERM
 

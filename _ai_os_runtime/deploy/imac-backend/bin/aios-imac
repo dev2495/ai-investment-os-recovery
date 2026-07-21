@@ -390,8 +390,22 @@ start_backend() {
   ensure_ssd
   render_launchagents
   launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
+  pkill -TERM -f '/_ai_os_runtime/api/ai_os_api_server.py' 2>/dev/null || true
+  pkill -TERM -f '/_ai_os_runtime/scripts/serve_spa.py' 2>/dev/null || true
+  pkill -TERM -f '/_ai_os_runtime/scripts/run_agent_message_daemon.py' 2>/dev/null || true
+  local port attempt
+  for port in "${AI_OS_API_PORT}" "${AI_OS_UI_PORT}"; do
+    for attempt in {1..40}; do
+      if ! lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null | grep -q .; then
+        break
+      fi
+      sleep 0.25
+    done
+    if lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null | grep -q .; then
+      die "Port ${port} is still occupied after stopping the previous AI OS runtime"
+    fi
+  done
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}"
-  launchctl kickstart -k "${LAUNCHD_DOMAIN}/${SUPERVISOR_LABEL}"
   launchctl bootout "${LAUNCHD_DOMAIN}" "${BACKUP_PLIST}" 2>/dev/null || true
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${BACKUP_PLIST}"
   launchctl bootout "${LAUNCHD_DOMAIN}" "${REPORTS_PLIST}" 2>/dev/null || true
@@ -409,6 +423,7 @@ stop_backend() {
     colima stop --profile ai-os || true
   fi
   pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_server.py" 2>/dev/null || true
+  pkill -f '/_ai_os_runtime/scripts/serve_spa.py' 2>/dev/null || true
   pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_agent_message_daemon.py" 2>/dev/null || true
   sync
   log "SAFE_TO_EJECT: AI OS services and Colima are stopped and writes are flushed"
