@@ -132,8 +132,8 @@ function SpecialSituations({ data }: { data: ResearchData }) {
 
 function NewsSources({ data }: { data: ResearchData }) {
   return <WorkspaceGrid><Panel className="aios-workspace-span" icon={Newspaper} title="Curated market intelligence"><div className="aios-brief-list">{data.news_brief.slice(0, 30).map((row, index) => <article className="aios-brief-item" key={text(row,"id",index)}><div><h4>{text(row,"title")}</h4><p>{truncate(text(row,"why_it_matters"),220)}</p></div><div style={{display:"grid",justifyItems:"end",gap:7}}><StatusPill status={text(row,"materiality_score")}>Score {text(row,"materiality_score","-")}</StatusPill><SourceLink row={row}/></div></article>)}</div></Panel><Panel icon={Radar} title="Followed sources" actions={<Badge>{data.feed_registry.length} feeds</Badge>}><LiveTable rows={data.feed_registry} emptyTitle="No feeds registered" columns={[
-    { key: "source_name", label: "Source", render: (row) => <RowTitle row={row} titleKeys={["source_name", "name"]} detailKeys={["feed_url", "source_url"]} /> },
-    { key: "source_type", label: "Type" }, { key: "status", label: "Health", render: (row) => <StatusCell row={row} keys={["status", "health_status"]} /> },
+    { key: "source_name", label: "Source", render: (row) => <RowTitle row={row} titleKeys={["feed_name", "source_name", "name"]} detailKeys={["url", "feed_url", "source_url"]} /> },
+    { key: "feed_type", label: "Type", render: (row) => text(row, "feed_type", text(row, "source_type")) }, { key: "status", label: "Health", render: (row) => <StatusCell row={row} keys={["status", "health_status"]} /> },
   ]} /></Panel><Panel icon={CalendarDays} title="Market calendar"><LiveTable rows={[...data.market_events, ...data.market_holidays]} emptyTitle="No upcoming events" columns={[
     { key: "company_name", label: "Event", render: (row) => <RowTitle row={row} titleKeys={["company_name", "holiday_name", "symbol"]} detailKeys={["purpose", "description"]} /> },
     { key: "event_date", label: "Date", render: (row) => text(row,"event_date",text(row,"holiday_date")) }, { key: "event_type", label: "Type", render: (row) => text(row,"event_type",text(row,"session_status")) },
