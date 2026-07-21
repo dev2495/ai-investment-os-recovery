@@ -2,13 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const runtimeRoot = path.resolve(scriptDir, "..");
-const require = createRequire(import.meta.url);
-const { chromium } = require(path.join(runtimeRoot, "ai-office-ui", "node_modules", "playwright"));
+import { spawn } from "node:child_process";
 
 function readArg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -26,7 +20,7 @@ const initialUrl = readArg(
 );
 const systemChromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const configuredExecutablePath = process.env.AI_OS_TRADINGVIEW_BROWSER_EXECUTABLE;
-const executablePath = [configuredExecutablePath, systemChromePath, chromium.executablePath()]
+const executablePath = [configuredExecutablePath, systemChromePath]
   .filter(Boolean)
   .find((candidate) => fs.existsSync(candidate));
 
@@ -36,24 +30,40 @@ if (!executablePath) {
 
 fs.mkdirSync(profileDir, { recursive: true });
 
-const context = await chromium.launchPersistentContext(profileDir, {
-  executablePath,
-  headless: false,
-  viewport: null,
-  args: [
-    `--remote-debugging-port=${port}`,
-    "--no-first-run",
-    "--no-default-browser-check"
-  ]
+let closing = false;
+const browserProcess = spawn(executablePath, [
+  "--remote-debugging-address=127.0.0.1",
+  `--remote-debugging-port=${port}`,
+  `--user-data-dir=${profileDir}`,
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--password-store=basic",
+  "--use-mock-keychain",
+  "--disable-sync",
+  initialUrl
+], { stdio: ["ignore", "inherit", "inherit"] });
+
+browserProcess.once("exit", (code, signal) => {
+  if (closing) return;
+  console.error(JSON.stringify({ status: "browser_exited", code, signal }));
+  process.exit(code ?? 1);
 });
 
-let page = context.pages().find((candidate) => candidate.url().startsWith("https://www.tradingview.com"));
-if (!page) {
-  page = context.pages()[0] || await context.newPage();
+async function waitForCdp() {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (response.ok) return response.json();
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Chrome CDP did not become ready on port ${port}`);
 }
-if (!page.url().startsWith("https://www.tradingview.com/chart")) {
-  await page.goto(initialUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-}
+
+const cdpVersion = await waitForCdp();
 
 console.log(JSON.stringify({
   status: "ready",
@@ -61,16 +71,16 @@ console.log(JSON.stringify({
   port,
   profile_dir: profileDir,
   executable_path: executablePath,
-  page_url: page.url(),
+  page_url: initialUrl,
+  cdp_browser: cdpVersion.Browser,
   pid: process.pid
 }));
 
-let closing = false;
 async function shutdown(signal) {
   if (closing) return;
   closing = true;
   console.log(JSON.stringify({ status: "stopping", signal }));
-  await context.close().catch(() => {});
+  browserProcess.kill("SIGTERM");
   process.exit(0);
 }
 
