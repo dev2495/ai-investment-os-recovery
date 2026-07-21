@@ -28,7 +28,7 @@ while [[ ! -d "${AI_OS_SSD_ROOT}" ]]; do
 done
 ensure_ssd
 
-if ! colima status --profile ai-os >/dev/null 2>&1; then
+if ! docker info >/dev/null 2>&1; then
   log "Starting lean Colima runtime"
   colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs
 fi

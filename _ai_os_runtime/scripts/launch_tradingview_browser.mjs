@@ -24,7 +24,15 @@ const initialUrl = readArg(
   "url",
   process.env.AI_OS_TRADINGVIEW_INITIAL_URL || "https://www.tradingview.com/chart/?symbol=NASDAQ%3AAAPL"
 );
-const executablePath = chromium.executablePath();
+const systemChromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const configuredExecutablePath = process.env.AI_OS_TRADINGVIEW_BROWSER_EXECUTABLE;
+const executablePath = [configuredExecutablePath, systemChromePath, chromium.executablePath()]
+  .filter(Boolean)
+  .find((candidate) => fs.existsSync(candidate));
+
+if (!executablePath) {
+  throw new Error("No supported Chromium executable is available");
+}
 
 fs.mkdirSync(profileDir, { recursive: true });
 
@@ -49,7 +57,7 @@ if (!page.url().startsWith("https://www.tradingview.com/chart")) {
 
 console.log(JSON.stringify({
   status: "ready",
-  backend: "chrome_for_testing",
+  backend: executablePath === systemChromePath ? "system_chrome" : "chrome_for_testing",
   port,
   profile_dir: profileDir,
   executable_path: executablePath,
