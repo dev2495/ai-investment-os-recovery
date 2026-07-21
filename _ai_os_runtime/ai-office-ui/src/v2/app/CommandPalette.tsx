@@ -52,6 +52,7 @@ export function CommandPalette() {
 
   const navigate = useNavigate();
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const [search, setSearch] = React.useState("");
 
   // Focus input when opened
   React.useEffect(() => {
@@ -108,7 +109,7 @@ export function CommandPalette() {
       >
         <div className="aios-palette__input-wrap">
           <Search size={16} className="aios-palette__input-icon" />
-          <Command.Input ref={inputRef} placeholder="Search, navigate, or ask Charlie…" className="aios-palette__input" />
+          <Command.Input ref={inputRef} value={search} onValueChange={setSearch} placeholder="Search, navigate, or ask Charlie…" className="aios-palette__input" />
           <kbd className="aios-palette__esc">ESC</kbd>
         </div>
         <Command.List className="aios-palette__list">
@@ -181,12 +182,13 @@ export function CommandPalette() {
           {/* Ask Charlie — appears when query looks like a question */}
           <Command.Group heading="Ask Charlie" className="aios-palette__group">
             <Command.Item
-              value="ask charlie question"
-              onSelect={(val) => askCharlie(val.replace(/^ask\s+charlie\s*/i, ""))}
+              value={`ask charlie ${search}`}
+              disabled={!search.trim()}
+              onSelect={() => askCharlie(search)}
               className="aios-palette__item aios-palette__item--charlie"
             >
               <Sparkles size={15} />
-              <span className="aios-palette__item-label">Ask Charlie: "<span className="aios-palette__charlie-q" />"</span>
+              <span className="aios-palette__item-label">Ask Charlie: "<span className="aios-palette__charlie-q">{search.trim() || "type a question"}</span>"</span>
             </Command.Item>
           </Command.Group>
         </Command.List>
