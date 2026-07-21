@@ -117,19 +117,18 @@ function HeroStrip({ mission, loading }: { mission: ReturnType<typeof useMission
   const breaches = mission.execution_control?.filter((r) => text(r, "kind") === "risk_event").length ?? 0;
   const staleSources = mission.source_freshness?.filter((r) => text(r, "status") === "stale").length ?? 0;
 
-  // Pull NAV + exposure from metrics (heuristic — backend may vary)
-  const navRow = mission.metrics?.find((r) => text(r, "metric_key", "").includes("nav") || text(r, "label", "").toLowerCase().includes("nav"));
+  const navRow = mission.metrics?.find((r) => text(r, "metric") === "portfolio_nav");
   const navValue = navRow ? num(navRow, "value") : 0;
-  const exposureRow = mission.metrics?.find((r) => text(r, "metric_key", "").includes("exposure") || text(r, "label", "").toLowerCase().includes("exposure"));
+  const exposureRow = mission.metrics?.find((r) => text(r, "metric") === "gross_book_exposure");
   const exposureValue = exposureRow ? num(exposureRow, "value") : 0;
 
   return (
     <div className="aios-today__hero">
       <MetricTile>
-        <Metric label="Net Asset Value" value={navValue > 0 ? formatCompact(navValue, "INR") : "—"} size="lg" sub={navRow ? text(navRow, "unit", "") : "across all clients"} />
+        <Metric label="Net Asset Value" value={navRow ? formatCompact(navValue, "INR") : "—"} size="lg" sub="latest holdings across active clients" />
       </MetricTile>
       <MetricTile>
-        <Metric label="Gross Exposure" value={exposureValue > 0 ? formatCompact(exposureValue, "INR") : "—"} size="lg" sub="across books" />
+        <Metric label="Gross Exposure" value={exposureRow ? formatCompact(exposureValue, "INR") : "—"} size="lg" sub="book-assigned positions" />
       </MetricTile>
       <MetricTile tone={breaches > 0 ? "risk" : "ok"}>
         <Metric label="Risk Breaches" value={breaches} size="lg" sub={breaches > 0 ? `${breaches} active` : "within limits"} />

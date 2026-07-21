@@ -1522,7 +1522,23 @@ def build_system_health_snapshot() -> dict:
 def build_mission_control_snapshot() -> dict:
     """Return the bounded executive read model for Charlie and Jarvis operations."""
     queries = {
-        "metrics": "SELECT metric, value FROM core.v_control_plane_snapshot ORDER BY metric",
+        "metrics": """
+            SELECT metric, value
+            FROM (
+                SELECT metric, value
+                FROM core.v_control_plane_snapshot
+                UNION ALL
+                SELECT 'portfolio_nav'::TEXT AS metric,
+                       round(coalesce(sum(latest_market_value), 0), 2)::TEXT AS value
+                FROM portfolio.v_client_control_plane
+                WHERE active
+                UNION ALL
+                SELECT metric, value
+                FROM books.v_portfolio_intelligence_summary
+                WHERE metric = 'gross_book_exposure'
+            ) executive_metrics
+            ORDER BY metric
+        """,
         "inbox": """
             SELECT id, task_id, title, owner_agent, status, priority,
                    recommended_action, target_workspace, claimed_by, claimed_at,
