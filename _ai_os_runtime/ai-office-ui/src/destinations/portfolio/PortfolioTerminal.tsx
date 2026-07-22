@@ -23,7 +23,7 @@ import {
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select, KeyValue,
 } from "../../system/primitives";
 import { DonutChart, Treemap } from "../../system/charts";
-import { text, num, formatRelative, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
+import { text, num, bool, formatRelative, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -79,9 +79,41 @@ function OverviewView() {
   const navRows = data?.client_nav ?? [];
   const intel = data?.portfolio_intelligence ?? [];
 
-  // Aggregate NAV
-  const totalNav = navRows.reduce((acc, r) => acc + num(r, "nav", num(r, "nav_inr", 0)), 0);
-  const totalExposure = positions.reduce((acc, r) => acc + num(r, "exposure", num(r, "market_value", num(r, "notional", 0))), 0);
+  const totalExposure = positions.reduce((acc, r) => acc + Math.abs(num(r, "exposure", num(r, "market_value", num(r, "notional", 0)))), 0);
+  const completeNavRows = navRows.filter((row) => row.nav !== null && row.nav !== undefined);
+  const completeNav = completeNavRows.reduce((acc, r) => acc + num(r, "nav", num(r, "nav_inr", 0)), 0);
+
+  const clientSummaries = React.useMemo(() => {
+    const holdings = new Map<string, { value: number; top: number; count: number }>();
+    for (const position of positions) {
+      const clientCode = text(position, "client_code", text(position, "display_name", "unassigned"));
+      const marketValue = Math.abs(num(position, "market_value", num(position, "exposure", 0)));
+      const summary = holdings.get(clientCode) ?? { value: 0, top: 0, count: 0 };
+      summary.value += marketValue;
+      summary.top = Math.max(summary.top, marketValue);
+      summary.count += 1;
+      holdings.set(clientCode, summary);
+    }
+
+    return clients.map((client) => {
+      const clientCode = text(client, "client_code", text(client, "id"));
+      const summary = holdings.get(clientCode) ?? { value: num(client, "latest_market_value", 0), top: 0, count: num(client, "latest_position_count", 0) };
+      const latestAt = text(client, "latest_position_at");
+      const latestTs = Date.parse(latestAt);
+      const stale = !Number.isFinite(latestTs) || Date.now() - latestTs > 7 * 24 * 60 * 60 * 1000;
+      return {
+        client_code: clientCode,
+        display_name: text(client, "display_name", clientCode),
+        holdings_value: summary.value,
+        position_count: summary.count,
+        top_holding_weight: summary.value > 0 ? summary.top / summary.value : 0,
+        latest_position_at: latestAt,
+        status: stale ? "stale" : "current",
+      } satisfies LiveRow;
+    });
+  }, [clients, positions]);
+
+  const visibleHoldings = clientSummaries.reduce((acc, row) => acc + num(row, "holdings_value", 0), 0);
 
   // Allocation by symbol (for treemap)
   const allocation = React.useMemo(() => {
@@ -97,16 +129,18 @@ function OverviewView() {
       .slice(0, 20);
   }, [positions]);
 
-  // Client NAV donut
-  const clientAllocation = navRows.map((r, i) => ({
-    name: text(r, "client_name", text(r, "name", `Client ${i}`)),
-    value: num(r, "nav", num(r, "nav_inr", 0)),
+  // Cash evidence is incomplete for some accounts, so this allocation is based
+  // on observable securities rather than presenting a partial NAV as complete.
+  const clientAllocation = clientSummaries.map((r) => ({
+    name: text(r, "display_name", text(r, "client_code")),
+    value: num(r, "holdings_value", 0),
   }));
 
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
-        <MetricTile><Metric label="Total NAV" value={totalNav > 0 ? formatCompact(totalNav, "INR") : "—"} size="lg" /></MetricTile>
+        <MetricTile><Metric label="Visible Holdings" value={visibleHoldings > 0 ? formatCompact(visibleHoldings, "INR") : "—"} size="lg" /></MetricTile>
+        <MetricTile><Metric label="Calculated NAV" value={completeNav > 0 ? formatCompact(completeNav, "INR") : "—"} sub={`${completeNavRows.length}/${navRows.length} accounts have cash evidence`} /></MetricTile>
         <MetricTile><Metric label="Gross Exposure" value={totalExposure > 0 ? formatCompact(totalExposure, "INR") : "—"} /></MetricTile>
         <MetricTile><Metric label="Clients" value={clients.length} /></MetricTile>
         <MetricTile><Metric label="Positions" value={positions.length} /></MetricTile>
@@ -121,9 +155,9 @@ function OverviewView() {
             <Treemap data={allocation} height={280} />
           )}
         </Panel>
-        <Panel icon={Users} title="NAV by Client">
+        <Panel icon={Users} title="Visible Holdings by Client">
           {isLoading ? <Skeleton style={{ height: 280 }} /> : clientAllocation.length === 0 ? (
-            <Empty icon={Users} title="No client NAV" />
+            <Empty icon={Users} title="No client holdings" />
           ) : (
             <>
               <DonutChart data={clientAllocation} height={220} />
@@ -137,17 +171,34 @@ function OverviewView() {
         </Panel>
       </div>
 
-      {intel.length > 0 && (
-        <Panel icon={Briefcase} title="Portfolio Intelligence">
+      {clientSummaries.length > 0 && (
+        <Panel icon={Users} title="Client Portfolio Summary">
           <DataTable
             columns={[
-              { key: "client", header: "Client", render: (r) => text(r, "client_name", text(r, "name")) },
-              { key: "nav", header: "NAV", align: "right", render: (r) => formatCompact(num(r, "nav", 0), "INR") },
+              { key: "client", header: "Client", render: (r) => <strong>{text(r, "display_name", text(r, "client_code"))}</strong> },
+              { key: "holdings", header: "Visible Holdings", align: "right", render: (r) => formatCompact(num(r, "holdings_value", 0), "INR") },
+              { key: "positions", header: "Positions", align: "right", render: (r) => num(r, "position_count", 0) },
               { key: "concentration", header: "Top Holding %", align: "right", render: (r) => formatPercent(num(r, "top_holding_weight", 0)) },
+              { key: "asof", header: "Latest Snapshot", render: (r) => formatRelative(text(r, "latest_position_at")) },
               { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "ok")} /> },
             ]}
-            rows={intel}
-            rowKey={(r, i) => String(text(r, "client_id", text(r, "id", i)))}
+            rows={clientSummaries}
+            rowKey={(r, i) => String(text(r, "client_code", i))}
+          />
+        </Panel>
+      )}
+
+      {intel.length > 0 && (
+        <Panel icon={Briefcase} title="Portfolio Intelligence Facts">
+          <DataTable
+            columns={[
+              { key: "section", header: "Section", render: (r) => text(r, "section", "portfolio") },
+              { key: "fact", header: "Fact", render: (r) => <strong>{text(r, "item_name", text(r, "item_key"))}</strong> },
+              { key: "value", header: "Value", align: "right", render: (r) => text(r, "item_value", "—") },
+              { key: "interpretation", header: "Interpretation", render: (r) => text(r, "interpretation", "—") },
+            ]}
+            rows={intel.slice(0, 12)}
+            rowKey={(r, i) => `${text(r, "section")}:${text(r, "item_key", i)}`}
           />
         </Panel>
       )}
@@ -165,6 +216,7 @@ function PositionsView() {
   const [filter, setFilter] = React.useState("");
 
   const filtered = filter ? positions.filter((r) => text(r, "symbol").toLowerCase().includes(filter.toLowerCase())) : positions;
+  const totalMarketValue = positions.reduce((sum, r) => sum + Math.abs(num(r, "market_value", 0)), 0);
 
   return (
     <Panel icon={PieChart} title="Positions"
@@ -176,17 +228,17 @@ function PositionsView() {
         <DataTable
           columns={[
             { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
-            { key: "client", header: "Client", render: (r) => text(r, "client_name", "—") },
+            { key: "client", header: "Client", render: (r) => text(r, "display_name", text(r, "client_name", "—")) },
             { key: "book", header: "Book", render: (r) => text(r, "book_key", "—") },
             { key: "qty", header: "Qty", align: "right", render: (r) => num(r, "quantity", 0) },
-            { key: "avg", header: "Avg Cost", align: "right", render: (r) => formatCurrency(num(r, "average_cost", 0)) },
+            { key: "avg", header: "Avg Cost", align: "right", render: (r) => formatCurrency(num(r, "average_cost", num(r, "average_price", 0))) },
             { key: "mv", header: "Mkt Value", align: "right", render: (r) => formatCompact(num(r, "market_value", 0), "INR") },
-            { key: "weight", header: "Weight", align: "right", render: (r) => formatPercent(num(r, "weight", 0)) },
+            { key: "weight", header: "Weight", align: "right", render: (r) => formatPercent(totalMarketValue > 0 ? Math.abs(num(r, "market_value", 0)) / totalMarketValue : 0) },
             { key: "purpose", header: "Purpose", render: (r) => text(r, "purpose", "—") },
           ]}
           rows={filtered}
           rowKey={(r, i) => String(text(r, "position_id", text(r, "id", i)))}
-          onRowClick={(r) => openEvidence({ kind: "strategy", key: String(text(r, "thesis_id", text(r, "position_id", text(r, "id")))), title: `${text(r, "symbol")} — ${text(r, "client_name", "position")}` })}
+          onRowClick={(r) => openEvidence({ kind: "strategy", key: String(text(r, "thesis_id", text(r, "position_id", text(r, "id")))), title: `${text(r, "symbol")} — ${text(r, "display_name", text(r, "client_name", "position"))}` })}
         />
       )}
     </Panel>
@@ -256,11 +308,12 @@ function ClientsView() {
         ) : (
           <DataTable
             columns={[
-              { key: "name", header: "Client", render: (r) => <strong>{text(r, "client_name", text(r, "name"))}</strong> },
+              { key: "name", header: "Client", render: (r) => <strong>{text(r, "display_name", text(r, "client_name", text(r, "name")))}</strong> },
               { key: "type", header: "Type", render: (r) => text(r, "client_type", "individual") },
               { key: "risk", header: "Risk Profile", render: (r) => text(r, "risk_profile", "—") },
-              { key: "since", header: "Since", render: (r) => text(r, "onboarded_at", "—") },
-              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "active")} /> },
+              { key: "value", header: "Visible Holdings", align: "right", render: (r) => formatCompact(num(r, "latest_market_value", 0), "INR") },
+              { key: "since", header: "Since", render: (r) => text(r, "onboarded_at", text(r, "created_at", "—")) },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", bool(r, "active", true) ? "active" : "inactive")} /> },
             ]}
             rows={clients}
             rowKey={(r, i) => String(text(r, "client_id", text(r, "id", i)))}
@@ -301,11 +354,12 @@ function NavView() {
         ) : (
           <DataTable
             columns={[
-              { key: "client", header: "Client", render: (r) => <strong>{text(r, "client_name", text(r, "name"))}</strong> },
-              { key: "nav", header: "NAV", align: "right", render: (r) => formatCompact(num(r, "nav", num(r, "nav_inr", 0)), "INR") },
+              { key: "client", header: "Client", render: (r) => <strong>{text(r, "display_name", text(r, "client_name", text(r, "name")))}</strong> },
+              { key: "nav", header: "Complete NAV", align: "right", render: (r) => r.nav === null || r.nav === undefined ? "—" : formatCompact(num(r, "nav", num(r, "nav_inr", 0)), "INR") },
               { key: "cash", header: "Cash", align: "right", render: (r) => formatCompact(num(r, "cash", num(r, "cash_balance", 0)), "INR") },
-              { key: "invested", header: "Invested", align: "right", render: (r) => formatCompact(num(r, "invested", 0), "INR") },
-              { key: "asof", header: "As Of", render: (r) => text(r, "as_of_date", text(r, "snapshot_date", "—")) },
+              { key: "invested", header: "Securities", align: "right", render: (r) => formatCompact(num(r, "securities_market_value", num(r, "invested", 0)), "INR") },
+              { key: "status", header: "Coverage", render: (r) => <StatusPill status={text(r, "calculation_status", "incomplete")} /> },
+              { key: "asof", header: "As Of", render: (r) => text(r, "nav_date", text(r, "as_of_date", text(r, "snapshot_date", "—"))) },
             ]}
             rows={nav}
             rowKey={(r, i) => String(text(r, "nav_id", text(r, "id", i)))}
