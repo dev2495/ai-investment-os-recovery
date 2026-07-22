@@ -101,7 +101,7 @@ class OpenRouterChatTest(unittest.TestCase):
             "news_brief": [{"title": "Market update", "source_url": "https://example.test/news"}],
         }
         answer = ai_os_api_server.deterministic_chat_reply(
-            "What is going on in my office today? Summarize portfolio, risk, approvals, filings and news.",
+            "Give me the verified office briefing: portfolio, risk, approvals, filings and news.",
             context,
             [],
             [],

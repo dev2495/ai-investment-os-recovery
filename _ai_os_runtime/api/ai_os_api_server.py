@@ -13602,7 +13602,7 @@ def deterministic_chat_reply(
     approval_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("approval_summary") or []}
     pending_approvals = context.get("pending_approvals") or []
     institutional_risk = {str(row.get("metric")): str(row.get("value")) for row in context.get("institutional_risk") or []}
-    broad_office_request = any(term in normalized for term in ("what is going on", "office today", "daily brief", "summarize verified", "what should i decide", "decide next"))
+    broad_office_request = any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "briefing", "summarize verified", "what should i decide", "decide next"))
 
     focused: list[str] = []
     if tool_results:
