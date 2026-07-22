@@ -113,7 +113,7 @@ function HeroStrip({ mission, loading }: { mission: ReturnType<typeof useMission
       </div>
     );
   }
-  const approvals = mission.approvals?.length ?? 0;
+  const approvals = mission.approvals?.filter((row) => text(row, "status") === "pending").length ?? 0;
   const breaches = mission.execution_control?.filter((r) => text(r, "kind") === "risk_event").length ?? 0;
   const staleSources = mission.source_freshness?.filter((r) => text(r, "status") === "stale").length ?? 0;
 
@@ -185,7 +185,7 @@ function DailyBrief({ mission, loading, onAskCharlie }: { mission: ReturnType<ty
  * NEEDS YOUR DECISION — inline approval spine
  * ============================================================ */
 function NeedsDecision({ mission, loading, onOpenEvidence }: { mission: ReturnType<typeof useMissionControl>["data"]; loading: boolean; onOpenEvidence: (t: { kind: string; key: string; title: string }) => void }) {
-  const approvals = mission?.approvals ?? [];
+  const approvals = mission?.approvals?.filter((row) => text(row, "status") === "pending") ?? [];
   return (
     <Panel
       icon={Gavel}

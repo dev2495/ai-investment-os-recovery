@@ -22,6 +22,11 @@ class FakeResponse:
 
 
 class OpenRouterChatTest(unittest.TestCase):
+    def test_today_quick_action_routes_to_complete_office_brief(self) -> None:
+        self.assertTrue(
+            ai_os_api_server.is_broad_office_request("What do I need to decide today?")
+        )
+
     def test_disables_reasoning_and_enforces_zero_data_retention(self) -> None:
         captured_request = None
 

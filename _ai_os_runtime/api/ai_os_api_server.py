@@ -13592,7 +13592,7 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
 
 def is_broad_office_request(message: str) -> bool:
     normalized = message.lower()
-    return any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "brief me", "briefing", "summarize verified", "what should i decide", "decide next"))
+    return any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "brief me", "briefing", "summarize verified", "what should i decide", "what do i need to decide", "decide next"))
 
 
 def deterministic_chat_reply(
