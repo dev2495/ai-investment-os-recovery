@@ -356,7 +356,7 @@ function NavView() {
             columns={[
               { key: "client", header: "Client", render: (r) => <strong>{text(r, "display_name", text(r, "client_name", text(r, "name")))}</strong> },
               { key: "nav", header: "Complete NAV", align: "right", render: (r) => r.nav === null || r.nav === undefined ? "—" : formatCompact(num(r, "nav", num(r, "nav_inr", 0)), "INR") },
-              { key: "cash", header: "Cash", align: "right", render: (r) => formatCompact(num(r, "cash", num(r, "cash_balance", 0)), "INR") },
+              { key: "cash", header: "Cash", align: "right", render: (r) => r.cash === null || r.cash_balance === null ? "—" : formatCompact(num(r, "cash", num(r, "cash_balance", 0)), "INR") },
               { key: "invested", header: "Securities", align: "right", render: (r) => formatCompact(num(r, "securities_market_value", num(r, "invested", 0)), "INR") },
               { key: "status", header: "Coverage", render: (r) => <StatusPill status={text(r, "calculation_status", "incomplete")} /> },
               { key: "asof", header: "As Of", render: (r) => text(r, "nav_date", text(r, "as_of_date", text(r, "snapshot_date", "—"))) },
