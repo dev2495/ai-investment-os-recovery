@@ -1326,6 +1326,19 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
     filing_count = int((((context or {}).get("filing_summary") or [{}])[0]).get("filing_count") or 0)
     if filing_count > 0 and re.search(r"\b(?:zero|no)\s+(?:corporate\s+)?filings?\b|\bno\s+filing\s+data\b", normalized):
         violations.append("filing_context_contradiction")
+    if (context or {}).get("broad_office_request"):
+        if not re.search(r"\bportfolio\b.{0,180}\b(?:inr|exposure|market value|holding|nav)\b", normalized):
+            violations.append("office_brief_portfolio_missing")
+        if "risk" not in normalized or "var" not in normalized or "%" not in response:
+            violations.append("office_brief_risk_metrics_missing")
+        pending = str(((context or {}).get("approval_summary_map") or {}).get("pending") or "")
+        approval_pattern = rf"(?:\bapprovals?\b.{{0,120}}\b{re.escape(pending)}\b|\b{re.escape(pending)}\b.{{0,120}}\bapprovals?\b)" if pending else r"\bapprovals?\b.{0,120}\bpending\b"
+        if not re.search(approval_pattern, normalized):
+            violations.append("office_brief_approvals_missing")
+        if "filing" not in normalized:
+            violations.append("office_brief_filings_missing")
+        if "news" not in normalized:
+            violations.append("office_brief_news_missing")
     return sorted(set(violations))
 
 
@@ -13566,6 +13579,11 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
     return context
 
 
+def is_broad_office_request(message: str) -> bool:
+    normalized = message.lower()
+    return any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "brief me", "briefing", "summarize verified", "what should i decide", "decide next"))
+
+
 def deterministic_chat_reply(
     message: str,
     context: dict,
@@ -13602,7 +13620,7 @@ def deterministic_chat_reply(
     approval_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("approval_summary") or []}
     pending_approvals = context.get("pending_approvals") or []
     institutional_risk = {str(row.get("metric")): str(row.get("value")) for row in context.get("institutional_risk") or []}
-    broad_office_request = any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "briefing", "summarize verified", "what should i decide", "decide next"))
+    broad_office_request = is_broad_office_request(message)
 
     focused: list[str] = []
     if tool_results:
@@ -14070,6 +14088,11 @@ def chat_with_charlie(payload: dict) -> dict:
     tool_intents = execute_charlie_safe_tools(message)
     context = build_chat_context(message, include_client_context=include_client_context)
     context["tool_results"] = tool_intents
+    context["broad_office_request"] = is_broad_office_request(message)
+    context["approval_summary_map"] = {
+        str(row.get("metric")): str(row.get("value"))
+        for row in context.get("approval_summary") or []
+    }
     normalized_message = message.lower()
     factual_request_terms = (
         "how many", "show", "list", "latest", "status", "what changed",

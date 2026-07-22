@@ -78,6 +78,21 @@ class OpenRouterChatTest(unittest.TestCase):
 
         self.assertIn("unsupported_capital_recommendation", violations)
 
+    def test_rejects_incomplete_or_mislabelled_office_brief(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[]):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                "Portfolio: no action. Risk: review a filing. Approvals: a merger headline. Filings: present. News: present.",
+                {
+                    "broad_office_request": True,
+                    "approval_summary_map": {"pending": "9"},
+                    "filing_summary": [{"filing_count": 12}],
+                },
+            )
+
+        self.assertIn("office_brief_portfolio_missing", violations)
+        self.assertIn("office_brief_risk_metrics_missing", violations)
+        self.assertIn("office_brief_approvals_missing", violations)
+
     def test_daily_brief_covers_portfolio_risk_approvals_filings_and_news(self) -> None:
         context = {
             "clients": [{"latest_market_value": "1000000"}],
