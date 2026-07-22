@@ -78,6 +78,25 @@ class OpenRouterChatTest(unittest.TestCase):
 
         self.assertIn("unsupported_capital_recommendation", violations)
 
+    def test_zero_allowed_items_does_not_contradict_execution_lock(self) -> None:
+        def fake_psql(query: str):
+            if "FROM agent.model_routes" in query:
+                return []
+            if "FROM trading.execution_control_state" in query:
+                return [{
+                    "global_execution_locked": True,
+                    "live_broker_writes_allowed": False,
+                }]
+            return []
+
+        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                "Approvals: live execution allowed on 0 items and broker orders allowed on 0.",
+                {"filing_summary": [{"filing_count": 12}]},
+            )
+
+        self.assertNotIn("execution_lock_contradiction", violations)
+
     def test_rejects_incomplete_or_mislabelled_office_brief(self) -> None:
         with mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[]):
             violations = ai_os_api_server.validate_charlie_model_response(

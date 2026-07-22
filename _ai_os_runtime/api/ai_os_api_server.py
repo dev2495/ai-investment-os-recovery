@@ -1312,8 +1312,19 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
             bool(execution_rows[0].get("global_execution_locked"))
             or not bool(execution_rows[0].get("live_broker_writes_allowed"))
         ):
-            if re.search(r"(?:execution|broker writes?|live orders?).{0,40}(?:enabled|unlocked|active|allowed)", normalized):
-                violations.append("execution_lock_contradiction")
+            execution_claim = re.search(
+                r"(?:execution|broker writes?|live orders?).{0,40}(?:enabled|unlocked|active|allowed)",
+                normalized,
+            )
+            if execution_claim:
+                claim_window = normalized[execution_claim.start():execution_claim.end() + 32]
+                explicitly_blocked = re.search(
+                    r"\b(?:not|never|no)\b.{0,24}\b(?:enabled|unlocked|active|allowed)\b|"
+                    r"\b(?:enabled|unlocked|active|allowed)\b(?:\s+on)?\s+(?:0|zero|none|false|no)\b",
+                    claim_window,
+                )
+                if not explicitly_blocked:
+                    violations.append("execution_lock_contradiction")
             if re.search(
                 r"(?:recommend|should|decide|consider|execute|place).{0,40}"
                 r"\b(?:buy|sell|short|cover|order|trade)\b|"
