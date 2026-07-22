@@ -93,9 +93,10 @@ function FilingsView() {
           <DataTable
             columns={[
               { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
+              { key: "exchange", header: "Exchange", render: (r) => text(r, "exchange", text(r, "source_name", "—")) },
               { key: "type", header: "Filing Type", render: (r) => text(r, "filing_type", text(r, "document_type", "—")) },
-              { key: "subject", header: "Subject", render: (r) => text(r, "subject", text(r, "description", "—")) },
-              { key: "date", header: "Date", render: (r) => text(r, "filing_date", text(r, "published_at", "—")) },
+              { key: "subject", header: "Subject", render: (r) => text(r, "title", text(r, "subject", text(r, "description", "—"))) },
+              { key: "date", header: "Filed", render: (r) => text(r, "filed_at", text(r, "filing_date", text(r, "published_at", "—"))).slice(0, 10) },
               { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "extraction_status", text(r, "status", "collected"))} /> },
             ]}
             rows={filings}
