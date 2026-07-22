@@ -17,7 +17,6 @@ import {
   OrbitControls, Environment, ContactShadows, Html, Float, AdaptiveDpr, AdaptiveEvents,
   PerspectiveCamera, RoundedBox, Edges, Text, AccumulativeShadows, SoftShadows,
 } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, SMAA, BrightnessContrast } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { ROOMS, floorY, roomByKey, type RoomDef } from "./officeLayout";
 import { useOfficeSnapshot } from "../data/queries";
@@ -496,13 +495,6 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
             makeDefault
           />
 
-          {/* Post-processing — warm, cinematic */}
-          <EffectComposer multisampling={0}>
-            <Bloom luminanceThreshold={0.7} luminanceSmoothing={0.4} intensity={0.5} mipmapBlur />
-            <BrightnessContrast brightness={0.02} contrast={0.06} />
-            <Vignette eskil={false} offset={0.2} darkness={0.65} />
-            <SMAA />
-          </EffectComposer>
         </Canvas>
 
         {/* HUD overlay */}
