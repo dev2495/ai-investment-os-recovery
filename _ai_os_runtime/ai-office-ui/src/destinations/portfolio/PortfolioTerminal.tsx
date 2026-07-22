@@ -371,10 +371,11 @@ function NavView() {
         {cash.length === 0 ? <Empty icon={DollarSign} title="No cash entries" /> : (
           <DataTable
             columns={[
-              { key: "client", header: "Client", render: (r) => text(r, "client_name", "—") },
-              { key: "type", header: "Type", render: (r) => text(r, "entry_type", "—") },
+              { key: "client", header: "Client", render: (r) => text(r, "display_name", text(r, "client_name", text(r, "client_code", "—"))) },
+              { key: "type", header: "Description", render: (r) => text(r, "description", text(r, "entry_type", "—")) },
+              { key: "flow", header: "Flow", render: (r) => text(r, "flow_class", "—") },
               { key: "amount", header: "Amount", align: "right", render: (r) => formatCurrency(num(r, "amount", 0)) },
-              { key: "date", header: "Date", render: (r) => text(r, "entry_date", "—") },
+              { key: "date", header: "Date", render: (r) => text(r, "entry_ts", text(r, "entry_date", "—")) },
             ]}
             rows={cash}
             rowKey={(r, i) => String(text(r, "entry_id", text(r, "id", i)))}
