@@ -13,11 +13,11 @@
 
 import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Search, Sparkles, Sun, Moon, Bell, Command } from "lucide-react";
+import { Search, Sparkles, Sun, Moon, Bell, Command, RefreshCw } from "lucide-react";
 import { useUIStore } from "../store";
-import { useMissionControl } from "../data/queries";
+import { useMissionControl, useZerodhaAuthStatus } from "../data/queries";
 import { IconButton } from "../system/primitives";
-import { text, num } from "../data/liveRow";
+import { bool, text } from "../data/liveRow";
 import { GlobalTopbarCss } from "./GlobalTopbar.css";
 
 /**
@@ -43,6 +43,7 @@ export function GlobalTopbar() {
   const toggleTheme = useUIStore((s) => s.toggleTheme);
 
   const { data: mission } = useMissionControl();
+  const { data: zerodha } = useZerodhaAuthStatus();
   const approvalCount = mission?.approvals?.length ?? 0;
   const riskEvents = mission?.execution_control?.filter(
     (r) => text(r, "kind") === "risk_event" || text(r, "control_key") === "global_kill_switch"
@@ -50,6 +51,15 @@ export function GlobalTopbar() {
   const riskCount = riskEvents.length;
 
   const totalAttention = approvalCount + (riskCount > 0 ? 1 : 0);
+
+  const reconnectZerodha = () => {
+    const loginUrl = text(zerodha, "login_url");
+    if (loginUrl) {
+      window.open(loginUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    navigate("/firm/system");
+  };
 
   return (
     <>
@@ -92,6 +102,17 @@ export function GlobalTopbar() {
             <Search size={14} />
             <span className="aios-topbar__search-text">Search or ask Charlie…</span>
             <kbd className="aios-topbar__kbd"><Command size={10} />K</kbd>
+          </button>
+
+          <button
+            className="aios-topbar__zerodha"
+            onClick={reconnectZerodha}
+            aria-label="Reconnect Zerodha"
+            title={bool(zerodha, "daily_access_token_available") ? "Zerodha connected. Reconnect today's session" : "Reconnect Zerodha for today's live data"}
+          >
+            <span className={bool(zerodha, "daily_access_token_available") ? "aios-topbar__broker-dot aios-topbar__broker-dot--ok" : "aios-topbar__broker-dot aios-topbar__broker-dot--warn"} />
+            <RefreshCw size={13} />
+            <span className="aios-topbar__zerodha-label">Zerodha</span>
           </button>
 
           {/* Attention badge — approvals + risk */}

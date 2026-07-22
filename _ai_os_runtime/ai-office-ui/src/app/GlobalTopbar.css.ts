@@ -127,6 +127,43 @@ export const GlobalTopbarCss = `
   border-radius: var(--radius-xs);
 }
 
+/* Daily broker-session renewal */
+.aios-topbar__zerodha {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.aios-topbar__zerodha:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-soft);
+}
+.aios-topbar__broker-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.aios-topbar__broker-dot--ok {
+  background: var(--status-ok);
+  box-shadow: 0 0 0 3px var(--status-ok-soft);
+}
+.aios-topbar__broker-dot--warn {
+  background: var(--status-warn);
+  box-shadow: 0 0 0 3px var(--status-warn-soft);
+}
+
 /* Attention badge */
 .aios-topbar__attention {
   position: relative;
@@ -174,6 +211,7 @@ export const GlobalTopbarCss = `
 @media (max-width: 1100px) {
   .aios-topbar__search { min-width: 160px; }
   .aios-topbar__search-text { display: none; }
+  .aios-topbar__zerodha-label { display: none; }
 }
 @media (max-width: 900px) {
   .aios-topbar__nav-item span { display: none; }

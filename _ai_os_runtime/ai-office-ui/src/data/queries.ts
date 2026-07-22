@@ -57,6 +57,7 @@ export const queryKeys = {
   reports: ["reports"] as const,
   integrationGateway: ["integration-gateway"] as const,
   office: ["office"] as const,
+  zerodhaAuth: ["zerodha-auth"] as const,
   departmentTerminal: (workspace: string) => ["department-terminal", workspace] as const,
   evidence: (kind: string, key: string) => ["evidence", kind, key] as const,
   workspaceConfig: (profileKey: string) => ["workspace-config", profileKey] as const,
@@ -98,6 +99,15 @@ export function useSystemHealth() {
       return validateSnapshot(SystemHealthSchema, data, "system-health");
     },
     ...snapshotQueryOptions,
+  });
+}
+
+export function useZerodhaAuthStatus() {
+  return useQuery<LiveRow>({
+    queryKey: queryKeys.zerodhaAuth,
+    queryFn: () => get<LiveRow>("/api/zerodha/auth/status"),
+    ...snapshotQueryOptions,
+    refetchInterval: 60_000,
   });
 }
 
