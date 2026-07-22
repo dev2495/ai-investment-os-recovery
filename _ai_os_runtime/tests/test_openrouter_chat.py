@@ -59,6 +59,60 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertEqual(status, "called")
         self.assertEqual(usage["completion_tokens"], 6)
 
+    def test_rejects_unsupported_capital_recommendation_while_execution_locked(self) -> None:
+        def fake_psql(query: str):
+            if "FROM agent.model_routes" in query:
+                return []
+            if "FROM trading.execution_control_state" in query:
+                return [{
+                    "global_execution_locked": True,
+                    "live_broker_writes_allowed": False,
+                }]
+            return []
+
+        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                "You should decide on a buy today and execute the trade.",
+                {"filing_summary": [{"filing_count": 12}]},
+            )
+
+        self.assertIn("unsupported_capital_recommendation", violations)
+
+    def test_daily_brief_covers_portfolio_risk_approvals_filings_and_news(self) -> None:
+        context = {
+            "clients": [{"latest_market_value": "1000000"}],
+            "latest_positions": [{"symbol": "TEST", "display_name": "Client", "market_value": "500000"}],
+            "book_summary": [{"metric": "gross_book_exposure", "value": "1000000"}],
+            "approval_summary": [
+                {"metric": "pending", "value": "2"},
+                {"metric": "high_or_critical_pending", "value": "1"},
+                {"metric": "live_execution_allowed", "value": "0"},
+                {"metric": "broker_order_allowed", "value": "0"},
+            ],
+            "pending_approvals": [{"title": "Review thesis", "risk_level": "high"}],
+            "institutional_risk": [
+                {"metric": "risk_run_status", "value": "completed"},
+                {"metric": "historical_coverage_pct", "value": "97.4"},
+                {"metric": "portfolio_var_99_1d_pct", "value": "2.95"},
+                {"metric": "portfolio_es_99_1d_pct", "value": "3.67"},
+                {"metric": "portfolio_var_99_10d_pct", "value": "7.18"},
+            ],
+            "filing_intelligence": [{"symbol": "TEST", "title": "Board outcome", "source_url": "https://example.test/filing"}],
+            "news_brief": [{"title": "Market update", "source_url": "https://example.test/news"}],
+        }
+        answer = ai_os_api_server.deterministic_chat_reply(
+            "What is going on in my office today? Summarize portfolio, risk, approvals, filings and news.",
+            context,
+            [],
+            [],
+            {"default_model": "test"},
+            "ok",
+            include_route_status=False,
+        )
+
+        for expected in ("Portfolio context", "Institutional risk", "Approvals", "Filing intelligence", "News brief"):
+            self.assertIn(expected, answer)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -80,7 +80,9 @@ CHARLIE_LOCAL_CONVERSATION_PROMPT = (
     "You are Charlie Munger, the natural-language chief of staff for a private investment office. "
     "Use only the verified draft and source snippets supplied by the system. Preserve every number, "
     "status, caveat, and source; never invent actions, trades, approvals, calculations, or facts. "
-    "State what is missing plainly. Be direct, conversational, and concise. Broker writes are locked."
+    "Never add a buy, sell, hold, sizing, order, or execution recommendation that is absent from the "
+    "verified draft. State what is missing plainly. Answer every category the user requested. "
+    "Be direct, conversational, and concise. Broker writes are locked."
 )
 
 QDRANT_COLLECTIONS = [
@@ -1312,6 +1314,13 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
         ):
             if re.search(r"(?:execution|broker writes?|live orders?).{0,40}(?:enabled|unlocked|active|allowed)", normalized):
                 violations.append("execution_lock_contradiction")
+            if re.search(
+                r"(?:recommend|should|decide|consider|execute|place).{0,40}"
+                r"\b(?:buy|sell|short|cover|order|trade)\b|"
+                r"\b(?:buy|sell|short|cover)\b.{0,24}\b(?:now|today|immediately)\b",
+                normalized,
+            ):
+                violations.append("unsupported_capital_recommendation")
     except Exception as exc:  # noqa: BLE001
         violations.append(f"guardrail_state_unavailable:{type(exc).__name__}")
     filing_count = int((((context or {}).get("filing_summary") or [{}])[0]).get("filing_count") or 0)
@@ -13417,6 +13426,25 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             WHERE enabled = true
             ORDER BY route_name
         """,
+        "approval_summary": """
+            SELECT metric, value, interpretation
+            FROM agent.v_approval_board_summary
+            ORDER BY metric
+        """,
+        "pending_approvals": """
+            SELECT approval_id, board_lane, title, owner_agent, risk_level,
+                   requested_action, recommended_next_action, symbol,
+                   strategy_name, latest_activity_at
+            FROM agent.v_approval_board_items
+            WHERE approval_status = 'pending'
+            ORDER BY risk_rank, latest_activity_at DESC
+            LIMIT 8
+        """,
+        "institutional_risk": """
+            SELECT metric, value, interpretation
+            FROM risk.v_institutional_risk_summary
+            ORDER BY metric
+        """,
         "filing_summary": """
             SELECT count(*) AS filing_count,
                    count(*) FILTER (WHERE event_status NOT IN ('reviewed','closed')) AS open_event_count,
@@ -13523,7 +13551,7 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
         """,
     }
     if not include_client_context:
-        for private_key in ("clients", "latest_positions", "book_summary", "investment_books", "symbol_intelligence"):
+        for private_key in ("clients", "latest_positions", "book_summary", "investment_books", "symbol_intelligence", "pending_approvals"):
             queries.pop(private_key, None)
     context: dict[str, object] = {}
     context_errors: list[dict[str, str]] = []
@@ -13571,6 +13599,10 @@ def deterministic_chat_reply(
     market_holidays = context.get("market_holidays") or []
     zerodha_market_status = (context.get("zerodha_market_status") or [{}])[0]
     tool_results = context.get("tool_results") or []
+    approval_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("approval_summary") or []}
+    pending_approvals = context.get("pending_approvals") or []
+    institutional_risk = {str(row.get("metric")): str(row.get("value")) for row in context.get("institutional_risk") or []}
+    broad_office_request = any(term in normalized for term in ("what is going on", "office today", "daily brief", "summarize verified", "what should i decide", "decide next"))
 
     focused: list[str] = []
     if tool_results:
@@ -13629,7 +13661,7 @@ def deterministic_chat_reply(
             f"latest option snapshot {zerodha_market_status.get('latest_option_at') or 'not available'}. "
             "Broker writes remain disabled."
         )
-    if focused:
+    if focused and not broad_office_request:
         return "\n".join(focused)
 
     lines = [
@@ -13662,6 +13694,29 @@ def deterministic_chat_reply(
             f"{top_symbol.get('symbol')} for {top_symbol.get('client_name')} at INR "
             f"{float(top_symbol.get('gross_exposure') or 0):,.0f}, bias {top_symbol.get('overall_bias')}."
         )
+    if broad_office_request or "risk" in normalized:
+        lines.append(
+            "Institutional risk: run "
+            f"{institutional_risk.get('risk_run_status', 'not_run')}; "
+            f"coverage {float(institutional_risk.get('historical_coverage_pct', '0') or 0):.2f}%; "
+            f"99% one-day VaR {float(institutional_risk.get('portfolio_var_99_1d_pct', '0') or 0):.2f}%; "
+            f"expected shortfall {float(institutional_risk.get('portfolio_es_99_1d_pct', '0') or 0):.2f}%; "
+            f"10-day VaR {float(institutional_risk.get('portfolio_var_99_10d_pct', '0') or 0):.2f}%."
+        )
+    if broad_office_request or any(term in normalized for term in ("approval", "decide", "decision")):
+        lines.append(
+            f"Approvals: {approval_summary.get('pending', '0')} pending, "
+            f"{approval_summary.get('high_or_critical_pending', '0')} high or critical; "
+            f"live execution allowed on {approval_summary.get('live_execution_allowed', '0')} items and "
+            f"broker orders allowed on {approval_summary.get('broker_order_allowed', '0')}."
+        )
+        if pending_approvals:
+            lines.append(
+                "Review first: " + "; ".join(
+                    f"{row.get('title')} ({row.get('risk_level')})"
+                    for row in pending_approvals[:3]
+                ) + "."
+            )
     if ohlcv:
         lines.append("OHLCV is live for " + ", ".join(f"{row.get('timeframe')}={row.get('rows')}" for row in ohlcv) + ".")
     if vectors:
@@ -13678,9 +13733,21 @@ def deterministic_chat_reply(
                 f"{row.get('symbol') or row.get('company_name')} - {row.get('title')} [{row.get('attachment_url') or row.get('source_url')}]"
                 for row in filings[:3]
             ) + ".")
+    if broad_office_request and filing_intelligence:
+        lines.append(
+            "Filing intelligence: " + "; ".join(
+                f"{row.get('symbol') or row.get('company_name')} - {row.get('title')} "
+                f"[{row.get('attachment_url') or row.get('source_url')}]"
+                for row in filing_intelligence[:3]
+            ) + "."
+        )
     if "news" in normalized and news:
         lines.append("Latest source-linked news: " + "; ".join(
             f"{row.get('title')} [{row.get('source_url')}]" for row in news[:3]
+        ) + ".")
+    elif broad_office_request and news_brief:
+        lines.append("News brief: " + "; ".join(
+            f"{row.get('title')} [{row.get('source_url')}]" for row in news_brief[:3]
         ) + ".")
     if "watchlist" in normalized:
         lines.append(f"Watchlist: {len(watchlist)} visible items" + (
@@ -14046,10 +14113,12 @@ def chat_with_charlie(payload: dict) -> dict:
         "User message:\n"
         f"{message}\n\n"
         "Verified office draft from governed SQL and tools:\n"
-        f"{verified_draft[:1200]}\n\n"
+        f"{verified_draft[:4000]}\n\n"
         "Source-linked memory snippets:\n"
         f"{json.dumps(retrieval_hits[:2], default=str)[:350]}\n\n"
-        "Rewrite the verified draft as a natural answer in 3-6 concise sentences. Preserve facts and links. "
+        "Rewrite the verified draft as a natural answer in 5-9 concise sentences. Preserve every requested "
+        "category, fact, caveat, status, number, and link. Do not add an inference or any buy, sell, hold, "
+        "sizing, order, or execution recommendation. If the draft reports no approved capital action, say so. "
         "Return only the final answer; do not describe these instructions or your reasoning."
     )
     started = time.perf_counter()
