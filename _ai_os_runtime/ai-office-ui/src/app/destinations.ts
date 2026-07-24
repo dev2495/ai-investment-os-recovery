@@ -47,6 +47,8 @@ import {
   Calendar,
   Download,
   ShieldAlert,
+  Radar,
+  Flame,
 } from "lucide-react";
 
 export type FunctionGroup =
@@ -56,6 +58,7 @@ export type FunctionGroup =
   | "quant"
   | "trading"
   | "options"
+  | "scanners"
   | "portfolio"
   | "macro"
   | "research"
@@ -79,6 +82,7 @@ export const FUNCTION_GROUPS: Array<{ key: FunctionGroup; label: string; icon: L
   { key: "quant", label: "Quant & Strategy", icon: BarChart3 },
   { key: "trading", label: "Trading Desk", icon: TrendingUp },
   { key: "options", label: "Options Desk", icon: TrendingDown },
+  { key: "scanners", label: "Scanners", icon: Radar },
   { key: "portfolio", label: "Portfolio & Clients", icon: Wallet },
   { key: "macro", label: "Macro & Markets", icon: Globe2 },
   { key: "research", label: "Research & Filings", icon: FileText },
@@ -130,6 +134,13 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "OCHAIN", path: "/options/chain", label: "Option Chain", icon: BarChart3, description: "Live option chain with Greeks, IV, open interest", group: "options", order: 1, status: "beta" },
   { code: "OSURF", path: "/options/surface", label: "Vol Surface", icon: LineChart, description: "Implied vol surface, skew, term structure", group: "options", order: 2, status: "beta" },
   { code: "OAGENT", path: "/options/agent", label: "Options Agent", icon: Brain, description: "Talk to the specialist options agent — strategies, risk, edge", group: "options", order: 3, status: "beta" },
+
+  /* ---- SCANNERS ---- */
+  { code: "SCAN", path: "/scanners/momentum", label: "Momentum Scanner", icon: TrendingUp, description: "Live momentum signals with direction + strength", group: "scanners", order: 0, status: "beta" },
+  { code: "BRK", path: "/scanners/breakouts", label: "Breakouts", icon: Zap, description: "Watchlist + positions + strong signals near breakout", group: "scanners", order: 1, status: "beta" },
+  { code: "VOL", path: "/scanners/volume", label: "Volume / OI Spurt", icon: Activity, description: "Contracts with the biggest OI change", group: "scanners", order: 2, status: "beta" },
+  { code: "IDEA", path: "/scanners/ideas", label: "Idea Scanner", icon: Lightbulb, description: "Generated fundamental + quant ideas to review", group: "scanners", order: 3, status: "beta" },
+  { code: "FLOW", path: "/scanners/options-flow", label: "Options Flow", icon: Flame, description: "Net OI buildup by underlying — call/put writing bias", group: "scanners", order: 4, status: "beta" },
 
   /* ---- PORTFOLIO & CLIENTS ---- */
   { code: "PORT", path: "/portfolio/overview", label: "Portfolio Overview", icon: Briefcase, description: "NAV, exposure, allocation, performance across clients", group: "portfolio", order: 0, status: "beta" },

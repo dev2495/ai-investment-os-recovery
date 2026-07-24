@@ -1233,7 +1233,12 @@ def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict
                     "temperature": 0.2,
                     "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
                     "reasoning": {"effort": "none", "exclude": True},
-                    "provider": {"zdr": True, "data_collection": "deny"},
+                    "provider": {
+                        "zdr": True,
+                        "data_collection": "deny",
+                        "sort": "price",
+                        "allow_fallbacks": True,
+                    },
                     "messages": [
                         {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
@@ -13989,6 +13994,44 @@ def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_
     return chat_turn
 
 
+def load_chat_history(session_key: str, limit: int = 4) -> list[dict]:
+    """Return a short, bounded conversation tail for local continuity."""
+    rows = run_psql_json(
+        "SELECT user_message,assistant_message,created_at FROM agent.chat_turns "
+        f"WHERE session_key={sql_literal(session_key)} ORDER BY created_at DESC LIMIT {max(1, min(limit, 8))}"
+    )
+    return list(reversed(rows))
+
+
+def resolve_agent_for_instruction(message: str) -> dict | None:
+    profiles = run_psql_json(
+        "SELECT agent_name,department,department_name,display_title FROM agent.v_employee_profiles_v1 "
+        "ORDER BY role_rank,agent_name"
+    )
+    normalized = message.lower()
+    for profile in profiles:
+        values = [profile.get("agent_name"), profile.get("display_title")]
+        if any(str(value or "").lower() in normalized for value in values if len(str(value or "")) >= 4):
+            return profile
+    department_aliases = {
+        "research": ("research", "fundamental"),
+        "quant": ("quant", "strategy"),
+        "risk": ("risk",),
+        "options": ("options", "derivatives"),
+        "news": ("news", "intelligence"),
+        "portfolio": ("portfolio", "capital allocation"),
+        "data": ("data",),
+    }
+    for aliases in department_aliases.values():
+        if not any(alias in normalized for alias in aliases):
+            continue
+        for profile in profiles:
+            department = f"{profile.get('department') or ''} {profile.get('department_name') or ''}".lower()
+            if any(alias in department for alias in aliases):
+                return profile
+    return None
+
+
 def execute_charlie_safe_tools(message: str) -> list[dict]:
     normalized = message.lower()
     explicit_refresh = any(term in normalized for term in ("refresh", "update", "sync", "collect", "fetch"))
@@ -14084,6 +14127,81 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             add_watchlist_symbol,
             "id",
         )
+
+    strategy_command = re.search(
+        r"\b(?:create|add|intake|define)\s+(?:a\s+|new\s+|this\s+)?strategy\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if strategy_command:
+        named = re.search(
+            r"\b(?:called|named)\s+[\"']?(.{3,80}?)[\"']?(?=\s+(?:that|which|with|using|for)\b|[,.;\n]|$)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        strategy_name = (named.group(1).strip(" .,:;") if named else "")
+        if not strategy_name:
+            tail = message[strategy_command.end():].strip(" .,:;-\n")
+            strategy_name = tail.split(" that ", 1)[0].split(" with ", 1)[0][:80].strip()
+        if not strategy_name:
+            strategy_name = f"Operator strategy {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+        family = "options" if any(term in normalized for term in ("option", "straddle", "strangle", "iron condor")) else "quant"
+        asset_class = "options" if family == "options" else "equity"
+        symbols_match = re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+        ignored = {"NSE", "BSE", "NFO", "MCX", "DSL", "ATR", "RSI", "EMA"}
+        symbols = [symbol for symbol in symbols_match if symbol not in ignored][:20]
+        invoke(
+            "create_strategy_intake",
+            lambda: create_strategy_intake({
+                "intake_text": message,
+                "strategy_name": strategy_name,
+                "strategy_family": family,
+                "asset_class": asset_class,
+                "symbols": symbols,
+                "intent_tags": ["charlie_chat", "operator_intake"],
+                "requested_outputs": ["structured_spec", "candidate", "backtest_queue", "validation_review"],
+                "source_kind": "charlie_chat",
+                "source_ref": "devarsh-charlie-primary",
+                "actor": "Devarsh via Charlie",
+            }),
+            "candidate_key",
+        )
+
+    delegation_command = re.search(
+        r"\b(?:delegate|assign|ask)\b.+\b(?:to|team|agent|department)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if delegation_command:
+        target = resolve_agent_for_instruction(message)
+        if target:
+            subject = re.sub(r"\s+", " ", message).strip()[:120]
+            invoke(
+                "delegate_agent_work",
+                lambda: create_agent_message({
+                    "from_agent": "Charlie Munger",
+                    "to_agent": target["agent_name"],
+                    "subject": subject,
+                    "body": message,
+                    "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
+                    "actor": "Devarsh via Charlie",
+                    "metadata": {"source": "charlie_chat", "operator_requested": True},
+                }),
+                "id",
+            )
+        else:
+            results.append({
+                "tool": "delegate_agent_work",
+                "status": "needs_target",
+                "detail": "Name an agent or department so Charlie can route the assignment.",
+            })
+
+    if re.search(r"\b(?:run|process)\s+(?:the\s+)?agent\s+(?:worker|queue)\b", message, flags=re.IGNORECASE):
+        invoke(
+            "run_agent_worker",
+            lambda: run_agent_worker({"actor": "Devarsh via Charlie", "limit": 5}),
+            "processed",
+        )
     return results
 
 
@@ -14132,6 +14250,10 @@ def chat_with_charlie(payload: dict) -> dict:
         or infer_local_chat_route(message)
     )
     preview_route = get_model_route(requested_route)
+    session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
+    history: list[dict] = []
+    if include_client_context and str(preview_route.get("default_provider") or "") != "openrouter":
+        history = load_chat_history(session_key, limit=4)
     verified_draft = deterministic_chat_reply(
         message,
         context,
@@ -14144,16 +14266,20 @@ def chat_with_charlie(payload: dict) -> dict:
 
     prompt = (
         "/no_think\n"
-        "User message:\n"
+        "Recent local conversation (context only; current verified data controls):\n"
+        f"{json.dumps(history, default=str)[:1800]}\n\n"
+        "Current user message:\n"
         f"{message}\n\n"
-        "Verified office draft from governed SQL and tools:\n"
-        f"{verified_draft[:4000]}\n\n"
+        "Verified office facts and deterministic calculations:\n"
+        f"{verified_draft[:5000]}\n\n"
+        "Completed or attempted operator actions:\n"
+        f"{json.dumps(tool_intents, default=str)[:1400]}\n\n"
         "Source-linked memory snippets:\n"
-        f"{json.dumps(retrieval_hits[:2], default=str)[:350]}\n\n"
-        "Rewrite the verified draft as a natural answer in 5-9 concise sentences. Preserve every requested "
-        "category, fact, caveat, status, number, and link. Do not add an inference or any buy, sell, hold, "
-        "sizing, order, or execution recommendation. If the draft reports no approved capital action, say so. "
-        "Return only the final answer; do not describe these instructions or your reasoning."
+        f"{json.dumps(retrieval_hits[:3], default=str)[:700]}\n\n"
+        "Answer as Charlie in a natural ongoing conversation. Lead with the direct answer, then state what was "
+        "actually done and the most useful next decision. Preserve facts, caveats, numbers, action status, and "
+        "links exactly. Never invent an action or recommendation. Do not add buy, sell, hold, sizing, order, or "
+        "execution advice. Broker writes remain locked. Return only the user-facing answer."
     )
     started = time.perf_counter()
     control_payload = dict(payload)
@@ -14258,6 +14384,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "dashboard_widgets": [item.get("widget") for item in materialization.get("materialized", []) if item.get("widget")],
         "agent_jobs": [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
         "tool_intents": tool_intents,
+        "operations": tool_intents,
         "response_guardrail": response_guardrail,
         "truth_envelope": truth_envelope,
         "truth_ledger_id": persisted_truth.get("id"),

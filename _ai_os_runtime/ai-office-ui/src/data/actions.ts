@@ -184,13 +184,19 @@ export function useUpsertWatchlist() {
  * ============================================================ */
 
 export interface StrategyIntakeInput {
+  intake_text: string;
   strategy_name: string;
-  description?: string;
-  hypothesis?: string;
+  strategy_family?: string;
+  asset_class?: string;
+  symbols?: string[];
   universe?: string;
   timeframe?: string;
-  dsl?: string;
-  template_key?: string;
+  intent_tags?: string[];
+  constraints_text?: string;
+  risk_notes?: string;
+  requested_outputs?: string[];
+  source_kind?: string;
+  source_ref?: string;
   actor?: string;
 }
 
@@ -571,7 +577,7 @@ export interface CreateAgentMessageInput {
   to_agent: string;
   message: string;
   subject?: string;
-  priority?: "low" | "normal" | "high" | "urgent";
+  priority?: "low" | "medium" | "high" | "critical";
   workspace?: string;
   metadata?: Record<string, unknown>;
 }

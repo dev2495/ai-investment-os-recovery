@@ -145,6 +145,12 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/options/chain": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/surface": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/agent": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
+    // Scanners
+    "/scanners/momentum": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),
+    "/scanners/breakouts": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),
+    "/scanners/volume": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),
+    "/scanners/ideas": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),
+    "/scanners/options-flow": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),
     // Trading desk
     "/trading/blotter": () => import("../destinations/trading/TradingDesk").then((m) => ({ default: m.default })),
     "/trading/journal": () => import("../destinations/trading/TradingDesk").then((m) => ({ default: m.default })),

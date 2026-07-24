@@ -9,10 +9,11 @@ import React from "react";
 import { useParams } from "react-router-dom";
 import {
   Users, Building2, Gavel, ShieldCheck, Cpu, Activity, Library,
-  Inbox, ChevronRight, MessageSquare,
+  Inbox, ChevronRight, MessageSquare, Play, Send,
 } from "lucide-react";
-import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList } from "../../system/primitives";
+import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Field, Select, TextArea } from "../../system/primitives";
 import { useOfficeSnapshot, useSystemHealth, useDepartmentTerminal } from "../../data/queries";
+import { useCreateAgentMessage, useRunAgentWorker } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
@@ -81,21 +82,71 @@ export function AgentsView() {
  * ============================================================ */
 export function DepartmentsView() {
   const { data, isLoading } = useDepartmentTerminal("agents");
-  const groups = React.useMemo(() => {
-    const map = new Map<string, LiveRow[]>();
-    for (const row of data?.departments ?? data?.primary ?? []) {
-      const dept = text(row, "department", text(row, "department_name", "Unassigned"));
-      if (!map.has(dept)) map.set(dept, []);
-      map.get(dept)!.push(row);
+  const createMessage = useCreateAgentMessage();
+  const runWorker = useRunAgentWorker();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const setAssistantScope = useUIStore((s) => s.setAssistantScope);
+  const departments = data?.departments ?? [];
+  const employees = data?.primary ?? [];
+  const [selected, setSelected] = React.useState("all");
+  const [target, setTarget] = React.useState("");
+  const [assignment, setAssignment] = React.useState("");
+
+  const departmentEmployees = React.useMemo(() => employees.filter((row) => {
+    if (selected === "all") return true;
+    return text(row, "department") === selected || text(row, "department_name") === selected;
+  }), [employees, selected]);
+  const employeeNames = React.useMemo(() => new Set(departmentEmployees.map((row) => text(row, "agent_name"))), [departmentEmployees]);
+  const queue = (data?.secondary ?? []).filter((row) => selected === "all" || employeeNames.has(text(row, "agent_name", text(row, "owner_agent"))));
+  const messages = (data?.tertiary ?? []).filter((row) => selected === "all" || employeeNames.has(text(row, "to_agent")) || employeeNames.has(text(row, "from_agent")));
+  const active = departmentEmployees.filter((row) => text(row, "live_state", "idle") !== "idle").length;
+  const openTasks = departmentEmployees.reduce((sum, row) => sum + num(row, "open_task_count", 0), 0);
+  const openInbox = departmentEmployees.reduce((sum, row) => sum + num(row, "open_inbox_count", 0), 0);
+
+  React.useEffect(() => {
+    if (!target || !departmentEmployees.some((row) => text(row, "agent_name") === target)) {
+      setTarget(text(departmentEmployees[0] ?? {}, "agent_name", ""));
     }
-    return Array.from(map.entries());
-  }, [data]);
+  }, [departmentEmployees, target]);
+
+  function assignWork() {
+    if (!target || !assignment.trim()) {
+      pushToast({ title: "Agent and objective required", tone: "warn", duration: 2500 });
+      return;
+    }
+    createMessage.mutate({
+      to_agent: target,
+      subject: assignment.trim().slice(0, 120),
+      message: assignment.trim(),
+      priority: "medium",
+      workspace: "departments",
+      metadata: { source: "department_cockpit", selected_department: selected },
+    }, {
+      onSuccess: () => { setAssignment(""); pushToast({ title: "Work assigned", message: target, tone: "ok", duration: 3000 }); },
+      onError: (error) => pushToast({ title: "Assignment failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  }
+
+  function processQueue() {
+    runWorker.mutate({ actor: "Devarsh", limit: 5 }, {
+      onSuccess: () => pushToast({ title: "Agent queue processed", tone: "ok", duration: 3000 }),
+      onError: (error) => pushToast({ title: "Worker failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  }
 
   return (
     <div className="aios-destination">
-      <Header icon={Building2} code="DEPTS" title="Departments" subtitle="11 departments, each with a mandate, lead, and work queue." />
-      <Panel icon={Building2} title="Department Directory">
-        {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
+      <Header icon={Building2} code="DEPTS" title="Department Operations" subtitle="Live employees, assignments, inbox traffic, worker state, readiness, and model accountability." />
+      <Panel icon={Building2} title="Operating Scope" actions={
+        <Select value={selected} onChange={(event) => setSelected(event.target.value)} style={{ minWidth: 240 }}>
+          <option value="all">All departments</option>
+          {departments.map((row, index) => {
+            const value = text(row, "department", text(row, "department_name", `dept-${index}`));
+            return <option key={value} value={value}>{text(row, "department_name", value)}</option>;
+          })}
+        </Select>
+      }>
+        {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : departments.length === 0 ? <Empty icon={Building2} title="No live department rows" /> : (
           <DataTable
             columns={[
               { key: "name", header: "Department", render: (r) => <strong>{text(r, "department_name", text(r, "department"))}</strong> },
@@ -103,8 +154,78 @@ export function DepartmentsView() {
               { key: "headcount", header: "Agents", align: "right", render: (r) => num(r, "agent_count", num(r, "headcount", 0)) },
               { key: "mandate", header: "Mandate", render: (r) => text(r, "mission", text(r, "mandate", "—")) },
             ]}
-            rows={data?.departments ?? data?.primary ?? []}
+            rows={selected === "all" ? departments : departments.filter((row) => text(row, "department", text(row, "department_name")) === selected)}
             rowKey={(r, i) => text(r, "department", `dept-${i}`)}
+          />
+        )}
+      </Panel>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Employees" value={departmentEmployees.length} /></MetricTile>
+        <MetricTile tone={active ? "ok" : "warn"}><Metric label="Working Now" value={active} /></MetricTile>
+        <MetricTile tone={openTasks ? "warn" : "ok"}><Metric label="Open Tasks" value={openTasks} /></MetricTile>
+        <MetricTile tone={openInbox ? "warn" : "ok"}><Metric label="Open Inbox" value={openInbox} /></MetricTile>
+        <MetricTile><Metric label="Queue Rows" value={queue.length} /></MetricTile>
+      </div>
+
+      <Panel icon={Users} title="Employee Operating Board">
+        {departmentEmployees.length === 0 ? <Empty icon={Users} title="No employees in this scope" /> : (
+          <DataTable
+            columns={[
+              { key: "agent", header: "Employee", render: (r) => <button style={{ color: "var(--accent)", background: "none", border: 0, cursor: "pointer", fontWeight: 600 }} onClick={() => setAssistantScope({ agentKey: text(r, "agent_name"), agentName: text(r, "agent_name") })}>{text(r, "agent_name")}</button> },
+              { key: "title", header: "Mandate", render: (r) => text(r, "display_title", text(r, "role_scope", "—")) },
+              { key: "work", header: "Current Work", render: (r) => text(r, "current_work_title", "No active assignment") },
+              { key: "tasks", header: "Tasks", align: "right", render: (r) => num(r, "open_task_count", 0) },
+              { key: "inbox", header: "Inbox", align: "right", render: (r) => num(r, "open_inbox_count", 0) },
+              { key: "model", header: "Model", render: (r) => text(r, "assigned_model", text(r, "primary_route", "—")) },
+              { key: "readiness", header: "Readiness", render: (r) => <StatusPill status={text(r, "readiness_status", text(r, "model_status", "unknown"))} /> },
+            ]}
+            rows={departmentEmployees}
+            rowKey={(r, i) => text(r, "agent_name", `agent-${i}`)}
+          />
+        )}
+      </Panel>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 0.8fr) minmax(420px, 1.2fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Send} title="Assign Work">
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
+            <Field label="Owner"><Select value={target} onChange={(event) => setTarget(event.target.value)}>{departmentEmployees.map((row) => <option key={text(row, "agent_name")} value={text(row, "agent_name")}>{text(row, "agent_name")} · {text(row, "department_name", text(row, "department"))}</option>)}</Select></Field>
+            <Field label="Objective"><TextArea value={assignment} onChange={(event) => setAssignment(event.target.value)} rows={5} placeholder="Give the objective, required evidence, deadline, and expected output…" /></Field>
+            <div style={{ display: "flex", gap: "var(--space-2)" }}>
+              <Button variant="primary" icon={Send} onClick={assignWork} disabled={createMessage.isPending}>Assign</Button>
+              <Button icon={Play} onClick={processQueue} disabled={runWorker.isPending}>Process queue</Button>
+            </div>
+          </div>
+        </Panel>
+        <Panel icon={Activity} title="Live Work Queue" actions={<Badge tone={queue.length ? "warn" : "ok"}>{queue.length}</Badge>}>
+          {queue.length === 0 ? <Empty icon={Activity} title="No queued work in this scope" /> : (
+            <DataTable
+              columns={[
+                { key: "work", header: "Work", render: (r) => <strong>{text(r, "task_title", text(r, "subject", text(r, "title", "Queued task")))}</strong> },
+                { key: "owner", header: "Owner", render: (r) => text(r, "agent_name", text(r, "owner_agent", text(r, "to_agent", "—"))) },
+                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", text(r, "processing_status", "queued"))} /> },
+                { key: "updated", header: "Updated", render: (r) => formatRelative(text(r, "updated_at", text(r, "created_at"))) },
+              ]}
+              rows={queue.slice(0, 30)}
+              rowKey={(r, i) => String(text(r, "task_id", text(r, "id", i)))}
+            />
+          )}
+        </Panel>
+      </div>
+
+      <Panel icon={Inbox} title="Inter-agent Conversation" actions={<Badge>{messages.length}</Badge>}>
+        {messages.length === 0 ? <Empty icon={Inbox} title="No messages in this scope" /> : (
+          <DataTable
+            columns={[
+              { key: "subject", header: "Subject", render: (r) => <strong>{text(r, "subject", "Agent message")}</strong> },
+              { key: "from", header: "From", render: (r) => text(r, "from_agent", "—") },
+              { key: "to", header: "To", render: (r) => text(r, "to_agent", "—") },
+              { key: "priority", header: "Priority", render: (r) => <StatusPill status={text(r, "priority", "medium")} /> },
+              { key: "state", header: "State", render: (r) => <StatusPill status={text(r, "processing_status", text(r, "status", "unread"))} /> },
+              { key: "time", header: "Sent", render: (r) => formatRelative(text(r, "created_at")) },
+            ]}
+            rows={messages.slice(0, 40)}
+            rowKey={(r, i) => String(text(r, "id", i))}
           />
         )}
       </Panel>
@@ -179,20 +300,36 @@ export function GovernanceView() {
  * MODELS VIEW
  * ============================================================ */
 export function ModelsView() {
-  const { data, isLoading } = useSystemHealth();
+  const health = useSystemHealth();
+  const terminal = useDepartmentTerminal("models");
+  const data = health.data;
+  const routes = terminal.data?.primary?.length ? terminal.data.primary : data?.model_routes ?? [];
+  const policies = terminal.data?.secondary ?? [];
+  const calls = terminal.data?.tertiary ?? [];
+  const isLoading = health.isLoading || terminal.isLoading;
+  const readyRoutes = routes.filter((row) => ["ready", "available", "healthy", "active"].some((value) => text(row, "runtime_status", text(row, "status")).toLowerCase().includes(value))).length;
+  const blockedCalls = calls.filter((row) => text(row, "decision_status", text(row, "status")).toLowerCase().includes("block")).length;
   return (
     <div className="aios-destination">
-      <Header icon={Cpu} code="MODELS" title="Models & Routes" subtitle="Model endpoints, routes, catalog, cost ledger, escalations." />
+      <Header icon={Cpu} code="MODELS" title="Model Router & Cost Control" subtitle="Private local default, explicit cloud escalation, privacy gates, runtime readiness, and audited calls." />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Governed Routes" value={routes.length} /></MetricTile>
+        <MetricTile tone={readyRoutes ? "ok" : "warn"}><Metric label="Runtime Ready" value={readyRoutes} /></MetricTile>
+        <MetricTile><Metric label="Privacy Policies" value={policies.length} /></MetricTile>
+        <MetricTile tone={blockedCalls ? "warn" : "ok"}><Metric label="Blocked Calls" value={blockedCalls} /></MetricTile>
+        <MetricTile><Metric label="Recent Decisions" value={calls.length} /></MetricTile>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
         <Panel icon={Cpu} title="Model Routes">
           {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
             <DataTable
               columns={[
                 { key: "route", header: "Route", render: (r) => <strong>{text(r, "route_name", text(r, "name"))}</strong> },
-                { key: "model", header: "Model", render: (r) => text(r, "model_name", text(r, "preferred_model", "—")) },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "info")} /> },
+                { key: "model", header: "Model", render: (r) => text(r, "default_model", text(r, "model_name", text(r, "preferred_model", "—"))) },
+                { key: "provider", header: "Provider", render: (r) => text(r, "default_provider", text(r, "provider", "—")) },
+                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "runtime_status", text(r, "status", "info"))} /> },
               ]}
-              rows={data?.model_routes ?? []}
+              rows={routes}
               rowKey={(r, i) => text(r, "route_name", `r-${i}`)}
             />
           )}
@@ -211,6 +348,37 @@ export function ModelsView() {
           )}
         </Panel>
       </div>
+      <Panel icon={ShieldCheck} title="Privacy & Cloud Gates">
+        {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : policies.length === 0 ? <Empty icon={ShieldCheck} title="No model privacy policies returned" /> : (
+          <DataTable
+            columns={[
+              { key: "class", header: "Data Class", render: (r) => <strong>{text(r, "privacy_class")}</strong> },
+              { key: "cloud", header: "Cloud", render: (r) => <StatusPill status={String(r.cloud_model_allowed) === "true" ? "allowed" : "blocked"} /> },
+              { key: "cache", header: "Cache", render: (r) => <StatusPill status={String(r.cache_allowed) === "true" ? "allowed" : "blocked"} /> },
+              { key: "context", header: "Max Context", align: "right", render: (r) => num(r, "max_context_chars", 0).toLocaleString() },
+              { key: "notes", header: "Control", render: (r) => text(r, "notes", text(r, "policy_statement", "—")) },
+            ]}
+            rows={policies}
+            rowKey={(r, i) => text(r, "privacy_class", `policy-${i}`)}
+          />
+        )}
+      </Panel>
+      <Panel icon={Activity} title="Recent Routing Decisions" actions={<Badge>{calls.length}</Badge>}>
+        {calls.length === 0 ? <Empty icon={Activity} title="No recent model calls" /> : (
+          <DataTable
+            columns={[
+              { key: "route", header: "Route", render: (r) => <strong>{text(r, "selected_route", text(r, "requested_route", "—"))}</strong> },
+              { key: "model", header: "Model", render: (r) => text(r, "selected_model", "—") },
+              { key: "privacy", header: "Privacy", render: (r) => <StatusPill status={text(r, "privacy_class", "unknown")} /> },
+              { key: "cache", header: "Cache", render: (r) => text(r, "cache_status", "—") },
+              { key: "status", header: "Decision", render: (r) => <StatusPill status={text(r, "decision_status", "unknown")} /> },
+              { key: "time", header: "Time", render: (r) => formatRelative(text(r, "created_at")) },
+            ]}
+            rows={calls.slice(0, 40)}
+            rowKey={(r, i) => String(text(r, "decision_key", text(r, "id", i)))}
+          />
+        )}
+      </Panel>
     </div>
   );
 }

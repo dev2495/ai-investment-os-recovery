@@ -27,9 +27,12 @@ import "./system/theme.css";
 import "./system/primitives.css";
 
 import App from "./app/App";
+import { GlobalErrorBoundary } from "./app/ErrorBoundary";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <GlobalErrorBoundary>
+      <App />
+    </GlobalErrorBoundary>
   </React.StrictMode>
 );

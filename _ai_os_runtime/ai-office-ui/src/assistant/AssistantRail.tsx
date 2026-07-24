@@ -59,6 +59,7 @@ interface ChatMessage {
   route?: string;
   evidence?: Array<{ kind: string; key: string; label: string }>;
   actions?: AssistantAction[];
+  operations?: Array<{ tool: string; status: string; detail?: string }>;
   ts: number;
 }
 
@@ -81,7 +82,8 @@ const QUICK_ACTIONS = [
   { label: "Summarize my portfolio risk", icon: Brain },
   { label: "What's fresh in research?", icon: Lightbulb },
   { label: "Show me the latest breaches", icon: Zap },
-  { label: "Propose a new screen for the firm", icon: Sparkles },
+  { label: "Create a new strategy called…", icon: Sparkles },
+  { label: "Ask the research department to…", icon: Microscope },
 ];
 
 export function AssistantRail() {
@@ -193,10 +195,15 @@ export function AssistantRail() {
           // These become proposal cards the user can accept/reject — Charlie
           // never mutates the stack unilaterally; he proposes, you decide.
           const actions: AssistantAction[] = [];
+          const operations = (data.tool_intents ?? []).map((intent) => ({
+            tool: text(intent, "tool", text(intent, "tool_name", "office_action")),
+            status: text(intent, "status", "completed"),
+            detail: text(intent, "detail", ""),
+          }));
 
           // Tool intents → governance proposals (e.g. "add a new agent")
           for (const intent of data.tool_intents ?? []) {
-            const toolName = text(intent, "tool_name", text(intent, "name", ""));
+            const toolName = text(intent, "tool", text(intent, "tool_name", text(intent, "name", "")));
             const reason = text(intent, "reason", text(intent, "description", ""));
             if (toolName.includes("architecture") || toolName.includes("governance")) {
               actions.push({
@@ -241,6 +248,7 @@ export function AssistantRail() {
             route: text(data.route, "route_name", route),
             evidence,
             actions,
+            operations,
             ts: Date.now(),
           };
           setMessages((prev) => [...prev, assistantMsg]);
@@ -292,7 +300,7 @@ export function AssistantRail() {
         to_agent: String(action.payload.to_agent || "Research Analyst"),
         subject: String(action.payload.task_name || action.label),
         message: action.description || String(action.payload.task_name || "Review Charlie's delegated task."),
-        priority: "normal",
+        priority: "medium",
         workspace: destContext,
         metadata: { source: "charlie_conversation", ...action.payload },
       }, { onSuccess: markDone, onError: fail });
@@ -481,6 +489,18 @@ function MessageBubble({
       {msg.route && (
         <div className="aios-assistant__msg-meta">
           via {msg.route} · {formatRelative(new Date(msg.ts).toISOString())}
+        </div>
+      )}
+      {msg.operations && msg.operations.length > 0 && (
+        <div className="aios-assistant__evidence">
+          <span className="micro">Office actions</span>
+          <div className="aios-assistant__evidence-chips">
+            {msg.operations.map((operation, index) => (
+              <span key={`${operation.tool}-${index}`} className="aios-assistant__evidence-chip" title={operation.detail}>
+                {operation.tool.replace(/_/g, " ")} · {operation.status}
+              </span>
+            ))}
+          </div>
         </div>
       )}
       {msg.actions && msg.actions.length > 0 && (

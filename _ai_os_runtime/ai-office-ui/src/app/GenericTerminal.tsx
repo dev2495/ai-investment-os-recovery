@@ -87,6 +87,7 @@ function useSnapshotForGroup(group: string): SnapshotResult {
   switch (group) {
     case "trading":
     case "options":
+    case "scanners":
     case "risk": {
       const q = useTradingQuantRisk();
       return { data: q.data as Record<string, unknown> | undefined, isLoading: q.isLoading, error: q.error };

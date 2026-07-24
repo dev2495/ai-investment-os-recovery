@@ -58,7 +58,12 @@ class OpenRouterChatTest(unittest.TestCase):
         )
         self.assertEqual(
             request_payload["provider"],
-            {"zdr": True, "data_collection": "deny"},
+            {
+                "zdr": True,
+                "data_collection": "deny",
+                "sort": "price",
+                "allow_fallbacks": True,
+            },
         )
         self.assertEqual(content, "Broker writes are locked.")
         self.assertEqual(status, "called")

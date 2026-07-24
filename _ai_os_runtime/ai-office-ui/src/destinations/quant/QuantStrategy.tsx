@@ -135,11 +135,15 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const pushToast = useUIStore((s) => s.pushToast);
   const [form, setForm] = React.useState({
     strategy_name: "",
-    description: "",
     hypothesis: "",
+    strategy_family: "quant",
+    asset_class: "equity",
+    symbols: "",
     universe: "NIFTY 500",
     timeframe: "daily",
     dsl: "",
+    constraints: "",
+    risk_notes: "",
   });
 
   function submit() {
@@ -147,8 +151,42 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
       pushToast({ title: "Name required", tone: "warn", duration: 2500 });
       return;
     }
-    intakeMut.mutate({ ...form, actor: "Devarsh" }, {
-      onSuccess: () => { pushToast({ title: "Strategy intake created", message: form.strategy_name, tone: "ok", duration: 3000 }); onClose(); setForm({ strategy_name: "", description: "", hypothesis: "", universe: "NIFTY 500", timeframe: "daily", dsl: "" }); },
+    if (!form.hypothesis.trim() && !form.dsl.trim()) {
+      pushToast({ title: "Define the edge", message: "Add a hypothesis or explicit rules.", tone: "warn", duration: 3000 });
+      return;
+    }
+    const symbols = form.symbols.split(/[\s,]+/).map((item) => item.trim().toUpperCase()).filter(Boolean);
+    const intakeText = [
+      `Strategy: ${form.strategy_name}`,
+      `Hypothesis: ${form.hypothesis || "Rules supplied below"}`,
+      `Family: ${form.strategy_family}; asset class: ${form.asset_class}`,
+      `Universe: ${form.universe}; timeframe: ${form.timeframe}`,
+      symbols.length ? `Symbols: ${symbols.join(", ")}` : "",
+      form.dsl ? `Rules / DSL:\n${form.dsl}` : "",
+      form.constraints ? `Constraints: ${form.constraints}` : "",
+      form.risk_notes ? `Risk notes: ${form.risk_notes}` : "",
+    ].filter(Boolean).join("\n");
+    intakeMut.mutate({
+      intake_text: intakeText,
+      strategy_name: form.strategy_name,
+      strategy_family: form.strategy_family,
+      asset_class: form.asset_class,
+      symbols,
+      universe: form.universe,
+      timeframe: form.timeframe,
+      intent_tags: ["operator_intake", form.strategy_family, form.timeframe],
+      constraints_text: form.constraints,
+      risk_notes: form.risk_notes,
+      requested_outputs: ["structured_spec", "candidate", "backtest_queue", "validation_review"],
+      source_kind: "ai_office_dashboard",
+      source_ref: "quant_lab_strategy_intake",
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        pushToast({ title: "Strategy intake created", message: text(result, "candidate_key", form.strategy_name), tone: "ok", duration: 3500 });
+        onClose();
+        setForm({ strategy_name: "", hypothesis: "", strategy_family: "quant", asset_class: "equity", symbols: "", universe: "NIFTY 500", timeframe: "daily", dsl: "", constraints: "", risk_notes: "" });
+      },
       onError: (e) => pushToast({ title: "Intake failed", message: e.message, tone: "risk", duration: 5000 }),
     });
   }
@@ -159,7 +197,16 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <Field label="Strategy Name" required><TextInput value={form.strategy_name} onChange={(e) => setForm({ ...form, strategy_name: e.target.value })} placeholder="e.g. Mean-reversion on NIFTY 200" /></Field>
-        <Field label="Hypothesis"><TextArea value={form.hypothesis} onChange={(e) => setForm({ ...form, hypothesis: e.target.value })} rows={2} placeholder="What edge does this exploit?" /></Field>
+        <Field label="Hypothesis" required><TextArea value={form.hypothesis} onChange={(e) => setForm({ ...form, hypothesis: e.target.value })} rows={3} placeholder="What repeatable edge should survive costs and out-of-sample testing?" /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+          <Field label="Strategy Family"><Select value={form.strategy_family} onChange={(e) => setForm({ ...form, strategy_family: e.target.value })}>
+            <option value="quant">Quant</option><option value="technical">Technical</option><option value="options">Options</option><option value="event_driven">Event-driven</option><option value="fundamental">Fundamental</option>
+          </Select></Field>
+          <Field label="Asset Class"><Select value={form.asset_class} onChange={(e) => setForm({ ...form, asset_class: e.target.value })}>
+            <option value="equity">Equity</option><option value="index">Index</option><option value="options">Options</option><option value="commodity">Commodity</option><option value="crypto">Crypto</option>
+          </Select></Field>
+        </div>
+        <Field label="Symbols" hint="Optional, comma separated"><TextInput value={form.symbols} onChange={(e) => setForm({ ...form, symbols: e.target.value })} placeholder="RELIANCE, HDFCBANK" /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
           <Field label="Universe"><Select value={form.universe} onChange={(e) => setForm({ ...form, universe: e.target.value })}>
             <option>NIFTY 500</option><option>NIFTY 200</option><option>NIFTY 100</option><option>Custom</option>
@@ -172,6 +219,8 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
           <TextArea value={form.dsl} onChange={(e) => setForm({ ...form, dsl: e.target.value })} rows={6}
             placeholder="// entry: rsi < 30 and close > ema(close, 200)&#10;// exit: rsi > 70" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} />
         </Field>
+        <Field label="Constraints"><TextArea value={form.constraints} onChange={(e) => setForm({ ...form, constraints: e.target.value })} rows={2} placeholder="Liquidity, costs, position limits, excluded dates…" /></Field>
+        <Field label="Risk Notes"><TextArea value={form.risk_notes} onChange={(e) => setForm({ ...form, risk_notes: e.target.value })} rows={2} placeholder="Known failure modes and invalidation criteria…" /></Field>
       </div>
     </Drawer>
   );
