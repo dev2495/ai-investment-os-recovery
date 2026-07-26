@@ -346,7 +346,10 @@ render_launchagents() {
     -e "s|__ENV_FILE__|${ENV_FILE}|g" \
     -e "s|__LOG_ROOT__|${LAUNCHD_LOG_ROOT}|g" \
     "${deploy_root}/templates/com.devarsh.aios.imac.scheduled-reports.plist.in" > "${REPORTS_PLIST}"
-  plutil -lint "${SUPERVISOR_PLIST}" "${BACKUP_PLIST}" "${REPORTS_PLIST}"
+  sed -e "s|/Users/devarshthakkar/AI_OS_NODE/ai-investment-os|${AI_OS_REPO_ROOT}|g" \
+    "${AI_OS_REPO_ROOT}/_ai_os_runtime/launchd/com.devarsh.aios.zerodha-stream.plist" \
+    > "${ZERODHA_STREAM_PLIST}"
+  plutil -lint "${SUPERVISOR_PLIST}" "${BACKUP_PLIST}" "${REPORTS_PLIST}" "${ZERODHA_STREAM_PLIST}"
 }
 
 configure_tailscale() {
@@ -410,6 +413,8 @@ start_backend() {
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${BACKUP_PLIST}"
   launchctl bootout "${LAUNCHD_DOMAIN}" "${REPORTS_PLIST}" 2>/dev/null || true
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${REPORTS_PLIST}"
+  launchctl bootout "${LAUNCHD_DOMAIN}" "${ZERODHA_STREAM_PLIST}" 2>/dev/null || true
+  launchctl bootstrap "${LAUNCHD_DOMAIN}" "${ZERODHA_STREAM_PLIST}"
   wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/health" "AI OS API" 180
   wait_http "http://127.0.0.1:${AI_OS_UI_PORT}/" "AI OS UI" 120
 }
@@ -418,6 +423,7 @@ stop_backend() {
   load_env
   launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${REPORTS_PLIST}" 2>/dev/null || true
+  launchctl bootout "${LAUNCHD_DOMAIN}" "${ZERODHA_STREAM_PLIST}" 2>/dev/null || true
   if colima status --profile ai-os >/dev/null 2>&1; then
     compose down --timeout 30 || true
     colima stop --profile ai-os || true

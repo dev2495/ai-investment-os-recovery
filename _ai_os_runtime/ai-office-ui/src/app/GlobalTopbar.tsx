@@ -11,11 +11,11 @@
  * "command bars". Replaces the old top-of-page command parser.
  */
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Search, Sparkles, Sun, Moon, Bell, Command, RefreshCw } from "lucide-react";
 import { useUIStore } from "../store";
-import { useMissionControl, useZerodhaAuthStatus } from "../data/queries";
+import { useExchangeZerodhaToken, useMissionControl, useZerodhaAuthStatus } from "../data/queries";
 import { IconButton } from "../system/primitives";
 import { bool, text } from "../data/liveRow";
 import { GlobalTopbarCss } from "./GlobalTopbar.css";
@@ -44,6 +44,8 @@ export function GlobalTopbar() {
 
   const { data: mission } = useMissionControl();
   const { data: zerodha } = useZerodhaAuthStatus();
+  const exchangeZerodha = useExchangeZerodhaToken();
+  const callbackHandled = useRef(false);
   const approvalCount = mission?.approvals?.length ?? 0;
   const riskEvents = mission?.execution_control?.filter(
     (r) => text(r, "kind") === "risk_event" || text(r, "control_key") === "global_kill_switch"
@@ -51,6 +53,23 @@ export function GlobalTopbar() {
   const riskCount = riskEvents.length;
 
   const totalAttention = approvalCount + (riskCount > 0 ? 1 : 0);
+
+  useEffect(() => {
+    if (callbackHandled.current) return;
+    const callbackUrl = new URL(window.location.href);
+    const requestToken = callbackUrl.searchParams.get("request_token");
+    if (!requestToken) return;
+
+    callbackHandled.current = true;
+    exchangeZerodha.mutate(requestToken, {
+      onSettled: () => {
+        for (const key of ["request_token", "status", "action"]) {
+          callbackUrl.searchParams.delete(key);
+        }
+        window.history.replaceState({}, "", `${callbackUrl.pathname}${callbackUrl.search}${callbackUrl.hash}`);
+      },
+    });
+  }, [exchangeZerodha]);
 
   const reconnectZerodha = () => {
     const loginUrl = text(zerodha, "login_url");
@@ -108,11 +127,21 @@ export function GlobalTopbar() {
             className="aios-topbar__zerodha"
             onClick={reconnectZerodha}
             aria-label="Reconnect Zerodha"
-            title={bool(zerodha, "daily_access_token_available") ? "Zerodha connected. Reconnect today's session" : "Reconnect Zerodha for today's live data"}
+            title={
+              exchangeZerodha.isPending
+                ? "Connecting Zerodha and restarting the read-only stream"
+                : exchangeZerodha.isError
+                  ? `Zerodha reconnect failed: ${exchangeZerodha.error.message}`
+                  : bool(zerodha, "daily_access_token_available")
+                    ? "Zerodha connected. Reconnect today's session"
+                    : "Reconnect Zerodha for today's live data"
+            }
           >
             <span className={bool(zerodha, "daily_access_token_available") ? "aios-topbar__broker-dot aios-topbar__broker-dot--ok" : "aios-topbar__broker-dot aios-topbar__broker-dot--warn"} />
             <RefreshCw size={13} />
-            <span className="aios-topbar__zerodha-label">Zerodha</span>
+            <span className="aios-topbar__zerodha-label">
+              {exchangeZerodha.isPending ? "Connecting…" : exchangeZerodha.isSuccess ? "Connected" : "Zerodha"}
+            </span>
           </button>
 
           {/* Attention badge — approvals + risk */}

@@ -8015,11 +8015,29 @@ def zerodha_auth_status() -> dict:
     return _run_zerodha_adapter(["--check-config"],30)
 
 
+def restart_zerodha_stream_async() -> dict:
+    if sys.platform != "darwin":
+        return {"status": "not_applicable", "service": "com.devarsh.aios.zerodha-stream"}
+    service = f"gui/{os.getuid()}/com.devarsh.aios.zerodha-stream"
+    try:
+        subprocess.Popen(
+            ["/bin/launchctl", "kickstart", "-k", service],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return {"status": "restart_requested", "service": service}
+    except OSError as exc:
+        return {"status": "restart_failed", "service": service, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def exchange_zerodha_request_token(payload: dict) -> dict:
     token=str(payload.get("request_token") or payload.get("requestToken") or "").strip()
     if not token:
         raise ValueError("request_token is required")
-    result=_run_zerodha_adapter(["--exchange-request-token",token],60)
+    result=dict(_run_zerodha_adapter(["--exchange-request-token",token],60))
+    result["stream_restart"]=restart_zerodha_stream_async()
     audit_api_write("ai_os_api_zerodha_token_exchange","exchange_zerodha_request_token",str(payload.get("actor") or "Devarsh"),"core.connector_health_checks",{"status":result.get("status")},{"request_token_received":True})
     return result
 

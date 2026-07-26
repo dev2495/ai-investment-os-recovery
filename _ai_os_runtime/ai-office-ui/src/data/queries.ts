@@ -111,6 +111,24 @@ export function useZerodhaAuthStatus() {
   });
 }
 
+export function useExchangeZerodhaToken() {
+  const queryClient = useQueryClient();
+  return useMutation<LiveRow, Error, string>({
+    mutationFn: (requestToken) =>
+      post<LiveRow>("/api/zerodha/auth/exchange", {
+        request_token: requestToken,
+        actor: "Devarsh",
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.zerodhaAuth }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.missionControl }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.tradingQuantRisk }),
+      ]);
+    },
+  });
+}
+
 export function usePortfolioOffice() {
   return useQuery<PortfolioOffice>({
     queryKey: queryKeys.portfolioOffice,

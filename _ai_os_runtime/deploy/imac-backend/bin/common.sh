@@ -14,6 +14,8 @@ REPORTS_LABEL="com.devarsh.aios.imac.scheduled-reports"
 SUPERVISOR_PLIST="${LAUNCHD_ROOT}/${SUPERVISOR_LABEL}.plist"
 BACKUP_PLIST="${LAUNCHD_ROOT}/${BACKUP_LABEL}.plist"
 REPORTS_PLIST="${LAUNCHD_ROOT}/${REPORTS_LABEL}.plist"
+ZERODHA_STREAM_LABEL="com.devarsh.aios.zerodha-stream"
+ZERODHA_STREAM_PLIST="${LAUNCHD_ROOT}/${ZERODHA_STREAM_LABEL}.plist"
 LAUNCHD_DOMAIN="gui/$(id -u)"
 
 log() {

@@ -63,6 +63,25 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         strategy.assert_not_called()
         message.assert_not_called()
 
+    def test_zerodha_exchange_restarts_read_only_stream(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "_run_zerodha_adapter",
+                return_value={"status": "connected", "broker_write_allowed": False},
+            ) as adapter,
+            mock.patch.object(
+                ai_os_api_server,
+                "restart_zerodha_stream_async",
+                return_value={"status": "restart_requested"},
+            ),
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.exchange_zerodha_request_token({"request_token": "one-time-token"})
+        adapter.assert_called_once_with(["--exchange-request-token", "one-time-token"], 60)
+        self.assertEqual(result["stream_restart"]["status"], "restart_requested")
+        self.assertFalse(result["broker_write_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()
