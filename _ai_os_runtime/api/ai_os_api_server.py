@@ -14185,10 +14185,17 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             "candidate_key",
         )
 
-    delegation_command = re.search(
-        r"\b(?:delegate|assign|ask)\b.+\b(?:to|team|agent|department)\b",
-        message,
-        flags=re.IGNORECASE,
+    delegation_command = (
+        re.search(
+            r"\b(?:delegate|assign)\b[^.!?\n]{1,200}\bto\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\bask\s+(?!you\b)(?:the\s+)?[^.!?\n]{1,120}\bto\b",
+            message,
+            flags=re.IGNORECASE,
+        )
     )
     if delegation_command:
         target = resolve_agent_for_instruction(message)

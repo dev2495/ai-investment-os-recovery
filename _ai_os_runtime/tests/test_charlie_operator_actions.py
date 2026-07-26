@@ -63,6 +63,18 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         strategy.assert_not_called()
         message.assert_not_called()
 
+    def test_capability_question_is_not_misread_as_delegation(self) -> None:
+        with mock.patch.object(
+            ai_os_api_server,
+            "create_agent_message",
+        ) as create_message:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "What can I ask you to do, and how will you keep me in control?"
+            )
+
+        self.assertEqual(operations, [])
+        create_message.assert_not_called()
+
     def test_zerodha_exchange_restarts_read_only_stream(self) -> None:
         with (
             mock.patch.object(
