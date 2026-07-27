@@ -24,9 +24,10 @@ import {
   Microscope,
   ClipboardCheck,
   Lightbulb,
+  Trash2,
 } from "lucide-react";
 import { useUIStore } from "../store";
-import { useChat } from "../data/queries";
+import { useChat, useDepartmentTerminal } from "../data/queries";
 import {
   useProposeArchitectureChange,
   useUpdateWorkspaceConfig,
@@ -60,6 +61,8 @@ interface ChatMessage {
   evidence?: Array<{ kind: string; key: string; label: string }>;
   actions?: AssistantAction[];
   operations?: Array<{ tool: string; status: string; detail?: string }>;
+  assistantName?: string;
+  assistantTitle?: string;
   ts: number;
 }
 
@@ -95,6 +98,7 @@ export function AssistantRail() {
   const location = useLocation();
   const navigate = useNavigate();
   const chat = useChat();
+  const employeeDirectory = useDepartmentTerminal("agents");
   const proposeArchitecture = useProposeArchitectureChange();
   const updateWorkspace = useUpdateWorkspaceConfig();
   const createAgentMessage = useCreateAgentMessage();
@@ -111,6 +115,10 @@ export function AssistantRail() {
   const [input, setInput] = React.useState("");
   const [route, setRoute] = React.useState<ReasoningRoute>("local");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const scopeProfile = React.useMemo(() => {
+    if (scope === "charlie") return employeeDirectory.data?.primary?.find((row) => text(row, "agent_name") === "Charlie Munger");
+    return employeeDirectory.data?.primary?.find((row) => text(row, "agent_name") === scope.agentName);
+  }, [employeeDirectory.data?.primary, scope]);
 
   /** Destination context — tells Charlie where you are. */
   const destContext = React.useMemo(() => {
@@ -167,12 +175,11 @@ export function AssistantRail() {
     setInput("");
 
     const scopedAgent = scope === "charlie" ? "Charlie Munger" : scope.agentName;
-    const scopedMessage = scope === "charlie" ? trimmed : `Act as ${scope.agentName}, the requested specialist. Coordinate through Charlie and answer with source-backed evidence. User request: ${trimmed}`;
     const routeConfig = ROUTE_CONFIG[route];
     chat.mutate(
       {
-        message: scopedMessage,
-        session_key: "devarsh-charlie-primary",
+        message: trimmed,
+        session_key: `devarsh-assistant-${scopedAgent.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
         actor: "Devarsh",
         workspace: destContext.toLowerCase().replace(/[^a-z]/g, "_"),
         route_name: routeConfig.routeName,
@@ -216,16 +223,17 @@ export function AssistantRail() {
             }
           }
 
-          // Agent jobs → delegation proposals (dispatch to a specialist)
+          // Backend-created jobs are already durable. Surface a tracking action
+          // instead of creating a duplicate delegation.
           for (const job of data.agent_jobs ?? []) {
             const agent = text(job, "agent_key", text(job, "to_agent", "specialist"));
             const task = text(job, "task_name", text(job, "workflow_key", "delegated task"));
             actions.push({
               id: `act-${Date.now()}-${actions.length}`,
-              kind: "delegate",
-              label: `Delegate to ${agent}`,
+              kind: "navigate",
+              label: `Track ${agent}`,
               description: task,
-              payload: { to_agent: agent, task_name: task, raw: job },
+              payload: { path: "/firm/departments", task_name: task, raw: job },
             });
           }
 
@@ -249,6 +257,8 @@ export function AssistantRail() {
             evidence,
             actions,
             operations,
+            assistantName: text(data.assistant_identity, "agent_name", scopedAgent),
+            assistantTitle: text(data.assistant_identity, "display_title", text(scopeProfile ?? {}, "display_title", "Investment office employee")),
             ts: Date.now(),
           };
           setMessages((prev) => [...prev, assistantMsg]);
@@ -337,6 +347,9 @@ export function AssistantRail() {
 
   const scopeName = scope === "charlie" ? "Charlie" : scope.agentName;
   const scopeInitials = scope === "charlie" ? "CM" : initials(scope.agentName);
+  const scopeRole = text(scopeProfile ?? {}, "display_title", scope === "charlie" ? "Chief of Staff · Orchestrator" : "Investment office employee");
+  const scopeState = text(scopeProfile ?? {}, "live_state", "ready");
+  const scopeRoute = text(scopeProfile ?? {}, "primary_route", ROUTE_CONFIG[route].routeName);
 
   return (
     <>
@@ -352,10 +365,18 @@ export function AssistantRail() {
             <div>
               <div className="aios-assistant__name">{scopeName}</div>
               <div className="aios-assistant__role">
-                {scope === "charlie" ? "Chief of Staff · Orchestrator" : "Specialist agent"}
+                {scopeRole}
               </div>
             </div>
           </div>
+          <button
+            className="aios-assistant__collapse"
+            onClick={() => setMessages([])}
+            aria-label="Clear this conversation"
+            title="Clear this conversation"
+          >
+            <Trash2 size={15} />
+          </button>
           <button
             className="aios-assistant__collapse"
             onClick={() => setOpen(false)}
@@ -369,6 +390,7 @@ export function AssistantRail() {
         <div className="aios-assistant__context">
           <span className="micro">Context</span>
           <span className="aios-assistant__context-dest">{destContext}</span>
+          <span style={{ marginLeft: "auto", fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{scopeState} · {scopeRoute.replace(/_/g, " ")}</span>
         </div>
 
         {/* Messages */}
@@ -382,7 +404,9 @@ export function AssistantRail() {
                   : `Ready to dig in — ask me anything.`}
               </div>
               <div className="aios-assistant__welcome-sub">
-                I can pull evidence, surface decisions, delegate to departments, and route approvals.
+                {scope === "charlie"
+                  ? "Tell me what you need. I can answer, retrieve evidence, delegate real work, create research intakes, and track the result."
+                  : text(scopeProfile ?? {}, "human_interface", text(scopeProfile ?? {}, "role_scope", "Ask for evidence-linked work within this employee's mandate."))}
               </div>
               <div className="aios-assistant__quick">
                 {QUICK_ACTIONS.map((qa) => (

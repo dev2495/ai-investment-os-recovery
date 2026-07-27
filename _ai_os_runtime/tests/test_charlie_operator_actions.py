@@ -7,6 +7,44 @@ from _ai_os_runtime.api import ai_os_api_server
 
 
 class CharlieOperatorActionsTest(unittest.TestCase):
+    def test_article_url_creates_governed_research_intake(self) -> None:
+        captured = {}
+
+        def fake_ingest(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "assigned", "live_execution_allowed": False, "paper": {"id": 91}}
+
+        with mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Read and analyze this article https://example.com/strategy-note as a possible hypothesis source"
+            )
+
+        self.assertEqual(operations[0]["tool"], "ingest_research_source")
+        self.assertEqual(captured["source_url"], "https://example.com/strategy-note")
+        self.assertIn("backtest_spec", captured["desired_outputs"])
+        self.assertFalse(operations[0]["result"]["live_execution_allowed"])
+
+    def test_scoped_identity_is_first_person_and_role_specific(self) -> None:
+        profile = {
+            "agent_name": "Research Analyst",
+            "display_title": "Senior Fundamental Research Analyst",
+            "department_name": "Research Factory",
+            "role_scope": "Verify primary evidence and build company research.",
+            "persona": "Skeptical evidence auditor.",
+            "operating_style": "Primary sources first.",
+            "mental_models": ["base_rates"],
+            "primary_route": "research_company_analysis",
+            "permission_level": "read_only",
+        }
+        with mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[profile]):
+            identity = ai_os_api_server.resolve_conversation_identity({
+                "metadata": {"assistant_scope": "Research Analyst"}
+            })
+
+        self.assertEqual(identity["agent_name"], "Research Analyst")
+        self.assertIn("I am Research Analyst", identity["first_person_identity"])
+        self.assertEqual(identity["primary_route"], "research_company_analysis")
+
     def test_explicit_strategy_command_creates_real_intake(self) -> None:
         captured = {}
 
@@ -50,6 +88,30 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(captured["to_agent"], "Research Analyst")
         self.assertEqual(captured["priority"], "medium")
         self.assertTrue(captured["metadata"]["operator_requested"])
+
+    def test_natural_department_delegation_is_actionable(self) -> None:
+        captured = {}
+        profiles = [{
+            "agent_name": "Head of Quant",
+            "display_title": "Head of Quant",
+            "department": "quant",
+            "department_name": "Quantitative Strategies Office",
+        }]
+
+        def fake_message(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "created", "id": 18}
+
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=profiles),
+            mock.patch.object(ai_os_api_server, "create_agent_message", fake_message),
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Have the quant team test this factor hypothesis and prepare a validation report"
+            )
+
+        self.assertEqual(operations[0]["tool"], "delegate_agent_work")
+        self.assertEqual(captured["to_agent"], "Head of Quant")
 
     def test_non_action_conversation_does_not_write(self) -> None:
         with (

@@ -102,6 +102,16 @@ export function DepartmentsView() {
   const active = departmentEmployees.filter((row) => text(row, "live_state", "idle") !== "idle").length;
   const openTasks = departmentEmployees.reduce((sum, row) => sum + num(row, "open_task_count", 0), 0);
   const openInbox = departmentEmployees.reduce((sum, row) => sum + num(row, "open_inbox_count", 0), 0);
+  const departmentHeadcount = React.useCallback((department: LiveRow) => {
+    const keys = new Set([
+      text(department, "department"),
+      text(department, "department_name"),
+    ].filter(Boolean).map((value) => value.toLowerCase()));
+    return employees.filter((employee) => [
+      text(employee, "department"),
+      text(employee, "department_name"),
+    ].some((value) => keys.has(value.toLowerCase()))).length;
+  }, [employees]);
 
   React.useEffect(() => {
     if (!target || !departmentEmployees.some((row) => text(row, "agent_name") === target)) {
@@ -137,6 +147,26 @@ export function DepartmentsView() {
   return (
     <div className="aios-destination">
       <Header icon={Building2} code="DEPTS" title="Department Operations" subtitle="Live employees, assignments, inbox traffic, worker state, readiness, and model accountability." />
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(360px, 0.9fr) minmax(520px, 1.4fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Send} title="Work Command" actions={<Badge tone={createMessage.isPending ? "warn" : "ok"}>{createMessage.isPending ? "Sending" : "Ready"}</Badge>}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
+            <Field label="Employee"><Select value={target} onChange={(event) => setTarget(event.target.value)}>{departmentEmployees.map((row) => <option key={text(row, "agent_name")} value={text(row, "agent_name")}>{text(row, "agent_name")} · {text(row, "display_title", text(row, "department_name", text(row, "department")))}</option>)}</Select></Field>
+            <Field label="Objective"><TextArea value={assignment} onChange={(event) => setAssignment(event.target.value)} rows={4} placeholder="State the decision or output, required evidence, deadline, and handoff…" /></Field>
+            <div style={{ display: "flex", gap: "var(--space-2)" }}>
+              <Button variant="primary" icon={Send} onClick={assignWork} disabled={createMessage.isPending}>Assign real work</Button>
+              <Button icon={Play} onClick={processQueue} disabled={runWorker.isPending}>Process queue</Button>
+            </div>
+          </div>
+        </Panel>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(130px, 1fr))", gap: "var(--space-3)" }}>
+          <MetricTile><Metric label="Employees" value={departmentEmployees.length} /></MetricTile>
+          <MetricTile tone={active ? "ok" : "warn"}><Metric label="Working Now" value={active} /></MetricTile>
+          <MetricTile tone={openTasks ? "warn" : "ok"}><Metric label="Open Tasks" value={openTasks} /></MetricTile>
+          <MetricTile tone={openInbox ? "warn" : "ok"}><Metric label="Open Inbox" value={openInbox} /></MetricTile>
+          <MetricTile><Metric label="Queue Rows" value={queue.length} /></MetricTile>
+          <MetricTile><Metric label="Messages" value={messages.length} /></MetricTile>
+        </div>
+      </div>
       <Panel icon={Building2} title="Operating Scope" actions={
         <Select value={selected} onChange={(event) => setSelected(event.target.value)} style={{ minWidth: 240 }}>
           <option value="all">All departments</option>
@@ -151,7 +181,7 @@ export function DepartmentsView() {
             columns={[
               { key: "name", header: "Department", render: (r) => <strong>{text(r, "department_name", text(r, "department"))}</strong> },
               { key: "lead", header: "Lead", render: (r) => text(r, "lead_agent", text(r, "department_lead", "—")) },
-              { key: "headcount", header: "Agents", align: "right", render: (r) => num(r, "agent_count", num(r, "headcount", 0)) },
+              { key: "headcount", header: "Employees", align: "right", render: (r) => departmentHeadcount(r) },
               { key: "mandate", header: "Mandate", render: (r) => text(r, "mission", text(r, "mandate", "—")) },
             ]}
             rows={selected === "all" ? departments : departments.filter((row) => text(row, "department", text(row, "department_name")) === selected)}
@@ -160,20 +190,12 @@ export function DepartmentsView() {
         )}
       </Panel>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
-        <MetricTile><Metric label="Employees" value={departmentEmployees.length} /></MetricTile>
-        <MetricTile tone={active ? "ok" : "warn"}><Metric label="Working Now" value={active} /></MetricTile>
-        <MetricTile tone={openTasks ? "warn" : "ok"}><Metric label="Open Tasks" value={openTasks} /></MetricTile>
-        <MetricTile tone={openInbox ? "warn" : "ok"}><Metric label="Open Inbox" value={openInbox} /></MetricTile>
-        <MetricTile><Metric label="Queue Rows" value={queue.length} /></MetricTile>
-      </div>
-
       <Panel icon={Users} title="Employee Operating Board">
         {departmentEmployees.length === 0 ? <Empty icon={Users} title="No employees in this scope" /> : (
           <DataTable
             columns={[
               { key: "agent", header: "Employee", render: (r) => <button style={{ color: "var(--accent)", background: "none", border: 0, cursor: "pointer", fontWeight: 600 }} onClick={() => setAssistantScope({ agentKey: text(r, "agent_name"), agentName: text(r, "agent_name") })}>{text(r, "agent_name")}</button> },
-              { key: "title", header: "Mandate", render: (r) => text(r, "display_title", text(r, "role_scope", "—")) },
+              { key: "title", header: "Role & Voice", render: (r) => <div><strong>{text(r, "display_title", text(r, "role_scope", "—"))}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 3 }}>{text(r, "persona", "Fact-first specialist").slice(0, 110)}</div></div> },
               { key: "work", header: "Current Work", render: (r) => text(r, "current_work_title", "No active assignment") },
               { key: "tasks", header: "Tasks", align: "right", render: (r) => num(r, "open_task_count", 0) },
               { key: "inbox", header: "Inbox", align: "right", render: (r) => num(r, "open_inbox_count", 0) },
@@ -186,17 +208,7 @@ export function DepartmentsView() {
         )}
       </Panel>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 0.8fr) minmax(420px, 1.2fr)", gap: "var(--space-4)", alignItems: "start" }}>
-        <Panel icon={Send} title="Assign Work">
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
-            <Field label="Owner"><Select value={target} onChange={(event) => setTarget(event.target.value)}>{departmentEmployees.map((row) => <option key={text(row, "agent_name")} value={text(row, "agent_name")}>{text(row, "agent_name")} · {text(row, "department_name", text(row, "department"))}</option>)}</Select></Field>
-            <Field label="Objective"><TextArea value={assignment} onChange={(event) => setAssignment(event.target.value)} rows={5} placeholder="Give the objective, required evidence, deadline, and expected output…" /></Field>
-            <div style={{ display: "flex", gap: "var(--space-2)" }}>
-              <Button variant="primary" icon={Send} onClick={assignWork} disabled={createMessage.isPending}>Assign</Button>
-              <Button icon={Play} onClick={processQueue} disabled={runWorker.isPending}>Process queue</Button>
-            </div>
-          </div>
-        </Panel>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "var(--space-4)", alignItems: "start" }}>
         <Panel icon={Activity} title="Live Work Queue" actions={<Badge tone={queue.length ? "warn" : "ok"}>{queue.length}</Badge>}>
           {queue.length === 0 ? <Empty icon={Activity} title="No queued work in this scope" /> : (
             <DataTable

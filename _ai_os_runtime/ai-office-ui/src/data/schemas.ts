@@ -207,6 +207,7 @@ export const ResearchIdeasSchema = z.object({
   generated_ideas: z.array(liveRow).default([]),
   research_papers: z.array(liveRow).default([]),
   paper_strategy_hypotheses: z.array(liveRow).default([]),
+  research_cycles: z.array(liveRow).default([]),
   discovery_candidates: z.array(liveRow).default([]),
   idea_dossiers: z.array(liveRow).default([]),
   output_artifacts: z.array(liveRow).default([]),
@@ -411,6 +412,8 @@ export type EntityEvidence = z.infer<typeof EntityEvidenceSchema>;
 export const ChatResponseSchema = z.object({
   chat_turn: liveRow,
   message: z.string().default(""),
+  assistant_identity: liveRow.optional().default({} as LiveRow),
+  conversation_mode: z.string().optional().default("orchestrator"),
   route: liveRow.optional().default({} as LiveRow),
   model_status: z.string().default(""),
   retrieval_status: z.string().default(""),

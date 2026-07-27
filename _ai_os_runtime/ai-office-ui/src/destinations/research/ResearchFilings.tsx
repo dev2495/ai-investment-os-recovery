@@ -17,7 +17,7 @@ import {
 import { useResearchIdeas } from "../../data/queries";
 import {
   useRunFilingCollector, useGenerateSpecialMemo,
-  useIngestResearchPaper,
+  useIngestResearchPaper, useIngestResearchSource,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -234,8 +234,11 @@ function PapersView() {
             columns={[
               { key: "title", header: "Paper", render: (r) => <strong>{text(r, "title")}</strong> },
               { key: "source", header: "Source", render: (r) => text(r, "source_key", "—") },
+              { key: "kind", header: "Kind", render: (r) => text(r, "source_kind", "paper").replace(/_/g, " ") },
+              { key: "words", header: "Extracted", align: "right", render: (r) => `${formatCompact(num(r, "extraction_word_count", 0))} words` },
               { key: "topics", header: "Topics", render: (r) => text(r, "topics", "—") },
               { key: "hypotheses", header: "Hypotheses", align: "right", render: (r) => num(r, "hypothesis_count", 0) },
+              { key: "status", header: "Pipeline", render: (r) => <StatusPill status={text(r, "intake_status", text(r, "review_status", "registered"))} /> },
               { key: "when", header: "Ingested", render: (r) => formatRelative(text(r, "ingested_at", text(r, "created_at"))) },
             ]}
             rows={papers}
@@ -297,31 +300,109 @@ function PaperIngestDrawer({ open, onClose }: { open: boolean; onClose: () => vo
  * ============================================================ */
 function IngestView() {
   const pushToast = useUIStore((s) => s.pushToast);
-  const setAssistantScope = useUIStore((s) => s.setAssistantScope);
-  const setAssistantOpen = useUIStore((s) => s.setAssistantOpen);
+  const openEvidence = useUIStore((s) => s.openEvidence);
+  const { data, isLoading } = useResearchIdeas();
+  const ingest = useIngestResearchSource();
+  const [lastResult, setLastResult] = React.useState<LiveRow | null>(null);
+  const [form, setForm] = React.useState({
+    title: "",
+    source_url: "",
+    pasted_text: "",
+    research_objective: "",
+    hypothesis: "",
+    target_universe: "NSE listed equities",
+    timeframe: "",
+    priority: "medium" as "low" | "medium" | "high" | "critical",
+  });
+  const papers = data?.research_papers ?? [];
+  const hypotheses = data?.paper_strategy_hypotheses ?? [];
+  const cycles = data?.research_cycles ?? [];
+  const activeIntakes = papers.filter((row) => !["reviewed", "closed"].includes(text(row, "intake_status", text(row, "review_status")).toLowerCase()));
+
+  function submit() {
+    if (!form.source_url.trim() && !form.pasted_text.trim()) {
+      pushToast({ title: "Add a URL or paste the article text", tone: "warn", duration: 3000 });
+      return;
+    }
+    if (!form.research_objective.trim()) {
+      pushToast({ title: "Research objective required", tone: "warn", duration: 3000 });
+      return;
+    }
+    const sourceKey = form.source_url.includes("github.com") ? "github" : form.source_url ? "web" : "manual";
+    ingest.mutate({
+      ...form,
+      source_url: form.source_url.trim() || undefined,
+      pasted_text: form.pasted_text.trim() || undefined,
+      title: form.title.trim() || undefined,
+      hypothesis: form.hypothesis.trim() || undefined,
+      timeframe: form.timeframe.trim() || undefined,
+      source_key: sourceKey,
+      source_kind: form.source_url ? "web_article" : "operator_note",
+      desired_outputs: ["research_note", "hypothesis_review", "backtest_spec"],
+      topics: ["operator_intake"],
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        setLastResult(result);
+        setForm((current) => ({ ...current, title: "", source_url: "", pasted_text: "", research_objective: "", hypothesis: "", timeframe: "" }));
+        const assignments = Array.isArray(result.assignments) ? result.assignments.length : 0;
+        pushToast({ title: "Research cycle started", message: `${assignments} employees assigned`, tone: "ok", duration: 4500 });
+      },
+      onError: (error) => pushToast({ title: "Ingestion failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
 
   return (
-    <Panel icon={Download} title="Research Ingest → Strategy Ideas">
-      <div style={{ padding: "var(--space-6)", textAlign: "center" }}>
-        <Download size={48} style={{ color: "var(--accent)", opacity: 0.5, marginBottom: "var(--space-3)" }} />
-        <h3 style={{ marginBottom: "var(--space-2)" }}>Ingest research pages → strategy ideas</h3>
-        <p style={{ color: "var(--text-muted)", maxWidth: 480, margin: "0 auto var(--space-5)" }}>
-          Paste a research blog, strategy article, or PDF URL. Charlie and the Strategy Generator
-          will extract the edge hypothesis, map it to our universe and data, and draft a strategy
-          intake you can backtest.
-        </p>
-        <Button variant="primary" icon={Sparkles} size="lg" onClick={() => {
-          setAssistantScope("charlie");
-          setAssistantOpen(true);
-          sessionStorage.setItem("aios:pending-charlie-question", "I want to ingest a research page and turn it into a strategy idea. Help me start.");
-        }}>
-          Ingest research with Charlie
-        </Button>
-        <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
-          Or use the Research Papers tab to ingest academic papers directly.
-        </div>
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Sources" value={papers.length} /></MetricTile>
+        <MetricTile tone={activeIntakes.length ? "warn" : "ok"}><Metric label="Active Intakes" value={activeIntakes.length} /></MetricTile>
+        <MetricTile><Metric label="Hypotheses" value={hypotheses.length} /></MetricTile>
+        <MetricTile><Metric label="Research Cycles" value={cycles.length} /></MetricTile>
       </div>
-    </Panel>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 0.95fr) minmax(560px, 1.35fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Download} title="Start Research Cycle" actions={<Badge tone={ingest.isPending ? "warn" : "ok"}>{ingest.isPending ? "Extracting" : "Ready"}</Badge>}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
+            <Field label="Public article, blog, paper, or GitHub URL"><TextInput value={form.source_url} onChange={(event) => setForm({ ...form, source_url: event.target.value })} placeholder="https://…" /></Field>
+            <Field label="Or paste the source text"><TextArea value={form.pasted_text} onChange={(event) => setForm({ ...form, pasted_text: event.target.value })} rows={5} placeholder="Paste article text, research notes, or a strategy description…" /></Field>
+            <Field label="Title (auto-detected when blank)"><TextInput value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+            <Field label="What should the team determine?" required><TextArea value={form.research_objective} onChange={(event) => setForm({ ...form, research_objective: event.target.value })} rows={3} placeholder="Verify the claims, map affected companies or factors, and decide whether a testable edge exists…" /></Field>
+            <Field label="Hypothesis to test (optional)"><TextArea value={form.hypothesis} onChange={(event) => setForm({ ...form, hypothesis: event.target.value })} rows={3} placeholder="Example: rising FPI sector allocation predicts relative 20-day outperformance after costs…" /></Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.7fr", gap: "var(--space-3)" }}>
+              <Field label="Universe"><TextInput value={form.target_universe} onChange={(event) => setForm({ ...form, target_universe: event.target.value })} /></Field>
+              <Field label="Timeframe"><TextInput value={form.timeframe} onChange={(event) => setForm({ ...form, timeframe: event.target.value })} placeholder="20 days" /></Field>
+              <Field label="Priority"><Select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as typeof form.priority })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></Select></Field>
+            </div>
+            <Button variant="primary" icon={Sparkles} onClick={submit} disabled={ingest.isPending}>Extract, assign, and queue review</Button>
+          </div>
+        </Panel>
+        <Panel icon={Microscope} title="Live Intake Pipeline" actions={<Badge tone={activeIntakes.length ? "warn" : "ok"}>{activeIntakes.length} active</Badge>}>
+          {isLoading ? <SkeletonGrid rows={6} /> : papers.length === 0 ? <Empty icon={Microscope} title="No source intakes yet" description="The first submitted source will appear here with extraction and review status." /> : (
+            <DataTable
+              columns={[
+                { key: "source", header: "Source", render: (r) => <div><strong>{text(r, "title")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 3 }}>{text(r, "research_objective", text(r, "source_url", "No objective recorded")).slice(0, 120)}</div></div> },
+                { key: "words", header: "Words", align: "right", render: (r) => formatCompact(num(r, "extraction_word_count", 0)) },
+                { key: "hypotheses", header: "Hypotheses", align: "right", render: (r) => num(r, "hypothesis_count", 0) },
+                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "intake_status", text(r, "review_status", "registered"))} /> },
+                { key: "when", header: "Updated", render: (r) => formatRelative(text(r, "updated_at")) },
+              ]}
+              rows={papers}
+              rowKey={(r, i) => String(text(r, "id", i))}
+              onRowClick={(r) => openEvidence({ kind: "artifact", key: String(text(r, "id")), title: text(r, "title", "Research source") })}
+            />
+          )}
+        </Panel>
+      </div>
+      {lastResult && (
+        <Panel icon={Sparkles} title="Cycle Created" actions={<StatusPill status="queued" />}>
+          <div style={{ padding: "var(--space-3)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "var(--space-3)" }}>
+            <MetricTile><Metric label="Employees Assigned" value={Array.isArray(lastResult.assignments) ? lastResult.assignments.length : 0} /></MetricTile>
+            <MetricTile><Metric label="Draft Hypotheses" value={num((lastResult.hypothesis_result as LiveRow) ?? {}, "count", 0)} /></MetricTile>
+            <MetricTile><Metric label="Execution" value="Locked" /></MetricTile>
+          </div>
+        </Panel>
+      )}
+    </>
   );
 }
 

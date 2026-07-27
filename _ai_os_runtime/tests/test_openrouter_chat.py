@@ -69,6 +69,25 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertEqual(status, "called")
         self.assertEqual(usage["completion_tokens"], 6)
 
+    def test_employee_system_prompt_is_forwarded_to_cloud_route(self) -> None:
+        captured_request = None
+
+        def fake_urlopen(request, timeout):
+            nonlocal captured_request
+            captured_request = request
+            return FakeResponse({"choices": [{"message": {"content": "I found two source gaps."}}]})
+
+        with (
+            mock.patch.object(ai_os_api_server, "OPENROUTER_API_KEY", "test-key"),
+            mock.patch.object(ai_os_api_server.urllib.request, "urlopen", fake_urlopen),
+        ):
+            ai_os_api_server.openrouter_chat(
+                "test/model", "Review the source.", "You are the Research Analyst. Speak in first person."
+            )
+
+        payload = json.loads(captured_request.data.decode("utf-8"))
+        self.assertEqual(payload["messages"][0]["content"], "You are the Research Analyst. Speak in first person.")
+
     def test_rejects_unsupported_capital_recommendation_while_execution_locked(self) -> None:
         def fake_psql(query: str):
             if "FROM agent.model_routes" in query:

@@ -1111,7 +1111,7 @@ def ollama_embed(text: str) -> list[float] | None:
     return None
 
 
-def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+def ollama_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str]:
     if not ollama_model_available(model_name):
         return None, "model_unavailable"
     governance = local_model_governance(model_name)
@@ -1130,7 +1130,7 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "messages": [
                     {
                         "role": "system",
-                        "content": CHARLIE_OLLAMA_SYSTEM_PROMPT,
+                        "content": system_prompt or CHARLIE_OLLAMA_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -1144,7 +1144,7 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+def mlx_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str]:
     if not mlx_model_available(model_name):
         return None, "model_unavailable"
     governance = local_model_governance(model_name)
@@ -1165,7 +1165,7 @@ def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "messages": [
                     {
                         "role": "system",
-                        "content": CHARLIE_TRUTH_SYSTEM_PROMPT,
+                        "content": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -1180,7 +1180,7 @@ def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def local_openai_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str]:
     if not local_openai_model_available(model_name):
         return None, "model_unavailable"
     governance = local_model_governance(model_name)
@@ -1198,7 +1198,7 @@ def local_openai_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "top_k": 20,
                 "max_tokens": LOCAL_OPENAI_MAX_TOKENS,
                 "messages": [
-                    {"role": "system", "content": CHARLIE_LOCAL_CONVERSATION_PROMPT},
+                    {"role": "system", "content": system_prompt or CHARLIE_LOCAL_CONVERSATION_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
             },
@@ -1212,7 +1212,7 @@ def local_openai_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict]:
+def openrouter_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str, dict]:
     """Call an explicitly selected public/internal cloud route with ZDR enforced."""
     if not OPENROUTER_API_KEY:
         return None, "openrouter_key_unavailable", {}
@@ -1240,7 +1240,7 @@ def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict
                         "allow_fallbacks": True,
                     },
                     "messages": [
-                        {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
+                        {"role": "system", "content": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
                 }
@@ -2273,8 +2273,18 @@ def build_research_ideas_snapshot() -> dict:
                    published_date, doi, source_url, pdf_url, abstract,
                    page_count, topics, asset_classes, markets, methodology_tags,
                    extraction_status, review_status, owner_agent,
+                   source_kind, research_objective, target_universe, desired_outputs,
+                   extraction_word_count, intake_status,
                    hypothesis_count, latest_ingestion_at, evidence, updated_at
             FROM research.v_research_paper_queue
+            LIMIT 80
+        """,
+        "research_cycles": """
+            SELECT id,cycle_key,source_kind,source_ref,objective,as_of,universe,
+                   strategy_spec,status,owner_agent,evidence,
+                   broker_write_allowed,live_execution_allowed,created_at
+            FROM strategy.research_cycles
+            ORDER BY created_at DESC
             LIMIT 80
         """,
         "paper_strategy_hypotheses": """
@@ -8741,6 +8751,168 @@ def run_filing_pdf_extractor(payload: dict) -> dict:
     return result
 
 
+def ingest_research_source(payload: dict) -> dict:
+    source_url = str(payload.get("source_url") or payload.get("sourceUrl") or "").strip()
+    pasted_text = str(payload.get("pasted_text") or payload.get("pastedText") or "").strip()
+    if not source_url and not pasted_text:
+        raise ValueError("source_url or pasted_text is required")
+    actor = str(payload.get("actor") or "Devarsh via Charlie").strip() or "Devarsh via Charlie"
+    normalized = {
+        **payload,
+        "source_url": source_url,
+        "pasted_text": pasted_text,
+        "actor": actor,
+        "desired_outputs": payload.get("desired_outputs") or payload.get("desiredOutputs") or [
+            "research_note", "hypothesis_review", "backtest_spec"
+        ],
+    }
+    completed = subprocess.run(
+        [PDF_PYTHON, str(RUNTIME_ROOT / "scripts" / "ingest_research_source.py")],
+        input=json.dumps(normalized, default=str),
+        cwd=VAULT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+    if completed.returncode != 0:
+        raise ValueError((completed.stderr or completed.stdout or "research source ingestion failed").strip())
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("research source ingestor returned invalid JSON") from exc
+
+    paper = result.get("paper") or {}
+    paper_id = paper.get("id")
+    if not paper_id:
+        raise ValueError("research source ingestor did not return a paper id")
+    title = str(paper.get("title") or "Research source")
+    objective = str(
+        payload.get("research_objective")
+        or payload.get("researchObjective")
+        or payload.get("objective")
+        or "Extract claims, evidence, risks, and falsifiable investment or strategy hypotheses."
+    ).strip()
+    priority = str(payload.get("priority") or "medium").strip().lower()
+    if priority not in {"low", "medium", "high", "critical"}:
+        priority = "medium"
+
+    active_names = {
+        str(row.get("agent_name"))
+        for row in run_psql_json("SELECT agent_name FROM agent.profiles WHERE status='active'")
+    }
+    target_specs = [
+        (
+            next((name for name in ("Research Analyst", "Company Analyst", "Research Librarian") if name in active_names), None),
+            "Independent evidence review",
+            "Verify source claims, separate fact from inference, identify contradictions and missing primary evidence, and write a source-linked research note.",
+        ),
+        (
+            next((name for name in ("Strategy Research Agent", "Head of Quant", "Quant Research Scientist") if name in active_names), None),
+            "Falsifiable hypothesis and test design",
+            "Convert only supported claims into abstain-aware, point-in-time hypotheses with data requirements, transaction costs, invalidation tests, and a paper-backtest plan.",
+        ),
+    ]
+    assignments: list[dict] = []
+    for target, subject_prefix, mandate in target_specs:
+        if not target:
+            continue
+        message = create_agent_message({
+            "from_agent": "Charlie Munger",
+            "to_agent": target,
+            "subject": f"{subject_prefix}: {title}"[:120],
+            "body": f"Objective: {objective}\n\nMandate: {mandate}\n\nSource: research.research_papers/{paper_id}",
+            "priority": priority,
+            "actor": actor,
+            "metadata": {
+                "source": "research_source_intake",
+                "paper_id": paper_id,
+                "source_url": paper.get("source_url"),
+                "content_hash": paper.get("content_hash"),
+                "operator_requested": True,
+                "live_execution_allowed": False,
+            },
+        })
+        task = triage_agent_message({
+            "message_id": message.get("id"),
+            "action": "create_task",
+            "actor": "Charlie Munger",
+            "target_workspace": "research",
+            "task_title": f"{subject_prefix}: {title}"[:180],
+            "task_objective": f"{objective}\n\n{mandate}",
+            "recommended_action": "Complete the evidence-linked output and hand it to the next review gate; do not promote to live trading.",
+            "priority": priority,
+        })
+        assignments.append({"agent": target, "message": message, "task": task})
+
+    hypothesis_text = str(payload.get("hypothesis") or payload.get("hypothesis_to_test") or "").strip()
+    hypothesis_result: dict = {"count": 0, "hypotheses": [], "status": "awaiting_agent_review"}
+    if hypothesis_text:
+        hypothesis_result = create_paper_strategy_hypotheses({
+            "paper_id": paper_id,
+            "actor": "Strategy Research Agent",
+            "hypotheses": [{
+                "title": str(payload.get("hypothesis_title") or f"Operator hypothesis from {title}")[:180],
+                "edge_hypothesis": hypothesis_text,
+                "market_scope": [str(payload.get("target_universe") or payload.get("universe") or "operator_defined")],
+                "asset_classes": payload.get("asset_classes") or [],
+                "timeframe": payload.get("timeframe"),
+                "signal_definition": {"status": "draft", "source": "operator_intake", "abstention_supported": True},
+                "data_requirements": {"point_in_time": True, "transaction_costs": True, "survivorship_bias_check": True},
+                "invalidation_tests": ["No out-of-sample persistence", "Edge disappears after costs", "Claim is not supported by the source"],
+                "limitations": ["Operator-supplied draft; independent source and quant review pending"],
+            }],
+        })
+        hypothesis_result["status"] = "draft_queued_for_independent_review"
+
+    cycle_key = "research-cycle-" + hashlib.sha256(
+        f"{paper.get('paper_key')}|{objective}|{hypothesis_text}".encode()
+    ).hexdigest()[:20]
+    cycle_rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO strategy.research_cycles (
+                cycle_key,source_kind,source_ref,objective,universe,strategy_spec,
+                status,owner_agent,evidence,broker_write_allowed,live_execution_allowed
+            ) VALUES (
+                {sql_literal(cycle_key)},'research_source',{sql_literal(str(paper_id))},
+                {sql_literal(objective)},{sql_literal(payload.get('target_universe') or payload.get('universe'))},
+                {sql_jsonb({'hypothesis': hypothesis_text or None, 'desired_outputs': normalized['desired_outputs'], 'abstention_supported': True, 'point_in_time_required': True, 'transaction_costs_required': True})},
+                'research','Head of Quant',
+                {sql_jsonb([{'table': 'research.research_papers', 'id': paper_id, 'content_hash': paper.get('content_hash')}])},
+                false,false
+            ) ON CONFLICT (cycle_key) DO NOTHING
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(record)),'[]'::json)::text
+        FROM (
+            SELECT * FROM inserted
+            UNION ALL
+            SELECT * FROM strategy.research_cycles WHERE cycle_key={sql_literal(cycle_key)} AND NOT EXISTS (SELECT 1 FROM inserted)
+            LIMIT 1
+        ) record
+        """
+    )
+    run_psql_text(
+        "UPDATE research.research_papers SET intake_status="
+        + sql_literal("hypothesis_queued" if hypothesis_text else "assigned")
+        + f", updated_at=now() WHERE id={int(paper_id)}"
+    )
+    result.update({
+        "assignments": assignments,
+        "hypothesis_result": hypothesis_result,
+        "research_cycle": cycle_rows[0] if cycle_rows else {},
+        "auto_promoted": False,
+        "broker_write_allowed": False,
+        "live_execution_allowed": False,
+    })
+    audit_api_write(
+        "ai_os_api_ingest_research_source", "ingest_research_source", actor,
+        "research.research_papers", result, {**normalized, "pasted_text": "[stored as hashed artifact]" if pasted_text else ""},
+    )
+    return result
+
+
 def ingest_research_paper(payload: dict) -> dict:
     title = str(payload.get("title") or "").strip()
     if not title:
@@ -14050,7 +14222,63 @@ def resolve_agent_for_instruction(message: str) -> dict | None:
     return None
 
 
-def execute_charlie_safe_tools(message: str) -> list[dict]:
+def resolve_conversation_identity(payload: dict) -> dict:
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    requested = str(
+        metadata.get("assistant_scope")
+        or metadata.get("assistantScope")
+        or payload.get("assistant_scope")
+        or "Charlie Munger"
+    ).strip() or "Charlie Munger"
+    try:
+        rows = run_psql_json(
+            "SELECT agent_name,display_title,department,department_name,role_scope,persona,"
+            "operating_style,mental_models,primary_route,permission_level,reports_to_agent,"
+            "voice_style,first_person_identity,conversation_contract "
+            "FROM agent.v_conversational_employee_profiles "
+            f"WHERE lower(agent_name)=lower({sql_literal(requested)}) "
+            f"OR lower(character_name)=lower({sql_literal(requested)}) "
+            "ORDER BY CASE WHEN lower(agent_name)=lower(" + sql_literal(requested) + ") THEN 0 ELSE 1 END LIMIT 1"
+        )
+    except Exception:  # Migration-safe fallback during a rolling release.
+        rows = run_psql_json(
+            "SELECT agent_name,display_title,department,department_name,role_scope,persona,"
+            "operating_style,mental_models,primary_route,permission_level,reports_to_agent,voice_style "
+            "FROM agent.v_employee_profiles_v1 "
+            f"WHERE lower(agent_name)=lower({sql_literal(requested)}) "
+            f"OR lower(character_name)=lower({sql_literal(requested)}) LIMIT 1"
+        )
+    if not rows and requested.lower() != "charlie munger":
+        return resolve_conversation_identity({**payload, "metadata": {**metadata, "assistant_scope": "Charlie Munger"}})
+    row = rows[0] if rows else {
+        "agent_name": "Charlie Munger",
+        "display_title": "Chief Investment Orchestrator",
+        "department_name": "Executive Office",
+        "role_scope": "Turn operator intent into evidence-linked work and decisions.",
+        "persona": "Blunt, rational, downside-first, and intolerant of unsupported claims.",
+        "operating_style": "Apply inversion, opportunity cost, and margin of safety before action.",
+        "mental_models": ["inversion", "opportunity_cost", "margin_of_safety"],
+        "primary_route": "charlie_munger_orchestration",
+        "permission_level": "write_with_approval",
+    }
+    if not row.get("first_person_identity"):
+        row["first_person_identity"] = (
+            f"I am {row.get('agent_name')}, {row.get('display_title') or row.get('role_scope')}. "
+            f"{row.get('persona') or ''} {row.get('operating_style') or ''} "
+            "I speak in first person, lead with verified facts, label inference and unknowns, cite evidence, and claim only work I completed."
+        )
+    row["requested_scope"] = requested
+    return row
+
+
+def identity_fallback_reply(identity: dict, response: str) -> str:
+    if str(identity.get("agent_name")) == "Charlie Munger":
+        return response
+    first_line = f"I am {identity.get('agent_name')}, {identity.get('display_title') or identity.get('role_scope')}."
+    return first_line + "\n\n" + response
+
+
+def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> list[dict]:
     normalized = message.lower()
     explicit_refresh = any(term in normalized for term in ("refresh", "update", "sync", "collect", "fetch"))
     results: list[dict] = []
@@ -14069,6 +14297,26 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             })
         except Exception as exc:  # noqa: BLE001
             results.append({"tool": tool, "status": "failed", "detail": f"{type(exc).__name__}: {exc}"[:500]})
+
+    source_urls = re.findall(r"https://[^\s<>\]\[()]+", message)
+    source_intent = any(
+        term in normalized
+        for term in ("ingest", "read this", "analyze this", "analyse this", "article", "paper", "blog", "research this", "hypothesis")
+    )
+    if source_urls and source_intent:
+        source_url = source_urls[0].rstrip(".,;:!?")
+        invoke(
+            "ingest_research_source",
+            lambda: ingest_research_source({
+                "source_url": source_url,
+                "source_key": "github" if "github.com" in source_url.lower() else "web",
+                "research_objective": message,
+                "desired_outputs": ["research_note", "hypothesis_review", "backtest_spec"],
+                "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
+                "actor": f"Devarsh via {actor}",
+            }),
+            "live_execution_allowed",
+        )
 
     if explicit_refresh and "news" in normalized:
         invoke(
@@ -14196,6 +14444,11 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             message,
             flags=re.IGNORECASE,
         )
+        or re.search(
+            r"\b(?:have|get|tell|send)\s+(?:the\s+)?(?:research|quant|risk|options|news|portfolio|data)\b[^.!?\n]{1,200}\b(?:review|analy[sz]e|test|build|check|prepare|investigate|do|work)\b",
+            message,
+            flags=re.IGNORECASE,
+        )
     )
     if delegation_command:
         target = resolve_agent_for_instruction(message)
@@ -14204,7 +14457,7 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             invoke(
                 "delegate_agent_work",
                 lambda: create_agent_message({
-                    "from_agent": "Charlie Munger",
+                    "from_agent": actor if actor in {str(row.get('agent_name')) for row in run_psql_json("SELECT agent_name FROM agent.profiles WHERE status='active'")} else "Charlie Munger",
                     "to_agent": target["agent_name"],
                     "subject": subject,
                     "body": message,
@@ -14235,11 +14488,12 @@ def chat_with_charlie(payload: dict) -> dict:
     if not message:
         raise ValueError("message is required")
 
+    identity = resolve_conversation_identity(payload)
     include_client_context = bool(payload.get("include_client_context", payload.get("includeClientContext", True)))
     requested_privacy = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
     if include_client_context and requested_privacy in {"public", "internal"}:
         raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
-    tool_intents = execute_charlie_safe_tools(message)
+    tool_intents = execute_charlie_safe_tools(message, str(identity.get("agent_name") or "Charlie Munger"))
     context = build_chat_context(message, include_client_context=include_client_context)
     context["tool_results"] = tool_intents
     context["broad_office_request"] = is_broad_office_request(message)
@@ -14275,7 +14529,8 @@ def chat_with_charlie(payload: dict) -> dict:
         or infer_local_chat_route(message)
     )
     preview_route = get_model_route(requested_route)
-    session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
+    base_session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
+    session_key = base_session_key + ":" + slug_for_text(str(identity.get("agent_name") or "charlie"))
     history: list[dict] = []
     if include_client_context and str(preview_route.get("default_provider") or "") != "openrouter":
         history = load_chat_history(session_key, limit=4)
@@ -14288,24 +14543,58 @@ def chat_with_charlie(payload: dict) -> dict:
         retrieval_status,
         include_route_status=False,
     )
+    needs_verified_facts = bool(
+        context["broad_office_request"]
+        or auto_factual_retrieval
+        or tool_intents
+        or any(term in normalized_message for term in (
+            "portfolio", "risk", "holding", "position", "watchlist", "strategy", "research",
+            "filing", "news", "calendar", "option", "market", "broker", "task", "inbox", "approval"
+        ))
+    )
+    bounded_verified_context = (
+        verified_draft[:3000]
+        if needs_verified_facts
+        else "No office snapshot was needed for this conversational turn. Do not invent office state or completed work."
+    )
+    identity_system_prompt = (
+        CHARLIE_TRUTH_SYSTEM_PROMPT.replace(
+            "You are Charlie Munger, the evidence-bound orchestrator for a private AI portfolio office.",
+            f"You are {identity.get('agent_name')}, {identity.get('display_title') or identity.get('role_scope')}, in a private AI portfolio office.",
+        )
+        + "\n\nACTIVE EMPLOYEE IDENTITY:\n"
+        + str(identity.get("first_person_identity") or "")
+        + "\nYou are this employee for the entire response. Speak as yourself in first person. "
+          "Do not call yourself Charlie unless the active identity is Charlie Munger. "
+          "Your title, mandate, tools, permissions, and completed actions come only from the supplied identity and evidence."
+    )
 
     prompt = (
         "/no_think\n"
+        "Active employee identity and operating contract:\n"
+        f"{json.dumps({key: identity.get(key) for key in ('agent_name','display_title','department_name','role_scope','persona','operating_style','mental_models','primary_route','permission_level','reports_to_agent')}, default=str)[:2200]}\n\n"
         "Recent local conversation (context only; current verified data controls):\n"
         f"{json.dumps(history, default=str)[:1800]}\n\n"
         "Current user message:\n"
         f"{message}\n\n"
-        "Verified office facts and deterministic calculations:\n"
-        f"{verified_draft[:5000]}\n\n"
+        "Relevant verified office facts and deterministic calculations:\n"
+        f"{bounded_verified_context}\n\n"
         "Completed or attempted operator actions:\n"
         f"{json.dumps(tool_intents, default=str)[:1400]}\n\n"
         "Source-linked memory snippets:\n"
         f"{json.dumps(retrieval_hits[:3], default=str)[:700]}\n\n"
-        "Answer as Charlie in a natural ongoing conversation. Lead with the direct answer, then state what was "
-        "actually done and the most useful next decision. Preserve facts, caveats, numbers, action status, and "
+        f"Answer as {identity.get('agent_name')} in a natural ongoing conversation. Lead with the direct answer. "
+        "When work was requested, state exactly what you completed, what you delegated, who owns it, and its stored status. "
+        "Preserve facts, caveats, numbers, action status, and "
         "links exactly. Never invent an action or recommendation. Do not add buy, sell, hold, sizing, order, or "
         "execution advice. Broker writes remain locked. Return only the user-facing answer."
     )
+
+    def deterministic_for_identity() -> str:
+        return identity_fallback_reply(
+            identity,
+            deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status),
+        )
     started = time.perf_counter()
     control_payload = dict(payload)
     control_payload["contains_client_data"] = include_client_context
@@ -14323,33 +14612,31 @@ def chat_with_charlie(payload: dict) -> dict:
     cached_response = model_decision.get("cached_response")
     if deterministic_only:
         route = {**route, "last_model_status": "deterministic_tool_route"}
-        assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+        assistant_message = deterministic_for_identity()
         model_status = "deterministic_fallback"
     elif cached_response:
         assistant_message, model_status = str(cached_response), "cache_hit"
     elif model_decision.get("decision_status") == "allowed":
         selected_model = str(route.get("default_model") or "llama3.2:3b")
         if route.get("default_provider") == "mlx":
-            assistant_message, model_status = mlx_chat(selected_model, prompt)
+            assistant_message, model_status = mlx_chat(selected_model, prompt, identity_system_prompt)
         elif route.get("default_provider") == "local_openai":
-            assistant_message, model_status = local_openai_chat(selected_model, prompt)
+            assistant_message, model_status = local_openai_chat(selected_model, prompt, identity_system_prompt)
         elif route.get("default_provider") == "openrouter":
-            assistant_message, model_status, cloud_usage = openrouter_chat(selected_model, prompt)
+            assistant_message, model_status, cloud_usage = openrouter_chat(selected_model, prompt, identity_system_prompt)
         else:
-            assistant_message, model_status = ollama_chat(selected_model, prompt)
+            assistant_message, model_status = ollama_chat(selected_model, prompt, identity_system_prompt)
     else:
         assistant_message, model_status = None, "model_call_blocked"
     if assistant_message and model_status == "called":
         response_guardrail = validate_charlie_model_response(assistant_message, context)
         if response_guardrail:
             route = {**route, "last_model_status": "response_guardrail_rejected"}
-            assistant_message = deterministic_chat_reply(
-                message, context, retrieval_hits, widget_intents, route, retrieval_status
-            )
+            assistant_message = deterministic_for_identity()
             model_status = "deterministic_fallback"
     if not assistant_message:
         route = {**route, "last_model_status": model_status}
-        assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+        assistant_message = deterministic_for_identity()
         model_status = "deterministic_fallback"
 
     finish_chat_model_call(
@@ -14364,6 +14651,8 @@ def chat_with_charlie(payload: dict) -> dict:
     metadata = dict(payload.get("metadata") or {})
     metadata.update({
         "api_route": "/api/chat",
+        "assistant_identity": identity.get("agent_name"),
+        "assistant_title": identity.get("display_title"),
         "model_call_decision_id": model_decision.get("id"),
         "privacy_class": model_decision.get("privacy_class"),
         "response_guardrail": response_guardrail,
@@ -14384,9 +14673,17 @@ def chat_with_charlie(payload: dict) -> dict:
                 "limit": len(widget_intents),
             }
         )
+    delegated_jobs = [
+        assignment.get("task")
+        for operation in tool_intents
+        for assignment in ((operation.get("result") or {}).get("assignments") or [])
+        if assignment.get("task")
+    ]
     return {
         "chat_turn": chat_turn,
         "message": assistant_message,
+        "assistant_identity": identity,
+        "conversation_mode": "employee" if identity.get("agent_name") != "Charlie Munger" else "orchestrator",
         "route": route,
         "model_status": model_status,
         "model_call_control": {
@@ -14407,7 +14704,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "widget_intents": widget_intents,
         "materialization": materialization,
         "dashboard_widgets": [item.get("widget") for item in materialization.get("materialized", []) if item.get("widget")],
-        "agent_jobs": [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
+        "agent_jobs": delegated_jobs + [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
         "tool_intents": tool_intents,
         "operations": tool_intents,
         "response_guardrail": response_guardrail,
@@ -14854,6 +15151,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/filings/extract-pdfs":
                 self._send_json(run_filing_pdf_extractor(payload), 201)
+                return
+            if self.path == "/api/research/sources/ingest":
+                self._send_json(ingest_research_source(payload), 201)
                 return
             if self.path == "/api/research/papers/ingest":
                 self._send_json(ingest_research_paper(payload), 201)

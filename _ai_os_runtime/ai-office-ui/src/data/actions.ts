@@ -419,6 +419,31 @@ export function useIngestResearchPaper() {
   );
 }
 
+export interface ResearchSourceIngestInput {
+  title?: string;
+  source_url?: string;
+  pasted_text?: string;
+  source_key?: "web" | "blog" | "github" | "manual";
+  source_kind?: string;
+  research_objective: string;
+  hypothesis?: string;
+  hypothesis_title?: string;
+  target_universe?: string;
+  timeframe?: string;
+  topics?: string[];
+  asset_classes?: string[];
+  desired_outputs?: string[];
+  priority?: "low" | "medium" | "high" | "critical";
+  actor?: string;
+}
+
+export function useIngestResearchSource() {
+  return useInvalidating<ResearchSourceIngestInput, LiveRow>(
+    "/api/research/sources/ingest",
+    [Q.researchIdeas, Q.strategyArsenal, Q.office, Q.missionControl]
+  );
+}
+
 /* ============================================================
  * SPECIAL SITUATIONS
  * ============================================================ */
