@@ -207,6 +207,43 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         strategy.assert_not_called()
         message.assert_not_called()
 
+    def test_research_status_language_requests_verified_context(self) -> None:
+        self.assertTrue(
+            ai_os_api_server.is_auto_factual_retrieval_request(
+                "What changed in the research office tonight, and what is actually completed?"
+            )
+        )
+
+    def test_research_status_reply_names_completed_specialist_outputs(self) -> None:
+        reply = ai_os_api_server.deterministic_chat_reply(
+            "What changed in research tonight?",
+            {
+                "research_intakes": [{
+                    "title": "Options source",
+                    "hypothesis_count": 1,
+                    "intake_status": "hypothesis_queued",
+                    "extraction_word_count": 400,
+                    "source_url": "https://example.com/options",
+                }],
+                "research_cycles": [{"id": 3}],
+                "research_worker_outputs": [{
+                    "worker_run_id": 321,
+                    "agent_name": "Strategy Research Agent",
+                    "skill_key": "generate_strategy_hypothesis",
+                    "paper_title": "Options source",
+                    "output_note_path": "ai memory/output.md",
+                }],
+            },
+            [],
+            [],
+            {"default_model": "test"},
+            "not_requested",
+        )
+
+        self.assertIn("1 immutable cycles", reply)
+        self.assertIn("run 321 by Strategy Research Agent", reply)
+        self.assertIn("live execution are disabled", reply)
+
     def test_capability_question_is_not_misread_as_delegation(self) -> None:
         with mock.patch.object(
             ai_os_api_server,

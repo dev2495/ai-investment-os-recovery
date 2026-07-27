@@ -13753,6 +13753,35 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             ORDER BY started_at DESC, id DESC
             LIMIT 8
         """,
+        "research_intakes": """
+            SELECT paper_id,title,source_kind,source_url,research_objective,
+                   target_universe,extraction_word_count,intake_status,
+                   hypothesis_count,open_task_count,latest_task_at,updated_at
+            FROM research.v_research_intake_pipeline
+            ORDER BY updated_at DESC,paper_id DESC
+            LIMIT 8
+        """,
+        "research_cycles": """
+            SELECT id,cycle_key,source_kind,source_ref,objective,as_of,universe,
+                   status,owner_agent,broker_write_allowed,live_execution_allowed
+            FROM strategy.research_cycles
+            ORDER BY created_at DESC,id DESC
+            LIMIT 8
+        """,
+        "research_worker_outputs": """
+            SELECT run.id AS worker_run_id,run.agent_name,run.skill_key,run.status,
+                   run.output_note_path,run.finished_at,task.id AS task_id,task.title,
+                   paper.id AS paper_id,paper.title AS paper_title
+            FROM agent.worker_runs run
+            JOIN agent.tasks task ON task.id=run.task_id
+            LEFT JOIN agent.agent_messages message ON message.generated_task_id=task.id
+            LEFT JOIN research.research_papers paper
+              ON paper.id=nullif(message.metadata->>'paper_id','')::BIGINT
+            WHERE run.status='completed'
+              AND message.metadata->>'source'='research_source_intake'
+            ORDER BY run.finished_at DESC,run.id DESC
+            LIMIT 12
+        """,
         "options_summary": """
             SELECT provider, exchange, underlying, expiry, observed_at,
                    contract_count, call_count, put_count, min_strike,
@@ -13795,6 +13824,26 @@ def is_broad_office_request(message: str) -> bool:
     return any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "brief me", "briefing", "summarize verified", "what should i decide", "what do i need to decide", "decide next"))
 
 
+def is_auto_factual_retrieval_request(message: str) -> bool:
+    normalized = message.lower()
+    request_terms = (
+        "how many", "show", "list", "latest", "status", "what changed",
+        "where is", "where are", "do we have", "give me", "get me",
+        "what is completed", "what is actually completed", "needs my review",
+    )
+    domain_terms = (
+        "filing", "announcement", "news", "watchlist", "idea list", "report",
+        "letter", "broker", "zerodha", "option", "position", "holding",
+        "client", "ohlcv", "market data", "calendar", "holiday", "result date",
+        "research", "paper", "article", "hypothesis", "backtest", "worker",
+        "agent", "department", "office",
+    )
+    return (
+        any(term in normalized for term in request_terms)
+        and any(term in normalized for term in domain_terms)
+    )
+
+
 def deterministic_chat_reply(
     message: str,
     context: dict,
@@ -13820,6 +13869,9 @@ def deterministic_chat_reply(
     watchlist = context.get("watchlist") or []
     ideas = context.get("generated_ideas") or []
     reports = context.get("latest_reports") or []
+    research_intakes = context.get("research_intakes") or []
+    research_cycles = context.get("research_cycles") or []
+    research_worker_outputs = context.get("research_worker_outputs") or []
     options = context.get("options_summary") or []
     broker_snapshots = context.get("broker_snapshots") or []
     news_brief = context.get("news_brief") or []
@@ -13841,6 +13893,31 @@ def deterministic_chat_reply(
                 + (f" ({result.get('detail')})" if result.get("detail") else "")
                 + "."
             )
+    if any(term in normalized for term in ("research", "paper", "article", "hypothesis", "backtest")):
+        if research_intakes:
+            focused.append(
+                f"Research pipeline: {len(research_intakes)} recent source intakes, "
+                f"{len(research_cycles)} immutable cycles, and {len(research_worker_outputs)} completed specialist outputs."
+            )
+            focused.extend(
+                f"- {row.get('title')}: {row.get('hypothesis_count')} hypothesis, "
+                f"status {row.get('intake_status')}, {row.get('extraction_word_count')} extracted words "
+                f"[source]({row.get('source_url')})"
+                for row in research_intakes[:4]
+            )
+            if research_worker_outputs:
+                focused.append("Completed specialist work:")
+                focused.extend(
+                    f"- run {row.get('worker_run_id')} by {row.get('agent_name')} using "
+                    f"{row.get('skill_key')} for {row.get('paper_title')}; "
+                    f"output {row.get('output_note_path')}"
+                    for row in research_worker_outputs[:6]
+                )
+            focused.append(
+                "All listed research cycles remain research-only; broker writes and live execution are disabled."
+            )
+        else:
+            focused.append("No research source intake is stored in the current verified snapshot.")
     if "news" in normalized:
         if news_brief:
             focused.append("What matters now from the live, source-linked news queue:")
@@ -14526,19 +14603,7 @@ def chat_with_charlie(payload: dict) -> dict:
         for row in context.get("approval_summary") or []
     }
     normalized_message = message.lower()
-    factual_request_terms = (
-        "how many", "show", "list", "latest", "status", "what changed",
-        "where is", "where are", "do we have", "give me", "get me",
-    )
-    factual_domain_terms = (
-        "filing", "announcement", "news", "watchlist", "idea list", "report",
-        "letter", "broker", "zerodha", "option", "position", "holding",
-        "client", "ohlcv", "market data", "calendar", "holiday", "result date",
-    )
-    auto_factual_retrieval = (
-        any(term in normalized_message for term in factual_request_terms)
-        and any(term in normalized_message for term in factual_domain_terms)
-    )
+    auto_factual_retrieval = is_auto_factual_retrieval_request(message)
     deterministic_only = bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
     if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
