@@ -14214,13 +14214,32 @@ def resolve_agent_for_instruction(message: str) -> dict | None:
         "portfolio": ("portfolio", "capital allocation"),
         "data": ("data",),
     }
-    for aliases in department_aliases.values():
-        if not any(alias in normalized for alias in aliases):
-            continue
+
+    def department_profile(aliases: tuple[str, ...]) -> dict | None:
         for profile in profiles:
             department = f"{profile.get('department') or ''} {profile.get('department_name') or ''}".lower()
             if any(alias in department for alias in aliases):
                 return profile
+        return None
+
+    # A named destination such as "quant team" must outrank incidental
+    # subject words such as "research source" in the assignment body.
+    for department_key, aliases in department_aliases.items():
+        explicit_phrases = tuple(
+            f"{alias} {unit}"
+            for alias in (department_key, *aliases)
+            for unit in ("team", "department", "desk", "office")
+        )
+        if any(phrase in normalized for phrase in explicit_phrases):
+            target = department_profile(aliases)
+            if target:
+                return target
+    for aliases in department_aliases.values():
+        if not any(alias in normalized for alias in aliases):
+            continue
+        target = department_profile(aliases)
+        if target:
+            return target
     return None
 
 

@@ -113,6 +113,37 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(operations[0]["tool"], "delegate_agent_work")
         self.assertEqual(captured["to_agent"], "Head of Quant")
 
+    def test_explicit_quant_team_outranks_research_subject_words(self) -> None:
+        captured = {}
+        profiles = [
+            {
+                "agent_name": "Research Analyst",
+                "display_title": "Research Analyst",
+                "department": "research",
+                "department_name": "Research Factory",
+            },
+            {
+                "agent_name": "Head of Quant",
+                "display_title": "Head of Quant",
+                "department": "quant",
+                "department_name": "Quantitative Strategies Office",
+            },
+        ]
+
+        def fake_message(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "created", "id": 19}
+
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=profiles),
+            mock.patch.object(ai_os_api_server, "create_agent_message", fake_message),
+        ):
+            ai_os_api_server.execute_charlie_safe_tools(
+                "Have the quant team review research source 1 and prepare a validation plan"
+            )
+
+        self.assertEqual(captured["to_agent"], "Head of Quant")
+
     def test_non_action_conversation_does_not_write(self) -> None:
         with (
             mock.patch.object(ai_os_api_server, "create_strategy_intake") as strategy,
