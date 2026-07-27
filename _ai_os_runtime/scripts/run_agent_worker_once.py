@@ -272,7 +272,7 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                 f"""
                 SELECT id, thread_key, from_agent, to_agent, subject, body,
                        priority, status, processing_status, related_skill_key,
-                       created_at
+                       metadata, created_at
                 FROM agent.agent_messages
                 WHERE id = {int(source_ref)}
                 LIMIT 1
@@ -283,6 +283,47 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
             "unread_messages": psql_one("SELECT count(*)::INT AS count FROM agent.agent_messages WHERE status = 'unread'"),
             "pending_messages": psql_one("SELECT count(*)::INT AS count FROM agent.agent_messages WHERE processing_status IN ('pending','failed_retry')"),
         }
+        message = base.get("agent_message") or {}
+        message_metadata = message.get("metadata") or {}
+        paper_id = message_metadata.get("paper_id")
+        if skill_key in {
+            "company_research_note",
+            "research_evidence_curation",
+            "generate_strategy_hypothesis",
+            "head_quant_governance",
+            "validate_strategy_model",
+        } and str(paper_id or "").isdigit():
+            numeric_paper_id = int(paper_id)
+            base["research_source"] = psql_one(
+                f"""
+                SELECT id,paper_key,title,source_url,source_kind,research_objective,
+                       target_universe,desired_outputs,extraction_word_count,
+                       extraction_status,review_status,intake_status,content_hash,
+                       metadata,evidence,left(extracted_text,12000) AS extracted_text
+                FROM research.research_papers
+                WHERE id={numeric_paper_id}
+                """
+            )
+            base["research_hypotheses"] = psql_json(
+                f"""
+                SELECT id,title,edge_hypothesis,market_scope,asset_classes,timeframe,
+                       signal_definition,data_requirements,invalidation_tests,
+                       limitations,status,owner_agent
+                FROM research.paper_strategy_hypotheses
+                WHERE paper_id={numeric_paper_id}
+                ORDER BY created_at,id
+                """
+            )
+            base["research_cycle"] = psql_one(
+                f"""
+                SELECT id,cycle_key,objective,as_of,universe,strategy_spec,status,
+                       owner_agent,evidence,broker_write_allowed,live_execution_allowed
+                FROM strategy.research_cycles
+                WHERE source_kind='research_source' AND source_ref={sql_literal(str(numeric_paper_id))}
+                ORDER BY created_at DESC,id DESC
+                LIMIT 1
+                """
+            )
     if job and job.get("source_kind") == "committee_packet_position":
         source_ref = str(job.get("source_ref") or "")
         packet_id = source_ref.split(":", 1)[0]
@@ -585,6 +626,83 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         lines.append(position["thesis"])
         next_actions.append("Submit the position, wait for every required member, then open post-quorum challenge and chair synthesis.")
         next_actions.append("Require Devarsh's human-final decision before capital, client-facing, or broker action.")
+    elif context.get("research_source") and skill_key in {"company_research_note", "research_evidence_curation"}:
+        source = context.get("research_source") or {}
+        source_text = str(source.get("extracted_text") or "")
+        headings = [
+            line.lstrip("# ").strip()
+            for line in source_text.splitlines()
+            if line.strip().startswith("#") and line.lstrip("# ").strip()
+        ][:8]
+        evidence_lines = []
+        for line in source_text.splitlines():
+            candidate = line.strip().lstrip("-*> ").strip()
+            if len(candidate) < 45:
+                continue
+            lowered = candidate.lower()
+            if any(token in lowered for token in ("proof of concept", "educational", "agent", "risk", "backtest", "portfolio", "signal", "valuation")):
+                evidence_lines.append(candidate[:320])
+            if len(evidence_lines) >= 6:
+                break
+        summary = "\n".join([
+            "### Verified source facts",
+            f"- Source: [{source.get('title')}]({source.get('source_url')})",
+            f"- Content hash: `{source.get('content_hash')}`; extracted words: {source.get('extraction_word_count')}; extraction status: `{source.get('extraction_status')}`.",
+            f"- Operator objective: {source.get('research_objective')}",
+            f"- Source sections detected: {', '.join(headings) if headings else 'No explicit headings detected.'}",
+            "",
+            "### Source-backed claims",
+            *([f"- {line}" for line in evidence_lines] or ["- No claim is promoted until a human reviewer opens the stored source artifact."]),
+            "",
+            "### Fact, inference, and unknown",
+            "- Fact: the stored artifact and hash above are the evidence boundary for this review.",
+            "- Inference: the architecture can inform employee roles and research sequencing, but it does not establish investable alpha.",
+            "- Unknown: empirical edge, capacity, slippage, market-regime stability, and India-specific data availability remain unverified.",
+            "- Constraint: source claims marked as educational or proof-of-concept must not be represented as production evidence.",
+        ])
+        lines.append(summary)
+        next_actions.extend([
+            "Open the stored source artifact and approve or reject each extracted claim before durable thesis use.",
+            "Send only approved, falsifiable claims to Head of Quant for point-in-time testing.",
+        ])
+    elif context.get("research_source") and skill_key in {"generate_strategy_hypothesis", "head_quant_governance", "validate_strategy_model"}:
+        source = context.get("research_source") or {}
+        hypotheses = context.get("research_hypotheses") or []
+        cycle = context.get("research_cycle") or {}
+        requested = str((source.get("metadata") or {}).get("requested_hypothesis") or "").strip()
+        if not requested and hypotheses:
+            requested = str(hypotheses[0].get("edge_hypothesis") or "").strip()
+        if not requested:
+            requested = "No trade signal is emitted unless a source-supported alpha rule has point-in-time inputs and can abstain when evidence is insufficient."
+        universe = source.get("target_universe") or cycle.get("universe") or "operator-defined liquid instruments"
+        summary = "\n".join([
+            "### Falsifiable hypothesis",
+            f"- {requested}",
+            "- Null: the rule has no positive net out-of-sample expectancy after costs and produces no improvement over the declared benchmark.",
+            "",
+            "### Point-in-time test specification",
+            f"1. Freeze cycle `{cycle.get('cycle_key') or 'new-cycle-required'}` at `{cycle.get('as_of') or 'explicit as_of required'}` for universe `{universe}`.",
+            "2. Version every source record by event time and ingestion time; use only values observable before each decision timestamp.",
+            "3. Convert the narrative into one deterministic signal contract: inputs, transforms, lookback, direction, conviction, confidence, and explicit abstain conditions.",
+            "4. Use anchored walk-forward splits with a final untouched holdout; purge overlapping labels and embargo adjacent observations.",
+            "5. Compare against buy-and-hold, cash, and a simple non-LLM rule using identical universe, rebalance times, and costs.",
+            "6. Apply fees, bid-ask spread, impact, borrow/funding, turnover, liquidity, and capacity assumptions before scoring.",
+            "7. Report CAGR, volatility, Sharpe/Sortino, max drawdown, hit rate, turnover, exposure, tail loss, stability by regime, and abstention rate.",
+            "8. Run survivorship, delisting, corporate-action, timestamp, restatement, duplicate-row, and data-gap checks before any result is reviewable.",
+            "",
+            "### Invalidation and promotion gates",
+            "- Reject if the effect disappears after costs, depends on leaked/restated data, fails the untouched holdout, or is concentrated in too few names/dates.",
+            "- Reject if parameter neighborhoods are unstable, regime performance is contradictory without a declared filter, or capacity is below the intended book size.",
+            "- Abstain when required inputs are stale, contradictory, outside the tested universe, or below the confidence floor.",
+            "- Promotion path: research -> independent model validation -> risk review -> paper monitor -> paper trade. No automatic live promotion.",
+            f"- Current execution flags: broker_write_allowed={bool(cycle.get('broker_write_allowed'))}; live_execution_allowed={bool(cycle.get('live_execution_allowed'))}.",
+        ])
+        lines.append(summary)
+        next_actions.extend([
+            "Specify the exact alpha formula, rebalance timestamp, benchmark, cost schedule, and data tables before queueing a backtest.",
+            "Create a new immutable research cycle for every changed hypothesis or data cut; never overwrite this cycle.",
+            "Require independent Model Validation and Risk approval before paper monitoring or trading.",
+        ])
     elif job.get("source_kind") == "agent_message":
         message = context.get("agent_message", {})
         lines.append(

@@ -8806,17 +8806,19 @@ def ingest_research_source(payload: dict) -> dict:
     target_specs = [
         (
             next((name for name in ("Research Analyst", "Company Analyst", "Research Librarian") if name in active_names), None),
+            "company_research_note",
             "Independent evidence review",
             "Verify source claims, separate fact from inference, identify contradictions and missing primary evidence, and write a source-linked research note.",
         ),
         (
             next((name for name in ("Strategy Research Agent", "Head of Quant", "Quant Research Scientist") if name in active_names), None),
+            "generate_strategy_hypothesis",
             "Falsifiable hypothesis and test design",
             "Convert only supported claims into abstain-aware, point-in-time hypotheses with data requirements, transaction costs, invalidation tests, and a paper-backtest plan.",
         ),
     ]
     assignments: list[dict] = []
-    for target, subject_prefix, mandate in target_specs:
+    for target, skill_key, subject_prefix, mandate in target_specs:
         if not target:
             continue
         message = create_agent_message({
@@ -8826,6 +8828,7 @@ def ingest_research_source(payload: dict) -> dict:
             "body": f"Objective: {objective}\n\nMandate: {mandate}\n\nSource: research.research_papers/{paper_id}",
             "priority": priority,
             "actor": actor,
+            "related_skill_key": skill_key,
             "metadata": {
                 "source": "research_source_intake",
                 "paper_id": paper_id,

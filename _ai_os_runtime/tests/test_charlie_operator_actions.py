@@ -1,12 +1,63 @@
 from __future__ import annotations
 
 import unittest
+import json
 from unittest import mock
 
 from _ai_os_runtime.api import ai_os_api_server
 
 
 class CharlieOperatorActionsTest(unittest.TestCase):
+    def test_research_intake_assigns_specialist_skills(self) -> None:
+        messages: list[dict] = []
+
+        def fake_message(payload: dict) -> dict:
+            messages.append(payload)
+            return {"id": len(messages), "to_agent": payload["to_agent"]}
+
+        completed = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({
+                "paper": {
+                    "id": 91,
+                    "paper_key": "paper-91",
+                    "title": "Point-in-time alpha architecture",
+                    "source_url": "https://example.com/research",
+                    "content_hash": "abc123",
+                }
+            }),
+            stderr="",
+        )
+        with (
+            mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed),
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[
+                    {"agent_name": "Research Analyst"},
+                    {"agent_name": "Strategy Research Agent"},
+                ],
+            ),
+            mock.patch.object(ai_os_api_server, "create_agent_message", fake_message),
+            mock.patch.object(ai_os_api_server, "triage_agent_message", return_value={"status": "queued"}),
+            mock.patch.object(ai_os_api_server, "run_psql_json_statement", return_value=[{"id": 7}]),
+            mock.patch.object(ai_os_api_server, "run_psql_text"),
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.ingest_research_source({
+                "source_url": "https://example.com/research",
+                "research_objective": "Test the architecture without leakage.",
+            })
+
+        self.assertEqual(
+            [(item["to_agent"], item["related_skill_key"]) for item in messages],
+            [
+                ("Research Analyst", "company_research_note"),
+                ("Strategy Research Agent", "generate_strategy_hypothesis"),
+            ],
+        )
+        self.assertFalse(result["live_execution_allowed"])
+
     def test_article_url_creates_governed_research_intake(self) -> None:
         captured = {}
 
