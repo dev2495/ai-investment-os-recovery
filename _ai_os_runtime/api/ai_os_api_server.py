@@ -37,7 +37,7 @@ MLX_REQUEST_MODEL = os.environ.get(
 )
 LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
 LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
-LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "450"))
+LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "160"))
 LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "180"))
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
@@ -1197,6 +1197,8 @@ def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = 
                 "top_p": 0.95,
                 "top_k": 20,
                 "max_tokens": LOCAL_OPENAI_MAX_TOKENS,
+                "cache_prompt": True,
+                "chat_template_kwargs": {"enable_thinking": False},
                 "messages": [
                     {"role": "system", "content": system_prompt or CHARLIE_LOCAL_CONVERSATION_PROMPT},
                     {"role": "user", "content": prompt},
