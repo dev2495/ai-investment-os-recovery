@@ -37,11 +37,11 @@ SELECT
     p.local_text_path, left(p.abstract, 1200) AS abstract, p.page_count,
     p.topics, p.asset_classes, p.markets, p.methodology_tags,
     p.extraction_status, p.review_status, p.owner_agent,
-    p.source_kind, p.research_objective, p.target_universe, p.desired_outputs,
-    p.extraction_word_count, p.intake_status,
     count(h.id) AS hypothesis_count,
     max(r.finished_at) AS latest_ingestion_at,
-    p.evidence, p.metadata, p.created_at, p.updated_at
+    p.evidence, p.metadata, p.created_at, p.updated_at,
+    p.source_kind, p.research_objective, p.target_universe, p.desired_outputs,
+    p.extraction_word_count, p.intake_status
 FROM research.research_papers p
 LEFT JOIN research.paper_sources s ON s.source_key = p.source_key
 LEFT JOIN research.paper_strategy_hypotheses h ON h.paper_id = p.id
