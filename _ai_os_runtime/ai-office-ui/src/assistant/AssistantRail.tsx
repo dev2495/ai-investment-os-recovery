@@ -113,7 +113,7 @@ export function AssistantRail() {
     }
   });
   const [input, setInput] = React.useState("");
-  const [route, setRoute] = React.useState<ReasoningRoute>("local");
+  const [route, setRoute] = React.useState<ReasoningRoute>("fast");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const scopeProfile = React.useMemo(() => {
     if (scope === "charlie") return employeeDirectory.data?.primary?.find((row) => text(row, "agent_name") === "Charlie Munger");
