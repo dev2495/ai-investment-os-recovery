@@ -240,7 +240,7 @@ class CharlieOperatorActionsTest(unittest.TestCase):
             "not_requested",
         )
 
-        self.assertIn("1 immutable cycles", reply)
+        self.assertIn("1 immutable cycles (research ledger entries, not completed backtests)", reply)
         self.assertIn("run 321 by Strategy Research Agent", reply)
         self.assertIn("live execution are disabled", reply)
 

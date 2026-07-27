@@ -13779,6 +13779,7 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
               ON paper.id=nullif(message.metadata->>'paper_id','')::BIGINT
             WHERE run.status='completed'
               AND message.metadata->>'source'='research_source_intake'
+              AND run.skill_key <> 'route_user_request'
             ORDER BY run.finished_at DESC,run.id DESC
             LIMIT 12
         """,
@@ -13897,7 +13898,8 @@ def deterministic_chat_reply(
         if research_intakes:
             focused.append(
                 f"Research pipeline: {len(research_intakes)} recent source intakes, "
-                f"{len(research_cycles)} immutable cycles, and {len(research_worker_outputs)} completed specialist outputs."
+                f"{len(research_cycles)} immutable cycles (research ledger entries, not completed backtests), "
+                f"and {len(research_worker_outputs)} completed specialist outputs."
             )
             focused.extend(
                 f"- {row.get('title')}: {row.get('hypothesis_count')} hypothesis, "
@@ -14749,6 +14751,23 @@ def chat_with_charlie(payload: dict) -> dict:
         "auto_factual_retrieval": auto_factual_retrieval,
     })
     truth_envelope = build_response_truth_envelope(model_status, route, retrieval_status, retrieval_hits, include_client_context)
+    if needs_verified_facts:
+        context_errors = context.get("context_errors") or []
+        truth_envelope["evidence_status"] = "warehouse_verified" if not context_errors else "warehouse_partial"
+        truth_envelope["source_refs"] = [{
+            "source_table": "warehouse_chat_snapshot",
+            "as_of": truth_envelope["as_of"],
+            "context_sections": sorted(
+                key for key, value in context.items()
+                if key not in {"context_errors", "tool_results"} and value
+            ),
+        }]
+        truth_envelope["missing_evidence"] = [
+            f"context_error:{row.get('section')}:{row.get('error')}"
+            for row in context_errors
+        ]
+        truth_envelope["verification_checks"]["warehouse_context_loaded"] = True
+        truth_envelope["verification_checks"]["warehouse_context_error_count"] = len(context_errors)
     metadata["truth_envelope"] = truth_envelope
     persisted_payload["metadata"] = metadata
     chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
