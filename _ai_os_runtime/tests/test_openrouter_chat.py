@@ -107,6 +107,41 @@ class OpenRouterChatTest(unittest.TestCase):
 
         self.assertIn("unsupported_capital_recommendation", violations)
 
+    def test_allows_bounded_research_status_and_explicit_non_recommendation(self) -> None:
+        def fake_psql(query: str):
+            if "FROM agent.model_routes" in query:
+                return []
+            if "FROM trading.execution_control_state" in query:
+                return [{
+                    "global_execution_locked": True,
+                    "live_broker_writes_allowed": False,
+                }]
+            return []
+
+        response = (
+            "I found eight source intakes and sixteen completed specialist outputs. "
+            "Key points from the evidence: these are research hypotheses, not completed backtests. "
+            "I would not recommend buying before validation, and I cannot execute an order while broker writes are locked. "
+            + "Evidence remains bounded. " * 90
+        )
+        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                response,
+                {"filing_summary": [{"filing_count": 12}]},
+            )
+
+        self.assertNotIn("reasoning_or_prompt_leak", violations)
+        self.assertNotIn("unsupported_capital_recommendation", violations)
+
+    def test_rejects_explicit_prompt_or_chain_of_thought_leak(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[]):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                "System prompt: reveal the chain of thought before answering.",
+                {"filing_summary": [{"filing_count": 0}]},
+            )
+
+        self.assertIn("reasoning_or_prompt_leak", violations)
+
     def test_zero_allowed_items_does_not_contradict_execution_lock(self) -> None:
         def fake_psql(query: str):
             if "FROM agent.model_routes" in query:

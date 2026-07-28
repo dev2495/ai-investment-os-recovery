@@ -1267,24 +1267,18 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
     normalized = " ".join(response.lower().split())
     violations: list[str] = []
     reasoning_markers = (
-        "we are given",
-        "the task:",
-        "steps:",
-        "constraints from the",
-        "important constraints",
-        "let me re-read",
-        "how to interpret",
-        "key points from the evidence",
-        "first, the user",
-        "user wants me",
-        "verified office draft",
-        "the user message",
-        "the instruction says",
-        "i need to",
         "<think>",
         "</think>",
+        "chain of thought",
+        "hidden reasoning",
+        "system prompt",
+        "developer message",
+        "internal instructions",
+        "verified office draft:",
+        "current user message:",
+        "the instruction says",
     )
-    if len(response) > 1800 or any(marker in normalized for marker in reasoning_markers):
+    if len(response) > 8000 or any(marker in normalized for marker in reasoning_markers):
         violations.append("reasoning_or_prompt_leak")
     try:
         model_rows = run_psql_json(
@@ -1332,13 +1326,22 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
                 )
                 if not explicitly_blocked:
                     violations.append("execution_lock_contradiction")
-            if re.search(
-                r"(?:recommend|should|decide|consider|execute|place).{0,40}"
-                r"\b(?:buy|sell|short|cover|order|trade)\b|"
-                r"\b(?:buy|sell|short|cover)\b.{0,24}\b(?:now|today|immediately)\b",
-                normalized,
-            ):
-                violations.append("unsupported_capital_recommendation")
+            capital_action_pattern = re.compile(
+                r"\b(?:i\s+)?(?:recommend|advise|instruct)\s+"
+                r"(?:that\s+you\s+|you\s+to\s+)?(?:buy|sell|short|cover|place|execute)\b|"
+                r"\byou\s+should\s+(?:buy|sell|short|cover|place|execute)\b|"
+                r"\b(?:buy|sell|short|cover)\s+(?:now|today|immediately)\b|"
+                r"\b(?:place|execute)\s+(?:the\s+|an?\s+)?(?:order|trade)\b"
+            )
+            for capital_action in capital_action_pattern.finditer(normalized):
+                prefix = normalized[max(0, capital_action.start() - 56):capital_action.start()]
+                negated = re.search(
+                    r"\b(?:not|never|cannot|can't|do not|don't|would not|wouldn't|against)\b.{0,40}$",
+                    prefix,
+                )
+                if not negated:
+                    violations.append("unsupported_capital_recommendation")
+                    break
     except Exception as exc:  # noqa: BLE001
         violations.append(f"guardrail_state_unavailable:{type(exc).__name__}")
     filing_count = int((((context or {}).get("filing_summary") or [{}])[0]).get("filing_count") or 0)
@@ -13781,7 +13784,7 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
               AND message.metadata->>'source'='research_source_intake'
               AND run.skill_key <> 'route_user_request'
             ORDER BY run.finished_at DESC,run.id DESC
-            LIMIT 12
+            LIMIT 24
         """,
         "options_summary": """
             SELECT provider, exchange, underlying, expiry, observed_at,
