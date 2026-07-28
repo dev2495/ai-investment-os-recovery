@@ -13792,10 +13792,12 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             LIMIT 8
         """,
         "broker_snapshots": """
-            SELECT provider, connector_key, dataset, captured_at,
-                   row_count, status, source_account_ref, broker_write_allowed
+            SELECT provider, source_connector_key AS connector_key, dataset,
+                   retrieved_at AS captured_at, row_count,
+                   'captured'::TEXT AS status,
+                   account_ref AS source_account_ref, broker_write_allowed
             FROM trading.v_latest_broker_read_snapshots
-            ORDER BY captured_at DESC
+            ORDER BY retrieved_at DESC
             LIMIT 12
         """,
         "widgets": """

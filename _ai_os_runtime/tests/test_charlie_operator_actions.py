@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import json
+from pathlib import Path
 from unittest import mock
 
 from _ai_os_runtime.api import ai_os_api_server
@@ -243,6 +244,17 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertIn("1 immutable cycles (research ledger entries, not completed backtests)", reply)
         self.assertIn("run 321 by Strategy Research Agent", reply)
         self.assertIn("live execution are disabled", reply)
+
+    def test_response_ledger_accepts_warehouse_truth_states(self) -> None:
+        migration = (
+            Path(ai_os_api_server.__file__).resolve().parents[1]
+            / "postgres"
+            / "init"
+            / "167_response_evidence_warehouse_states_v1.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("'warehouse_verified'", migration)
+        self.assertIn("'warehouse_partial'", migration)
 
     def test_capability_question_is_not_misread_as_delegation(self) -> None:
         with mock.patch.object(
