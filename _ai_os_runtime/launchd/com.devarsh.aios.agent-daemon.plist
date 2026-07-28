@@ -30,7 +30,7 @@
     <key>AI_OS_PSQL_BIN</key>
     <string>/opt/homebrew/opt/postgresql@15/bin/psql</string>
     <key>AI_OS_DOCKER_BIN</key>
-    <string>/usr/local/bin/docker</string>
+    <string>/opt/homebrew/bin/docker</string>
     <key>AI_OS_ARTIFACT_ROOT</key>
     <string>/Volumes/Devarsh SSD/AI OS Data/artifacts</string>
     <key>AI_OS_PDF_PYTHON</key>
