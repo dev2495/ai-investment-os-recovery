@@ -228,6 +228,19 @@ class CharlieOperatorActionsTest(unittest.TestCase):
                 "Summarize my client portfolio positions and exposure"
             )
         )
+
+    def test_fast_route_selection_is_explicit_one_call_cloud_approval(self) -> None:
+        self.assertTrue(
+            ai_os_api_server.is_explicit_cloud_route_selection(
+                {"route_name": "openrouter_research_fast"},
+                {"default_provider": "openrouter"},
+            )
+        )
+        self.assertFalse(
+            ai_os_api_server.is_explicit_cloud_route_selection(
+                {}, {"default_provider": "openrouter"}
+            )
+        )
         self.assertTrue(
             ai_os_api_server.message_requires_client_private_context(
                 "Brief me on what is going on in the office today"

@@ -13859,6 +13859,11 @@ def message_requires_client_private_context(message: str) -> bool:
     return any(term in normalized for term in private_terms)
 
 
+def is_explicit_cloud_route_selection(payload: dict, route: dict) -> bool:
+    route_name = str(payload.get("route_name") or payload.get("routeName") or "").strip()
+    return bool(route_name and str(route.get("default_provider") or "") == "openrouter")
+
+
 def deterministic_chat_reply(
     message: str,
     context: dict,
@@ -14715,6 +14720,11 @@ def chat_with_charlie(payload: dict) -> dict:
             control_payload["privacy_class"] = "client_private"
         else:
             control_payload["privacy_class"] = "internal"
+            control_payload["cloud_approved"] = bool(
+                payload.get("cloud_approved")
+                or payload.get("cloudApproved")
+                or is_explicit_cloud_route_selection(payload, preview_route)
+            )
     if not control_payload.get("route_name") and not control_payload.get("routeName"):
         control_payload["route_name"] = requested_route
     model_decision = choose_chat_model_call(control_payload, prompt)
