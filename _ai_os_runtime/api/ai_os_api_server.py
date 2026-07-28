@@ -13847,6 +13847,18 @@ def is_auto_factual_retrieval_request(message: str) -> bool:
     )
 
 
+def message_requires_client_private_context(message: str) -> bool:
+    normalized = message.lower()
+    if is_broad_office_request(message):
+        return True
+    private_terms = (
+        "client", "portfolio", "holding", "position", "account", "mandate",
+        "pnl", "profit and loss", "exposure", "zerodha", "broker", "order",
+        "trade blotter", "trade journal", "my trades", "our trades",
+    )
+    return any(term in normalized for term in private_terms)
+
+
 def deterministic_chat_reply(
     message: str,
     context: dict,
@@ -14622,6 +14634,12 @@ def chat_with_charlie(payload: dict) -> dict:
         or infer_local_chat_route(message)
     )
     preview_route = get_model_route(requested_route)
+    requires_client_private_context = bool(include_client_context and message_requires_client_private_context(message))
+    model_retrieval_hits = retrieval_hits
+    if str(preview_route.get("default_provider") or "") == "openrouter":
+        # Cloud receives only the bounded deterministic draft. Local Qdrant
+        # snippets may contain unrelated client material and never cross this boundary.
+        model_retrieval_hits = []
     base_session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
     session_key = base_session_key + ":" + slug_for_text(str(identity.get("agent_name") or "charlie"))
     history: list[dict] = []
@@ -14675,7 +14693,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "Completed or attempted operator actions:\n"
         f"{json.dumps(tool_intents, default=str)[:1400]}\n\n"
         "Source-linked memory snippets:\n"
-        f"{json.dumps(retrieval_hits[:3], default=str)[:700]}\n\n"
+        f"{json.dumps(model_retrieval_hits[:3], default=str)[:700]}\n\n"
         f"Answer as {identity.get('agent_name')} in a natural ongoing conversation. Lead with the direct answer. "
         "When work was requested, state exactly what you completed, what you delegated, who owns it, and its stored status. "
         "Preserve facts, caveats, numbers, action status, and "
@@ -14690,7 +14708,13 @@ def chat_with_charlie(payload: dict) -> dict:
         )
     started = time.perf_counter()
     control_payload = dict(payload)
-    control_payload["contains_client_data"] = include_client_context
+    control_payload["contains_client_data"] = requires_client_private_context
+    if str(preview_route.get("default_provider") or "") == "openrouter":
+        if requires_client_private_context:
+            control_payload["route_name"] = CHAT_MODEL_ROUTE
+            control_payload["privacy_class"] = "client_private"
+        else:
+            control_payload["privacy_class"] = "internal"
     if not control_payload.get("route_name") and not control_payload.get("routeName"):
         control_payload["route_name"] = requested_route
     model_decision = choose_chat_model_call(control_payload, prompt)

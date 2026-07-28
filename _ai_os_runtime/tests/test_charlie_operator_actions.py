@@ -215,6 +215,25 @@ class CharlieOperatorActionsTest(unittest.TestCase):
             )
         )
 
+    def test_research_status_can_use_internal_cloud_boundary(self) -> None:
+        self.assertFalse(
+            ai_os_api_server.message_requires_client_private_context(
+                "Which research sources and specialist outputs were completed tonight?"
+            )
+        )
+
+    def test_portfolio_and_broad_office_requests_stay_client_private(self) -> None:
+        self.assertTrue(
+            ai_os_api_server.message_requires_client_private_context(
+                "Summarize my client portfolio positions and exposure"
+            )
+        )
+        self.assertTrue(
+            ai_os_api_server.message_requires_client_private_context(
+                "Brief me on what is going on in the office today"
+            )
+        )
+
     def test_research_status_reply_names_completed_specialist_outputs(self) -> None:
         reply = ai_os_api_server.deterministic_chat_reply(
             "What changed in research tonight?",
