@@ -211,6 +211,33 @@ class OpenRouterChatTest(unittest.TestCase):
         for expected in ("Portfolio context", "Institutional risk", "Approvals", "Filing intelligence", "News brief"):
             self.assertIn(expected, answer)
 
+    def test_research_draft_reports_per_source_output_counts(self) -> None:
+        context = {
+            "research_intakes": [
+                {"title": "TradingAgents", "hypothesis_count": 1, "intake_status": "hypothesis_queued", "extraction_word_count": 2008, "source_url": "https://example.test/a"},
+                {"title": "Options Hub", "hypothesis_count": 1, "intake_status": "hypothesis_queued", "extraction_word_count": 900, "source_url": "https://example.test/b"},
+            ],
+            "research_cycles": [{"id": 1}, {"id": 2}],
+            "research_worker_outputs": [
+                {"worker_run_id": 1, "agent_name": "Research Analyst", "skill_key": "research", "paper_title": "TradingAgents", "output_note_path": "/tmp/a"},
+                {"worker_run_id": 2, "agent_name": "Strategy Research Agent", "skill_key": "strategy", "paper_title": "Options Hub", "output_note_path": "/tmp/b"},
+            ],
+        }
+
+        answer = ai_os_api_server.deterministic_chat_reply(
+            "Summarize the research pipeline.",
+            context,
+            [],
+            [],
+            {"default_model": "test"},
+            "ok",
+            include_route_status=False,
+        )
+
+        self.assertIn("2 completed specialist outputs", answer)
+        self.assertIn("TradingAgents: 1 hypothesis", answer)
+        self.assertIn("and 1 completed specialist outputs", answer)
+
 
 if __name__ == "__main__":
     unittest.main()

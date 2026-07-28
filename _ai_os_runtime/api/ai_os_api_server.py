@@ -13895,6 +13895,11 @@ def deterministic_chat_reply(
     research_intakes = context.get("research_intakes") or []
     research_cycles = context.get("research_cycles") or []
     research_worker_outputs = context.get("research_worker_outputs") or []
+    research_output_counts: dict[str, int] = {}
+    for output in research_worker_outputs:
+        paper_title = str(output.get("paper_title") or "").strip()
+        if paper_title:
+            research_output_counts[paper_title] = research_output_counts.get(paper_title, 0) + 1
     options = context.get("options_summary") or []
     broker_snapshots = context.get("broker_snapshots") or []
     news_brief = context.get("news_brief") or []
@@ -13926,16 +13931,17 @@ def deterministic_chat_reply(
             focused.extend(
                 f"- {row.get('title')}: {row.get('hypothesis_count')} hypothesis, "
                 f"status {row.get('intake_status')}, {row.get('extraction_word_count')} extracted words "
+                f"and {research_output_counts.get(str(row.get('title') or '').strip(), 0)} completed specialist outputs "
                 f"[source]({row.get('source_url')})"
-                for row in research_intakes[:4]
+                for row in research_intakes[:8]
             )
             if research_worker_outputs:
-                focused.append("Completed specialist work:")
+                focused.append("Recent completed specialist work (bounded sample, not the full ledger):")
                 focused.extend(
                     f"- run {row.get('worker_run_id')} by {row.get('agent_name')} using "
                     f"{row.get('skill_key')} for {row.get('paper_title')}; "
                     f"output {row.get('output_note_path')}"
-                    for row in research_worker_outputs[:6]
+                    for row in research_worker_outputs[:4]
                 )
             focused.append(
                 "All listed research cycles remain research-only; broker writes and live execution are disabled."
@@ -14704,6 +14710,7 @@ def chat_with_charlie(payload: dict) -> dict:
         f"{json.dumps(model_retrieval_hits[:3], default=str)[:700]}\n\n"
         f"Answer as {identity.get('agent_name')} in a natural ongoing conversation. Lead with the direct answer. "
         "When work was requested, state exactly what you completed, what you delegated, who owns it, and its stored status. "
+        "Any row list is a bounded sample unless explicitly labelled complete; omission from a sample is never evidence that a record or run does not exist. "
         "Preserve facts, caveats, numbers, action status, and "
         "links exactly. Never invent an action or recommendation. Do not add buy, sell, hold, sizing, order, or "
         "execution advice. Broker writes remain locked. Return only the user-facing answer."
