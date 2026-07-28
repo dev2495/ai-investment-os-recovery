@@ -14353,6 +14353,32 @@ def resolve_agent_for_instruction(message: str) -> dict | None:
     return None
 
 
+def resolve_delegation_skill(target: dict) -> str | None:
+    """Choose the target employee's active substantive skill for durable work."""
+    agent_name = str(target.get("agent_name") or "").strip()
+    if not agent_name:
+        return None
+    try:
+        rows = run_psql_json(
+            "SELECT skill_key FROM agent.v_agent_skill_matrix "
+            f"WHERE {sql_literal(agent_name)}=ANY(coalesce(primary_agents, '{{}}'::text[])) "
+            f"OR {sql_literal(agent_name)}=ANY(coalesce(assigned_agents, '{{}}'::text[])) "
+            "ORDER BY CASE WHEN " + sql_literal(agent_name) + "=ANY(coalesce(primary_agents, '{}'::text[])) THEN 0 ELSE 1 END, skill_key LIMIT 1"
+        )
+        if rows and rows[0].get("skill_key"):
+            return str(rows[0]["skill_key"])
+    except Exception:  # Rolling migrations may temporarily hide the matrix view.
+        pass
+    fallback_by_agent = {
+        "Head of Quant": "head_quant_governance",
+        "Research Analyst": "company_research_note",
+        "Strategy Research Agent": "generate_strategy_hypothesis",
+        "News Analyst": "news_to_dashboard_alert",
+        "Risk Agent": "risk_gate_review",
+    }
+    return fallback_by_agent.get(agent_name)
+
+
 def resolve_conversation_identity(payload: dict) -> dict:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     requested = str(
@@ -14585,6 +14611,7 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
         target = resolve_agent_for_instruction(message)
         if target:
             subject = re.sub(r"\s+", " ", message).strip()[:120]
+            related_skill_key = resolve_delegation_skill(target)
             invoke(
                 "delegate_agent_work",
                 lambda: create_agent_message({
@@ -14594,7 +14621,12 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
                     "body": message,
                     "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
                     "actor": "Devarsh via Charlie",
-                    "metadata": {"source": "charlie_chat", "operator_requested": True},
+                    "related_skill_key": related_skill_key,
+                    "metadata": {
+                        "source": "charlie_chat",
+                        "operator_requested": True,
+                        "skill_key": related_skill_key,
+                    },
                 }),
                 "id",
             )

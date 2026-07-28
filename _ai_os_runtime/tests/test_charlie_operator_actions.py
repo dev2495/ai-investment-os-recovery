@@ -138,6 +138,7 @@ class CharlieOperatorActionsTest(unittest.TestCase):
 
         self.assertEqual(operations[0]["tool"], "delegate_agent_work")
         self.assertEqual(captured["to_agent"], "Research Analyst")
+        self.assertEqual(captured["related_skill_key"], "company_research_note")
         self.assertEqual(captured["priority"], "medium")
         self.assertTrue(captured["metadata"]["operator_requested"])
 
@@ -164,6 +165,7 @@ class CharlieOperatorActionsTest(unittest.TestCase):
 
         self.assertEqual(operations[0]["tool"], "delegate_agent_work")
         self.assertEqual(captured["to_agent"], "Head of Quant")
+        self.assertEqual(captured["related_skill_key"], "head_quant_governance")
 
     def test_explicit_quant_team_outranks_research_subject_words(self) -> None:
         captured = {}

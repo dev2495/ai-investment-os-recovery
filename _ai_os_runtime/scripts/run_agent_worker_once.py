@@ -286,6 +286,26 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
         message = base.get("agent_message") or {}
         message_metadata = message.get("metadata") or {}
         paper_id = message_metadata.get("paper_id")
+        if not str(paper_id or "").isdigit():
+            message_text = f"{message.get('subject') or ''} {message.get('body') or ''}".lower()
+            source_aliases = (
+                ("tradingagents", "tradingagents"),
+                ("ai hedge fund", "ai hedge fund"),
+                ("newsdesk", "newsdesk"),
+                ("commodity landed", "commodity landed"),
+                ("tradingview screener", "tradingview screener"),
+                ("fii dii", "fii dii"),
+                ("options hub", "options hub"),
+                ("fundamental scanner", "fundamental scanner"),
+            )
+            source_term = next((query for alias, query in source_aliases if alias in message_text), None)
+            if source_term:
+                matched_source = psql_one(
+                    "SELECT id FROM research.research_papers "
+                    f"WHERE lower(title) LIKE {sql_literal('%' + source_term + '%')} "
+                    "ORDER BY updated_at DESC,id DESC LIMIT 1"
+                )
+                paper_id = matched_source.get("id")
         if skill_key in {
             "company_research_note",
             "research_evidence_curation",
@@ -322,6 +342,20 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                 WHERE source_kind='research_source' AND source_ref={sql_literal(str(numeric_paper_id))}
                 ORDER BY created_at DESC,id DESC
                 LIMIT 1
+                """
+            )
+        if skill_key in {"head_quant_governance", "validate_strategy_model", "generate_strategy_hypothesis"}:
+            base["workflow_contracts"] = psql_json(
+                """
+                SELECT workflow_key,workflow_name,workflow_type,owner_agent,status,
+                       permission_level,approval_required,notes,metadata
+                FROM agent.workflow_registry
+                WHERE workflow_key IN (
+                    'checkpointed_research_committee',
+                    'outcome_grounded_decision_review',
+                    'mrchartist_multi_source_intelligence'
+                )
+                ORDER BY workflow_key
                 """
             )
     if job and job.get("source_kind") == "committee_packet_position":
@@ -675,6 +709,20 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         if not requested:
             requested = "No trade signal is emitted unless a source-supported alpha rule has point-in-time inputs and can abstain when evidence is insufficient."
         universe = source.get("target_universe") or cycle.get("universe") or "operator-defined liquid instruments"
+        workflow_contracts = context.get("workflow_contracts") or []
+        workflow_lines = [
+            "### Current registered workflow controls",
+            *(
+                [
+                    f"- `{row.get('workflow_key')}`: {row.get('workflow_name')} is `{row.get('status')}`, "
+                    f"permission `{row.get('permission_level')}`, human approval required={bool(row.get('approval_required'))}."
+                    for row in workflow_contracts
+                ]
+                or ["- No matching workflow contract is registered; comparison remains blocked until the control plane is defined."]
+            ),
+            "- TradingAgents patterns are adopted as typed, checkpointed research handoffs only; the internal workflow registry and human approval boundary remain controlling.",
+            "",
+        ]
         summary = "\n".join([
             "### Falsifiable hypothesis",
             f"- {requested}",
@@ -690,6 +738,7 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
             "7. Report CAGR, volatility, Sharpe/Sortino, max drawdown, hit rate, turnover, exposure, tail loss, stability by regime, and abstention rate.",
             "8. Run survivorship, delisting, corporate-action, timestamp, restatement, duplicate-row, and data-gap checks before any result is reviewable.",
             "",
+            *workflow_lines,
             "### Invalidation and promotion gates",
             "- Reject if the effect disappears after costs, depends on leaked/restated data, fails the untouched holdout, or is concentrated in too few names/dates.",
             "- Reject if parameter neighborhoods are unstable, regime performance is contradictory without a declared filter, or capacity is below the intended book size.",
