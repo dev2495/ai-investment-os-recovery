@@ -267,7 +267,18 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
     }
     if job and job.get("source_kind") == "agent_message":
         source_ref = str(job.get("source_ref") or "")
-        if source_ref.isdigit():
+        base["agent_message"] = psql_one(
+            f"""
+            SELECT id, thread_key, from_agent, to_agent, subject, body,
+                   priority, status, processing_status, related_skill_key,
+                   metadata, created_at
+            FROM agent.agent_messages
+            WHERE generated_task_id = {int(job.get("task_id"))}
+            ORDER BY created_at DESC,id DESC
+            LIMIT 1
+            """
+        )
+        if not base["agent_message"] and source_ref.isdigit():
             base["agent_message"] = psql_one(
                 f"""
                 SELECT id, thread_key, from_agent, to_agent, subject, body,
@@ -645,12 +656,98 @@ def advance_committee_after_all_positions(packet_id: int) -> dict[str, Any]:
     return {"status": result.get("packet_status"), "advanced": True, "packet": result}
 
 
+
+def run_kronos_adapter(job: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    tool = psql_one(
+        """
+        SELECT enabled,config
+        FROM agent.tool_registry
+        WHERE tool_name='kronos_inference_adapter'
+        LIMIT 1
+        """
+    )
+    if not tool.get("enabled"):
+        raise RuntimeError(
+            "Kronos inference adapter is not ready. Run setup_kronos_runtime.sh and activate its verified registry entry."
+        )
+    message = context.get("agent_message") or {}
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    payload = metadata.get("input_payload") if isinstance(metadata.get("input_payload"), dict) else {}
+    if not payload:
+        raise ValueError("The Kronos graph node is missing its typed input_payload.")
+    script = RUNTIME_ROOT / "scripts" / "run_kronos_forecast.py"
+    command = [
+        sys.executable,
+        str(script),
+        "--task-id",
+        str(int(job["task_id"])),
+        "--payload-json",
+        json.dumps(payload, sort_keys=True),
+    ]
+    graph_run_id = metadata.get("graph_run_id")
+    graph_node_run_id = metadata.get("graph_node_run_id")
+    if str(graph_run_id or "").isdigit():
+        command.extend(["--graph-run-id", str(int(graph_run_id))])
+    if str(graph_node_run_id or "").isdigit():
+        command.extend(["--graph-node-run-id", str(int(graph_node_run_id))])
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=int(os.environ.get("AI_OS_KRONOS_TASK_TIMEOUT_SECONDS") or 7200),
+        env={**os.environ, "AI_OS_RUNTIME_ROOT": str(RUNTIME_ROOT)},
+    )
+    result: dict[str, Any] = {}
+    for raw_line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            result = candidate
+            break
+    if completed.returncode != 0 or result.get("status") != "completed":
+        detail = result.get("error") or completed.stderr.strip() or "Kronos adapter failed."
+        raise RuntimeError(str(detail))
+    context["kronos_forecast"] = result
+    context["execution_envelope"] = {
+        **(context.get("execution_envelope") or {}),
+        "mode": "pinned_local_model_adapter",
+        "model_invocation": "Kronos-mini",
+        "capital_action_allowed": False,
+        "live_execution_allowed": False,
+        "broker_order_allowed": False,
+    }
+    return result
+
 def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any]) -> tuple[str, list[str]]:
     skill_key = str(skill.get("skill_key") or job.get("suggested_skill_key") or "refresh_dashboard_widget")
     lines: list[str] = []
     next_actions: list[str] = []
 
-    if job.get("source_kind") == "committee_packet_position":
+    if skill_key == "kronos_forecast_feature_generation" and context.get("kronos_forecast"):
+        forecast = context["kronos_forecast"]
+        validation = forecast.get("validation") or {}
+        terminal = ((forecast.get("features") or {}).get("terminal_return") or {})
+        lines.append(
+            f"Generated {forecast.get('path_count')} pinned Kronos mini research paths over "
+            f"{forecast.get('horizon')} bars on {forecast.get('device')} and persisted "
+            f"{forecast.get('stored_points')} forecast points as run {forecast.get('forecast_run_id')}."
+        )
+        lines.append(
+            "This is a forecast distribution feature, not a trade signal. "
+            f"Terminal median return={terminal.get('median')}; "
+            f"10th-90th percentile={terminal.get('p10')} to {terminal.get('p90')}; "
+            f"OHLC validity={validation.get('ohlc_validity')}; "
+            f"volume validity={validation.get('volume_validity')}."
+        )
+        lines.append(
+            f"Point-in-time source hash: {forecast.get('source_hash')}; output hash: {forecast.get('output_hash')}."
+        )
+        next_actions.append("Run realized calibration, walk-forward cost-aware backtesting, and independent Model Risk review.")
+        next_actions.append("Keep every forecast-derived feature out of signals, paper orders, and live orders until the graph's human decision gate.")
+    elif job.get("source_kind") == "committee_packet_position":
         position = committee_position_for(job, profile, context)
         packet = context.get("committee_packet") or {}
         lines.append(
@@ -909,12 +1006,33 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
         {"source": "agent.v_agent_skill_matrix", "skill_key": skill.get("skill_key")},
         {"source": "obsidian_note", "path": relative_note},
     ]
+    kronos_forecast = context.get("kronos_forecast")
+    if isinstance(kronos_forecast, dict):
+        evidence.extend(kronos_forecast.get("evidence") or [])
+        evidence.append(
+            {
+                "source": "strategy.kronos_forecast_runs",
+                "forecast_run_id": kronos_forecast.get("forecast_run_id"),
+                "source_hash": kronos_forecast.get("source_hash"),
+                "output_hash": kronos_forecast.get("output_hash"),
+            }
+        )
     input_snapshot = {
         "job": job,
         "agent": profile,
         "skill": skill,
         "context_counts": context,
     }
+    message = context.get("agent_message") if isinstance(context.get("agent_message"), dict) else {}
+    message_metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    graph_managed = str(message_metadata.get("graph_node_run_id") or "").isdigit()
+    task_completion_status = "completed" if graph_managed else "needs_review"
+    inbox_completion_status = "completed" if graph_managed else "needs_review"
+    inbox_recommendation = (
+        "Graph node evidence captured; Graph Control Plane owns downstream review and approval."
+        if graph_managed
+        else "Review the completed agent worker output note, then decide whether to close, rerun, or escalate."
+    )
     sql = f"""
     WITH inserted_run AS (
         INSERT INTO agent.worker_runs (
@@ -941,7 +1059,7 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     ),
     updated_task AS (
         UPDATE agent.tasks
-        SET status = 'needs_review',
+        SET status = {sql_literal(task_completion_status)},
             output_note_path = {sql_literal(relative_note)},
             evidence = coalesce(evidence, '[]'::jsonb) || {sql_jsonb(evidence)},
             updated_at = now()
@@ -958,8 +1076,8 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     ),
     updated_inbox AS (
         UPDATE agent.inbox_items
-        SET status = 'needs_review',
-            recommended_action = 'Review the completed agent worker output note, then decide whether to close, rerun, or escalate.',
+        SET status = {sql_literal(inbox_completion_status)},
+            recommended_action = {sql_literal(inbox_recommendation)},
             evidence = coalesce(evidence, '[]'::jsonb) || {sql_jsonb(evidence)},
             updated_at = now()
         WHERE id = {int(job.get('inbox_item_id')) if job.get('inbox_item_id') is not None else -1}
@@ -979,6 +1097,19 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
     message = str(error)[:1200]
     task_id = int(job.get("task_id"))
     inbox_id = int(job.get("inbox_item_id")) if job.get("inbox_item_id") is not None else -1
+    graph_message = psql_one(
+        f"""
+        SELECT metadata
+        FROM agent.agent_messages
+        WHERE generated_task_id={task_id}
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1
+        """
+    )
+    graph_metadata = graph_message.get("metadata") if isinstance(graph_message.get("metadata"), dict) else {}
+    graph_managed = str(graph_metadata.get("graph_node_run_id") or "").isdigit()
+    failure_status = "failed" if graph_managed else "needs_review"
+    inbox_failure_status = "blocked" if graph_managed else "needs_review"
     evidence = [
         {"source": "run_agent_worker_once", "task_id": task_id, "status": "failed"},
         {"error": message},
@@ -1001,7 +1132,7 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
         ),
         updated_task AS (
             UPDATE agent.tasks
-            SET status='needs_review',
+            SET status={sql_literal(failure_status)},
                 evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
                 updated_at=now()
             WHERE id={task_id}
@@ -1009,7 +1140,7 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
         ),
         updated_inbox AS (
             UPDATE agent.inbox_items
-            SET status='needs_review',
+            SET status={sql_literal(inbox_failure_status)},
                 recommended_action='Worker failed. Review the recorded error, fix the bounded cause, then requeue.',
                 evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
                 updated_at=now()
@@ -1063,6 +1194,13 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     "gate_ids": [],
                     "reason": "deterministic sealed position; no model or external provider invocation",
                 }
+            elif skill_key == "kronos_forecast_feature_generation":
+                gate_result = {
+                    "overall_status": "passed",
+                    "next_task_status": "in_progress",
+                    "gate_ids": [],
+                    "reason": "pinned local model adapter with independent tool readiness and no provider spend",
+                }
             else:
                 gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             if gate_result.get("overall_status") != "passed":
@@ -1082,6 +1220,8 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                 continue
             context = context_for(skill_key, job.get("widget_key"), job)
             context["execution_envelope"] = execution_envelope_for(profile, skill)
+            if skill_key == "kronos_forecast_feature_generation":
+                run_kronos_adapter(job, context)
             summary, next_actions = summary_for(job, profile, skill, context)
             note_path = write_note(job, profile, skill, context, summary, next_actions)
             completed = complete_job(job, profile, skill, context, summary, note_path)

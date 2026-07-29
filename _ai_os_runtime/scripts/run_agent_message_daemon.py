@@ -18,6 +18,10 @@ from run_agent_worker_once import psql_json, psql_text, run_once, sql_jsonb, sql
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or SCRIPT_DIR.parent).resolve()
 WORKLOAD_SCRIPT_DIR = RUNTIME_ROOT / "scripts"
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
+
+from api import graph_control_plane  # noqa: E402
 
 
 def record_daemon_heartbeat(
@@ -79,6 +83,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "strategy_discovery_scheduler",
         "market_news_ingestion",
         "workflow_schedule_materializer",
+        "graph_control_plane",
     ):
         payload = result.get(key)
         if isinstance(payload, dict):
@@ -240,15 +245,82 @@ def process_messages(limit: int) -> list[dict[str, Any]]:
     return results
 
 
-def daemon_pass(message_limit: int, worker_limit: int, include_completed: bool = False) -> dict[str, Any]:
+def psql_json_statement(sql: str) -> list[dict[str, Any]]:
+    payload = json.loads(psql_text(sql) or "[]")
+    if not isinstance(payload, list):
+        raise RuntimeError("graph statement did not return a JSON array")
+    return payload
+
+
+def advance_active_graph_runs(run_limit: int, max_steps: int) -> dict[str, Any]:
+    runs = psql_json(
+        f"""
+        SELECT graph_run_id,graph_key,run_status,updated_at
+        FROM agent.v_graph_run_status
+        WHERE run_status IN ('queued','running','waiting_approval')
+        ORDER BY updated_at,graph_run_id
+        LIMIT {max(1, min(50, int(run_limit)))}
+        """
+    )
+    advanced: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for run in runs:
+        run_id = int(run["graph_run_id"])
+        try:
+            result = graph_control_plane.advance_graph_run(
+                psql_json,
+                psql_json_statement,
+                {
+                    "graph_run_id": run_id,
+                    "actor": "Jarvis Agent Daemon",
+                    "max_steps": max(1, min(100, int(max_steps))),
+                },
+            )
+            advanced.append({
+                "graph_run_id": run_id,
+                "graph_key": result.get("graph_key") or run.get("graph_key"),
+                "run_status": result.get("run_status"),
+                "processed_steps": result.get("processed_steps", 0),
+                "waiting": len(result.get("attention") or []),
+            })
+        except Exception as exc:  # noqa: BLE001
+            errors.append({
+                "graph_run_id": run_id,
+                "graph_key": run.get("graph_key"),
+                "error": type(exc).__name__ + ": " + str(exc),
+            })
+    return {
+        "status": "failed" if errors else "success",
+        "count": len(advanced),
+        "active_runs_seen": len(runs),
+        "runs": advanced,
+        "errors": errors,
+    }
+
+
+def daemon_pass(
+    message_limit: int,
+    worker_limit: int,
+    include_completed: bool = False,
+    *,
+    graph_control_enabled: bool = True,
+    graph_run_limit: int = 20,
+    graph_max_steps: int = 40,
+) -> dict[str, Any]:
     message_results = process_messages(message_limit)
     worker_results = run_once(max(1, worker_limit), include_completed)
-    return {
+    result = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "messages_processed": len(message_results),
         "message_results": message_results,
         "worker": worker_results,
     }
+    if graph_control_enabled:
+        result["graph_control_plane"] = advance_active_graph_runs(
+            graph_run_limit,
+            graph_max_steps,
+        )
+    return result
 
 
 def record_source_freshness_scheduler_run(
@@ -555,6 +627,9 @@ def main() -> int:
     parser.add_argument("--message-limit", type=int, default=10)
     parser.add_argument("--worker-limit", type=int, default=5)
     parser.add_argument("--include-completed", action="store_true")
+    parser.add_argument("--disable-graph-control", action="store_true", help="Disable automatic bounded graph progression.")
+    parser.add_argument("--graph-run-limit", type=int, default=int(os.environ.get("AI_OS_GRAPH_RUN_LIMIT", "20")))
+    parser.add_argument("--graph-max-steps", type=int, default=int(os.environ.get("AI_OS_GRAPH_MAX_STEPS", "40")))
     parser.add_argument("--disable-source-freshness", action="store_true", help="Disable scheduled source freshness checks.")
     parser.add_argument(
         "--source-freshness-interval",
@@ -630,6 +705,7 @@ def main() -> int:
     market_news_interval = max(300, int(args.market_news_interval))
     workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
     workflow_scheduler_interval = max(30, int(args.workflow_scheduler_interval))
+    graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
     last_source_freshness_run = 0.0
     last_tradingview_cdp_run = 0.0
     last_ohlcv_aggregation_run = 0.0
@@ -648,6 +724,7 @@ def main() -> int:
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
+        "graph_control": graph_control_enabled,
     }
 
     record_daemon_heartbeat(
@@ -661,13 +738,21 @@ def main() -> int:
 
     while True:
         try:
-            result = daemon_pass(args.message_limit, args.worker_limit, args.include_completed)
+            result = daemon_pass(
+                args.message_limit,
+                args.worker_limit,
+                args.include_completed,
+                graph_control_enabled=graph_control_enabled,
+                graph_run_limit=max(1, int(args.graph_run_limit)),
+                graph_max_steps=max(1, int(args.graph_max_steps)),
+            )
         except Exception as exc:  # noqa: BLE001
             result = {
                 "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "messages_processed": 0,
                 "message_results": [],
                 "worker": {"count": 0, "status": "failed"},
+                "graph_control_plane": {"status": "failed", "error": "daemon pass aborted before graph progression"},
                 "daemon_pass": {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)},
             }
         if workflow_scheduler_enabled and (last_workflow_scheduler_run == 0.0 or time.monotonic() - last_workflow_scheduler_run >= workflow_scheduler_interval):
@@ -750,6 +835,7 @@ def main() -> int:
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
+            graph_control = result.get("graph_control_plane") or {}
             print(
                 f"{result['generated_at']} messages={result['messages_processed']} "
                 f"worker_runs={result['worker']['count']} "
@@ -759,6 +845,8 @@ def main() -> int:
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
+                f"graph_runs={graph_control.get('count', 0)}/{graph_control.get('active_runs_seen', 0)} "
+                f"graph_status={graph_control.get('status', 'skipped')} "
                 f"strategy_discovery={strategy_discovery.get('status', 'skipped')}",
                 flush=True,
             )

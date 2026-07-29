@@ -119,6 +119,7 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
   const loader: Record<string, () => Promise<{ default: React.ComponentType }>> = {
     "/today": () => import("../destinations/today/TodayDestination"),
     "/firm/office": () => import("../destinations/firm/OfficeView").then((m) => ({ default: m.OfficeView })),
+    "/firm/graphs": () => import("../destinations/firm/GraphStudio").then((m) => ({ default: m.GraphStudio })),
     "/firm/agents": () => import("../destinations/firm/FirmAgentViews").then((m) => ({ default: m.AgentsView })),
     "/firm/departments": () => import("../destinations/firm/FirmAgentViews").then((m) => ({ default: m.DepartmentsView })),
     "/firm/committees": () => import("../destinations/firm/FirmAgentViews").then((m) => ({ default: m.CommitteesView })),

@@ -19,6 +19,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from . import graph_control_plane
+except ImportError:  # Direct script execution on the iMac.
+    import graph_control_plane  # type: ignore
+
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
@@ -366,6 +371,34 @@ def build_office_snapshot() -> dict:
             FROM agent.v_agent_message_threads
             ORDER BY created_at DESC NULLS LAST, id DESC
             LIMIT 50
+        """,
+        "graph_runs": """
+            SELECT graph_run_id,graph_key,graph_name,run_status,triggered_by,
+                   subject_type,subject_ref,pending_decision,completed_node_count,
+                   active_node_count,waiting_node_count,failed_node_count,
+                   started_at,updated_at
+            FROM agent.v_graph_run_status
+            WHERE run_status IN ('queued','running','waiting_approval','waiting_input','paused')
+            ORDER BY updated_at DESC,graph_run_id DESC
+            LIMIT 24
+        """,
+        "graph_node_runs": """
+            SELECT graph_node_run_id,graph_run_id,graph_key,node_key,node_name,
+                   node_type,owner_agent,skill_key,status,task_id,task_title,
+                   worker_status,worker_summary,approval_id,approval_status,
+                   committee_packet_id,committee_packet_status,
+                   committee_session_status,updated_at
+            FROM agent.v_graph_node_run_detail
+            WHERE status IN ('ready','queued','running','waiting_approval','waiting_input','failed')
+            ORDER BY updated_at DESC,graph_node_run_id DESC
+            LIMIT 80
+        """,
+        "graph_attention": """
+            SELECT attention_kind,id,graph_run_id,graph_node_run_id,category,
+                   title,detail,status,owner_agent,due_at,created_at,updated_at,context
+            FROM agent.v_graph_attention_queue
+            ORDER BY created_at DESC
+            LIMIT 40
         """,
         "committee_room_items": """
             SELECT committee_item_key, committee_lane, committee_scope,
@@ -9083,13 +9116,21 @@ def resolve_approval(payload: dict) -> dict:
         raise ValueError("status must be approved or rejected")
     decided_by = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
     guarded = run_psql_json(
-        f"SELECT approval_type FROM agent.approvals WHERE id={approval_id} AND status='pending' LIMIT 1"
+        f"SELECT approval_type,requested_action FROM agent.approvals "
+        f"WHERE id={approval_id} AND status='pending' LIMIT 1"
     )
-    if guarded and guarded[0].get("approval_type") in {
+    guarded_action = (
+        guarded[0].get("requested_action")
+        if guarded and isinstance(guarded[0].get("requested_action"), dict)
+        else {}
+    )
+    if guarded and (
+        guarded_action.get("graph_node_run_id")
+        or guarded[0].get("approval_type") in {
         "client_onboarding", "account_change", "holding_update",
         "client_cash_entry", "client_report_send",
         "tradingview_template_action",
-    }:
+    }):
         raise ValueError("This approval must use its dedicated resolve endpoint so the governed state change and side effects remain linked")
     rows = run_psql_json_statement(
         f"""
@@ -13808,9 +13849,37 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             FROM ops.v_dashboard_widget_intents
             LIMIT 12
         """,
+        "graph_catalog": """
+            SELECT graph_key,graph_name,graph_family,description,owner_agent,
+                   autonomy_ceiling,node_count,edge_count,open_run_count,
+                   completed_run_count,failed_run_count,latest_run_at
+            FROM agent.v_graph_catalog
+            ORDER BY graph_family,graph_name
+        """,
+        "graph_runs": """
+            SELECT graph_run_id,graph_key,graph_name,run_status,trigger_type,
+                   triggered_by,subject_type,subject_ref,current_node_key,
+                   current_node_name,current_owner_agent,total_nodes,
+                   completed_nodes,failed_nodes,waiting_nodes,open_wait_count,
+                   open_approval_count,started_at,updated_at,finished_at
+            FROM agent.v_graph_run_status
+            ORDER BY created_at DESC,graph_run_id DESC
+            LIMIT 12
+        """,
+        "graph_attention": """
+            SELECT attention_kind,attention_id,graph_run_id,graph_key,
+                   node_key,title,detail,owner_agent,priority,status,created_at
+            FROM agent.v_graph_attention_queue
+            ORDER BY created_at DESC
+            LIMIT 12
+        """,
     }
     if not include_client_context:
-        for private_key in ("clients", "latest_positions", "book_summary", "investment_books", "symbol_intelligence", "pending_approvals"):
+        for private_key in (
+            "clients", "latest_positions", "book_summary", "investment_books",
+            "symbol_intelligence", "pending_approvals", "graph_runs",
+            "graph_attention",
+        ):
             queries.pop(private_key, None)
     context: dict[str, object] = {}
     context_errors: list[dict[str, str]] = []
@@ -13842,7 +13911,7 @@ def is_auto_factual_retrieval_request(message: str) -> bool:
         "letter", "broker", "zerodha", "option", "position", "holding",
         "client", "ohlcv", "market data", "calendar", "holiday", "result date",
         "research", "paper", "article", "hypothesis", "backtest", "worker",
-        "agent", "department", "office",
+        "agent", "department", "office", "workflow", "graph run", "cycle",
     )
     return (
         any(term in normalized for term in request_terms)
@@ -13911,7 +13980,11 @@ def deterministic_chat_reply(
     approval_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("approval_summary") or []}
     pending_approvals = context.get("pending_approvals") or []
     institutional_risk = {str(row.get("metric")): str(row.get("value")) for row in context.get("institutional_risk") or []}
+    graph_catalog = context.get("graph_catalog") or []
+    graph_runs = context.get("graph_runs") or []
+    graph_attention = context.get("graph_attention") or []
     broad_office_request = is_broad_office_request(message)
+    graph_request = any(term in normalized for term in ("workflow", "graph run", "control plane", "lifecycle", "daily office loop"))
 
     focused: list[str] = []
     if tool_results:
@@ -13921,6 +13994,31 @@ def deterministic_chat_reply(
                 + (f" ({result.get('detail')})" if result.get("detail") else "")
                 + "."
             )
+    if graph_request:
+        if graph_runs:
+            focused.append(
+                f"Graph Control Plane: {len(graph_catalog)} active definitions and "
+                f"{len(graph_runs)} recent governed runs are visible."
+            )
+            focused.extend(
+                f"- run {row.get('graph_run_id')} {row.get('graph_name') or row.get('graph_key')}: "
+                f"{row.get('run_status')}; node {row.get('current_node_name') or row.get('current_node_key') or 'none'} "
+                f"owned by {row.get('current_owner_agent') or 'unassigned'}; "
+                f"{row.get('completed_nodes') or 0}/{row.get('total_nodes') or 0} nodes complete"
+                for row in graph_runs[:6]
+            )
+        else:
+            focused.append(
+                f"Graph Control Plane: {len(graph_catalog)} active definitions are registered; no governed run is visible."
+            )
+        if graph_attention:
+            focused.append("Waiting on action:")
+            focused.extend(
+                f"- {row.get('title')} for run {row.get('graph_run_id')} "
+                f"({row.get('priority')}, owner {row.get('owner_agent')})"
+                for row in graph_attention[:5]
+            )
+        focused.append("All graph capital actions remain human-gated; broker writes are disabled.")
     if any(term in normalized for term in ("research", "paper", "article", "hypothesis", "backtest")):
         if research_intakes:
             focused.append(
@@ -14030,6 +14128,23 @@ def deterministic_chat_reply(
             f"{top_symbol.get('symbol')} for {top_symbol.get('client_name')} at INR "
             f"{float(top_symbol.get('gross_exposure') or 0):,.0f}, bias {top_symbol.get('overall_bias')}."
         )
+    if broad_office_request and graph_catalog:
+        open_graph_runs = [
+            row for row in graph_runs
+            if str(row.get("run_status") or "") not in {"completed", "failed", "cancelled"}
+        ]
+        lines.append(
+            f"Graph operations: {len(graph_catalog)} active workflows, "
+            f"{len(open_graph_runs)} open runs, and {len(graph_attention)} items waiting for review or input."
+        )
+        if open_graph_runs:
+            lines.append(
+                "Active workflow: " + "; ".join(
+                    f"run {row.get('graph_run_id')} {row.get('graph_name') or row.get('graph_key')} "
+                    f"at {row.get('current_node_name') or row.get('current_node_key')}"
+                    for row in open_graph_runs[:3]
+                ) + "."
+            )
     if broad_office_request or "risk" in normalized:
         lines.append(
             "Institutional risk: run "
@@ -14435,6 +14550,164 @@ def identity_fallback_reply(identity: dict, response: str) -> str:
     return first_line + "\n\n" + response
 
 
+def _graph_subject_from_message(message: str, fallback: str) -> str:
+    match = re.search(
+        r"\b(?:on|for|about|subject|hypothesis)\s*(?::|=|-)?\s*(.{3,500})$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    subject = (match.group(1) if match else fallback).strip(" \t\r\n.,;:-")
+    return subject[:500] or fallback
+
+
+def infer_graph_control_command(message: str) -> dict | None:
+    """Return an explicit, bounded graph command; never infer writes from questions."""
+    normalized = re.sub(r"\s+", " ", message.lower()).strip()
+    if not normalized:
+        return None
+
+    control_match = re.search(
+        r"\b(pause|resume|cancel|advance|continue)\s+"
+        r"(?:(?:the\s+)?(?:graph|workflow|cycle|loop)\s+)?(?:run\s+)?#?(\d+)\b",
+        normalized,
+    )
+    if control_match:
+        action = control_match.group(1)
+        return {
+            "action": "advance" if action == "continue" else action,
+            "graph_run_id": int(control_match.group(2)),
+        }
+
+    if not re.search(r"\b(?:start|run|launch|begin|open)\b", normalized):
+        return None
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    source_urls = [url.rstrip(".,;:!?") for url in re.findall(r"https://[^\s<>\]\[()]+", message)]
+
+    if any(
+        phrase in normalized
+        for phrase in (
+            "daily office loop",
+            "daily office workflow",
+            "daily office cycle",
+            "daily intelligence loop",
+            "office intelligence loop",
+        )
+    ):
+        input_payload = {"as_of": today}
+        return {
+            "action": "start",
+            "graph_key": "daily_office_intelligence",
+            "input_payload": input_payload,
+            "subject_type": "office_day",
+            "subject_ref": today,
+        }
+
+    research_flow = any(
+        phrase in normalized
+        for phrase in (
+            "research-to-investment",
+            "research to investment",
+            "research decision workflow",
+            "research decision cycle",
+            "company research lifecycle",
+            "company research workflow",
+            "full research cycle",
+            "full research workflow",
+            "end-to-end research",
+            "end to end research",
+        )
+    )
+    if research_flow:
+        subject = _graph_subject_from_message(message, message.strip())
+        input_payload: dict[str, object] = {"subject": subject, "objective": message.strip()}
+        if source_urls:
+            input_payload["source_urls"] = source_urls[:10]
+        symbols = [
+            symbol for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol not in {"NSE", "BSE", "NFO", "MCX", "URL", "PDF"}
+        ]
+        if symbols:
+            input_payload["symbol"] = symbols[0]
+        return {
+            "action": "start",
+            "graph_key": "research_to_investment_decision",
+            "input_payload": input_payload,
+            "subject_type": "research_subject",
+            "subject_ref": slug_for_text(subject)[:120],
+        }
+
+    strategy_flow = any(
+        phrase in normalized
+        for phrase in (
+            "strategy research lifecycle",
+            "strategy research workflow",
+            "strategy research cycle",
+            "quant research lifecycle",
+            "quant research workflow",
+            "full strategy lifecycle",
+            "full strategy cycle",
+            "full quant validation cycle",
+        )
+    )
+    if strategy_flow:
+        hypothesis = _graph_subject_from_message(message, message.strip())
+        ignored = {"NSE", "BSE", "NFO", "MCX", "ATR", "RSI", "EMA", "OHLCV", "PDF"}
+        symbols = [
+            symbol for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol not in ignored
+        ][:20]
+        input_payload = {"hypothesis": hypothesis}
+        if symbols:
+            input_payload["symbols"] = symbols
+        timeframe_match = re.search(r"\b(1m|3m|5m|15m|30m|1h|4h|1d|daily|weekly)\b", normalized)
+        if timeframe_match:
+            input_payload["timeframe"] = {"daily": "1d", "weekly": "1w"}.get(
+                timeframe_match.group(1), timeframe_match.group(1)
+            )
+        return {
+            "action": "start",
+            "graph_key": "strategy_research_lifecycle",
+            "input_payload": input_payload,
+            "subject_type": "strategy_hypothesis",
+            "subject_ref": slug_for_text(hypothesis)[:120],
+        }
+
+    if "kronos" in normalized and any(term in normalized for term in ("forecast", "prediction", "feature research")):
+        ignored = {"KRONOS", "NSE", "BSE", "NFO", "MCX", "OHLCV"}
+        symbols = [
+            symbol for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol not in ignored
+        ]
+        if not symbols:
+            return {"action": "needs_input", "detail": "A Kronos run requires an explicit symbol."}
+        timeframe_match = re.search(r"\b(1m|3m|5m|15m|30m|1h|4h|1d|daily)\b", normalized)
+        timeframe = timeframe_match.group(1) if timeframe_match else "1d"
+        if timeframe == "daily":
+            timeframe = "1d"
+        exchange_match = re.search(r"\b(NSE|BSE|NFO|BFO|MCX)\b", message, flags=re.IGNORECASE)
+        exchange = exchange_match.group(1).upper() if exchange_match else "NSE"
+        input_payload = {
+            "symbol": symbols[0],
+            "exchange": exchange,
+            "timeframe": timeframe,
+            "as_of": today,
+            "lookback": 512,
+            "horizon": 5,
+            "path_count": 20,
+            "model_revision": "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
+        }
+        return {
+            "action": "start",
+            "graph_key": "kronos_forecast_research",
+            "input_payload": input_payload,
+            "subject_type": "market_symbol",
+            "subject_ref": f"{exchange}:{symbols[0]}:{timeframe}:{today}",
+        }
+
+    return None
+
+
 def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> list[dict]:
     normalized = message.lower()
     explicit_refresh = any(term in normalized for term in ("refresh", "update", "sync", "collect", "fetch"))
@@ -14454,6 +14727,68 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             })
         except Exception as exc:  # noqa: BLE001
             results.append({"tool": tool, "status": "failed", "detail": f"{type(exc).__name__}: {exc}"[:500]})
+
+    graph_command = infer_graph_control_command(message)
+    graph_action = str((graph_command or {}).get("action") or "")
+    if graph_command:
+        if graph_action == "needs_input":
+            results.append({
+                "tool": "graph_control",
+                "status": "needs_input",
+                "detail": str(graph_command.get("detail") or "More graph input is required."),
+            })
+        elif graph_action == "start":
+            graph_key = str(graph_command["graph_key"])
+            if graph_key == "kronos_forecast_research":
+                adapter = run_psql_json(
+                    "SELECT tool_name,enabled FROM agent.tool_registry "
+                    "WHERE tool_name='kronos_inference_adapter' AND enabled=true LIMIT 1"
+                )
+                if not adapter:
+                    results.append({
+                        "tool": "start_graph_run",
+                        "status": "dependency_required",
+                        "detail": "Kronos adapter is not installed and validated; no forecast run was started.",
+                    })
+                else:
+                    payload = {
+                        **graph_command,
+                        "actor": f"Devarsh via {actor}",
+                        "trigger_type": "charlie_chat",
+                    }
+                    payload.pop("action", None)
+                    payload["idempotency_key"] = graph_control_plane.idempotency_key(
+                        graph_key,
+                        str(payload.get("subject_ref") or ""),
+                        payload.get("input_payload") or {},
+                    )
+                    invoke("start_graph_run", lambda: start_graph_control_run(payload), "graph_run_id")
+            else:
+                payload = {
+                    **graph_command,
+                    "actor": f"Devarsh via {actor}",
+                    "trigger_type": "charlie_chat",
+                }
+                payload.pop("action", None)
+                payload["idempotency_key"] = graph_control_plane.idempotency_key(
+                    graph_key,
+                    str(payload.get("subject_ref") or ""),
+                    payload.get("input_payload") or {},
+                )
+                invoke("start_graph_run", lambda: start_graph_control_run(payload), "graph_run_id")
+        elif graph_action in {"pause", "resume", "cancel", "advance"}:
+            run_payload = {
+                "graph_run_id": int(graph_command["graph_run_id"]),
+                "actor": f"Devarsh via {actor}",
+            }
+            handlers: dict[str, tuple[str, Callable[[], dict]]] = {
+                "pause": ("pause_graph_run", lambda: pause_graph_control_run(run_payload)),
+                "resume": ("resume_graph_run", lambda: resume_graph_control_run(run_payload)),
+                "cancel": ("cancel_graph_run", lambda: cancel_graph_control_run(run_payload)),
+                "advance": ("advance_graph_run", lambda: advance_graph_control_run(run_payload)),
+            }
+            tool_name, callback = handlers[graph_action]
+            invoke(tool_name, callback, "graph_run_id")
 
     source_urls = re.findall(r"https://[^\s<>\]\[()]+", message)
     source_intent = any(
@@ -14556,7 +14891,7 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
         message,
         flags=re.IGNORECASE,
     )
-    if strategy_command:
+    if strategy_command and not graph_command:
         named = re.search(
             r"\b(?:called|named)\s+[\"']?(.{3,80}?)[\"']?(?=\s+(?:that|which|with|using|for)\b|[,.;\n]|$)",
             message,
@@ -14607,7 +14942,7 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             flags=re.IGNORECASE,
         )
     )
-    if delegation_command:
+    if delegation_command and not graph_command:
         target = resolve_agent_for_instruction(message)
         if target:
             subject = re.sub(r"\s+", " ", message).strip()[:120]
@@ -14917,6 +15252,71 @@ def chat_with_charlie(payload: dict) -> dict:
     }
 
 
+def advance_active_graph_control_runs(payload: dict | None = None) -> dict:
+    request = payload or {}
+    try:
+        limit = int(request.get("limit") or request.get("run_limit") or 20)
+        max_steps = int(request.get("max_steps") or request.get("maxSteps") or 40)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit and max_steps must be integers") from exc
+    limit = max(1, min(limit, 50))
+    max_steps = max(1, min(max_steps, 100))
+    actor = str(request.get("actor") or "Jarvis").strip() or "Jarvis"
+    runs = run_psql_json(
+        f"""
+        SELECT graph_run_id,graph_key,run_status,updated_at
+        FROM agent.v_graph_run_status
+        WHERE run_status IN ('queued','running','waiting_approval')
+        ORDER BY updated_at,graph_run_id
+        LIMIT {limit}
+        """
+    )
+    advanced: list[dict] = []
+    errors: list[dict] = []
+    for run in runs:
+        run_id = int(run["graph_run_id"])
+        try:
+            result = graph_control_plane.advance_graph_run(
+                run_psql_json,
+                run_psql_json_statement,
+                {
+                    "graph_run_id": run_id,
+                    "actor": actor,
+                    "max_steps": max_steps,
+                },
+            )
+            advanced.append({
+                "graph_run_id": run_id,
+                "graph_key": result.get("graph_key") or run.get("graph_key"),
+                "run_status": result.get("run_status"),
+                "processed_steps": result.get("processed_steps", 0),
+                "waiting": len(result.get("attention") or []),
+            })
+        except Exception as exc:  # noqa: BLE001
+            errors.append({
+                "graph_run_id": run_id,
+                "graph_key": run.get("graph_key"),
+                "error": f"{type(exc).__name__}: {exc}"[:1000],
+            })
+    result = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "failed" if errors else "success",
+        "active_runs_seen": len(runs),
+        "count": len(advanced),
+        "runs": advanced,
+        "errors": errors,
+    }
+    audit_api_write(
+        "ai_os_advance_active_graph_runs",
+        "advance_active_graph_runs",
+        actor,
+        "agent.graph_runs",
+        result,
+        request,
+    )
+    return result
+
+
 def run_agent_worker(payload: dict) -> dict:
     try:
         limit = int(payload.get("limit") or 5)
@@ -14946,6 +15346,20 @@ def run_agent_worker(payload: dict) -> dict:
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "agent worker failed").strip())
     result = json.loads(completed.stdout or "{}")
+    try:
+        result["graph_control_plane"] = advance_active_graph_control_runs({
+            "actor": str(payload.get("actor") or "Jarvis"),
+            "limit": 20,
+            "max_steps": 40,
+        })
+    except Exception as exc:  # noqa: BLE001
+        result["graph_control_plane"] = {
+            "status": "failed",
+            "active_runs_seen": 0,
+            "count": 0,
+            "runs": [],
+            "errors": [{"error": f"{type(exc).__name__}: {exc}"[:1000]}],
+        }
     audit_api_write(
         "ai_os_api_agent_worker_run_once",
         "run_agent_worker",
@@ -14973,6 +15387,223 @@ def materialize_agent_schedules(payload: dict) -> dict:
         "materialize_agent_schedules",
         actor,
         "agent.workflow_schedule_runs",
+        result,
+        payload,
+    )
+    return result
+
+
+def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
+    raw_run_id = str(query.get("run_id", query.get("graph_run_id", [""]))[0]).strip()
+    run_id = int(raw_run_id) if raw_run_id else None
+    snapshot = graph_control_plane.build_snapshot(run_psql_json, run_id=run_id)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "data_mode": {
+            "seed_data_allowed": False,
+            "execution_policy": "Declarative graph tasks only; arbitrary code and broker writes are disabled.",
+        },
+        **snapshot,
+    }
+
+
+def start_graph_control_run(payload: dict) -> dict:
+    started = graph_control_plane.start_graph_run(run_psql_json, run_psql_json_statement, payload)
+    run_id = int(started["graph_run_id"])
+    result = graph_control_plane.advance_graph_run(
+        run_psql_json,
+        run_psql_json_statement,
+        {
+            "graph_run_id": run_id,
+            "actor": payload.get("actor") or "Jarvis",
+            "max_steps": payload.get("max_steps") or payload.get("maxSteps") or 20,
+        },
+    )
+    result["created"] = bool(started.get("created"))
+    audit_api_write(
+        "ai_os_start_graph_run",
+        "start_graph_run",
+        str(payload.get("actor") or "Jarvis"),
+        "agent.graph_runs",
+        result,
+        payload,
+    )
+    return result
+
+
+def advance_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.advance_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_advance_graph_run",
+        "advance_graph_run",
+        str(payload.get("actor") or "Jarvis"),
+        "agent.graph_runs",
+        result,
+        payload,
+    )
+    return result
+
+
+def pause_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.pause_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write("ai_os_pause_graph_run", "pause_graph_run", str(payload.get("actor") or "Devarsh"), "agent.graph_runs", result, payload)
+    return result
+
+
+def resume_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.resume_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write("ai_os_resume_graph_run", "resume_graph_run", str(payload.get("actor") or "Devarsh"), "agent.graph_runs", result, payload)
+    return result
+
+
+def cancel_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.cancel_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write("ai_os_cancel_graph_run", "cancel_graph_run", str(payload.get("actor") or "Devarsh"), "agent.graph_runs", result, payload)
+    return result
+
+
+def resolve_graph_principal_wait(payload: dict) -> dict:
+    result = graph_control_plane.resolve_principal_wait(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_resolve_graph_wait",
+        "resolve_graph_wait",
+        str(payload.get("actor") or "Devarsh"),
+        "agent.waiting_on_principal",
+        result,
+        payload,
+    )
+    return result
+
+
+def resolve_graph_control_decision(payload: dict) -> dict:
+    try:
+        approval_id = int(payload.get("approval_id") or payload.get("approvalId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approval_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    rationale = str(payload.get("rationale") or payload.get("notes") or "").strip()
+    actor = str(payload.get("actor") or payload.get("decided_by") or "Devarsh").strip()
+    if not decision:
+        raise ValueError("decision is required")
+    if not rationale:
+        raise ValueError("rationale is required")
+
+    rows = run_psql_json(
+        f"""
+        SELECT approval.id,approval.approval_type,approval.status,
+               approval.requested_action,node_run.graph_run_id,
+               node_run.id AS graph_node_run_id,
+               packet.id AS committee_packet_id,packet.packet_status,
+               registry.decision_options
+        FROM agent.approvals approval
+        JOIN agent.graph_node_runs node_run ON node_run.approval_id=approval.id
+        LEFT JOIN agent.committee_packets packet
+          ON packet.id=nullif(approval.requested_action->>'committee_packet_id','')::BIGINT
+        LEFT JOIN agent.committee_registry registry
+          ON registry.committee_key=packet.committee_key
+        WHERE approval.id={approval_id} AND approval.status='pending'
+        LIMIT 1
+        """
+    )
+    if not rows:
+        raise ValueError("pending graph approval not found")
+    graph_decision = rows[0]
+    requested_action = (
+        graph_decision.get("requested_action")
+        if isinstance(graph_decision.get("requested_action"), dict)
+        else {}
+    )
+    options = graph_decision.get("decision_options") or requested_action.get("decision_options") or ["approve", "reject"]
+    allowed = {str(option).lower() for option in options}
+    if decision not in allowed:
+        raise ValueError("decision must be one of: " + ", ".join(sorted(allowed)))
+    packet_id = graph_decision.get("committee_packet_id")
+    if packet_id and str(graph_decision.get("packet_status") or "") != "awaiting_human":
+        raise ValueError("committee packet is not awaiting a human decision")
+    approval_status = "approved" if packet_id or decision == "approve" else "rejected"
+    packet_sql = str(int(packet_id)) if packet_id else "NULL"
+    result_rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT id,task_id FROM agent.approvals
+            WHERE id={approval_id} AND status='pending'
+            FOR UPDATE
+        ), committee_decision AS (
+            SELECT CASE WHEN {packet_sql} IS NOT NULL
+                THEN agent.record_committee_human_decision(
+                    {packet_sql},{sql_literal(decision)},{sql_literal(actor)},{sql_literal(rationale)}
+                )
+                ELSE '{{}}'::jsonb END AS result
+            FROM selected
+        ), approval_update AS (
+            UPDATE agent.approvals approval
+            SET status={sql_literal(approval_status)},decided_by={sql_literal(actor)},
+                decided_at=now(),requested_action=approval.requested_action ||
+                    jsonb_build_object(
+                        'selected_decision',{sql_literal(decision)},
+                        'decision_rationale',{sql_literal(rationale)},
+                        'committee_result',(SELECT result FROM committee_decision)
+                    )
+            FROM selected
+            WHERE approval.id=selected.id
+            RETURNING approval.*
+        ), task_update AS (
+            UPDATE agent.tasks task
+            SET status=CASE WHEN {sql_literal(approval_status)}='approved' THEN 'completed' ELSE 'cancelled' END,
+                updated_at=now()
+            FROM selected WHERE task.id=selected.task_id RETURNING task.id
+        ), inbox_update AS (
+            UPDATE agent.inbox_items inbox
+            SET status=CASE WHEN {sql_literal(approval_status)}='approved' THEN 'done' ELSE 'cancelled' END,
+                updated_at=now()
+            FROM selected WHERE inbox.task_id=selected.task_id RETURNING inbox.id
+        )
+        SELECT jsonb_build_array(jsonb_build_object(
+            'approval_id',approval_update.id,'approval_status',approval_update.status,
+            'graph_run_id',{int(graph_decision['graph_run_id'])},
+            'graph_node_run_id',{int(graph_decision['graph_node_run_id'])},
+            'committee_packet_id',{packet_sql},'decision',{sql_literal(decision)},
+            'rationale',{sql_literal(rationale)}
+        ))::TEXT
+        FROM approval_update
+        """
+    )
+    if not result_rows:
+        raise ValueError("graph decision could not be recorded")
+    result = result_rows[0]
+    result["graph"] = advance_graph_control_run({
+        "graph_run_id": int(graph_decision["graph_run_id"]),
+        "actor": actor,
+        "max_steps": 40,
+    })
+    audit_api_write(
+        "ai_os_resolve_graph_decision","resolve_graph_decision",actor,
+        "agent.approvals",result,payload,
+    )
+    return result
+
+
+def request_graph_control_change(payload: dict) -> dict:
+    result = graph_control_plane.request_graph_change(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_request_graph_change",
+        "request_graph_change",
+        str(payload.get("actor") or "Charlie Munger"),
+        "agent.graph_change_requests",
+        result,
+        payload,
+    )
+    return result
+
+
+def record_graph_control_correction(payload: dict) -> dict:
+    result = graph_control_plane.record_correction(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_record_graph_correction",
+        "record_graph_correction",
+        str(payload.get("actor") or "Devarsh"),
+        "agent.correction_ledger",
         result,
         payload,
     )
@@ -15130,6 +15761,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/reports/snapshot":
                 self._send_json(build_reports_snapshot())
                 return
+            if request_path == "/api/graph-control/snapshot":
+                self._send_json(build_graph_control_snapshot(query))
+                return
             if request_path == "/api/workspaces/config":
                 self._send_json(build_workspace_config(str(query.get("profile_key", ["devarsh"])[0])))
                 return
@@ -15229,6 +15863,36 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/agents/messages/triage":
                 self._send_json(triage_agent_message(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/start":
+                self._send_json(start_graph_control_run(payload), 201)
+                return
+            if self.path == "/api/graphs/runs/advance":
+                self._send_json(advance_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/advance-active":
+                self._send_json(advance_active_graph_control_runs(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/pause":
+                self._send_json(pause_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/resume":
+                self._send_json(resume_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/cancel":
+                self._send_json(cancel_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/waits/resolve":
+                self._send_json(resolve_graph_principal_wait(payload), 200)
+                return
+            if self.path == "/api/graphs/decisions":
+                self._send_json(resolve_graph_control_decision(payload), 200)
+                return
+            if self.path == "/api/graphs/change-requests":
+                self._send_json(request_graph_control_change(payload), 201)
+                return
+            if self.path == "/api/graphs/corrections":
+                self._send_json(record_graph_control_correction(payload), 201)
                 return
             if self.path == "/api/agents/comments":
                 self._send_json(create_agent_comment(payload), 201)

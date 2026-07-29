@@ -210,6 +210,113 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         strategy.assert_not_called()
         message.assert_not_called()
 
+    def test_status_question_does_not_start_graph(self) -> None:
+        with mock.patch.object(ai_os_api_server, "start_graph_control_run") as start_graph:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "What is the status of the research workflow?"
+            )
+        self.assertEqual(operations, [])
+        start_graph.assert_not_called()
+
+    def test_explicit_research_lifecycle_starts_governed_graph(self) -> None:
+        captured = {}
+
+        def fake_start(payload: dict) -> dict:
+            captured.update(payload)
+            return {"graph_run_id": 42, "run_status": "running", "created": True}
+
+        with mock.patch.object(ai_os_api_server, "start_graph_control_run", fake_start):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Start the full research cycle on RELIANCE capital allocation and governance"
+            )
+
+        self.assertEqual(operations[0]["tool"], "start_graph_run")
+        self.assertEqual(operations[0]["detail"], "42")
+        self.assertEqual(captured["graph_key"], "research_to_investment_decision")
+        self.assertIn("RELIANCE", captured["input_payload"]["subject"])
+        self.assertEqual(captured["input_payload"]["symbol"], "RELIANCE")
+        self.assertEqual(captured["trigger_type"], "charlie_chat")
+        self.assertTrue(captured["idempotency_key"])
+
+    def test_explicit_strategy_lifecycle_does_not_create_parallel_intake(self) -> None:
+        captured = {}
+
+        def fake_start(payload: dict) -> dict:
+            captured.update(payload)
+            return {"graph_run_id": 43, "run_status": "running", "created": True}
+
+        with (
+            mock.patch.object(ai_os_api_server, "start_graph_control_run", fake_start),
+            mock.patch.object(ai_os_api_server, "create_strategy_intake") as create_intake,
+            mock.patch.object(ai_os_api_server, "create_agent_message") as create_message,
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Run the strategy research lifecycle for NIFTY 15m opening range mean reversion"
+            )
+
+        self.assertEqual(operations[0]["tool"], "start_graph_run")
+        self.assertEqual(captured["graph_key"], "strategy_research_lifecycle")
+        self.assertEqual(captured["input_payload"]["timeframe"], "15m")
+        create_intake.assert_not_called()
+        create_message.assert_not_called()
+
+    def test_graph_run_control_is_explicit_and_bounded(self) -> None:
+        with mock.patch.object(
+            ai_os_api_server,
+            "pause_graph_control_run",
+            return_value={"graph_run_id": 77, "run_status": "paused"},
+        ) as pause:
+            operations = ai_os_api_server.execute_charlie_safe_tools("Pause workflow run 77")
+
+        self.assertEqual(operations[0]["tool"], "pause_graph_run")
+        self.assertEqual(operations[0]["detail"], "77")
+        pause.assert_called_once()
+        self.assertEqual(pause.call_args.args[0]["graph_run_id"], 77)
+
+    def test_kronos_requires_symbol_before_any_write(self) -> None:
+        with mock.patch.object(ai_os_api_server, "start_graph_control_run") as start_graph:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Start a Kronos forecast research run"
+            )
+        self.assertEqual(operations[0]["status"], "needs_input")
+        start_graph.assert_not_called()
+
+    def test_kronos_requires_validated_adapter_before_start(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[]),
+            mock.patch.object(ai_os_api_server, "start_graph_control_run") as start_graph,
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Run Kronos forecast research for RELIANCE 1d NSE"
+            )
+        self.assertEqual(operations[0]["status"], "dependency_required")
+        start_graph.assert_not_called()
+
+    def test_graph_status_reply_uses_verified_run_state(self) -> None:
+        reply = ai_os_api_server.deterministic_chat_reply(
+            "Show the graph run status",
+            {
+                "graph_catalog": [{"graph_key": "daily_office_intelligence"}],
+                "graph_runs": [{
+                    "graph_run_id": 9,
+                    "graph_name": "Daily Office Intelligence Loop",
+                    "run_status": "running",
+                    "current_node_name": "Review portfolios and books",
+                    "current_owner_agent": "Portfolio Manager",
+                    "completed_nodes": 2,
+                    "total_nodes": 9,
+                }],
+                "graph_attention": [],
+            },
+            [],
+            [],
+            {"default_model": "test"},
+            "not_requested",
+        )
+        self.assertIn("run 9 Daily Office Intelligence Loop", reply)
+        self.assertIn("2/9 nodes complete", reply)
+        self.assertIn("broker writes are disabled", reply)
+
     def test_research_status_language_requests_verified_context(self) -> None:
         self.assertTrue(
             ai_os_api_server.is_auto_factual_retrieval_request(
@@ -278,6 +385,56 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertIn("1 immutable cycles (research ledger entries, not completed backtests)", reply)
         self.assertIn("run 321 by Strategy Research Agent", reply)
         self.assertIn("live execution are disabled", reply)
+
+    def test_active_graph_progression_is_bounded_and_audited(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[
+                    {"graph_run_id": 41, "graph_key": "daily_office_intelligence"},
+                    {"graph_run_id": 42, "graph_key": "strategy_research_lifecycle"},
+                ],
+            ) as query,
+            mock.patch.object(
+                ai_os_api_server.graph_control_plane,
+                "advance_graph_run",
+                side_effect=[
+                    {"graph_key": "daily_office_intelligence", "run_status": "running", "processed_steps": 3, "attention": []},
+                    {"graph_key": "strategy_research_lifecycle", "run_status": "waiting_approval", "processed_steps": 2, "attention": [{"id": 9}]},
+                ],
+            ) as advance,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.advance_active_graph_control_runs({
+                "actor": "Jarvis test",
+                "limit": 999,
+                "max_steps": 999,
+            })
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["runs"][1]["waiting"], 1)
+        self.assertEqual(advance.call_args_list[0].args[2]["max_steps"], 100)
+        self.assertIn("LIMIT 50", query.call_args.args[0])
+        audit.assert_called_once()
+
+    def test_manual_worker_immediately_advances_graph_control(self) -> None:
+        completed = mock.Mock(returncode=0, stdout='{"count":1,"results":[]}', stderr="")
+        with (
+            mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed),
+            mock.patch.object(
+                ai_os_api_server,
+                "advance_active_graph_control_runs",
+                return_value={"status": "success", "active_runs_seen": 1, "count": 1, "runs": [], "errors": []},
+            ) as advance,
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.run_agent_worker({"actor": "Devarsh", "limit": 1})
+
+        self.assertEqual(result["graph_control_plane"]["status"], "success")
+        advance.assert_called_once()
+        self.assertEqual(advance.call_args.args[0]["actor"], "Devarsh")
 
     def test_response_ledger_accepts_warehouse_truth_states(self) -> None:
         migration = (

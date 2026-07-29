@@ -22,6 +22,7 @@ import {
   IntegrationGatewaySchema,
   OfficeSnapshotSchema,
   DepartmentTerminalSchema,
+  GraphControlSnapshotSchema,
   EntityEvidenceSchema,
   ChatResponseSchema,
   WorkspaceConfigSchema,
@@ -38,6 +39,7 @@ import type {
   IntegrationGateway,
   OfficeSnapshot,
   DepartmentTerminal,
+  GraphControlSnapshot,
   EntityEvidence,
   ChatResponse,
   WorkspaceConfig,
@@ -57,6 +59,7 @@ export const queryKeys = {
   reports: ["reports"] as const,
   integrationGateway: ["integration-gateway"] as const,
   office: ["office"] as const,
+  graphControl: (runId?: number | null) => ["graph-control", runId ?? "all"] as const,
   zerodhaAuth: ["zerodha-auth"] as const,
   departmentTerminal: (workspace: string) => ["department-terminal", workspace] as const,
   evidence: (kind: string, key: string) => ["evidence", kind, key] as const,
@@ -207,6 +210,23 @@ export function useOfficeSnapshot() {
     refetchOnWindowFocus: true,
     placeholderData: keepPreviousData,
     staleTime: 5_000,
+    retry: (failureCount: number) => failureCount < 2,
+  });
+}
+
+export function useGraphControlSnapshot(runId?: number | null) {
+  return useQuery<GraphControlSnapshot>({
+    queryKey: queryKeys.graphControl(runId),
+    queryFn: async () => {
+      const data = await get("/api/graph-control/snapshot", {
+        query: runId ? { run_id: runId } : undefined,
+      });
+      return validateSnapshot(GraphControlSnapshotSchema, data, "graph-control");
+    },
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,
+    staleTime: 3_000,
     retry: (failureCount: number) => failureCount < 2,
   });
 }

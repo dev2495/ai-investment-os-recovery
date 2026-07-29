@@ -94,7 +94,8 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "TODAY", path: "/today", label: "Today", icon: LayoutDashboard, description: "Daily brief, decisions, delegations, what matters now", group: "home", order: 0, status: "live" },
 
   /* ---- THE FIRM ---- */
-  { code: "OFFICE", path: "/firm/office", label: "3D Live Office", icon: Boxes, description: "Walk the firm — agents at desks, data flowing, risk glowing", group: "firm", order: 0, status: "preview" },
+  { code: "OFFICE", path: "/firm/office", label: "3D Live Office", icon: Boxes, description: "Walk the firm — every employee, assignment, graph handoff, and risk state", group: "firm", order: 0, status: "live" },
+  { code: "GRAPHS", path: "/firm/graphs", label: "Graph Studio", icon: GitBranch, description: "Launch, inspect, pause, decide, correct, and adapt governed agent workflows", group: "firm", order: 1, status: "live" },
   { code: "AGENTS", path: "/firm/agents", label: "Agents & Employees", icon: Users, description: "The full agent roster, departments, skills, model routes", group: "firm", order: 1, status: "beta" },
   { code: "DEPTS", path: "/firm/departments", label: "Departments", icon: Building2, description: "11 departments, mandates, leads, work queues", group: "firm", order: 2, status: "beta" },
   { code: "COMM", path: "/firm/committees", label: "Committee Room", icon: Gavel, description: "Packets, positions, synthesis, human decisions", group: "firm", order: 3, status: "beta" },

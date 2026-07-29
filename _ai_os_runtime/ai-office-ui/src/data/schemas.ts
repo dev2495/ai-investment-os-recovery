@@ -369,6 +369,30 @@ export const DepartmentTerminalSchema = z.object({
 export type DepartmentTerminal = z.infer<typeof DepartmentTerminalSchema>;
 
 /* ============================================================
+ * Graph Control Plane
+ * ============================================================ */
+export const GraphControlSnapshotSchema = z.object({
+  ...snapshotMeta,
+  data_mode: dataMode.optional(),
+  graphs: z.array(liveRow).default([]),
+  nodes: z.array(liveRow).default([]),
+  edges: z.array(liveRow).default([]),
+  runs: z.array(liveRow).default([]),
+  node_runs: z.array(liveRow).default([]),
+  edge_runs: z.array(liveRow).default([]),
+  checkpoints: z.array(liveRow).default([]),
+  events: z.array(liveRow).default([]),
+  autonomy: z.array(liveRow).default([]),
+  autonomy_evidence: z.array(liveRow).default([]),
+  attention: z.array(liveRow).default([]),
+  change_requests: z.array(liveRow).default([]),
+  corrections: z.array(liveRow).default([]),
+  waiting: z.array(liveRow).default([]),
+}).passthrough();
+
+export type GraphControlSnapshot = z.infer<typeof GraphControlSnapshotSchema>;
+
+/* ============================================================
  * Live Office (the 3D office data source)
  * ============================================================ */
 export const OfficeSnapshotSchema = z.object({
@@ -385,6 +409,9 @@ export const OfficeSnapshotSchema = z.object({
   execution_control: z.array(executionControlRow).default([]),
   long_term_committee_queue: z.array(liveRow).optional().default([]),
   strategy_committee_queue: z.array(liveRow).optional().default([]),
+  graph_runs: z.array(liveRow).optional().default([]),
+  graph_node_runs: z.array(liveRow).optional().default([]),
+  graph_attention: z.array(liveRow).optional().default([]),
 }).passthrough();
 
 export type OfficeSnapshot = z.infer<typeof OfficeSnapshotSchema>;
@@ -467,6 +494,7 @@ export const SNAPSHOT_SCHEMAS = {
   reports: ReportsSchema,
   integrationGateway: IntegrationGatewaySchema,
   office: OfficeSnapshotSchema,
+  graphControl: GraphControlSnapshotSchema,
 } as const;
 
 export type SnapshotKey = keyof typeof SNAPSHOT_SCHEMAS;

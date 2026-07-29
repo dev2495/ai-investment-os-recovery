@@ -24,6 +24,7 @@ const Q = {
   strategyArsenal: ["strategy-arsenal"],
   reports: ["reports"],
   office: ["office"],
+  graphControl: ["graph-control"],
 } as const;
 
 /** Generic invalidating mutation factory. */
@@ -626,4 +627,107 @@ export function useMaterializeAgentSchedules() {
     "/api/agents/schedules/run",
     [Q.office, Q.missionControl]
   );
+}
+
+/* ============================================================
+ * GRAPH CONTROL PLANE
+ * ============================================================ */
+
+export interface StartGraphRunInput {
+  graph_key: string;
+  input_payload: Record<string, unknown>;
+  actor?: string;
+  trigger_type?: string;
+  subject_type?: string;
+  subject_ref?: string;
+  correlation_key?: string;
+  idempotency_key?: string;
+  max_steps?: number;
+}
+
+const GRAPH_INVALIDATIONS = [Q.graphControl, Q.office, Q.missionControl] as const;
+
+export function useStartGraphRun() {
+  return useInvalidating<StartGraphRunInput, LiveRow>(
+    "/api/graphs/runs/start",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useAdvanceGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string; max_steps?: number }, LiveRow>(
+    "/api/graphs/runs/advance",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useAdvanceActiveGraphRuns() {
+  return useInvalidating<{ actor?: string; limit?: number; max_steps?: number }, LiveRow>(
+    "/api/graphs/runs/advance-active",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function usePauseGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string; reason: string }, LiveRow>(
+    "/api/graphs/runs/pause",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useResumeGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string }, LiveRow>(
+    "/api/graphs/runs/resume",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useCancelGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string; reason: string }, LiveRow>(
+    "/api/graphs/runs/cancel",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useResolveGraphWait() {
+  return useInvalidating<{ wait_id: number; actor?: string; resolution: Record<string, unknown> }, LiveRow>(
+    "/api/graphs/waits/resolve",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useResolveGraphDecision() {
+  return useInvalidating<{ approval_id: number; decision: string; rationale: string; actor?: string }, LiveRow>(
+    "/api/graphs/decisions",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useRequestGraphChange() {
+  return useInvalidating<{
+    graph_key: string;
+    title: string;
+    rationale: string;
+    proposed_patch: Record<string, unknown>;
+    safety_impact: Record<string, unknown>;
+    actor?: string;
+  }, LiveRow>("/api/graphs/change-requests", GRAPH_INVALIDATIONS);
+}
+
+export function useRecordGraphCorrection() {
+  return useInvalidating<{
+    source_kind?: string;
+    source_ref?: string;
+    graph_run_id?: number;
+    graph_node_run_id?: number;
+    correction_type?: string;
+    severity: "low" | "medium" | "high" | "critical";
+    expected_state?: Record<string, unknown>;
+    observed_state?: Record<string, unknown>;
+    root_cause?: string;
+    corrective_action: string;
+    prevention_change?: Record<string, unknown>;
+    owner_agent?: string;
+    actor?: string;
+  }, LiveRow>("/api/graphs/corrections", GRAPH_INVALIDATIONS);
 }
