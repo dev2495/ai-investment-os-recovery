@@ -103,7 +103,9 @@ const DEFAULT_INPUTS: Record<string, Record<string, string>> = {
     timeframe: "1d",
     as_of: today,
     lookback: "512",
-    model_revision: "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+    horizon: "5",
+    path_count: "20",
+    model_revision: "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
   },
 };
 

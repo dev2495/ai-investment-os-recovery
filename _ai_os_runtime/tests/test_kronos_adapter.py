@@ -36,6 +36,26 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertEqual(len(kronos_inference_worker.KRONOS_MODEL_SHA256), 64)
         self.assertEqual(len(kronos_inference_worker.KRONOS_TOKENIZER_SHA256), 64)
 
+    def test_graph_studio_uses_model_revision_not_source_revision(self) -> None:
+        source = (
+            RUNTIME_ROOT
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "firm"
+            / "GraphStudio.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'model_revision: "f4e68697d9d5aed55cef5c96aabc3376bcad9f81"',
+            source,
+        )
+        self.assertNotIn(
+            'model_revision: "67b630e67f6a18c9e9be918d9b4337c960db1e9a"',
+            source,
+        )
+        self.assertIn('horizon: "5"', source)
+        self.assertIn('path_count: "20"', source)
+
     def test_daily_forecast_timestamps_skip_weekend_and_exchange_holiday(self) -> None:
         timestamps = run_kronos_forecast.future_timestamps(
             "2026-01-23T10:00:00+00:00",
