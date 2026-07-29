@@ -13873,26 +13873,61 @@ def build_chat_context(
         """,
         "graph_catalog": """
             SELECT graph_key,graph_name,graph_family,description,owner_agent,
-                   autonomy_ceiling,node_count,edge_count,open_run_count,
+                   default_autonomy_level AS autonomy_ceiling,
+                   node_count,edge_count,open_run_count,
                    completed_run_count,failed_run_count,latest_run_at
             FROM agent.v_graph_catalog
             ORDER BY graph_family,graph_name
         """,
         "graph_runs": """
-            SELECT graph_run_id,graph_key,graph_name,run_status,trigger_type,
-                   triggered_by,subject_type,subject_ref,current_node_key,
-                   current_node_name,current_owner_agent,total_nodes,
-                   completed_nodes,failed_nodes,waiting_nodes,open_wait_count,
-                   open_approval_count,started_at,updated_at,finished_at
-            FROM agent.v_graph_run_status
-            ORDER BY created_at DESC,graph_run_id DESC
+            SELECT run.graph_run_id,run.graph_key,run.graph_name,run.run_status,
+                   run.trigger_type,run.triggered_by,run.subject_type,run.subject_ref,
+                   active_node.node_key AS current_node_key,
+                   active_node.node_name AS current_node_name,
+                   active_node.owner_agent AS current_owner_agent,
+                   run.node_run_count AS total_nodes,
+                   run.completed_node_count AS completed_nodes,
+                   run.failed_node_count AS failed_nodes,
+                   run.waiting_node_count AS waiting_nodes,
+                   (SELECT count(*)
+                      FROM agent.v_graph_attention_queue attention
+                     WHERE attention.graph_run_id=run.graph_run_id
+                       AND attention.status='open') AS open_wait_count,
+                   (SELECT count(*)
+                      FROM agent.v_graph_node_run_detail node_detail
+                     WHERE node_detail.graph_run_id=run.graph_run_id
+                       AND node_detail.approval_status='pending') AS open_approval_count,
+                   run.started_at,run.updated_at,run.finished_at
+            FROM agent.v_graph_run_status run
+            LEFT JOIN LATERAL (
+                SELECT detail.node_key,detail.node_name,detail.owner_agent
+                FROM agent.v_graph_node_run_detail detail
+                WHERE detail.graph_run_id=run.graph_run_id
+                  AND detail.status IN ('ready','queued','running','waiting_approval','waiting_input','failed')
+                ORDER BY CASE detail.status
+                           WHEN 'running' THEN 1
+                           WHEN 'waiting_approval' THEN 2
+                           WHEN 'waiting_input' THEN 3
+                           WHEN 'ready' THEN 4
+                           WHEN 'queued' THEN 5
+                           ELSE 6
+                         END,
+                         detail.updated_at DESC,
+                         detail.graph_node_run_id DESC
+                LIMIT 1
+            ) active_node ON true
+            ORDER BY run.created_at DESC,run.graph_run_id DESC
             LIMIT 12
         """,
         "graph_attention": """
-            SELECT attention_kind,attention_id,graph_run_id,graph_key,
-                   node_key,title,detail,owner_agent,priority,status,created_at
-            FROM agent.v_graph_attention_queue
-            ORDER BY created_at DESC
+            SELECT attention.attention_kind,attention.id AS attention_id,
+                   attention.graph_run_id,node_detail.graph_key,node_detail.node_key,
+                   attention.title,attention.detail,attention.owner_agent,
+                   attention.category AS priority,attention.status,attention.created_at
+            FROM agent.v_graph_attention_queue attention
+            LEFT JOIN agent.v_graph_node_run_detail node_detail
+              ON node_detail.graph_node_run_id=attention.graph_node_run_id
+            ORDER BY attention.created_at DESC
             LIMIT 12
         """,
     }
@@ -14024,8 +14059,8 @@ def deterministic_chat_reply(
     scoped_employee = scoped_employee_rows[0] if scoped_employee_rows else {}
     scoped_status_request = any(term in normalized for term in (
         "what are you", "what is your", "working on", "backtesting",
-        "current task", "current assignment", "your status", "your workload",
-        "what are you doing",
+        "current task", "current assignment", "live assignment", "assignment",
+        "your status", "your workload", "evidence is missing", "what are you doing",
     ))
 
     focused: list[str] = []
@@ -14050,6 +14085,13 @@ def deterministic_chat_reply(
                 f"Open tasks {scoped_employee.get('open_task_count') or 0}; "
                 f"last activity {scoped_employee.get('latest_activity_at') or 'unknown'}."
             )
+            assignment_detail = (
+                scoped_employee.get("current_task_objective")
+                or scoped_employee.get("current_work_detail")
+                or scoped_employee.get("latest_worker_summary")
+            )
+            if assignment_detail:
+                focused.append(f"Assignment evidence state: {assignment_detail}")
         else:
             focused.append(
                 f"Live employee state (authoritative): {scoped_name} is {scoped_state} "
@@ -14407,6 +14449,7 @@ def persist_response_truth_envelope(chat_turn: dict, route: dict, envelope: dict
 def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_status: str, retrieval_hits: list[dict], widget_intents: list[dict], tool_intents: list[dict]) -> dict:
     session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
     actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    assistant_name = str(payload.get("assistant_name") or payload.get("assistantName") or "Charlie Munger").strip() or "Charlie Munger"
     user_message = str(payload.get("message") or "").strip()
     model_provider = str(route.get("default_provider") or "ollama")
     model_name = str(route.get("default_model") or "llama3.2:3b")
@@ -14421,7 +14464,7 @@ def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_
                 retrieval_hits, widget_intents, tool_intents, metadata
             )
             VALUES (
-                {sql_literal(session_key)}, {sql_literal(actor)}, 'Charlie Munger',
+                {sql_literal(session_key)}, {sql_literal(actor)}, {sql_literal(assistant_name)},
                 {sql_literal(user_message)}, {sql_literal(assistant_message)},
                 {sql_literal(route_name)}, {sql_literal(model_provider)}, {sql_literal(model_name)},
                 {sql_literal(model_status)}, {sql_jsonb(retrieval_hits)},
@@ -15220,6 +15263,7 @@ def chat_with_charlie(payload: dict) -> dict:
     )
 
     persisted_payload = dict(payload)
+    persisted_payload["assistant_name"] = str(identity.get("agent_name") or "Charlie Munger")
     metadata = dict(payload.get("metadata") or {})
     metadata.update({
         "api_route": "/api/chat",

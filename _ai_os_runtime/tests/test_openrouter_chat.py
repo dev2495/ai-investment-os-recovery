@@ -255,7 +255,7 @@ class OpenRouterChatTest(unittest.TestCase):
 
     def test_scoped_employee_status_draft_uses_live_assignment(self) -> None:
         answer = ai_os_api_server.deterministic_chat_reply(
-            "What are you backtesting now?",
+            "Tell me your current live assignment from the warehouse, its task status, and what evidence is missing.",
             {
                 "scoped_employee": [{
                     "agent_name": "Backtest Engineer",
@@ -263,6 +263,7 @@ class OpenRouterChatTest(unittest.TestCase):
                     "current_task_id": 368,
                     "current_task_status": "in_progress",
                     "current_task_title": "Backtest TATASTEEL research strategy after costs",
+                    "current_task_objective": "Validate returns after brokerage, slippage, and taxes.",
                     "open_task_count": 1,
                     "latest_activity_at": "2026-07-29T09:00:00Z",
                 }],
@@ -277,6 +278,41 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertIn("Backtest Engineer is executing", answer)
         self.assertIn("task #368 is in_progress", answer)
         self.assertIn("Backtest TATASTEEL research strategy after costs", answer)
+        self.assertIn("Validate returns after brokerage, slippage, and taxes", answer)
+
+    def test_persists_selected_employee_as_chat_assistant(self) -> None:
+        statements: list[str] = []
+
+        def capture_statement(statement: str):
+            statements.append(statement)
+            return []
+
+        with mock.patch.object(
+            ai_os_api_server,
+            "run_psql_json_statement",
+            capture_statement,
+        ):
+            ai_os_api_server.persist_chat_turn(
+                {
+                    "session_key": "qa-backtest",
+                    "assistant_name": "Backtest Engineer",
+                    "message": "What is your assignment?",
+                },
+                "Live employee state verified.",
+                {
+                    "route_name": "charlie_munger_orchestration",
+                    "default_provider": "ollama",
+                    "default_model": "qwen3:4b-instruct",
+                },
+                "called",
+                [],
+                [],
+                [],
+            )
+
+        self.assertTrue(statements)
+        self.assertIn("Backtest Engineer", statements[0])
+        self.assertNotIn("'Charlie Munger'", statements[0])
 
     def test_rejects_scoped_employee_idle_contradiction(self) -> None:
         def fake_psql(query: str):
