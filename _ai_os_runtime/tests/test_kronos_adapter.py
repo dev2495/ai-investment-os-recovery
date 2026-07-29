@@ -5,7 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -61,6 +61,48 @@ class KronosAdapterTest(unittest.TestCase):
         local = datetime.fromisoformat(timestamps[0]).astimezone(run_kronos_forecast.IST)
         self.assertEqual(local.date().isoformat(), "2026-01-27")
         self.assertEqual(local.strftime("%H:%M"), "09:15")
+
+    def test_create_run_uses_top_level_data_modifying_cte(self) -> None:
+        returned = json.dumps(
+            {
+                "id": 12,
+                "run_key": "kronos-test",
+                "source_hash": "abc",
+                "source_start_ts": "2026-07-17T18:30:00+00:00",
+                "source_end_ts": "2026-07-20T18:30:00+00:00",
+            }
+        )
+        with mock.patch.object(
+            run_kronos_forecast,
+            "psql_text",
+            return_value=returned,
+        ) as query:
+            result = run_kronos_forecast.create_run(
+                task_id=None,
+                graph_run_id=None,
+                graph_node_run_id=None,
+                candidate={"symbol_id": 1},
+                rows=[
+                    {"ts": "2026-07-17T18:30:00+00:00"},
+                    {"ts": "2026-07-20T18:30:00+00:00"},
+                ],
+                symbol="TATASTEEL",
+                exchange="NSE",
+                timeframe="1d",
+                as_of=datetime(2026, 7, 20, 18, 30, tzinfo=timezone.utc),
+                lookback=2,
+                horizon=2,
+                path_count=20,
+                model_revision=kronos_inference_worker.KRONOS_MODEL_REVISION,
+                seed_base=20260729,
+                temperature=1.0,
+                top_p=0.9,
+            )
+        sql = query.call_args.args[0]
+        self.assertIn("WITH inserted AS (", sql)
+        self.assertIn("INSERT INTO strategy.kronos_forecast_runs", sql)
+        self.assertIn("SELECT row_to_json(inserted)::text FROM inserted", sql)
+        self.assertEqual(result["id"], 12)
 
     def test_distribution_contract_requires_real_twenty_path_output(self) -> None:
         paths = []

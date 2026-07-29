@@ -326,8 +326,9 @@ def create_run(
         "direct_signal": False,
         "broker_order_allowed": False,
     }
-    return psql_one(
+    inserted = psql_text(
         f"""
+        WITH inserted AS (
         INSERT INTO strategy.kronos_forecast_runs (
             run_key,task_id,graph_run_id,graph_node_run_id,symbol_id,symbol,exchange,
             timeframe,as_of,lookback,horizon,path_count,model_variant,model_repo,
@@ -349,8 +350,11 @@ def create_run(
             {seed_base},{temperature},{top_p},'running',{sql_jsonb(input_contract)},now()
         )
         RETURNING id,run_key,source_hash,source_start_ts,source_end_ts
+        )
+        SELECT row_to_json(inserted)::text FROM inserted
         """
     )
+    return json.loads(inserted)
 
 
 def quantile(values: list[float], probability: float) -> float:
