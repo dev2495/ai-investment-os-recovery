@@ -394,6 +394,9 @@ export const GraphStudioCss = `
     align-items: stretch;
     flex-direction: column;
   }
+  .graph-studio__run-panel > .aios-panel__header > .aios-panel__title {
+    flex: 0 1 auto;
+  }
   .graph-studio__run-panel > .aios-panel__header > .aios-panel__actions,
   .graph-run-actions { width: 100%; }
   .graph-run-actions {

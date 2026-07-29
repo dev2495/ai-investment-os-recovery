@@ -68,6 +68,7 @@ class KronosAdapterTest(unittest.TestCase):
             ".graph-studio__run-panel > .aios-panel__header",
             styles,
         )
+        self.assertIn("flex: 0 1 auto;", styles)
 
     def test_daily_forecast_timestamps_skip_weekend_and_exchange_holiday(self) -> None:
         timestamps = run_kronos_forecast.future_timestamps(
