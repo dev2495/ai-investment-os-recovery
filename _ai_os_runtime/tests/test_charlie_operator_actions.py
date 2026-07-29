@@ -68,13 +68,22 @@ class CharlieOperatorActionsTest(unittest.TestCase):
 
         with mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest):
             operations = ai_os_api_server.execute_charlie_safe_tools(
-                "Read and analyze this article https://example.com/strategy-note as a possible hypothesis source"
+                "Read and analyze https://example.com/strategy-note as a research source with testable hypotheses"
             )
 
         self.assertEqual(operations[0]["tool"], "ingest_research_source")
         self.assertEqual(captured["source_url"], "https://example.com/strategy-note")
         self.assertIn("backtest_spec", captured["desired_outputs"])
         self.assertFalse(operations[0]["result"]["live_execution_allowed"])
+
+    def test_negated_source_command_does_not_ingest(self) -> None:
+        with mock.patch.object(ai_os_api_server, "ingest_research_source") as ingest:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Do not ingest or read https://example.com/strategy-note"
+            )
+
+        self.assertEqual(operations, [])
+        ingest.assert_not_called()
 
     def test_scoped_identity_is_first_person_and_role_specific(self) -> None:
         profile = {

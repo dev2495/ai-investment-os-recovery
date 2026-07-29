@@ -14895,11 +14895,20 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             invoke(tool_name, callback, "graph_run_id")
 
     source_urls = re.findall(r"https://[^\s<>\]\[()]+", message)
-    source_intent = any(
-        term in normalized
-        for term in ("ingest", "read this", "analyze this", "analyse this", "article", "paper", "blog", "research this", "hypothesis")
+    source_intent = bool(
+        re.search(
+            r"\b(?:ingest|read|analy[sz]e|review|extract|summari[sz]e|study|research)\b",
+            normalized,
+        )
+        or any(term in normalized for term in ("article", "paper", "blog", "research source", "hypothesis"))
     )
-    if source_urls and source_intent:
+    source_intent_negated = bool(
+        re.search(
+            r"\b(?:do not|don't|dont|never)\s+(?:ingest|read|analy[sz]e|review|extract|summari[sz]e|study|research)\b",
+            normalized,
+        )
+    )
+    if source_urls and source_intent and not source_intent_negated:
         source_url = source_urls[0].rstrip(".,;:!?")
         invoke(
             "ingest_research_source",
