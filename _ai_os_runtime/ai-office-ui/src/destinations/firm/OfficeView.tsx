@@ -81,7 +81,7 @@ export function OfficeView() {
   });
   const working = employees.filter((row) => {
     const state = employeeState(row).toLowerCase();
-    return ["active", "working", "running", "in_progress", "queued", "processing", "waiting_approval"].some((candidate) => state.includes(candidate));
+    return ["active", "working", "running", "executing", "in_progress", "queued", "processing", "waiting_approval"].some((candidate) => state.includes(candidate));
   }).length;
   const blocked = employees.filter((row) => employeeState(row).toLowerCase().includes("block") || num(row, "blocked_task_count") > 0).length;
   const rooms = data?.live_office_rooms ?? [];
@@ -141,7 +141,7 @@ export function OfficeView() {
                 columns={[
                   { key: "room", header: "Department", render: (row) => <strong>{text(row, "room_name", text(row, "room_key"))}</strong> },
                   { key: "agents", header: "Employees", align: "right", render: (row) => num(row, "agent_count") },
-                  { key: "active", header: "Working", align: "right", render: (row) => num(row, "active_agent_count") },
+                  { key: "active", header: "Active", align: "right", render: (row) => num(row, "active_agent_count") },
                   { key: "tasks", header: "Open Tasks", align: "right", render: (row) => num(row, "open_task_count") },
                   { key: "inbox", header: "Inbox", align: "right", render: (row) => num(row, "open_inbox_count") },
                   { key: "state", header: "State", render: (row) => <StatusPill status={text(row, "room_state", "idle")} /> },

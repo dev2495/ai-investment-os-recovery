@@ -10,7 +10,7 @@ import { formatRelative, num, text } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { LiveOfficeCss } from "./LiveOffice.css";
 
-const ACTIVE_STATES = ["active", "working", "running", "in_progress", "queued", "processing", "waiting_approval"];
+const ACTIVE_STATES = ["active", "working", "running", "executing", "in_progress", "queued", "processing", "waiting_approval"];
 const BLOCKED_STATES = ["blocked", "error", "failed", "critical"];
 
 function normalizeDepartment(raw: string): string {
@@ -232,7 +232,7 @@ function Room({
           <span className="office-room-label__name">{room.label}</span>
           <div className="office-room-label__meta">
             <span className={`office-room-label__dot office-room-label__dot--${hasRisk ? "risk" : "ok"}`} />
-            <span>{agents.length} employees · {activeCount} working</span>
+            <span>{agents.length} employees · {activeCount} active</span>
             {blockedCount > 0 && <span className="office-room-label__pending">{blockedCount} blocked</span>}
           </div>
         </div>

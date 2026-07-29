@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from _ai_os_runtime.api import ai_os_api_server
@@ -22,6 +23,17 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         graph_query = captured["graph_node_runs"]
         self.assertIn("output_summary AS worker_summary", graph_query)
         self.assertNotIn("worker_status,worker_summary", graph_query)
+
+    def test_live_office_state_labels_match_runtime_semantics(self) -> None:
+        runtime_root = Path(__file__).resolve().parents[1]
+        office_view = (runtime_root / "ai-office-ui" / "src" / "destinations" / "firm" / "OfficeView.tsx").read_text(encoding="utf-8")
+        live_office = (runtime_root / "ai-office-ui" / "src" / "office3d" / "LiveOffice.tsx").read_text(encoding="utf-8")
+
+        for source in (office_view, live_office):
+            self.assertIn("\"executing\"", source)
+        self.assertIn("header: \"Active\"", office_view)
+        self.assertIn("{activeCount} active", live_office)
+        self.assertNotIn("{activeCount} working", live_office)
 
 
 if __name__ == "__main__":
