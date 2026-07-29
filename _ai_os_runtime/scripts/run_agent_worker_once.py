@@ -125,21 +125,30 @@ def get_queue(limit: int, include_completed: bool, task_id: int | None = None) -
         if include_completed
         else "AND (source_kind='committee_packet_position' OR coalesce(latest_worker_status, '') <> 'completed')"
     )
-    task_filter = f"AND task_id = {int(task_id)}" if task_id is not None else ""
+    task_filter = f"AND queue.task_id = {int(task_id)}" if task_id is not None else ""
     return psql_json(
         f"""
-        SELECT *
-        FROM agent.v_live_agent_worker_queue
+        SELECT queue.*
+        FROM agent.v_live_agent_worker_queue queue
         WHERE (
-            task_status IN ('queued','in_progress','needs_review')
-            OR (source_kind='committee_packet_position' AND task_status='blocked')
+            queue.task_status IN ('queued','in_progress','needs_review')
+            OR (queue.source_kind='committee_packet_position' AND queue.task_status='blocked')
         )
           {completed_filter}
           {task_filter}
         ORDER BY
-            CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-            CASE task_status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'needs_review' THEN 3 ELSE 4 END,
-            updated_at DESC
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM agent.agent_messages message
+                WHERE message.generated_task_id=queue.task_id
+                  AND (
+                    message.metadata ? 'graph_run_id'
+                    OR message.metadata ? 'graph_node_run_id'
+                  )
+            ) THEN 0 ELSE 1 END,
+            CASE queue.task_status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'needs_review' THEN 3 ELSE 4 END,
+            CASE queue.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+            queue.updated_at DESC
         LIMIT {int(limit)}
         """
     )

@@ -143,6 +143,20 @@ class KronosAdapterTest(unittest.TestCase):
                 100.0,
             )
 
+    def test_graph_managed_tasks_are_prioritized_ahead_of_stale_queue(self) -> None:
+        with mock.patch.object(
+            run_agent_worker_once,
+            "psql_json",
+            return_value=[],
+        ) as query:
+            run_agent_worker_once.get_queue(5, include_completed=False)
+        sql = query.call_args.args[0]
+        graph_priority = sql.index("message.generated_task_id=queue.task_id")
+        task_state_priority = sql.index("CASE queue.task_status")
+        ordinary_priority = sql.index("CASE queue.priority")
+        self.assertLess(graph_priority, task_state_priority)
+        self.assertLess(task_state_priority, ordinary_priority)
+
     def test_graph_managed_worker_completes_for_control_plane_review(self) -> None:
         job = {
             "task_id": 44,
