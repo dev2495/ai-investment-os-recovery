@@ -104,7 +104,28 @@ export const GraphStudioCss = `
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
-.graph-run-actions .aios-select { min-width: 210px; }
+.graph-studio__run-panel > .aios-panel__header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.graph-studio__run-panel > .aios-panel__header > .aios-panel__title {
+  flex: 1 1 220px;
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
+}
+.graph-studio__run-panel > .aios-panel__header > .aios-panel__actions {
+  flex: 1 1 auto;
+  max-width: 100%;
+}
+.graph-run-actions {
+  max-width: 100%;
+  justify-content: flex-end;
+}
+.graph-run-actions .aios-select {
+  flex: 1 1 210px;
+  min-width: 0;
+  max-width: 100%;
+}
 .graph-run-bar {
   min-height: 62px;
   display: flex;
@@ -369,6 +390,16 @@ export const GraphStudioCss = `
 
 @media (max-width: 1550px) {
   .graph-studio__workspace { grid-template-columns: minmax(220px, 0.65fr) minmax(520px, 1.7fr); }
+  .graph-studio__run-panel > .aios-panel__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .graph-studio__run-panel > .aios-panel__header > .aios-panel__actions,
+  .graph-run-actions { width: 100%; }
+  .graph-run-actions {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
   .graph-studio__attention {
     grid-column: 1 / -1;
     grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr);
@@ -388,6 +419,11 @@ export const GraphStudioCss = `
   .graph-change { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
+  .graph-run-actions { grid-template-columns: 1fr 1fr; }
+  .graph-run-actions .aios-select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
   .graph-studio__toolbar,
   .graph-run-bar__controls { width: 100%; }
   .graph-studio__toolbar .aios-btn,

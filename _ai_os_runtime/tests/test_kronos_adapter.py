@@ -55,6 +55,19 @@ class KronosAdapterTest(unittest.TestCase):
         )
         self.assertIn('horizon: "5"', source)
         self.assertIn('path_count: "20"', source)
+        self.assertIn('className="graph-studio__run-panel"', source)
+        styles = (
+            RUNTIME_ROOT
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "firm"
+            / "GraphStudio.css.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            ".graph-studio__run-panel > .aios-panel__header",
+            styles,
+        )
 
     def test_daily_forecast_timestamps_skip_weekend_and_exchange_holiday(self) -> None:
         timestamps = run_kronos_forecast.future_timestamps(

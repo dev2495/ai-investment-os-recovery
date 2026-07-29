@@ -708,6 +708,7 @@ export function GraphStudio() {
 
         <main className="graph-studio__main">
           <Panel
+            className="graph-studio__run-panel"
             icon={Activity}
             title={selectedRun ? `${text(selectedGraph, "graph_name")} · Run ${selectedRunId}` : text(selectedGraph, "graph_name", "Select a graph")}
             actions={
