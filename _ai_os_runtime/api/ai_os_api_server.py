@@ -385,7 +385,8 @@ def build_office_snapshot() -> dict:
         "graph_node_runs": """
             SELECT graph_node_run_id,graph_run_id,graph_key,node_key,node_name,
                    node_type,owner_agent,skill_key,status,task_id,task_title,
-                   worker_status,worker_summary,approval_id,approval_status,
+                   worker_status,output_summary AS worker_summary,
+                   approval_id,approval_status,
                    committee_packet_id,committee_packet_status,
                    committee_session_status,updated_at
             FROM agent.v_graph_node_run_detail
