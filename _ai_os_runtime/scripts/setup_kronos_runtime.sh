@@ -1,6 +1,7 @@
-
 #!/usr/bin/env bash
 set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/opt/homebrew/opt/postgresql@16/bin:${PATH}"
 
 RUNTIME_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KRONOS_HOME="${AI_OS_KRONOS_HOME:-/Volumes/Devarsh SSD/AI OS Data/models/kronos-runtime}"
