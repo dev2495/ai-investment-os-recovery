@@ -48,9 +48,26 @@ while [[ ! -d "${AI_OS_SSD_ROOT}" ]]; do
 done
 ensure_ssd
 
+wait_for_docker() {
+  local attempts="${1:-120}" i
+  for ((i=1; i<=attempts; i++)); do
+    if docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 if ! docker info >/dev/null 2>&1; then
   log "Starting lean Colima runtime"
-  colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs
+  colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs || true
+  if ! wait_for_docker 60; then
+    log "Colima reported running without a Docker socket; repairing stale VM state once"
+    colima stop --profile ai-os --force || true
+    colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs
+    wait_for_docker 180 || die "Docker did not become ready after Colima state repair"
+  fi
 fi
 
 compose up -d
