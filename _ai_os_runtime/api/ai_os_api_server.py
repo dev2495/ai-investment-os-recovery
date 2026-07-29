@@ -1381,6 +1381,23 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
     filing_count = int((((context or {}).get("filing_summary") or [{}])[0]).get("filing_count") or 0)
     if filing_count > 0 and re.search(r"\b(?:zero|no)\s+(?:corporate\s+)?filings?\b|\bno\s+filing\s+data\b", normalized):
         violations.append("filing_context_contradiction")
+    scoped_rows = (context or {}).get("scoped_employee") or []
+    if scoped_rows:
+        scoped_employee = scoped_rows[0]
+        scoped_task_status = str(scoped_employee.get("current_task_status") or "").lower()
+        scoped_live_state = str(scoped_employee.get("live_state") or "").lower()
+        scoped_is_executing = (
+            scoped_task_status == "in_progress"
+            or scoped_live_state in {"executing", "running", "working", "processing"}
+        )
+        idle_claim = re.search(
+            r"\b(?:idle|not\s+(?:working|backtesting|running)\s+(?:on\s+)?anything|"
+            r"no\s+active\s+(?:task|assignment|work)|"
+            r"nothing\s+(?:is\s+)?(?:running|active)\s+right\s+now)\b",
+            normalized,
+        )
+        if scoped_is_executing and idle_claim and not re.search(r"\bnot\s+idle\b", normalized):
+            violations.append("scoped_employee_activity_contradiction")
     if (context or {}).get("broad_office_request"):
         if not re.search(r"\bportfolio\b.{0,180}\b(?:inr|exposure|market value|holding|nav)\b", normalized):
             violations.append("office_brief_portfolio_missing")
@@ -13613,7 +13630,11 @@ def infer_widget_intents(message: str, snapshot_context: dict) -> list[dict]:
     return intents
 
 
-def build_chat_context(message: str, include_client_context: bool = True) -> dict:
+def build_chat_context(
+    message: str,
+    include_client_context: bool = True,
+    assistant_name: str | None = None,
+) -> dict:
     queries = {
         "clients": """
             SELECT client_code, display_name, account_count, latest_position_count,
@@ -13875,6 +13896,19 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             LIMIT 12
         """,
     }
+    if assistant_name:
+        queries["scoped_employee"] = f"""
+            SELECT agent_name, display_title, department_key, department_name,
+                   live_state, current_work_title, current_work_detail,
+                   current_task_id, current_task_title, current_task_objective,
+                   current_task_status, current_task_priority, open_task_count,
+                   queued_task_count, in_progress_task_count, blocked_task_count,
+                   open_inbox_count, unread_message_count, latest_worker_run_id,
+                   latest_worker_status, latest_worker_summary, latest_activity_at
+            FROM agent.v_live_office_agent_activity
+            WHERE lower(agent_name) = lower({sql_literal(assistant_name)})
+            LIMIT 1
+        """
     if not include_client_context:
         for private_key in (
             "clients", "latest_positions", "book_summary", "investment_books",
@@ -13986,6 +14020,13 @@ def deterministic_chat_reply(
     graph_attention = context.get("graph_attention") or []
     broad_office_request = is_broad_office_request(message)
     graph_request = any(term in normalized for term in ("workflow", "graph run", "control plane", "lifecycle", "daily office loop"))
+    scoped_employee_rows = context.get("scoped_employee") or []
+    scoped_employee = scoped_employee_rows[0] if scoped_employee_rows else {}
+    scoped_status_request = any(term in normalized for term in (
+        "what are you", "what is your", "working on", "backtesting",
+        "current task", "current assignment", "your status", "your workload",
+        "what are you doing",
+    ))
 
     focused: list[str] = []
     if tool_results:
@@ -13994,6 +14035,25 @@ def deterministic_chat_reply(
                 f"Action: {result.get('tool')} -> {result.get('status')}"
                 + (f" ({result.get('detail')})" if result.get("detail") else "")
                 + "."
+            )
+    if scoped_employee and scoped_status_request:
+        scoped_name = scoped_employee.get("agent_name") or "Scoped employee"
+        scoped_state = scoped_employee.get("live_state") or "unknown"
+        scoped_task_status = scoped_employee.get("current_task_status") or "no_open_task"
+        scoped_task_title = scoped_employee.get("current_task_title") or scoped_employee.get("current_work_title")
+        scoped_task_id = scoped_employee.get("current_task_id")
+        task_ref = f"task #{scoped_task_id}" if scoped_task_id else "current assignment"
+        if scoped_task_title:
+            focused.append(
+                f"Live employee state (authoritative): {scoped_name} is {scoped_state}. "
+                f"{task_ref} is {scoped_task_status}: {scoped_task_title}. "
+                f"Open tasks {scoped_employee.get('open_task_count') or 0}; "
+                f"last activity {scoped_employee.get('latest_activity_at') or 'unknown'}."
+            )
+        else:
+            focused.append(
+                f"Live employee state (authoritative): {scoped_name} is {scoped_state} "
+                "with no current task title in the warehouse."
             )
     if graph_request:
         if graph_runs:
@@ -14993,7 +15053,11 @@ def chat_with_charlie(payload: dict) -> dict:
     if include_client_context and requested_privacy in {"public", "internal"}:
         raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
     tool_intents = execute_charlie_safe_tools(message, str(identity.get("agent_name") or "Charlie Munger"))
-    context = build_chat_context(message, include_client_context=include_client_context)
+    context = build_chat_context(
+        message,
+        include_client_context=include_client_context,
+        assistant_name=str(identity.get("agent_name") or "Charlie Munger"),
+    )
     context["tool_results"] = tool_intents
     context["broad_office_request"] = is_broad_office_request(message)
     context["approval_summary_map"] = {
@@ -15042,7 +15106,8 @@ def chat_with_charlie(payload: dict) -> dict:
         or tool_intents
         or any(term in normalized_message for term in (
             "portfolio", "risk", "holding", "position", "watchlist", "strategy", "research",
-            "filing", "news", "calendar", "option", "market", "broker", "task", "inbox", "approval"
+            "filing", "news", "calendar", "option", "market", "broker", "task", "inbox", "approval",
+            "backtest", "working", "assignment", "what are you doing"
         ))
     )
     bounded_verified_context = (
@@ -15072,6 +15137,8 @@ def chat_with_charlie(payload: dict) -> dict:
         f"{message}\n\n"
         "Relevant verified office facts and deterministic calculations:\n"
         f"{bounded_verified_context}\n\n"
+        "The scoped employee row in verified facts is authoritative for current work and status. "
+        "Never claim idle or no active work when it reports an executing or in-progress task.\n\n"
         "Completed or attempted operator actions:\n"
         f"{json.dumps(tool_intents, default=str)[:1400]}\n\n"
         "Source-linked memory snippets:\n"

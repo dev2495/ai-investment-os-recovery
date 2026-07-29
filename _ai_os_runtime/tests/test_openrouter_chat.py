@@ -238,6 +238,73 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertIn("TradingAgents: 1 hypothesis", answer)
         self.assertIn("and 1 completed specialist outputs", answer)
 
+    def test_scoped_context_loads_live_employee_assignment(self) -> None:
+        def fake_psql(query: str):
+            if "FROM agent.v_live_office_agent_activity" in query:
+                return [{"agent_name": "Backtest Engineer", "live_state": "executing"}]
+            return []
+
+        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+            context = ai_os_api_server.build_chat_context(
+                "What are you backtesting now?",
+                include_client_context=False,
+                assistant_name="Backtest Engineer",
+            )
+
+        self.assertEqual(context["scoped_employee"][0]["live_state"], "executing")
+
+    def test_scoped_employee_status_draft_uses_live_assignment(self) -> None:
+        answer = ai_os_api_server.deterministic_chat_reply(
+            "What are you backtesting now?",
+            {
+                "scoped_employee": [{
+                    "agent_name": "Backtest Engineer",
+                    "live_state": "executing",
+                    "current_task_id": 368,
+                    "current_task_status": "in_progress",
+                    "current_task_title": "Backtest TATASTEEL research strategy after costs",
+                    "open_task_count": 1,
+                    "latest_activity_at": "2026-07-29T09:00:00Z",
+                }],
+            },
+            [],
+            [],
+            {"default_model": "test"},
+            "ok",
+            include_route_status=False,
+        )
+
+        self.assertIn("Backtest Engineer is executing", answer)
+        self.assertIn("task #368 is in_progress", answer)
+        self.assertIn("Backtest TATASTEEL research strategy after costs", answer)
+
+    def test_rejects_scoped_employee_idle_contradiction(self) -> None:
+        def fake_psql(query: str):
+            if "FROM agent.model_routes" in query:
+                return []
+            if "FROM trading.execution_control_state" in query:
+                return [{
+                    "global_execution_locked": True,
+                    "live_broker_writes_allowed": False,
+                }]
+            return []
+
+        context = {
+            "scoped_employee": [{
+                "agent_name": "Backtest Engineer",
+                "live_state": "executing",
+                "current_task_status": "in_progress",
+            }],
+            "filing_summary": [{"filing_count": 12}],
+        }
+        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                "I am idle. I am not backtesting anything right now.",
+                context,
+            )
+
+        self.assertIn("scoped_employee_activity_contradiction", violations)
+
 
 if __name__ == "__main__":
     unittest.main()
