@@ -558,7 +558,8 @@ status_backend() {
   load_env
   printf 'node_role=%s\nssd=%s\nrepo=%s\nvault=%s\n' \
     "${AI_OS_NODE_ROLE}" "${AI_OS_SSD_ROOT}" "${AI_OS_REPO_ROOT}" "${AI_OS_VAULT_ROOT}/ai memory"
-  diskutil info "${AI_OS_SSD_ROOT}" 2>/dev/null | egrep 'Volume Name|Mounted|Mount Point|File System Personality|Volume Used Space|Volume Free Space' || true
+  /sbin/mount | grep -F " on ${AI_OS_SSD_ROOT} (" || true
+  /bin/df -h "${AI_OS_SSD_ROOT}" || true
   colima status --profile ai-os 2>/dev/null || true
   compose ps 2>/dev/null || true
   curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" 2>/dev/null | jq '{status, checked_at, model_runtime, storage}' || true
