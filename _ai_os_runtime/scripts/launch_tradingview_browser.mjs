@@ -43,14 +43,25 @@ const browserProcess = spawn(executablePath, [
   initialUrl
 ], { stdio: ["ignore", "inherit", "inherit"] });
 
-browserProcess.once("exit", (code, signal) => {
+browserProcess.once("exit", async (code, signal) => {
   if (closing) return;
+  try {
+    const reusedVersion = await waitForCdp(15000);
+    console.log(JSON.stringify({
+      status: "reused_existing_browser",
+      code,
+      signal,
+      port,
+      cdp_browser: reusedVersion.Browser
+    }));
+    return;
+  } catch {}
   console.error(JSON.stringify({ status: "browser_exited", code, signal }));
   process.exit(code ?? 1);
 });
 
-async function waitForCdp() {
-  const deadline = Date.now() + 120000;
+async function waitForCdp(timeoutMs = 120000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
