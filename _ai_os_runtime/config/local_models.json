@@ -256,6 +256,33 @@
       ]
     },
     {
+      "model": "ministral-3:3b-instruct-2512-q4_K_M",
+      "provider": "ollama",
+      "source": "https://ollama.com/library/ministral-3:3b-instruct-2512-q4_K_M",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 512,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary",
+        "structured_output"
+      ],
+      "activation_requirements": [
+        "Ollama 0.13.1 or later",
+        "exact model digest",
+        "conversation_v1 pass",
+        "zero hard failures",
+        "median latency at or below 30000 ms"
+      ]
+    },
+    {
       "model": "qwen3:4b-instruct",
       "tier": "light",
       "required_profiles": [
