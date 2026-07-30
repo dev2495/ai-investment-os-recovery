@@ -341,6 +341,60 @@ class OpenRouterChatTest(unittest.TestCase):
 
         self.assertIn("scoped_employee_activity_contradiction", violations)
 
+    def test_local_openai_uses_bounded_natural_conversation_budget(self) -> None:
+        captured: dict = {}
+
+        def fake_http_json(method, url, payload, timeout):
+            captured.update({
+                "method": method,
+                "url": url,
+                "payload": payload,
+                "timeout": timeout,
+            })
+            return {"choices": [{"message": {"content": "I am online and ready."}}]}
+
+        with (
+            mock.patch.object(ai_os_api_server, "local_openai_model_available", return_value=True),
+            mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(ai_os_api_server, "http_json", fake_http_json),
+        ):
+            content, status = ai_os_api_server.local_openai_chat(
+                "prism-ml/Bonsai-27B-Q1_0",
+                "Give me a concise status.",
+            )
+
+        self.assertEqual(content, "I am online and ready.")
+        self.assertEqual(status, "called")
+        self.assertEqual(captured["timeout"], 240)
+        self.assertEqual(captured["payload"]["max_tokens"], 96)
+        self.assertFalse(captured["payload"]["chat_template_kwargs"]["enable_thinking"])
+
+    def test_model_call_audit_preserves_failed_attempt_before_safe_fallback(self) -> None:
+        statements: list[str] = []
+
+        with mock.patch.object(
+            ai_os_api_server,
+            "run_psql_json_statement",
+            side_effect=lambda statement: statements.append(statement) or [],
+        ):
+            ai_os_api_server.finish_chat_model_call(
+                {
+                    "id": 9,
+                    "selected_provider": "local_openai",
+                    "cache_status": "bypassed",
+                },
+                "Verified deterministic fallback.",
+                "deterministic_fallback",
+                180100,
+                attempt_status="call_failed:TimeoutError",
+            )
+
+        self.assertEqual(len(statements), 1)
+        self.assertIn("'attempt_status', 'call_failed:TimeoutError'", statements[0])
+        self.assertIn("'final_status', 'deterministic_fallback'", statements[0])
+        self.assertIn("'fallback_used', true", statements[0])
+        self.assertIn("error_message='call_failed:TimeoutError'", statements[0])
+
 
 if __name__ == "__main__":
     unittest.main()

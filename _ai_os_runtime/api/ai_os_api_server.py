@@ -42,8 +42,8 @@ MLX_REQUEST_MODEL = os.environ.get(
 )
 LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
 LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
-LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "160"))
-LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "180"))
+LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "96"))
+LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "240"))
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MAX_COMPLETION_TOKENS = int(os.environ.get("AI_OS_OPENROUTER_MAX_COMPLETION_TOKENS", "1200"))
@@ -87,7 +87,8 @@ CHARLIE_LOCAL_CONVERSATION_PROMPT = (
     "status, caveat, and source; never invent actions, trades, approvals, calculations, or facts. "
     "Never add a buy, sell, hold, sizing, order, or execution recommendation that is absent from the "
     "verified draft. State what is missing plainly. Answer every category the user requested. "
-    "Be direct, conversational, and concise. Broker writes are locked."
+    "Be direct, conversational, and concise. Use at most six short sentences unless the user explicitly asks for detail. "
+    "Broker writes are locked."
 )
 
 QDRANT_COLLECTIONS = [
@@ -13543,7 +13544,9 @@ def finish_chat_model_call(
     model_status: str,
     latency_ms: int,
     usage: dict | None = None,
+    attempt_status: str | None = None,
 ) -> None:
+    attempt_status = attempt_status or model_status
     record_selected_model_usage(decision, model_status, usage)
     response_hash = hashlib.sha256(response.encode("utf-8", errors="replace")).hexdigest()
     cache_status = str(decision.get("cache_status") or "bypassed")
@@ -13576,7 +13579,12 @@ def finish_chat_model_call(
             SET decision_status={sql_literal('completed' if model_status in {'called','cache_hit','deterministic_fallback'} else 'failed')},
                 cache_status={sql_literal(cache_status)}, response_hash={sql_literal(response_hash)},
                 latency_ms={max(0, int(latency_ms))},
-                error_message={sql_literal(None if model_status in {'called','cache_hit','deterministic_fallback'} else model_status)},
+                evidence=evidence || jsonb_build_array(jsonb_build_object(
+                    'attempt_status', {sql_literal(attempt_status)},
+                    'final_status', {sql_literal(model_status)},
+                    'fallback_used', {str(attempt_status != model_status).lower()}
+                )),
+                error_message={sql_literal(None if attempt_status in {'called','cache_hit','deterministic_fallback','deterministic_tool_route'} else attempt_status)},
                 finished_at=now()
             WHERE id={int(decision['id'])}
             RETURNING id
@@ -15164,7 +15172,7 @@ def chat_with_charlie(payload: dict) -> dict:
         ))
     )
     bounded_verified_context = (
-        verified_draft[:3000]
+        verified_draft[:1800]
         if needs_verified_facts
         else "No office snapshot was needed for this conversational turn. Do not invent office state or completed work."
     )
@@ -15183,9 +15191,9 @@ def chat_with_charlie(payload: dict) -> dict:
     prompt = (
         "/no_think\n"
         "Active employee identity and operating contract:\n"
-        f"{json.dumps({key: identity.get(key) for key in ('agent_name','display_title','department_name','role_scope','persona','operating_style','mental_models','primary_route','permission_level','reports_to_agent')}, default=str)[:2200]}\n\n"
+        f"{json.dumps({key: identity.get(key) for key in ('agent_name','display_title','department_name','role_scope','persona','operating_style','mental_models','primary_route','permission_level','reports_to_agent')}, default=str)[:1200]}\n\n"
         "Recent local conversation (context only; current verified data controls):\n"
-        f"{json.dumps(history, default=str)[:1800]}\n\n"
+        f"{json.dumps(history, default=str)[:900]}\n\n"
         "Current user message:\n"
         f"{message}\n\n"
         "Relevant verified office facts and deterministic calculations:\n"
@@ -15193,15 +15201,16 @@ def chat_with_charlie(payload: dict) -> dict:
         "The scoped employee row in verified facts is authoritative for current work and status. "
         "Never claim idle or no active work when it reports an executing or in-progress task.\n\n"
         "Completed or attempted operator actions:\n"
-        f"{json.dumps(tool_intents, default=str)[:1400]}\n\n"
+        f"{json.dumps(tool_intents, default=str)[:900]}\n\n"
         "Source-linked memory snippets:\n"
-        f"{json.dumps(model_retrieval_hits[:3], default=str)[:700]}\n\n"
+        f"{json.dumps(model_retrieval_hits[:3], default=str)[:500]}\n\n"
         f"Answer as {identity.get('agent_name')} in a natural ongoing conversation. Lead with the direct answer. "
         "When work was requested, state exactly what you completed, what you delegated, who owns it, and its stored status. "
         "Any row list is a bounded sample unless explicitly labelled complete; omission from a sample is never evidence that a record or run does not exist. "
         "Preserve facts, caveats, numbers, action status, and "
         "links exactly. Never invent an action or recommendation. Do not add buy, sell, hold, sizing, order, or "
-        "execution advice. Broker writes remain locked. Return only the user-facing answer."
+        "execution advice. Broker writes remain locked. Use at most six short sentences unless the user explicitly asks for detail. "
+        "Return only the user-facing answer."
     )
 
     def deterministic_for_identity() -> str:
@@ -15235,6 +15244,7 @@ def chat_with_charlie(payload: dict) -> dict:
         )
     )
     cached_response = model_decision.get("cached_response")
+    model_attempt_status = "not_attempted"
     if deterministic_only:
         route = {**route, "last_model_status": "deterministic_tool_route"}
         assistant_message = deterministic_for_identity()
@@ -15253,9 +15263,11 @@ def chat_with_charlie(payload: dict) -> dict:
             assistant_message, model_status = ollama_chat(selected_model, prompt, identity_system_prompt)
     else:
         assistant_message, model_status = None, "model_call_blocked"
+    model_attempt_status = model_status
     if assistant_message and model_status == "called":
         response_guardrail = validate_charlie_model_response(assistant_message, context)
         if response_guardrail:
+            model_attempt_status = "response_guardrail_rejected"
             route = {**route, "last_model_status": "response_guardrail_rejected"}
             assistant_message = deterministic_for_identity()
             model_status = "deterministic_fallback"
@@ -15270,6 +15282,7 @@ def chat_with_charlie(payload: dict) -> dict:
         model_status,
         int((time.perf_counter() - started) * 1000),
         cloud_usage,
+        attempt_status=model_attempt_status,
     )
 
     persisted_payload = dict(payload)
@@ -15282,6 +15295,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "model_call_decision_id": model_decision.get("id"),
         "privacy_class": model_decision.get("privacy_class"),
         "response_guardrail": response_guardrail,
+        "model_attempt_status": model_attempt_status,
         "cloud_usage": cloud_usage,
         "auto_factual_retrieval": auto_factual_retrieval,
     })
@@ -15340,6 +15354,7 @@ def chat_with_charlie(payload: dict) -> dict:
             "contains_client_data": model_decision.get("contains_client_data"),
             "cache_status": model_decision.get("cache_status"),
             "block_reasons": model_decision.get("block_reasons"),
+            "attempt_status": model_attempt_status,
             "raw_prompt_stored": False,
         },
         "retrieval_status": retrieval_status,

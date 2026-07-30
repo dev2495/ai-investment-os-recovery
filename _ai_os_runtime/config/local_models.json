@@ -228,6 +228,34 @@
       ]
     },
     {
+      "model": "nanbeige/nanbeige4.2:3b-Q4_K_M",
+      "provider": "ollama",
+      "source": "https://huggingface.co/Nanbeige/Nanbeige4.2-3B",
+      "tier": "light",
+      "required_profiles": [
+        "imac",
+        "macbook"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 384,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary",
+        "business_review_draft",
+        "deck_outline"
+      ],
+      "activation_requirements": [
+        "Nanbeige-compatible Ollama runtime",
+        "exact model digest",
+        "conversation_v1 pass",
+        "median latency at or below 30000 ms"
+      ]
+    },
+    {
       "model": "qwen3:4b-instruct",
       "tier": "light",
       "required_profiles": [
