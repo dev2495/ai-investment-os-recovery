@@ -23,9 +23,13 @@ fi
 printf '%s\n' "$$" > "${SUPERVISOR_LOCK}/pid"
 
 children=()
+colima_start_pid=""
 
 stop_children() {
   local pid
+  if [[ -n "${colima_start_pid}" ]]; then
+    kill -TERM "${colima_start_pid}" 2>/dev/null || true
+  fi
   for pid in "${children[@]:-}"; do
     [[ -n "${pid}" ]] || continue
     kill "${pid}" 2>/dev/null || true
@@ -48,25 +52,63 @@ while [[ ! -d "${AI_OS_SSD_ROOT}" ]]; do
 done
 ensure_ssd
 
-wait_for_docker() {
-  local attempts="${1:-120}" i
-  for ((i=1; i<=attempts; i++)); do
+start_colima_with_timeout() {
+  local timeout_seconds="$1" i
+  shift
+
+  colima start "$@" &
+  colima_start_pid="$!"
+
+  for ((i=1; i<=timeout_seconds; i++)); do
     if docker info >/dev/null 2>&1; then
+      for _ in {1..15}; do
+        kill -0 "${colima_start_pid}" 2>/dev/null || break
+        sleep 1
+      done
+      if kill -0 "${colima_start_pid}" 2>/dev/null; then
+        log "Colima CLI remained active after Docker became ready; detaching it"
+        kill -TERM "${colima_start_pid}" 2>/dev/null || true
+      fi
+      wait "${colima_start_pid}" 2>/dev/null || true
+      colima_start_pid=""
       return 0
+    fi
+
+    if ! kill -0 "${colima_start_pid}" 2>/dev/null; then
+      wait "${colima_start_pid}" 2>/dev/null || true
+      colima_start_pid=""
+      return 1
     fi
     sleep 1
   done
+
+  log "Colima start exceeded ${timeout_seconds}s; terminating the stuck CLI"
+  kill -TERM "${colima_start_pid}" 2>/dev/null || true
+  sleep 2
+  kill -KILL "${colima_start_pid}" 2>/dev/null || true
+  wait "${colima_start_pid}" 2>/dev/null || true
+  colima_start_pid=""
   return 1
 }
 
+colima_args=(
+  --profile ai-os
+  --runtime docker
+  --cpu 2
+  --memory 3
+  --disk 32
+  --vm-type vz
+  --mount-type virtiofs
+)
+
 if ! docker info >/dev/null 2>&1; then
   log "Starting lean Colima runtime"
-  colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs || true
-  if ! wait_for_docker 60; then
-    log "Colima reported running without a Docker socket; repairing stale VM state once"
+  if ! start_colima_with_timeout 90 "${colima_args[@]}"; then
+    log "Colima did not expose Docker; repairing stale VM state once"
     colima stop --profile ai-os --force || true
-    colima start --profile ai-os --runtime docker --cpu 2 --memory 3 --disk 32 --vm-type vz --mount-type virtiofs
-    wait_for_docker 180 || die "Docker did not become ready after Colima state repair"
+    if ! start_colima_with_timeout 180 "${colima_args[@]}"; then
+      die "Docker did not become ready after Colima state repair"
+    fi
   fi
 fi
 
