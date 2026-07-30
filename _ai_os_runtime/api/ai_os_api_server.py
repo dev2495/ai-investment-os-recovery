@@ -42,7 +42,7 @@ MLX_REQUEST_MODEL = os.environ.get(
 )
 LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
 LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
-LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "96"))
+LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "128"))
 LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "240"))
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
@@ -87,7 +87,7 @@ CHARLIE_LOCAL_CONVERSATION_PROMPT = (
     "status, caveat, and source; never invent actions, trades, approvals, calculations, or facts. "
     "Never add a buy, sell, hold, sizing, order, or execution recommendation that is absent from the "
     "verified draft. State what is missing plainly. Answer every category the user requested. "
-    "Be direct, conversational, and concise. Use at most six short sentences unless the user explicitly asks for detail. "
+    "Be direct, conversational, and concise. Use at most four short sentences and 90 words unless the user explicitly asks for detail. "
     "Broker writes are locked."
 )
 
@@ -1242,8 +1242,11 @@ def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = 
             timeout=LOCAL_OPENAI_TIMEOUT_SECONDS,
         )
         choices = payload.get("choices") if isinstance(payload, dict) else None
-        message = choices[0].get("message") if isinstance(choices, list) and choices else None
+        choice = choices[0] if isinstance(choices, list) and choices else None
+        message = choice.get("message") if isinstance(choice, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(choice, dict) and choice.get("finish_reason") == "length":
+            return None, "model_output_truncated"
         return str(content).strip() if content else None, "called"
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         return None, f"call_failed:{type(exc).__name__}"
@@ -15209,7 +15212,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "Any row list is a bounded sample unless explicitly labelled complete; omission from a sample is never evidence that a record or run does not exist. "
         "Preserve facts, caveats, numbers, action status, and "
         "links exactly. Never invent an action or recommendation. Do not add buy, sell, hold, sizing, order, or "
-        "execution advice. Broker writes remain locked. Use at most six short sentences unless the user explicitly asks for detail. "
+        "execution advice. Broker writes remain locked. Use at most four short sentences and 90 words unless the user explicitly asks for detail. "
         "Return only the user-facing answer."
     )
 

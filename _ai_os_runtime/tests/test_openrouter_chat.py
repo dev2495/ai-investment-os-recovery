@@ -366,8 +366,31 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertEqual(content, "I am online and ready.")
         self.assertEqual(status, "called")
         self.assertEqual(captured["timeout"], 240)
-        self.assertEqual(captured["payload"]["max_tokens"], 96)
+        self.assertEqual(captured["payload"]["max_tokens"], 128)
         self.assertFalse(captured["payload"]["chat_template_kwargs"]["enable_thinking"])
+
+    def test_local_openai_rejects_truncated_output(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server, "local_openai_model_available", return_value=True),
+            mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(
+                ai_os_api_server,
+                "http_json",
+                return_value={
+                    "choices": [{
+                        "finish_reason": "length",
+                        "message": {"content": "This sentence was clipped"},
+                    }],
+                },
+            ),
+        ):
+            content, status = ai_os_api_server.local_openai_chat(
+                "prism-ml/Bonsai-27B-Q1_0",
+                "Give me a complete answer.",
+            )
+
+        self.assertIsNone(content)
+        self.assertEqual(status, "model_output_truncated")
 
     def test_model_call_audit_preserves_failed_attempt_before_safe_fallback(self) -> None:
         statements: list[str] = []
