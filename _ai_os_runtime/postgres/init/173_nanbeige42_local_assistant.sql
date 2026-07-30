@@ -79,12 +79,16 @@ ON CONFLICT (endpoint_key) DO UPDATE SET
     route_name=EXCLUDED.route_name,
     base_url=EXCLUDED.base_url,
     deployment_target=EXCLUDED.deployment_target,
-    status=EXCLUDED.status,
+    status=CASE
+        WHEN agent.model_endpoints.health_status='model_unavailable'
+        THEN agent.model_endpoints.status
+        ELSE EXCLUDED.status
+    END,
     context_window=EXCLUDED.context_window,
     estimated_disk_gb=EXCLUDED.estimated_disk_gb,
     capabilities=EXCLUDED.capabilities,
     notes=EXCLUDED.notes,
-    config=EXCLUDED.config,
+    config=agent.model_endpoints.config || EXCLUDED.config,
     updated_at=now();
 
 COMMIT;
