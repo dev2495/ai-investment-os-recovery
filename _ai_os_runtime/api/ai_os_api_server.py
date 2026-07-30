@@ -15055,7 +15055,8 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             flags=re.IGNORECASE,
         )
     )
-    if delegation_command and not graph_command:
+    source_intake_handled = bool(source_urls and source_intent and not source_intent_negated)
+    if delegation_command and not graph_command and not source_intake_handled:
         target = resolve_agent_for_instruction(message)
         if target:
             subject = re.sub(r"\s+", " ", message).strip()[:120]

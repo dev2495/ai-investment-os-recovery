@@ -66,15 +66,21 @@ class CharlieOperatorActionsTest(unittest.TestCase):
             captured.update(payload)
             return {"status": "assigned", "live_execution_allowed": False, "paper": {"id": 91}}
 
-        with mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest):
+        with (
+            mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest),
+            mock.patch.object(ai_os_api_server, "create_agent_message") as generic_delegation,
+        ):
             operations = ai_os_api_server.execute_charlie_safe_tools(
-                "Read and analyze https://example.com/strategy-note as a research source with testable hypotheses"
+                "Read and analyze https://example.com/strategy-note as a research source with testable hypotheses, "
+                "then delegate the evidence review to the research team"
             )
 
+        self.assertEqual(len(operations), 1)
         self.assertEqual(operations[0]["tool"], "ingest_research_source")
         self.assertEqual(captured["source_url"], "https://example.com/strategy-note")
         self.assertIn("backtest_spec", captured["desired_outputs"])
         self.assertFalse(operations[0]["result"]["live_execution_allowed"])
+        generic_delegation.assert_not_called()
 
     def test_negated_source_command_does_not_ingest(self) -> None:
         with mock.patch.object(ai_os_api_server, "ingest_research_source") as ingest:
