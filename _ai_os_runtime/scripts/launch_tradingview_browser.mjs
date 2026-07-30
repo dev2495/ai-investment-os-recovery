@@ -87,10 +87,13 @@ console.log(JSON.stringify({
   pid: process.pid
 }));
 
+const keepAliveTimer = setInterval(() => {}, 60000);
+
 async function shutdown(signal) {
   if (closing) return;
   closing = true;
   console.log(JSON.stringify({ status: "stopping", signal }));
+  clearInterval(keepAliveTimer);
   browserProcess.kill("SIGTERM");
   process.exit(0);
 }

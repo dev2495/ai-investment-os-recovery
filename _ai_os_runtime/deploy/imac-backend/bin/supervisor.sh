@@ -125,12 +125,16 @@ fi
 wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 90
 
 if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
-  log "Starting the governed TradingView browser worker"
-  node "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/launch_tradingview_browser.mjs" \
-    --port "${AI_OS_TRADINGVIEW_CDP_PORT}" \
-    --profile-dir "${AI_OS_TRADINGVIEW_BROWSER_PROFILE}" \
-    >>"${LOG_ROOT}/tradingview-browser.log" 2>>"${LOG_ROOT}/tradingview-browser.err" &
-  children+=("$!")
+  if curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" >/dev/null 2>&1; then
+    log "Reusing the governed TradingView browser session"
+  else
+    log "Starting the governed TradingView browser worker"
+    node "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/launch_tradingview_browser.mjs" \
+      --port "${AI_OS_TRADINGVIEW_CDP_PORT}" \
+      --profile-dir "${AI_OS_TRADINGVIEW_BROWSER_PROFILE}" \
+      >>"${LOG_ROOT}/tradingview-browser.log" 2>>"${LOG_ROOT}/tradingview-browser.err" &
+    children+=("$!")
+  fi
   wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 120
 fi
 
@@ -180,6 +184,11 @@ while true; do
       die "Supervised process ${pid} exited"
     fi
   done
-  curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" >/dev/null
+  if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
+    curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" >/dev/null \
+      || die "Governed TradingView browser heartbeat failed"
+  fi
+  curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" >/dev/null \
+    || die "AI OS API heartbeat failed"
   sleep 20
 done

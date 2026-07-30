@@ -542,12 +542,18 @@ verify_backend() {
   printf 'DATABASE_INVARIANTS=%s\n' "${invariants}"
   [[ "$(printf '%s' "${invariants}" | jq -r '.execution_locked')" == "true" ]] || die "Execution lock invariant failed"
 
-  curl -fsS "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" \
-    | jq -e '.result.collections | length >= 6' >/dev/null
-  curl -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" \
-    | jq -e --arg model "${AI_OS_EMBEDDING_MODEL}" '.models | any((.name // .model) == $model)' >/dev/null
-  launchctl print "${LAUNCHD_DOMAIN}/${SUPERVISOR_LABEL}" >/dev/null
-  launchctl print "${LAUNCHD_DOMAIN}/${REPORTS_LABEL}" >/dev/null
+  if ! curl -fsS "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" \
+    | jq -e '.result.collections | length >= 6' >/dev/null; then
+    die "Qdrant must expose at least six indexed collections"
+  fi
+  if ! curl -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" \
+    | jq -e --arg model "${AI_OS_EMBEDDING_MODEL}" '.models | any((.name // .model) == $model)' >/dev/null; then
+    die "Ollama is missing the configured embedding model: ${AI_OS_EMBEDDING_MODEL}"
+  fi
+  launchctl print "${LAUNCHD_DOMAIN}/${SUPERVISOR_LABEL}" >/dev/null \
+    || die "Supervisor LaunchAgent is not loaded"
+  launchctl print "${LAUNCHD_DOMAIN}/${REPORTS_LABEL}" >/dev/null \
+    || die "Scheduled reports LaunchAgent is not loaded"
   if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
     wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 10
   fi
