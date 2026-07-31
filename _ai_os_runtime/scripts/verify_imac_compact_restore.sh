@@ -65,7 +65,11 @@ repo_commit="$(manifest_value repo_commit)"
 }
 
 rsync -a --delete "${BACKUP_SET}/vault/" "${VAULT_RESTORE}/"
-diff -qr "${BACKUP_SET}/vault" "${VAULT_RESTORE}" > "${DRILL_WORK}/vault.diff"
+rsync -ani --delete "${BACKUP_SET}/vault/" "${VAULT_RESTORE}/" > "${DRILL_WORK}/vault.diff"
+[[ ! -s "${DRILL_WORK}/vault.diff" ]] || {
+  echo "ERROR: restored vault differs from the backup set" >&2
+  exit 9
+}
 
 docker exec ai_os_postgres dropdb -U "${AI_OS_POSTGRES_USER}" --if-exists --force "${RESTORE_DB}" >/dev/null 2>&1 || true
 docker exec ai_os_postgres createdb -U "${AI_OS_POSTGRES_USER}" -T template0 "${RESTORE_DB}"

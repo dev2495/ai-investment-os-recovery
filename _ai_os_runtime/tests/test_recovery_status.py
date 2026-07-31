@@ -93,6 +93,8 @@ class RecoveryStatusTests(unittest.TestCase):
         self.assertIn("ALTER EXTENSION timescaledb UPDATE TO", restore_script)
         self.assertIn("timescaledb_post_restore()", restore_script)
         self.assertIn("postgres-inventory.diff", restore_script)
+        self.assertIn("rsync -ani --delete", restore_script)
+        self.assertNotIn("diff -qr", restore_script)
         self.assertNotIn("timescale/timescaledb:latest-pg16", env_example)
         self.assertNotIn("redis:7-alpine", env_example)
         self.assertIn("timescale/timescaledb@sha256:", compose)
