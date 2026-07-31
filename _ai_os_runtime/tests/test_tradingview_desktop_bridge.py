@@ -65,6 +65,46 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         commands = [call.args[0][0] for call in run.call_args_list]
         self.assertEqual(commands, ["/usr/bin/pbcopy", "/usr/bin/osascript"])
 
+    def test_api_serializes_permission_gated_task_as_one_json_document(self) -> None:
+        task = {"id": 91, "task_title": "Open TradingView Desktop: NSE:RELIANCE"}
+        updated = {
+            **task,
+            "status": "waiting_input",
+            "result_summary": "TradingView Desktop requires Accessibility permission.",
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "create_tradingview_task", return_value=task),
+            mock.patch.object(
+                ai_os_api_server,
+                "open_link_in_desktop",
+                return_value={
+                    "status": "permission_required",
+                    "desktop": {"installed": True, "running": True, "automation_permission": False},
+                },
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json_statement",
+                return_value=[updated],
+            ) as json_query,
+            mock.patch.object(
+                ai_os_api_server,
+                "probe_tradingview_cdp",
+                return_value={"available": True, "port": 9333},
+            ),
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.open_tradingview_desktop_chart(
+                {"symbol": "RELIANCE", "exchange": "NSE", "timeframe": "15"}
+            )
+
+        sql = json_query.call_args.args[0]
+        self.assertIn("WITH updated AS", sql)
+        self.assertIn("json_agg(row_to_json(updated))", sql)
+        self.assertEqual(result["status"], "permission_required")
+        self.assertEqual(result["task"]["status"], "waiting_input")
+        self.assertTrue(result["desktop"]["cdp_fallback"]["available"])
+
     def test_charlie_routes_explicit_desktop_chart_command(self) -> None:
         with mock.patch.object(
             ai_os_api_server,

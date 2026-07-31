@@ -1108,15 +1108,18 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
         )
     )
     rows = run_psql_json_statement(f"""
-        UPDATE ops.tradingview_tasks
-        SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
-            evidence=evidence || jsonb_build_array({sql_jsonb({"source": "TradingView Desktop clipboard handoff", "target_url": target_url, "status": bridge_status})}),
-            metadata=metadata || {sql_jsonb({"target_url": target_url, "desktop": bridge.get("desktop") or {}})},
-            updated_at=now(),
-            completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
-        WHERE id={task_id}
-        RETURNING id, task_title, task_type, status, symbols, exchange, timeframe,
-                  result_summary, evidence, metadata, created_at, updated_at, completed_at
+        WITH updated AS (
+            UPDATE ops.tradingview_tasks
+            SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
+                evidence=evidence || jsonb_build_array({sql_jsonb({"source": "TradingView Desktop clipboard handoff", "target_url": target_url, "status": bridge_status})}),
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "desktop": bridge.get("desktop") or {}})},
+                updated_at=now(),
+                completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
+            WHERE id={task_id}
+            RETURNING id, task_title, task_type, status, symbols, exchange, timeframe,
+                      result_summary, evidence, metadata, created_at, updated_at, completed_at
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
     """)
     response = {
         "status": bridge_status,
