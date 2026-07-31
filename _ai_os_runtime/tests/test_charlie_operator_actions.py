@@ -339,6 +339,42 @@ class CharlieOperatorActionsTest(unittest.TestCase):
             )
         )
 
+    def test_embedding_does_not_depend_on_transient_ollama_tags(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(ai_os_api_server, "http_json", return_value={"embeddings": [[0.1, 0.2]]}),
+            mock.patch.object(ai_os_api_server, "ollama_model_available") as tags_probe,
+        ):
+            vector = ai_os_api_server.ollama_embed("execution safety rule")
+
+        self.assertEqual(vector, [0.1, 0.2])
+        tags_probe.assert_not_called()
+
+    def test_stored_memory_title_request_requires_semantic_retrieval(self) -> None:
+        message = (
+            "Use our stored AI OS memory to tell me the execution-safety rule "
+            "and name the relevant memory titles."
+        )
+        self.assertTrue(ai_os_api_server.is_auto_factual_retrieval_request(message))
+        reply = ai_os_api_server.deterministic_chat_reply(
+            message,
+            {"context_errors": []},
+            [],
+            [],
+            {"default_model": "test"},
+            "embedding_model_unavailable",
+        )
+        self.assertIn("cannot name or cite stored notes", reply)
+        self.assertIn("embedding_model_unavailable", reply)
+
+    def test_retrieval_gate_precedes_model_call_for_factual_memory_requests(self) -> None:
+        source = Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
+        gate = source.index("elif retrieval_gate_blocked:")
+        provider_call = source.index("elif model_decision.get(\"decision_status\") == \"allowed\":", gate)
+        self.assertLess(gate, provider_call)
+        self.assertIn("existing_missing_evidence = list", source)
+        self.assertIn("semantic_retrieval_passed", source)
+
     def test_research_status_can_use_internal_cloud_boundary(self) -> None:
         self.assertFalse(
             ai_os_api_server.message_requires_client_private_context(

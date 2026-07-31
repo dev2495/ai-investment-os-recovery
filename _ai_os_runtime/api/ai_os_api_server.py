@@ -1237,8 +1237,7 @@ def model_runtime_options(model_name: str) -> dict[str, int | float]:
 
 
 def ollama_embed(text: str) -> list[float] | None:
-    if not ollama_model_available(EMBEDDING_MODEL):
-        return None
+    # The embed endpoint is authoritative; /api/tags can time out while another model is loading.
     if not local_model_governance(EMBEDDING_MODEL).get("assignable"):
         return None
     try:
@@ -14111,6 +14110,7 @@ def is_auto_factual_retrieval_request(message: str) -> bool:
         "how many", "show", "list", "latest", "status", "what changed",
         "where is", "where are", "do we have", "give me", "get me",
         "what is completed", "what is actually completed", "needs my review",
+        "find", "retrieve", "cite", "use our stored", "what does", "name the",
     )
     domain_terms = (
         "filing", "announcement", "news", "watchlist", "idea list", "report",
@@ -14118,6 +14118,7 @@ def is_auto_factual_retrieval_request(message: str) -> bool:
         "client", "ohlcv", "market data", "calendar", "holiday", "result date",
         "research", "paper", "article", "hypothesis", "backtest", "worker",
         "agent", "department", "office", "workflow", "graph run", "cycle",
+        "memory", "vault", "obsidian", "stored note", "knowledge base",
     )
     return (
         any(term in normalized for term in request_terms)
@@ -14513,6 +14514,11 @@ def deterministic_chat_reply(
     if retrieval_hits:
         titles = [str(hit.get("title")) for hit in retrieval_hits[:3] if hit.get("title")]
         lines.append("Most relevant memory hits: " + "; ".join(titles) + ".")
+    elif is_auto_factual_retrieval_request(message) and retrieval_status != "ok":
+        lines.append(
+            "Semantic memory retrieval is unavailable for this turn "
+            f"({retrieval_status}). I cannot name or cite stored notes until retrieval succeeds."
+        )
     if widget_intents:
         lines.append("Suggested dashboard widgets: " + ", ".join(intent["widget_title"] for intent in widget_intents) + ".")
     else:
@@ -15460,10 +15466,16 @@ def chat_with_charlie(payload: dict) -> dict:
     )
     cached_response = model_decision.get("cached_response")
     model_attempt_status = "not_attempted"
+    retrieval_gate_blocked = bool(auto_factual_retrieval and retrieval_status != "ok")
     if deterministic_only:
         route = {**route, "last_model_status": "deterministic_tool_route"}
         assistant_message = deterministic_for_identity()
         model_status = "deterministic_fallback"
+    elif retrieval_gate_blocked:
+        route = {**route, "last_model_status": f"retrieval_gate_blocked:{retrieval_status}"}
+        assistant_message = deterministic_for_identity()
+        model_status = "deterministic_fallback"
+        model_attempt_status = f"retrieval_gate_blocked:{retrieval_status}"
     elif cached_response:
         assistant_message, model_status = str(cached_response), "cache_hit"
     elif model_decision.get("decision_status") == "allowed":
@@ -15517,7 +15529,10 @@ def chat_with_charlie(payload: dict) -> dict:
     truth_envelope = build_response_truth_envelope(model_status, route, retrieval_status, retrieval_hits, include_client_context)
     if needs_verified_facts:
         context_errors = context.get("context_errors") or []
-        truth_envelope["evidence_status"] = "warehouse_verified" if not context_errors else "warehouse_partial"
+        existing_missing_evidence = list(truth_envelope.get("missing_evidence") or [])
+        truth_envelope["evidence_status"] = (
+            "warehouse_partial" if context_errors or retrieval_gate_blocked else "warehouse_verified"
+        )
         truth_envelope["source_refs"] = [{
             "source_table": "warehouse_chat_snapshot",
             "as_of": truth_envelope["as_of"],
@@ -15526,12 +15541,16 @@ def chat_with_charlie(payload: dict) -> dict:
                 if key not in {"context_errors", "tool_results"} and value
             ),
         }]
-        truth_envelope["missing_evidence"] = [
+        truth_envelope["missing_evidence"] = existing_missing_evidence + [
             f"context_error:{row.get('section')}:{row.get('error')}"
             for row in context_errors
         ]
         truth_envelope["verification_checks"]["warehouse_context_loaded"] = True
         truth_envelope["verification_checks"]["warehouse_context_error_count"] = len(context_errors)
+        truth_envelope["verification_checks"]["semantic_retrieval_required"] = auto_factual_retrieval
+        truth_envelope["verification_checks"]["semantic_retrieval_passed"] = (
+            not auto_factual_retrieval or retrieval_status == "ok"
+        )
     metadata["truth_envelope"] = truth_envelope
     persisted_payload["metadata"] = metadata
     chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
