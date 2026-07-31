@@ -172,6 +172,11 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/portfolio/nav": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/reconciliation": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/trackers": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
+    // Risk and capital
+    "/risk/dashboard": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    "/risk/limits": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    "/risk/institutional": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    "/risk/capital": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
     // Research & filings
     "/research/filings": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/special-situations": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
