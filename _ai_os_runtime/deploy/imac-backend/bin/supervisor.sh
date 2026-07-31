@@ -124,6 +124,32 @@ if ! curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" 
 fi
 wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 90
 
+nanbeige_supervised=0
+NANBEIGE_ROOT="${AI_OS_NANBEIGE_ROOT:-${AI_OS_DATA_ROOT}/models/nanbeige42-runtime}"
+NANBEIGE_SERVER="${NANBEIGE_ROOT}/source/llama.cpp/build/bin/llama-server"
+NANBEIGE_MODEL="${NANBEIGE_ROOT}/nanbeige4.2-3b-Q4_K_M.gguf"
+NANBEIGE_PORT="${AI_OS_NANBEIGE_PORT:-11436}"
+NANBEIGE_ALIAS="nanbeige/nanbeige4.2:3b-Q4_K_M"
+if [[ "${AI_OS_ENABLE_NANBEIGE42:-1}" == "1" ]]; then
+  if [[ -x "${NANBEIGE_SERVER}" && -f "${NANBEIGE_MODEL}" ]]; then
+    if curl --max-time 3 -fsS "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" >/dev/null 2>&1; then
+      log "Reusing the isolated Nanbeige4.2 runtime"
+    else
+      log "Starting the isolated Nanbeige4.2 runtime"
+      DYLD_LIBRARY_PATH="${NANBEIGE_ROOT}/source/llama.cpp/build/bin" "${NANBEIGE_SERVER}" \
+        --model "${NANBEIGE_MODEL}" --alias "${NANBEIGE_ALIAS}" \
+        --host 127.0.0.1 --port "${NANBEIGE_PORT}" --ctx-size 8192 \
+        --n-gpu-layers 99 --parallel 1 --jinja \
+        >>"${LOG_ROOT}/nanbeige42.log" 2>>"${LOG_ROOT}/nanbeige42.err" &
+      children+=("$!")
+    fi
+    wait_http "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" Nanbeige4.2 180
+    nanbeige_supervised=1
+  else
+    log "Nanbeige4.2 artifacts are not installed yet; keeping its model route disabled"
+  fi
+fi
+
 if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
   if curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" >/dev/null 2>&1; then
     log "Reusing the governed TradingView browser session"
@@ -184,6 +210,10 @@ while true; do
       die "Supervised process ${pid} exited"
     fi
   done
+  if [[ "${nanbeige_supervised}" == "1" ]]; then
+    curl --max-time 5 -fsS "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" >/dev/null \
+      || die "Nanbeige4.2 heartbeat failed"
+  fi
   if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
     curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" >/dev/null \
       || die "Governed TradingView browser heartbeat failed"

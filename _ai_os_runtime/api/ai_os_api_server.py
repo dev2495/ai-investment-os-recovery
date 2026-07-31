@@ -1195,9 +1195,51 @@ def mlx_model_available(model_name: str) -> bool:
         return False
 
 
-def local_openai_model_available(model_name: str) -> bool:
+def local_openai_endpoint(model_name: str) -> dict:
+    """Resolve a private OpenAI-compatible runtime without sharing one global URL."""
+    fallback = {
+        "base_url": LOCAL_OPENAI_BASE_URL,
+        "request_model": LOCAL_OPENAI_REQUEST_MODEL,
+        "max_output_tokens": LOCAL_OPENAI_MAX_TOKENS,
+    }
     try:
-        with urllib.request.urlopen(f"{LOCAL_OPENAI_BASE_URL}/models", timeout=3.0) as response:
+        rows = run_psql_json(
+            f"""
+            SELECT base_url,
+                   coalesce(nullif(config->>'request_model',''), model_name) AS request_model,
+                   coalesce((config->>'max_output_tokens')::INTEGER, {LOCAL_OPENAI_MAX_TOKENS}) AS max_output_tokens,
+                   endpoint_key, status, health_status
+            FROM agent.model_endpoints
+            WHERE provider='local_openai'
+              AND model_name={sql_literal(model_name)}
+              AND status NOT IN ('disabled','blocked')
+              AND nullif(base_url,'') IS NOT NULL
+            ORDER BY (status='active') DESC, (health_status='healthy') DESC, updated_at DESC
+            LIMIT 1
+            """
+        )
+    except Exception:  # noqa: BLE001 - runtime fallback must survive DB startup ordering
+        rows = []
+    if not rows:
+        return fallback
+    row = rows[0]
+    try:
+        max_output_tokens = int(row.get("max_output_tokens") or LOCAL_OPENAI_MAX_TOKENS)
+    except (TypeError, ValueError):
+        max_output_tokens = LOCAL_OPENAI_MAX_TOKENS
+    return {
+        **fallback,
+        **row,
+        "base_url": str(row.get("base_url") or LOCAL_OPENAI_BASE_URL).rstrip("/"),
+        "request_model": str(row.get("request_model") or LOCAL_OPENAI_REQUEST_MODEL),
+        "max_output_tokens": max(32, min(max_output_tokens, 1200)),
+    }
+
+
+def local_openai_model_available(model_name: str) -> bool:
+    endpoint = local_openai_endpoint(model_name)
+    try:
+        with urllib.request.urlopen(f"{endpoint['base_url']}/models", timeout=3.0) as response:
             return int(response.status) == 200
     except (OSError, urllib.error.URLError, TimeoutError):
         return False
@@ -1335,17 +1377,18 @@ def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = 
     governance = local_model_governance(model_name)
     if not governance.get("assignable"):
         return None, str(governance.get("reason") or "model_not_promoted")
+    endpoint = local_openai_endpoint(model_name)
     try:
         payload = http_json(
             "POST",
-            f"{LOCAL_OPENAI_BASE_URL}/chat/completions",
+            f"{endpoint['base_url']}/chat/completions",
             {
-                "model": LOCAL_OPENAI_REQUEST_MODEL,
+                "model": endpoint["request_model"],
                 "stream": False,
                 "temperature": 0.7,
                 "top_p": 0.95,
                 "top_k": 20,
-                "max_tokens": LOCAL_OPENAI_MAX_TOKENS,
+                "max_tokens": endpoint["max_output_tokens"],
                 "cache_prompt": True,
                 "chat_template_kwargs": {"enable_thinking": False},
                 "messages": [

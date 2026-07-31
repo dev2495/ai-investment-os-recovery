@@ -356,6 +356,15 @@ class OpenRouterChatTest(unittest.TestCase):
         with (
             mock.patch.object(ai_os_api_server, "local_openai_model_available", return_value=True),
             mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(
+                ai_os_api_server,
+                "local_openai_endpoint",
+                return_value={
+                    "base_url": ai_os_api_server.LOCAL_OPENAI_BASE_URL,
+                    "request_model": ai_os_api_server.LOCAL_OPENAI_REQUEST_MODEL,
+                    "max_output_tokens": ai_os_api_server.LOCAL_OPENAI_MAX_TOKENS,
+                },
+            ),
             mock.patch.object(ai_os_api_server, "http_json", fake_http_json),
         ):
             content, status = ai_os_api_server.local_openai_chat(
@@ -369,10 +378,51 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertEqual(captured["payload"]["max_tokens"], 128)
         self.assertFalse(captured["payload"]["chat_template_kwargs"]["enable_thinking"])
 
+    def test_local_openai_uses_model_specific_endpoint(self) -> None:
+        captured: dict = {}
+
+        def fake_http_json(method, url, payload, timeout):
+            captured.update({"url": url, "payload": payload, "timeout": timeout})
+            return {"choices": [{"message": {"content": "Private runtime is ready."}}]}
+
+        with (
+            mock.patch.object(ai_os_api_server, "local_openai_model_available", return_value=True),
+            mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(
+                ai_os_api_server,
+                "local_openai_endpoint",
+                return_value={
+                    "base_url": "http://127.0.0.1:11436/v1",
+                    "request_model": "nanbeige/nanbeige4.2:3b-Q4_K_M",
+                    "max_output_tokens": 384,
+                },
+            ),
+            mock.patch.object(ai_os_api_server, "http_json", fake_http_json),
+        ):
+            content, status = ai_os_api_server.local_openai_chat(
+                "nanbeige/nanbeige4.2:3b-Q4_K_M",
+                "Give me the office status.",
+            )
+
+        self.assertEqual(content, "Private runtime is ready.")
+        self.assertEqual(status, "called")
+        self.assertEqual(captured["url"], "http://127.0.0.1:11436/v1/chat/completions")
+        self.assertEqual(captured["payload"]["model"], "nanbeige/nanbeige4.2:3b-Q4_K_M")
+        self.assertEqual(captured["payload"]["max_tokens"], 384)
+
     def test_local_openai_rejects_truncated_output(self) -> None:
         with (
             mock.patch.object(ai_os_api_server, "local_openai_model_available", return_value=True),
             mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(
+                ai_os_api_server,
+                "local_openai_endpoint",
+                return_value={
+                    "base_url": ai_os_api_server.LOCAL_OPENAI_BASE_URL,
+                    "request_model": ai_os_api_server.LOCAL_OPENAI_REQUEST_MODEL,
+                    "max_output_tokens": ai_os_api_server.LOCAL_OPENAI_MAX_TOKENS,
+                },
+            ),
             mock.patch.object(
                 ai_os_api_server,
                 "http_json",

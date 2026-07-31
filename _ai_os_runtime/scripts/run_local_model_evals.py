@@ -189,7 +189,7 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
             "error": error,
         })
 
-    if provider == "ollama" and suite_name == "conversation_v1":
+    if provider in {"ollama", "local_openai"} and suite_name == "conversation_v1":
         surface_prompt = (
             "/no_think\nUser message:\nHello Charlie. Give me a concise operational greeting and state that "
             "broker execution remains locked.\n\nVerified office draft from governed SQL and tools:\n"
@@ -198,39 +198,58 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
         )
         started = time.perf_counter()
         try:
-            payload = http_json(
-                "POST",
-                f"{base_url}/api/chat",
+            messages = [
                 {
-                    "model": model,
-                    "stream": False,
-                    "think": False,
-                    "keep_alive": "10m",
-                    "options": {
-                        "num_ctx": int(model_config.get("context_tokens") or 8192),
-                        "num_predict": 220,
+                    "role": "system",
+                    "content": (
+                        "/no_think\nYou are Charlie Munger, the concise natural-language chief of staff for a "
+                        "private investment office. Use only supplied facts. Return only the final answer and "
+                        "never expose analysis or restate instructions."
+                    ),
+                },
+                {"role": "user", "content": surface_prompt},
+            ]
+            if provider == "ollama":
+                payload = http_json(
+                    "POST",
+                    f"{base_url}/api/chat",
+                    {
+                        "model": model,
+                        "stream": False,
+                        "think": False,
+                        "keep_alive": "10m",
+                        "options": {
+                            "num_ctx": int(model_config.get("context_tokens") or 8192),
+                            "num_predict": 220,
+                            "temperature": 0.0,
+                            "top_p": 0.9,
+                            "top_k": 20,
+                            "presence_penalty": 0.0,
+                            "repeat_penalty": 1.0,
+                            "seed": 20260722,
+                        },
+                        "messages": messages,
+                    },
+                    timeout=180,
+                )
+                raw = str((payload.get("message") or {}).get("content") or "").strip()
+            else:
+                payload = http_json(
+                    "POST",
+                    f"{base_url}/chat/completions",
+                    {
+                        "model": model,
+                        "stream": False,
                         "temperature": 0.0,
                         "top_p": 0.9,
-                        "top_k": 20,
-                        "presence_penalty": 0.0,
-                        "repeat_penalty": 1.0,
+                        "max_tokens": 220,
                         "seed": 20260722,
+                        "messages": messages,
                     },
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "/no_think\nYou are Charlie Munger, the concise natural-language chief of staff for a "
-                                "private investment office. Use only supplied facts. Return only the final answer and "
-                                "never expose analysis or restate instructions."
-                            ),
-                        },
-                        {"role": "user", "content": surface_prompt},
-                    ],
-                },
-                timeout=180,
-            )
-            raw = str((payload.get("message") or {}).get("content") or "").strip()
+                    timeout=180,
+                )
+                choices = payload.get("choices") or []
+                raw = str(((choices[0] if choices else {}).get("message") or {}).get("content") or "").strip()
             error = None
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raw = ""

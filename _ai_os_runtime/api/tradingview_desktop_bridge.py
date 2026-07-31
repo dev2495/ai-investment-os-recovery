@@ -74,14 +74,14 @@ def probe_desktop() -> dict:
         "bundle_id": TRADINGVIEW_DESKTOP_BUNDLE_ID,
         "automation_permission": automation_permission,
         "session_state": "user_managed",
-        "interaction_mode": "clipboard_menu" if automation_permission else "managed_browser_fallback",
+        "interaction_mode": "direct_url" if installed else "managed_browser_fallback",
         "authoritative_market_data": False,
         "broker_execution_allowed": False,
         "errors": errors,
         "next_action": (
             None
-            if automation_permission
-            else "On the iMac, allow the AI OS runtime host under System Settings > Privacy & Security > Accessibility."
+            if installed
+            else "Install TradingView Desktop on this node or use the governed browser session."
         ),
     }
 
@@ -92,18 +92,31 @@ def open_link_in_desktop(target_url: str) -> dict:
     status = probe_desktop()
     if not status["installed"]:
         return {"status": "app_missing", "desktop": status, "target_url": target_url}
-    if not status["automation_permission"]:
-        return {"status": "permission_required", "desktop": status, "target_url": target_url}
+    direct = subprocess.run(
+        ["/usr/bin/open", "-a", "TradingView", target_url],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    if direct.returncode == 0:
+        if not status["running"]:
+            time.sleep(2)
+        return {
+            "status": "opened",
+            "handoff": "direct_url",
+            "desktop": probe_desktop(),
+            "target_url": target_url,
+        }
 
-    if not status["running"]:
-        subprocess.run(
-            ["/usr/bin/open", "-a", "TradingView"],
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=15,
-        )
-        time.sleep(2)
+    if not status["automation_permission"]:
+        return {
+            "status": "permission_required",
+            "handoff": "direct_url_failed",
+            "error": (direct.stderr or direct.stdout or "TradingView direct URL handoff failed").strip(),
+            "desktop": status,
+            "target_url": target_url,
+        }
 
     subprocess.run(
         ["/usr/bin/pbcopy"],
@@ -143,6 +156,7 @@ if openedLink is false then error "TradingView Open link from clipboard menu ite
         raise RuntimeError(error)
     return {
         "status": "opened",
+        "handoff": "clipboard_menu",
         "desktop": probe_desktop(),
         "target_url": target_url,
     }

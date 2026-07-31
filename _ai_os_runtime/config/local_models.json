@@ -229,12 +229,15 @@
     },
     {
       "model": "nanbeige/nanbeige4.2:3b-Q4_K_M",
-      "provider": "ollama",
+      "provider": "local_openai",
       "source": "https://huggingface.co/Nanbeige/Nanbeige4.2-3B",
+      "revision": "f56ec5a9650268aa098496734743c25ea778bd2d",
+      "runtime_source": "https://github.com/Nanbeige/llama.cpp/tree/nanbeige42",
+      "runtime_revision": "c6640a1c0cf7b38df342b67021a3900b04d092e7",
+      "local_path": "nanbeige/nanbeige4.2:3b-Q4_K_M",
       "tier": "light",
       "required_profiles": [
-        "imac",
-        "macbook"
+        "imac"
       ],
       "context_tokens": 8192,
       "max_output_tokens": 384,
@@ -249,9 +252,9 @@
         "deck_outline"
       ],
       "activation_requirements": [
-        "Nanbeige-compatible Ollama runtime",
-        "exact model digest",
-        "conversation_v1 pass",
+        "isolated pinned Nanbeige llama.cpp runtime",
+        "official Hugging Face revision and GGUF SHA-256",
+        "conversation_v1 pass with zero hard failures",
         "median latency at or below 30000 ms"
       ]
     },
