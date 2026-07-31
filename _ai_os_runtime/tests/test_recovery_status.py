@@ -76,6 +76,18 @@ class RecoveryStatusTests(unittest.TestCase):
             self.assertIn(field, script)
 
 
+    def test_imac_status_projects_current_health_contract(self) -> None:
+        script = (
+            pathlib.Path(__file__).parents[1]
+            / "deploy"
+            / "imac-backend"
+            / "bin"
+            / "aios-imac"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("{ok, generated_at, db, tradingview_cdp, operator_auth}", script)
+        self.assertNotIn("{status, checked_at, model_runtime, storage}", script)
+
     def test_compact_restore_drill_is_version_aligned_and_image_pinned(self) -> None:
         runtime_root = pathlib.Path(__file__).parents[1]
         restore_script = (

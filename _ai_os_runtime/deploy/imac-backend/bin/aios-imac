@@ -596,7 +596,7 @@ status_backend() {
   /bin/df -h "${AI_OS_SSD_ROOT}" || true
   colima status --profile ai-os 2>/dev/null || true
   compose ps 2>/dev/null || true
-  curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" 2>/dev/null | jq '{status, checked_at, model_runtime, storage}' || true
+  curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" 2>/dev/null | jq '{ok, generated_at, db, tradingview_cdp, operator_auth}' || true
   curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" 2>/dev/null | jq -r '.models[]?.name' || true
   command -v tailscale >/dev/null 2>&1 && tailscale serve status || true
   [[ ! -f "${AI_OS_OFFSITE_BACKUP_ROOT}/current/manifest.txt" ]] || cat "${AI_OS_OFFSITE_BACKUP_ROOT}/current/manifest.txt"
