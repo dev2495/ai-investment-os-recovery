@@ -922,6 +922,7 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
                 row for row in evidence_rows
                 if str(row.get("event_type") or "") in requested_event_types
             ]
+        context["selected_filing_evidence"] = evidence_rows
         filing_lines: list[str] = []
         unparsed_count = 0
         for row in evidence_rows:
@@ -1067,7 +1068,7 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
         str(job.get("source_kind") or ""),
         str(job.get("source_ref") or ""),
     ]
-    for filing in (context.get("special_situation_filings") or context.get("recent_filings") or []):
+    for filing in (context.get("selected_filing_evidence") or context.get("special_situation_filings") or context.get("recent_filings") or []):
         evidence.append(
             "research.v_corporate_filing_inbox "
             f"filing_id={filing.get('filing_id')} "
@@ -1123,7 +1124,7 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
         {"source": "agent.v_agent_skill_matrix", "skill_key": skill.get("skill_key")},
         {"source": "obsidian_note", "path": relative_note},
     ]
-    for filing in (context.get("special_situation_filings") or context.get("recent_filings") or []):
+    for filing in (context.get("selected_filing_evidence") or context.get("special_situation_filings") or context.get("recent_filings") or []):
         evidence.append({
             "source": "research.v_corporate_filing_inbox",
             "filing_id": filing.get("filing_id"),

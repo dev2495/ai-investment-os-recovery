@@ -323,6 +323,7 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertIn("https://example.test/filing/88.pdf", summary)
         self.assertIn("stored event `merger`", summary)
         self.assertNotIn("Preferential allotment announcement", summary)
+        self.assertEqual([row["filing_id"] for row in context["selected_filing_evidence"]], [88])
         self.assertIn("triage metadata, not verified transaction terms", summary)
         self.assertIn("makes no buy, sell", summary)
         self.assertNotIn("Processed internal message", summary)
