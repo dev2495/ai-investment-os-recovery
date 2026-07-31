@@ -305,9 +305,9 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
         }
         message = base.get("agent_message") or {}
         message_metadata = message.get("metadata") or {}
+        message_text = f"{message.get('subject') or ''} {message.get('body') or ''}".lower()
         paper_id = message_metadata.get("paper_id")
         if not str(paper_id or "").isdigit():
-            message_text = f"{message.get('subject') or ''} {message.get('body') or ''}".lower()
             source_aliases = (
                 ("tradingagents", "tradingagents"),
                 ("ai hedge fund", "ai hedge fund"),
@@ -326,6 +326,31 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                     "ORDER BY updated_at DESC,id DESC LIMIT 1"
                 )
                 paper_id = matched_source.get("id")
+        if (
+            skill_key == "research_evidence_curation"
+            and any(
+                term in message_text
+                for term in ("coverage gap", "artifact gap", "knowledge gap", "missing note")
+            )
+        ):
+            base["artifact_gaps"] = psql_json(
+                """
+                SELECT gap_type,source_view,source_id,title,owner_agent,status,
+                       created_at,updated_at,gap_reason
+                FROM agent.v_output_artifact_gaps
+                ORDER BY updated_at DESC NULLS LAST,created_at DESC NULLS LAST
+                LIMIT 20
+                """
+            )
+            base["artifact_gap_summary"] = psql_json(
+                """
+                SELECT gap_type,count(*)::int AS gap_count,
+                       max(updated_at) AS latest_updated_at
+                FROM agent.v_output_artifact_gaps
+                GROUP BY gap_type
+                ORDER BY gap_count DESC,gap_type
+                """
+            )
         if skill_key in {
             "company_research_note",
             "research_evidence_curation",
@@ -794,6 +819,59 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         lines.append(position["thesis"])
         next_actions.append("Submit the position, wait for every required member, then open post-quorum challenge and chair synthesis.")
         next_actions.append("Require Devarsh's human-final decision before capital, client-facing, or broker action.")
+    elif skill_key == "research_evidence_curation" and "artifact_gaps" in context:
+        gaps = context.get("artifact_gaps") or []
+        remediation_by_type = {
+            "worker_run_missing_note": (
+                "Re-materialize the worker output into Obsidian, persist output_note_path, "
+                "and verify the note exists before closing the run."
+            ),
+            "long_term_research_update_missing_note": (
+                "Create a company research note linked to the update, symbol, thesis, source lineage, "
+                "and review date; then reconcile note_path."
+            ),
+            "strategy_committee_missing_memo": (
+                "Generate the committee memo from the sealed review packet, attach evidence and dissent, "
+                "and keep the decision pending human approval."
+            ),
+        }
+        gap_lines: list[str] = []
+        for index, gap in enumerate(gaps, start=1):
+            gap_type = str(gap.get("gap_type") or "unclassified_gap")
+            remediation = remediation_by_type.get(
+                gap_type,
+                "Route the source row to its owner, materialize the missing durable artifact, "
+                "and reconcile the registry before closure.",
+            )
+            gap_lines.extend([
+                f"### Gap {index}: {gap.get('title') or gap_type}",
+                f"- Type: {gap_type}; status: {gap.get('status') or 'unknown'}; owner: {gap.get('owner_agent') or 'unassigned'}.",
+                f"- Evidence row: {gap.get('source_view') or 'unknown'}:{gap.get('source_id') or 'unknown'}; updated: {gap.get('updated_at') or gap.get('created_at') or 'unknown'}.",
+                f"- Verified reason: {gap.get('gap_reason') or 'No reason was supplied by the gap registry.'}",
+                f"- Remediation contract: {remediation}",
+                "",
+            ])
+        lines.append("\n".join([
+            "## Knowledge Coverage Gap Review",
+            f"Reviewed {len(gaps)} current gap rows from authoritative view agent.v_output_artifact_gaps.",
+            "This run is a read-only evidence review: no source records were altered and no trading action was requested or allowed.",
+            "",
+            *(
+                gap_lines
+                if gap_lines
+                else [
+                    "No open output-artifact gaps were returned by the warehouse at execution time.",
+                    "The empty result is bounded to the current view and timestamp; it is not evidence that every research domain is complete.",
+                ]
+            ),
+            "## Control Conclusion",
+            "- Each gap remains open until its owning source row has a verified Obsidian artifact and the registry no longer returns it.",
+            "- Capital action allowed: false. Live execution allowed: false. Broker orders allowed: false.",
+        ]))
+        next_actions.extend([
+            "Assign each remediation contract to the listed owner and retain the source-view/source-ID pair in the task evidence.",
+            "After remediation, rerun this skill and close only the gaps that disappear from agent.v_output_artifact_gaps.",
+        ])
     elif context.get("research_source") and skill_key in {"company_research_note", "research_evidence_curation"}:
         source = context.get("research_source") or {}
         source_text = str(source.get("extracted_text") or "")
@@ -1074,6 +1152,12 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
             f"filing_id={filing.get('filing_id')} "
             f"source={filing.get('attachment_url') or filing.get('source_url') or 'missing'}"
         )
+    for gap in context.get("artifact_gaps") or []:
+        evidence.append(
+            "agent.v_output_artifact_gaps "
+            f"gap_type={gap.get('gap_type')} "
+            f"source={gap.get('source_view')}:{gap.get('source_id')}"
+        )
     body = [
         f"# Agent Worker Run - Task {job.get('task_id')}",
         "",
@@ -1131,6 +1215,14 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
             "source_url": filing.get("attachment_url") or filing.get("source_url"),
             "event_type": filing.get("event_type"),
             "extraction_status": filing.get("extraction_status"),
+        })
+    for gap in context.get("artifact_gaps") or []:
+        evidence.append({
+            "source": "agent.v_output_artifact_gaps",
+            "gap_type": gap.get("gap_type"),
+            "source_view": gap.get("source_view"),
+            "source_id": gap.get("source_id"),
+            "owner_agent": gap.get("owner_agent"),
         })
     kronos_forecast = context.get("kronos_forecast")
     if isinstance(kronos_forecast, dict):
