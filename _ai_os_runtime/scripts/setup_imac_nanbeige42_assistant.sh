@@ -1,30 +1,39 @@
 #!/bin/bash
 set -euo pipefail
 
+EXPLICIT_REPO_ROOT="${AI_OS_REPO_ROOT:-}"
+EXPLICIT_RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-}"
+EXPLICIT_DATA_ROOT="${AI_OS_DATA_ROOT:-}"
+EXPLICIT_DOCKER_BIN="${AI_OS_DOCKER_BIN:-}"
+EXPLICIT_PYTHON_BIN="${AI_OS_PYTHON_BIN:-}"
+EXPLICIT_NANBEIGE_ROOT="${AI_OS_NANBEIGE_ROOT:-}"
+EXPLICIT_NANBEIGE_PORT="${AI_OS_NANBEIGE_PORT:-}"
+EXPLICIT_LOG_ROOT="${AI_OS_RUNTIME_LOG_ROOT:-}"
+
 ENV_FILE="${AI_OS_IMAC_ENV:-${HOME}/Library/Application Support/AIOS/imac.env}"
 if [[ -f "${ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
 fi
 
-REPO_ROOT="${AI_OS_REPO_ROOT:-${HOME}/AI_OS_NODE/current}"
-RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-${REPO_ROOT}/_ai_os_runtime}"
-DATA_ROOT="${AI_OS_DATA_ROOT:-/Volumes/Devarsh SSD/AI OS Data}"
-DOCKER_BIN="${AI_OS_DOCKER_BIN:-/opt/homebrew/bin/docker}"
-PYTHON_BIN="${AI_OS_PYTHON_BIN:-/opt/homebrew/bin/python3.13}"
+REPO_ROOT="${EXPLICIT_REPO_ROOT:-${AI_OS_REPO_ROOT:-${HOME}/AI_OS_NODE/current}}"
+RUNTIME_ROOT="${EXPLICIT_RUNTIME_ROOT:-${AI_OS_RUNTIME_ROOT:-${REPO_ROOT}/_ai_os_runtime}}"
+DATA_ROOT="${EXPLICIT_DATA_ROOT:-${AI_OS_DATA_ROOT:-/Volumes/Devarsh SSD/AI OS Data}}"
+DOCKER_BIN="${EXPLICIT_DOCKER_BIN:-${AI_OS_DOCKER_BIN:-/opt/homebrew/bin/docker}}"
+PYTHON_BIN="${EXPLICIT_PYTHON_BIN:-${AI_OS_PYTHON_BIN:-/opt/homebrew/bin/python3.13}}"
 MODEL="nanbeige/nanbeige4.2:3b-Q4_K_M"
 MODEL_REVISION="f56ec5a9650268aa098496734743c25ea778bd2d"
 RUNTIME_REVISION="c6640a1c0cf7b38df342b67021a3900b04d092e7"
-ROOT="${AI_OS_NANBEIGE_ROOT:-${DATA_ROOT}/models/nanbeige42-runtime}"
+ROOT="${EXPLICIT_NANBEIGE_ROOT:-${AI_OS_NANBEIGE_ROOT:-${DATA_ROOT}/models/nanbeige42-runtime}}"
 SOURCE_ROOT="${ROOT}/source/llama.cpp"
 BUILD_ROOT="${SOURCE_ROOT}/build"
 MODEL_ROOT="${ROOT}/model-hf-f56ec5"
 BF16_GGUF="${ROOT}/nanbeige4.2-3b-bf16.gguf"
 QUANT_GGUF="${ROOT}/nanbeige4.2-3b-Q4_K_M.gguf"
 VENV="${ROOT}/venv-convert"
-PORT="${AI_OS_NANBEIGE_PORT:-11436}"
+PORT="${EXPLICIT_NANBEIGE_PORT:-${AI_OS_NANBEIGE_PORT:-11436}}"
 BASE_URL="http://127.0.0.1:${PORT}/v1"
-LOG_ROOT="${AI_OS_RUNTIME_LOG_ROOT:-${HOME}/Library/Logs/AIOS/runtime}"
+LOG_ROOT="${EXPLICIT_LOG_ROOT:-${AI_OS_RUNTIME_LOG_ROOT:-${HOME}/Library/Logs/AIOS/runtime}}"
 TEMP_SERVER_PID=""
 
 record_probe_state() {

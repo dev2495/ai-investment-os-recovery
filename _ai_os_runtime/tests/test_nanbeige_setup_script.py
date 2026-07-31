@@ -18,6 +18,15 @@ class NanbeigeSetupScriptTests(unittest.TestCase):
         self.assertIn("--promote", script)
         self.assertIn('shasum -a 256 "${QUANT_GGUF}"', script)
         self.assertNotIn("ollama pull", script)
+        self.assertIn('EXPLICIT_REPO_ROOT="${AI_OS_REPO_ROOT:-}"', script)
+        self.assertIn(
+            'REPO_ROOT="${EXPLICIT_REPO_ROOT:-${AI_OS_REPO_ROOT:-${HOME}/AI_OS_NODE/current}}"',
+            script,
+        )
+        self.assertIn(
+            'RUNTIME_ROOT="${EXPLICIT_RUNTIME_ROOT:-${AI_OS_RUNTIME_ROOT:-${REPO_ROOT}/_ai_os_runtime}}"',
+            script,
+        )
 
     def test_migration_registers_isolated_loopback_endpoint(self):
         migration = MIGRATION.read_text(encoding="utf-8")
