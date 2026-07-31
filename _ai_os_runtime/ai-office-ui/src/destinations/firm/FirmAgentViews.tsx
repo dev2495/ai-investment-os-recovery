@@ -9,10 +9,10 @@ import React from "react";
 import { useParams } from "react-router-dom";
 import {
   Users, Building2, Gavel, ShieldCheck, Cpu, Activity, Library,
-  Inbox, ChevronRight, MessageSquare, Play, Send,
+  Inbox, ChevronRight, MessageSquare, Play, Send, Search, RefreshCw,
 } from "lucide-react";
-import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Field, Select, TextArea } from "../../system/primitives";
-import { useOfficeSnapshot, useSystemHealth, useDepartmentTerminal } from "../../data/queries";
+import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Field, Select, TextArea, TextInput } from "../../system/primitives";
+import { useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports } from "../../data/queries";
 import { useCreateAgentMessage, useRunAgentWorker } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials } from "../../data/liveRow";
@@ -433,20 +433,129 @@ export function SystemView() {
  * LIBRARY VIEW (Obsidian vault)
  * ============================================================ */
 export function LibraryView() {
+  const reports = useReports();
+  const openEvidence = useUIStore((s) => s.openEvidence);
+  const pushToast = useUIStore((s) => s.pushToast);
+  const [query, setQuery] = React.useState("");
+  const [family, setFamily] = React.useState("all");
+
+  const data = reports.data;
+  const artifacts = data?.artifacts ?? [];
+  const rawArtifacts = data?.raw_artifacts ?? [];
+  const lineage = data?.artifact_lineage ?? [];
+  const sourceCoverage = data?.research_hub ?? [];
+  const gaps = data?.artifact_gaps ?? [];
+
+  const families = React.useMemo(() => Array.from(new Set([
+    ...artifacts.map((row) => text(row, "artifact_family", text(row, "artifact_type"))),
+    ...rawArtifacts.map((row) => text(row, "artifact_type")),
+  ].filter(Boolean))).sort(), [artifacts, rawArtifacts]);
+
+  const searchable = React.useMemo(() => {
+    const registryRows = artifacts.map((row) => ({ ...row, library_source: "Output registry" }));
+    const rawRows = rawArtifacts.map((row) => ({ ...row, library_source: "Raw artifact" }));
+    const needle = query.trim().toLowerCase();
+    return [...registryRows, ...rawRows].filter((row) => {
+      const rowFamily = text(row, "artifact_family", text(row, "artifact_type"));
+      if (family !== "all" && rowFamily !== family) return false;
+      if (!needle) return true;
+      return [
+        text(row, "title"), text(row, "summary"), rowFamily,
+        text(row, "source_system"), text(row, "owner_agent"),
+        text(row, "department"), text(row, "symbol"), text(row, "company_name"),
+      ].some((value) => value.toLowerCase().includes(needle));
+    }).slice(0, 200);
+  }, [artifacts, rawArtifacts, family, query]);
+
+  const refresh = async () => {
+    try {
+      await reports.refetch();
+      pushToast({ title: "Knowledge library refreshed", tone: "ok", duration: 2500 });
+    } catch (error) {
+      pushToast({ title: "Library refresh failed", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 5000 });
+    }
+  };
+
+  const openArtifact = (row: LiveRow) => {
+    const key = text(row, "artifact_key", text(row, "id", text(row, "content_hash", text(row, "row_ref"))));
+    openEvidence({ kind: "artifact", key, title: text(row, "title", "Knowledge artifact") });
+  };
+
   return (
     <div className="aios-destination">
-      <Header icon={Library} code="LIBRARY" title="Knowledge Library" subtitle="Obsidian vault, Qdrant vector retrieval, note graph." />
-      <Panel icon={Library} title="Vault">
-        <Empty
-          icon={Library}
-          title="Knowledge graph coming soon"
-          description="Browse the Obsidian vault (decisions, research, runbooks) and search via Qdrant. Use Charlie to search notes in the meantime — ask him anything."
-        />
+      <Header icon={Library} code="LIBRARY" title="Knowledge Library" subtitle="Searchable research, decisions, reports, source lineage, and durable AI output inventory." />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Registered Outputs" value={artifacts.length} /></MetricTile>
+        <MetricTile><Metric label="Raw Artifacts" value={rawArtifacts.length} /></MetricTile>
+        <MetricTile><Metric label="Lineage Records" value={lineage.length} /></MetricTile>
+        <MetricTile><Metric label="Source Families" value={sourceCoverage.length} /></MetricTile>
+        <MetricTile tone={gaps.length ? "warn" : "ok"}><Metric label="Artifact Gaps" value={gaps.length} /></MetricTile>
+      </div>
+      <Panel
+        icon={Search}
+        title="Search Knowledge"
+        actions={<Button size="sm" icon={RefreshCw} onClick={refresh} disabled={reports.isFetching}>{reports.isFetching ? "Refreshing" : "Refresh"}</Button>}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(180px, 280px)", gap: "var(--space-3)", padding: "var(--space-3)" }}>
+          <Field label="Title, company, symbol, owner, or topic">
+            <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the live artifact registry..." />
+          </Field>
+          <Field label="Artifact family">
+            <Select value={family} onChange={(event) => setFamily(event.target.value)}>
+              <option value="all">All families</option>
+              {families.map((value) => <option key={value} value={value}>{value}</option>)}
+            </Select>
+          </Field>
+        </div>
+        {reports.isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading knowledge inventory...</div> : (
+          <DataTable
+            columns={[
+              { key: "title", header: "Artifact", render: (row) => <div><strong>{text(row, "title", "Untitled artifact")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 2 }}>{text(row, "summary", text(row, "local_path", text(row, "source_url"))).slice(0, 150)}</div></div> },
+              { key: "family", header: "Family", render: (row) => <Badge>{text(row, "artifact_family", text(row, "artifact_type", "artifact"))}</Badge> },
+              { key: "source", header: "Source / owner", render: (row) => <div>{text(row, "source_system", text(row, "owner_agent", "Unassigned"))}<div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "library_source")}</div></div> },
+              { key: "updated", header: "Updated", render: (row) => formatRelative(text(row, "latest_activity_at", text(row, "captured_at", text(row, "updated_at", text(row, "created_at"))))) },
+              { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", text(row, "sensitivity", "indexed"))} /> },
+            ]}
+            rows={searchable}
+            rowKey={(row, index) => `${text(row, "library_source")}-${text(row, "artifact_key", text(row, "id", text(row, "content_hash", index)))}`}
+            onRowClick={openArtifact}
+            empty={<Empty icon={Library} title={query || family !== "all" ? "No matching artifacts" : "No artifacts ingested"} description={query || family !== "all" ? "Change the search or artifact family filter." : "The live artifact registry returned no rows."} />}
+          />
+        )}
       </Panel>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 1.2fr) minmax(340px, 0.8fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Library} title="Research Source Coverage">
+          <DataTable
+            columns={[
+              { key: "root", header: "Source root", render: (row) => <strong>{text(row, "root_label", "Unknown source")}</strong> },
+              { key: "family", header: "Family", render: (row) => text(row, "artifact_family", "-") },
+              { key: "count", header: "Artifacts", align: "right", render: (row) => num(row, "artifact_count", 0) },
+              { key: "latest", header: "Latest capture", render: (row) => formatRelative(text(row, "latest_captured_at", text(row, "latest_source_modified_at"))) },
+            ]}
+            rows={sourceCoverage}
+            rowKey={(row, index) => `${text(row, "root_label", index)}-${text(row, "artifact_family")}`}
+            empty={<Empty icon={Library} title="No research source coverage" description="The reports API returned no indexed research roots." />}
+            dense
+          />
+        </Panel>
+        <Panel icon={ShieldCheck} title="Lineage & Coverage Gaps" actions={<Badge tone={gaps.length ? "warn" : "ok"}>{gaps.length ? `${gaps.length} open` : "Complete"}</Badge>}>
+          {gaps.length === 0 ? (
+            <Empty icon={ShieldCheck} title="No artifact gaps reported" description={`${lineage.length} lineage records are visible in the current snapshot.`} />
+          ) : (
+            <div style={{ maxHeight: 360, overflow: "auto" }}><ScrollList>
+              {gaps.slice(0, 30).map((row, index) => (
+                <div key={`${text(row, "gap_type", index)}-${text(row, "source_id", index)}`} style={{ padding: "var(--space-3)", borderBottom: "1px solid var(--border-subtle)", cursor: "pointer" }} onClick={() => openEvidence({ kind: "artifact", key: text(row, "source_id", String(index)), title: text(row, "title", text(row, "gap_type", "Artifact gap")) })}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)" }}><strong>{text(row, "title", text(row, "gap_type", "Artifact gap"))}</strong><StatusPill status={text(row, "status", "review")} /></div>
+                  <div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 4 }}>{text(row, "gap_reason", text(row, "source_view"))}</div>
+                </div>
+              ))}
+            </ScrollList></div>
+          )}
+        </Panel>
+      </div>
     </div>
   );
 }
-
 /* ============================================================
  * Shared header
  * ============================================================ */
