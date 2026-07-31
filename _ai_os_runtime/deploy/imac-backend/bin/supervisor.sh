@@ -24,11 +24,15 @@ printf '%s\n' "$$" > "${SUPERVISOR_LOCK}/pid"
 
 children=()
 colima_start_pid=""
+nanbeige_pid=""
 
 stop_children() {
   local pid
   if [[ -n "${colima_start_pid}" ]]; then
     kill -TERM "${colima_start_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${nanbeige_pid}" ]]; then
+    kill "${nanbeige_pid}" 2>/dev/null || true
   fi
   for pid in "${children[@]:-}"; do
     [[ -n "${pid}" ]] || continue
@@ -124,30 +128,46 @@ if ! curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" 
 fi
 wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 90
 
-nanbeige_supervised=0
+nanbeige_state="disabled"
+nanbeige_started_at=0
+nanbeige_next_restart_at=0
+nanbeige_last_warning_at=0
 NANBEIGE_ROOT="${AI_OS_NANBEIGE_ROOT:-${AI_OS_DATA_ROOT}/models/nanbeige42-runtime}"
-NANBEIGE_SERVER="${NANBEIGE_ROOT}/source/llama.cpp/build/bin/llama-server"
+NANBEIGE_RUNTIME_REVISION="${AI_OS_NANBEIGE_RUNTIME_REVISION:-c6640a1c0cf7b38df342b67021a3900b04d092e7}"
+NANBEIGE_RUNTIME_ROOT="${AI_OS_NANBEIGE_RUNTIME_ROOT:-${HOME}/AI_OS_NODE/model-runtimes/nanbeige42/${NANBEIGE_RUNTIME_REVISION}}"
+NANBEIGE_RUNTIME_BIN="${NANBEIGE_RUNTIME_ROOT}/bin"
+NANBEIGE_SERVER="${NANBEIGE_RUNTIME_BIN}/llama-server"
 NANBEIGE_MODEL="${NANBEIGE_ROOT}/nanbeige4.2-3b-Q4_K_M.gguf"
 NANBEIGE_PORT="${AI_OS_NANBEIGE_PORT:-11436}"
 NANBEIGE_ALIAS="nanbeige/nanbeige4.2:3b-Q4_K_M"
+NANBEIGE_START_GRACE_SECONDS="${AI_OS_NANBEIGE_START_GRACE_SECONDS:-240}"
+NANBEIGE_RESTART_DELAY_SECONDS="${AI_OS_NANBEIGE_RESTART_DELAY_SECONDS:-60}"
+
+start_nanbeige_runtime() {
+  if curl --max-time 3 -fsS "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" >/dev/null 2>&1; then
+    nanbeige_state="ready"
+    nanbeige_pid=""
+    log "Reusing the isolated Nanbeige4.2 runtime"
+    return 0
+  fi
+
+  log "Starting the isolated Nanbeige4.2 runtime without blocking mission control"
+  DYLD_LIBRARY_PATH="${NANBEIGE_RUNTIME_BIN}" "${NANBEIGE_SERVER}" \
+    --model "${NANBEIGE_MODEL}" --alias "${NANBEIGE_ALIAS}" \
+    --host 127.0.0.1 --port "${NANBEIGE_PORT}" --ctx-size 8192 \
+    --n-gpu-layers 99 --parallel 1 --jinja \
+    --reasoning off --reasoning-budget 0 \
+    >>"${LOG_ROOT}/nanbeige42.log" 2>>"${LOG_ROOT}/nanbeige42.err" &
+  nanbeige_pid="$!"
+  nanbeige_started_at="$(date +%s)"
+  nanbeige_state="warming"
+}
+
 if [[ "${AI_OS_ENABLE_NANBEIGE42:-1}" == "1" ]]; then
   if [[ -x "${NANBEIGE_SERVER}" && -f "${NANBEIGE_MODEL}" ]]; then
-    if curl --max-time 3 -fsS "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" >/dev/null 2>&1; then
-      log "Reusing the isolated Nanbeige4.2 runtime"
-    else
-      log "Starting the isolated Nanbeige4.2 runtime"
-      DYLD_LIBRARY_PATH="${NANBEIGE_ROOT}/source/llama.cpp/build/bin" "${NANBEIGE_SERVER}" \
-        --model "${NANBEIGE_MODEL}" --alias "${NANBEIGE_ALIAS}" \
-        --host 127.0.0.1 --port "${NANBEIGE_PORT}" --ctx-size 8192 \
-        --n-gpu-layers 99 --parallel 1 --jinja \
-        --reasoning off --reasoning-budget 0 \
-        >>"${LOG_ROOT}/nanbeige42.log" 2>>"${LOG_ROOT}/nanbeige42.err" &
-      children+=("$!")
-    fi
-    wait_http "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" Nanbeige4.2 180
-    nanbeige_supervised=1
+    start_nanbeige_runtime
   else
-    log "Nanbeige4.2 artifacts are not installed yet; keeping its model route disabled"
+    log "Nanbeige4.2 model or internal runtime bundle is missing; mission control will use another healthy route"
   fi
 fi
 
@@ -205,15 +225,47 @@ wait_http "http://127.0.0.1:${AI_OS_UI_PORT}/" "AI OS UI" 60
 log "AI OS iMac backend is ready"
 
 while true; do
+  now="$(date +%s)"
   ensure_ssd
   for pid in "${children[@]:-}"; do
     if [[ -n "${pid}" ]] && ! kill -0 "${pid}" 2>/dev/null; then
       die "Supervised process ${pid} exited"
     fi
   done
-  if [[ "${nanbeige_supervised}" == "1" ]]; then
-    curl --max-time 5 -fsS "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" >/dev/null \
-      || die "Nanbeige4.2 heartbeat failed"
+  if [[ "${AI_OS_ENABLE_NANBEIGE42:-1}" == "1" && -x "${NANBEIGE_SERVER}" && -f "${NANBEIGE_MODEL}" ]]; then
+    if curl --max-time 5 -fsS "http://127.0.0.1:${NANBEIGE_PORT}/v1/models" >/dev/null 2>&1; then
+      if [[ "${nanbeige_state}" != "ready" ]]; then
+        log "Nanbeige4.2 is ready"
+      fi
+      nanbeige_state="ready"
+    elif [[ "${nanbeige_state}" == "warming" ]]; then
+      if [[ -z "${nanbeige_pid}" ]] || ! kill -0 "${nanbeige_pid}" 2>/dev/null; then
+        log "Nanbeige4.2 exited during warmup; retrying in ${NANBEIGE_RESTART_DELAY_SECONDS}s"
+        nanbeige_pid=""
+        nanbeige_state="unavailable"
+        nanbeige_next_restart_at="$((now + NANBEIGE_RESTART_DELAY_SECONDS))"
+      elif (( now - nanbeige_started_at >= NANBEIGE_START_GRACE_SECONDS )); then
+        log "Nanbeige4.2 warmup exceeded ${NANBEIGE_START_GRACE_SECONDS}s; restarting it without affecting mission control"
+        kill "${nanbeige_pid}" 2>/dev/null || true
+        wait "${nanbeige_pid}" 2>/dev/null || true
+        nanbeige_pid=""
+        nanbeige_state="unavailable"
+        nanbeige_next_restart_at="$((now + NANBEIGE_RESTART_DELAY_SECONDS))"
+      elif (( now - nanbeige_last_warning_at >= 60 )); then
+        log "Nanbeige4.2 is still warming; API and UI remain available"
+        nanbeige_last_warning_at="${now}"
+      fi
+    else
+      if [[ -n "${nanbeige_pid}" ]] && kill -0 "${nanbeige_pid}" 2>/dev/null; then
+        kill "${nanbeige_pid}" 2>/dev/null || true
+        wait "${nanbeige_pid}" 2>/dev/null || true
+      fi
+      nanbeige_pid=""
+      nanbeige_state="unavailable"
+      if (( now >= nanbeige_next_restart_at )); then
+        start_nanbeige_runtime
+      fi
+    fi
   fi
   if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
     curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" >/dev/null \

@@ -19,6 +19,7 @@ class NanbeigeSetupScriptTests(unittest.TestCase):
         self.assertIn('shasum -a 256 "${QUANT_GGUF}"', script)
         self.assertNotIn("ollama pull", script)
         self.assertIn('EXPLICIT_REPO_ROOT="${AI_OS_REPO_ROOT:-}"', script)
+        self.assertIn('EXPLICIT_NANBEIGE_RUNTIME_ROOT="${AI_OS_NANBEIGE_RUNTIME_ROOT:-}"', script)
         self.assertIn(
             'REPO_ROOT="${EXPLICIT_REPO_ROOT:-${AI_OS_REPO_ROOT:-${HOME}/AI_OS_NODE/current}}"',
             script,
@@ -27,6 +28,9 @@ class NanbeigeSetupScriptTests(unittest.TestCase):
             'RUNTIME_ROOT="${EXPLICIT_RUNTIME_ROOT:-${AI_OS_RUNTIME_ROOT:-${REPO_ROOT}/_ai_os_runtime}}"',
             script,
         )
+        self.assertIn('${HOME}/AI_OS_NODE/model-runtimes/nanbeige42/${RUNTIME_REVISION}', script)
+        self.assertIn('rsync -a "${BUILD_ROOT}/bin/" "${RUNTIME_INCOMING}/bin/"', script)
+        self.assertIn('DYLD_LIBRARY_PATH="${LLAMA_RUNTIME_BIN}"', script)
 
     def test_migration_registers_isolated_loopback_endpoint(self):
         migration = MIGRATION.read_text(encoding="utf-8")
@@ -37,13 +41,22 @@ class NanbeigeSetupScriptTests(unittest.TestCase):
         self.assertIn("Stock Ollama does not ship", migration)
         self.assertIn('"live_execution_allowed":false', migration)
 
-    def test_supervisor_only_starts_installed_artifacts(self):
+    def test_supervisor_uses_internal_runtime_without_blocking_mission_control(self):
         supervisor = SUPERVISOR.read_text(encoding="utf-8")
 
         self.assertIn('AI_OS_ENABLE_NANBEIGE42:-1', supervisor)
         self.assertIn('[[ -x "${NANBEIGE_SERVER}" && -f "${NANBEIGE_MODEL}" ]]', supervisor)
-        self.assertIn('/v1/models" Nanbeige4.2 180', supervisor)
-        self.assertIn('Nanbeige4.2 heartbeat failed', supervisor)
+        self.assertIn(
+            '${HOME}/AI_OS_NODE/model-runtimes/nanbeige42/${NANBEIGE_RUNTIME_REVISION}',
+            supervisor,
+        )
+        self.assertIn(
+            'Starting the isolated Nanbeige4.2 runtime without blocking mission control',
+            supervisor,
+        )
+        self.assertIn('API and UI remain available', supervisor)
+        self.assertNotIn('/v1/models" Nanbeige4.2 180', supervisor)
+        self.assertNotIn('die "Nanbeige4.2 heartbeat failed"', supervisor)
 
 
 if __name__ == "__main__":

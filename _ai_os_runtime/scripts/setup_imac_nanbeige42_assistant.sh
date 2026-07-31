@@ -7,6 +7,7 @@ EXPLICIT_DATA_ROOT="${AI_OS_DATA_ROOT:-}"
 EXPLICIT_DOCKER_BIN="${AI_OS_DOCKER_BIN:-}"
 EXPLICIT_PYTHON_BIN="${AI_OS_PYTHON_BIN:-}"
 EXPLICIT_NANBEIGE_ROOT="${AI_OS_NANBEIGE_ROOT:-}"
+EXPLICIT_NANBEIGE_RUNTIME_ROOT="${AI_OS_NANBEIGE_RUNTIME_ROOT:-}"
 EXPLICIT_NANBEIGE_PORT="${AI_OS_NANBEIGE_PORT:-}"
 EXPLICIT_LOG_ROOT="${AI_OS_RUNTIME_LOG_ROOT:-}"
 
@@ -27,6 +28,8 @@ RUNTIME_REVISION="c6640a1c0cf7b38df342b67021a3900b04d092e7"
 ROOT="${EXPLICIT_NANBEIGE_ROOT:-${AI_OS_NANBEIGE_ROOT:-${DATA_ROOT}/models/nanbeige42-runtime}}"
 SOURCE_ROOT="${ROOT}/source/llama.cpp"
 BUILD_ROOT="${SOURCE_ROOT}/build"
+LLAMA_RUNTIME_ROOT="${EXPLICIT_NANBEIGE_RUNTIME_ROOT:-${AI_OS_NANBEIGE_RUNTIME_ROOT:-${HOME}/AI_OS_NODE/model-runtimes/nanbeige42/${RUNTIME_REVISION}}}"
+LLAMA_RUNTIME_BIN="${LLAMA_RUNTIME_ROOT}/bin"
 MODEL_ROOT="${ROOT}/model-hf-f56ec5"
 BF16_GGUF="${ROOT}/nanbeige4.2-3b-bf16.gguf"
 QUANT_GGUF="${ROOT}/nanbeige4.2-3b-Q4_K_M.gguf"
@@ -79,7 +82,7 @@ trap cleanup EXIT INT TERM
 
 [[ -x "${DOCKER_BIN}" ]] || { echo "Docker is not installed at ${DOCKER_BIN}." >&2; exit 2; }
 [[ -x "${PYTHON_BIN}" ]] || { echo "Python is not installed at ${PYTHON_BIN}." >&2; exit 2; }
-for command in git cmake shasum curl; do
+for command in git cmake shasum curl rsync; do
   command -v "${command}" >/dev/null 2>&1 || { echo "${command} is required." >&2; exit 2; }
 done
 [[ -f "${RUNTIME_ROOT}/postgres/init/175_nanbeige42_isolated_local_openai.sql" ]] || {
@@ -108,6 +111,20 @@ if [[ ! -x "${BUILD_ROOT}/bin/llama-server" || ! -x "${BUILD_ROOT}/bin/llama-qua
   cmake --build "${BUILD_ROOT}" --config Release --parallel 2 --target llama-server llama-quantize
 fi
 
+if [[ ! -x "${LLAMA_RUNTIME_BIN}/llama-server" ]]; then
+  RUNTIME_INCOMING="${LLAMA_RUNTIME_ROOT}.incoming.$$"
+  mkdir -p "$(dirname "${LLAMA_RUNTIME_ROOT}")" "${RUNTIME_INCOMING}/bin"
+  rsync -a "${BUILD_ROOT}/bin/" "${RUNTIME_INCOMING}/bin/"
+  [[ -x "${RUNTIME_INCOMING}/bin/llama-server" ]] || {
+    record_probe_state "blocked" "runtime_failed" "runtime_install" "The internal llama runtime bundle is incomplete."
+    exit 4
+  }
+  if [[ -e "${LLAMA_RUNTIME_ROOT}" ]]; then
+    mv "${LLAMA_RUNTIME_ROOT}" "${LLAMA_RUNTIME_ROOT}.invalid.$(date +%s)"
+  fi
+  mv "${RUNTIME_INCOMING}" "${LLAMA_RUNTIME_ROOT}"
+fi
+
 if [[ ! -x "${VENV}/bin/python" ]]; then
   "${PYTHON_BIN}" -m venv "${VENV}"
 fi
@@ -130,11 +147,11 @@ if [[ ! -f "${QUANT_GGUF}" ]]; then
 fi
 
 MODEL_SHA="$(shasum -a 256 "${QUANT_GGUF}" | awk '{print $1}')"
-RUNTIME_VERSION="$(DYLD_LIBRARY_PATH="${BUILD_ROOT}/bin" "${BUILD_ROOT}/bin/llama-server" --version 2>&1 | head -n 1)"
+RUNTIME_VERSION="$(DYLD_LIBRARY_PATH="${LLAMA_RUNTIME_BIN}" "${LLAMA_RUNTIME_BIN}/llama-server" --version 2>&1 | head -n 1)"
 record_probe_state "probing" "checking" "conversation_v1" ""
 
 if ! curl --max-time 3 -fsS "${BASE_URL}/models" >/dev/null 2>&1; then
-  DYLD_LIBRARY_PATH="${BUILD_ROOT}/bin" "${BUILD_ROOT}/bin/llama-server" \
+  DYLD_LIBRARY_PATH="${LLAMA_RUNTIME_BIN}" "${LLAMA_RUNTIME_BIN}/llama-server" \
     --model "${QUANT_GGUF}" --alias "${MODEL}" \
     --host 127.0.0.1 --port "${PORT}" --ctx-size 8192 \
     --n-gpu-layers 99 --parallel 1 --jinja \
@@ -164,7 +181,8 @@ if ! python3 "${RUNTIME_ROOT}/scripts/run_local_model_evals.py" \
 fi
 
 "${DOCKER_BIN}" exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 \
-  -v model_sha="${MODEL_SHA}" -v runtime_version="${RUNTIME_VERSION}" <<'SQL'
+  -v model_sha="${MODEL_SHA}" -v runtime_version="${RUNTIME_VERSION}" \
+  -v runtime_root="${LLAMA_RUNTIME_ROOT}" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -186,7 +204,8 @@ UPDATE agent.model_endpoints
 SET status='active', health_status='healthy', last_checked_at=now(), last_error=NULL,
     config=config || jsonb_build_object(
       'gguf_sha256', :'model_sha',
-      'runtime_version', :'runtime_version'
+      'runtime_version', :'runtime_version',
+      'runtime_root', :'runtime_root'
     ),
     updated_at=now()
 WHERE endpoint_key='nanbeige42_3b_q4_local_openai_imac';
