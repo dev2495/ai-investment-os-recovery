@@ -902,6 +902,26 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
             (context.get("special_situation_filings") if special_requested else context.get("recent_filings"))
             or []
         )
+        requested_event_types: set[str] = set()
+        event_phrases = (
+            ("reverse merger", "reverse_merger"),
+            ("demerger", "demerger"),
+            ("open offer", "open_offer"),
+            ("buyback", "buyback"),
+            ("delisting", "delisting"),
+            ("scheme of arrangement", "scheme_of_arrangement"),
+            ("preferential allotment", "preferential_allotment"),
+        )
+        for phrase, event_type in event_phrases:
+            if phrase in objective:
+                requested_event_types.add(event_type)
+        if "merger" in objective and not {"reverse_merger", "demerger"}.intersection(requested_event_types):
+            requested_event_types.add("merger")
+        if requested_event_types:
+            evidence_rows = [
+                row for row in evidence_rows
+                if str(row.get("event_type") or "") in requested_event_types
+            ]
         filing_lines: list[str] = []
         unparsed_count = 0
         for row in evidence_rows:
@@ -926,7 +946,12 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
                 f"extraction=`{extraction_status}`, event_status=`{row.get('event_status') or 'unknown'}`, "
                 f"opportunity_score=`{row.get('opportunity_score')}`, risk_score=`{row.get('risk_score')}`."
             )
-        scope_label = "special-situation filings from the last 14 days" if special_requested else "filings from the last 2 days"
+        if requested_event_types:
+            scope_label = (
+                "event types " + ", ".join(sorted(requested_event_types)) + " from the last 14 days"
+            )
+        else:
+            scope_label = "special-situation filings from the last 14 days" if special_requested else "filings from the last 2 days"
         summary = "\n".join([
             "### Evidence-reviewed filing set",
             f"- Scope: {scope_label}; bounded rows returned: {len(evidence_rows)}.",

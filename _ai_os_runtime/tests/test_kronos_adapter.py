@@ -285,6 +285,22 @@ class KronosAdapterTest(unittest.TestCase):
             },
             "special_situation_filings": [
                 {
+                    "filing_id": 87,
+                    "source_name": "bse",
+                    "exchange": "BSE",
+                    "symbol": "OTHER",
+                    "company_name": "Other Limited",
+                    "title": "Preferential allotment announcement",
+                    "event_type": "preferential_allotment",
+                    "filed_at": "2026-07-31T09:01:00+00:00",
+                    "source_url": "https://example.test/filing/87",
+                    "attachment_url": "https://example.test/filing/87.pdf",
+                    "extraction_status": "captured",
+                    "opportunity_score": 50,
+                    "risk_score": 50,
+                    "event_status": "new",
+                },
+                {
                     "filing_id": 88,
                     "source_name": "nse",
                     "exchange": "NSE",
@@ -306,6 +322,7 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertIn("Evidence-reviewed filing set", summary)
         self.assertIn("https://example.test/filing/88.pdf", summary)
         self.assertIn("stored event `merger`", summary)
+        self.assertNotIn("Preferential allotment announcement", summary)
         self.assertIn("triage metadata, not verified transaction terms", summary)
         self.assertIn("makes no buy, sell", summary)
         self.assertNotIn("Processed internal message", summary)
