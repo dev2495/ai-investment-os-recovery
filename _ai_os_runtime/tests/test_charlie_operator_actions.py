@@ -474,6 +474,52 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(operations, [])
         create_message.assert_not_called()
 
+    def test_capability_question_gets_direct_deterministic_answer(self) -> None:
+        reply = ai_os_api_server.deterministic_chat_reply(
+            "Can you explain what you can do for me without changing anything?",
+            {},
+            [],
+            [],
+            {"default_model": "test"},
+            "not_requested",
+        )
+
+        self.assertIn("delegate named work", reply)
+        self.assertIn("place broker orders", reply)
+        self.assertNotIn("Largest visible holding", reply)
+
+    def test_attention_question_returns_current_work_and_decision_queue(self) -> None:
+        reply = ai_os_api_server.deterministic_chat_reply(
+            "Good morning Charlie. What are you working on and what needs my attention today?",
+            {
+                "scoped_employee": [{
+                    "agent_name": "Charlie Munger",
+                    "live_state": "available",
+                    "current_work_title": "Daily Office Brief",
+                    "current_work_detail": "The evidence-backed letter is complete.",
+                }],
+                "approval_summary": [
+                    {"metric": "pending", "value": "2"},
+                    {"metric": "high_or_critical_pending", "value": "1"},
+                ],
+                "pending_approvals": [{"title": "Approve research escalation"}],
+                "graph_attention": [{
+                    "graph_run_id": 9,
+                    "title": "Review risk objection",
+                    "priority": "high",
+                }],
+            },
+            [],
+            [],
+            {"default_model": "test"},
+            "not_requested",
+        )
+
+        self.assertIn("current assignment is Daily Office Brief", reply)
+        self.assertIn("2 pending approvals", reply)
+        self.assertIn("run 9 Review risk objection", reply)
+        self.assertIn("Broker execution remains locked", reply)
+
     def test_zerodha_exchange_restarts_read_only_stream(self) -> None:
         with (
             mock.patch.object(

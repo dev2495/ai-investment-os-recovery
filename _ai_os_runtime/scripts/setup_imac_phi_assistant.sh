@@ -29,13 +29,23 @@ mkdir -p "${OLLAMA_MODELS}" "${DATA_ROOT}/evals/local_models"
 
 "${OLLAMA_BIN}" pull "${MODEL}"
 
-python3 "${RUNTIME_ROOT}/scripts/run_local_model_evals.py" \
+if ! python3 "${RUNTIME_ROOT}/scripts/run_local_model_evals.py" \
   --model "${MODEL}" \
   --provider ollama \
   --base-url "http://127.0.0.1:11434" \
   --artifact-root "${DATA_ROOT}/evals/local_models" \
   --persist \
-  --promote
+  --promote; then
+  "${DOCKER_BIN}" exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 <<'SQL'
+UPDATE agent.model_endpoints
+SET status='disabled', health_status='eval_failed', last_checked_at=now(),
+    last_error='The exact installed model did not pass the governed conversation_v1 promotion gate.',
+    updated_at=now()
+WHERE endpoint_key='ollama_phi4_mini_3_8b_imac';
+SQL
+  echo "Phi-4 Mini remains disabled because conversation_v1 did not pass." >&2
+  exit 1
+fi
 
 "${DOCKER_BIN}" exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 <<'SQL'
 DO $$

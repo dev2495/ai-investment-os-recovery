@@ -14073,6 +14073,52 @@ def deterministic_chat_reply(
         "current task", "current assignment", "live assignment", "assignment",
         "your status", "your workload", "evidence is missing", "what are you doing",
     ))
+    capability_question = any(phrase in normalized for phrase in (
+        "what can i ask you", "what can you do", "what are you able to do",
+        "explain what you can do", "your capabilities", "how can you help",
+    ))
+    if capability_question:
+        return (
+            "I can answer from the live portfolio, research, risk, market, and operating ledgers; "
+            "ingest articles and documents; delegate named work; create strategy intakes; run governed "
+            "research, backtest, and committee workflows; update approved dashboard widgets; and track every result.\n"
+            "I will state what I actually did, who owns the next step, the evidence used, and what needs your decision.\n"
+            "I cannot approve capital or place broker orders; those remain locked behind explicit human and risk gates."
+        )
+
+    attention_request = any(phrase in normalized for phrase in (
+        "needs my attention", "need my attention", "what should i decide",
+        "what do i need to decide", "what needs my review", "needs my review",
+    ))
+    if attention_request:
+        attention_lines: list[str] = []
+        if scoped_employee:
+            current_title = scoped_employee.get("current_task_title") or scoped_employee.get("current_work_title")
+            current_detail = scoped_employee.get("current_task_objective") or scoped_employee.get("current_work_detail")
+            if current_title:
+                sentence = f"I am {scoped_employee.get('live_state') or 'available'}; my current assignment is {current_title}."
+                if current_detail:
+                    sentence += f" Latest evidence: {str(current_detail)[:280]}"
+                attention_lines.append(sentence)
+        pending_count = int(approval_summary.get("pending", "0") or 0)
+        high_count = int(approval_summary.get("high_or_critical_pending", "0") or 0)
+        if pending_count:
+            approval_titles = "; ".join(str(row.get('title')) for row in pending_approvals[:3] if row.get('title'))
+            attention_lines.append(
+                f"Your decision queue has {pending_count} pending approvals, including {high_count} high or critical."
+                + (f" Review first: {approval_titles}." if approval_titles else "")
+            )
+        else:
+            attention_lines.append("You have no pending approval recorded in the current warehouse snapshot.")
+        if graph_attention:
+            attention_lines.append(
+                "Workflow attention: " + "; ".join(
+                    f"run {row.get('graph_run_id')} {row.get('title')} ({row.get('priority')})"
+                    for row in graph_attention[:2]
+                ) + "."
+            )
+        attention_lines.append("Broker execution remains locked; no capital action was taken.")
+        return "\n".join(attention_lines)
 
     focused: list[str] = []
     if tool_results:
