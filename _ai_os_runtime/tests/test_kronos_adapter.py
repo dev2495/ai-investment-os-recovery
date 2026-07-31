@@ -263,6 +263,54 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertIn("SET status='blocked'", sql)
         self.assertEqual(result["task_status"], "failed")
 
+    def test_filing_message_runs_evidence_skill_not_generic_routing_summary(self) -> None:
+        job = {
+            "task_id": 496,
+            "source_kind": "agent_message",
+            "source_ref": "129",
+            "objective": "Review today's merger-classified NSE and BSE filings",
+            "priority": "high",
+            "suggested_skill_key": "analyze_corporate_filing",
+        }
+        profile = {
+            "agent_name": "Filings Analyst",
+            "display_title": "Corporate Filings Analyst",
+            "cost_policy": "local_first_escalate_for_large_pdf",
+        }
+        skill = {"skill_key": "analyze_corporate_filing", "skill_name": "Analyze Corporate Filing"}
+        context = {
+            "agent_message": {
+                "subject": "Review merger-classified filings",
+                "body": "Identify exact source evidence and uncertainties.",
+            },
+            "special_situation_filings": [
+                {
+                    "filing_id": 88,
+                    "source_name": "nse",
+                    "exchange": "NSE",
+                    "symbol": "EXAMPLE",
+                    "company_name": "Example Limited",
+                    "title": "Scheme of Arrangement announcement",
+                    "event_type": "merger",
+                    "filed_at": "2026-07-31T09:00:00+00:00",
+                    "source_url": "https://example.test/filing/88",
+                    "attachment_url": "https://example.test/filing/88.pdf",
+                    "extraction_status": "captured",
+                    "opportunity_score": 65,
+                    "risk_score": 40,
+                    "event_status": "new",
+                }
+            ],
+        }
+        summary, next_actions = run_agent_worker_once.summary_for(job, profile, skill, context)
+        self.assertIn("Evidence-reviewed filing set", summary)
+        self.assertIn("https://example.test/filing/88.pdf", summary)
+        self.assertIn("stored event `merger`", summary)
+        self.assertIn("triage metadata, not verified transaction terms", summary)
+        self.assertIn("makes no buy, sell", summary)
+        self.assertNotIn("Processed internal message", summary)
+        self.assertNotIn("Next build should enable", " ".join(next_actions))
+
     def test_migration_prohibits_direct_signal_and_broker_orders(self) -> None:
         migration = (
             RUNTIME_ROOT / "postgres" / "init" / "172_kronos_research_adapter_v1.sql"

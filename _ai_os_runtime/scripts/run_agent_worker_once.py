@@ -461,6 +461,34 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
             LIMIT 6
             """
         )
+        base["recent_filings"] = psql_json(
+            """
+            SELECT filing_id,source_name,exchange,symbol,company_name,title,
+                   filing_type,event_type,filed_at,source_url,attachment_url,
+                   extraction_status,opportunity_score,risk_score,event_status,
+                   assigned_agent,event_created_at
+            FROM research.v_corporate_filing_inbox
+            WHERE filed_at >= current_date - interval '2 days'
+            ORDER BY filed_at DESC NULLS LAST,event_created_at DESC NULLS LAST,filing_id DESC
+            LIMIT 20
+            """
+        )
+        base["special_situation_filings"] = psql_json(
+            """
+            SELECT filing_id,source_name,exchange,symbol,company_name,title,
+                   filing_type,event_type,filed_at,source_url,attachment_url,
+                   extraction_status,opportunity_score,risk_score,event_status,
+                   assigned_agent,event_created_at
+            FROM research.v_corporate_filing_inbox
+            WHERE filed_at >= current_date - interval '14 days'
+              AND event_type IN (
+                  'merger','demerger','reverse_merger','open_offer','buyback',
+                  'delisting','scheme_of_arrangement','preferential_allotment'
+              )
+            ORDER BY filed_at DESC NULLS LAST,event_created_at DESC NULLS LAST,filing_id DESC
+            LIMIT 20
+            """
+        )
     elif skill_key == "model_runtime_check" or widget_key == "model_runtime_status":
         base["runtime"] = {
             "enabled_model_routes": psql_one("SELECT count(*)::INT AS count FROM agent.model_routes WHERE enabled = true"),
@@ -858,6 +886,65 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
             "Create a new immutable research cycle for every changed hypothesis or data cut; never overwrite this cycle.",
             "Require independent Model Validation and Risk approval before paper monitoring or trading.",
         ])
+    elif skill_key == "analyze_corporate_filing":
+        message = context.get("agent_message") or {}
+        objective = " ".join(
+            str(value or "")
+            for value in (job.get("objective"), message.get("subject"), message.get("body"))
+        ).lower()
+        special_terms = (
+            "merger", "demerger", "reverse merger", "open offer", "buyback",
+            "delisting", "scheme of arrangement", "preferential allotment",
+            "special situation",
+        )
+        special_requested = any(term in objective for term in special_terms)
+        evidence_rows = list(
+            (context.get("special_situation_filings") if special_requested else context.get("recent_filings"))
+            or []
+        )
+        filing_lines: list[str] = []
+        unparsed_count = 0
+        for row in evidence_rows:
+            source_url = str(row.get("attachment_url") or row.get("source_url") or "").strip()
+            extraction_status = str(row.get("extraction_status") or "unknown")
+            if extraction_status not in {"extracted", "completed", "parsed"}:
+                unparsed_count += 1
+            company = str(row.get("company_name") or row.get("symbol") or "Unknown company")
+            exchange_symbol = ":".join(
+                value for value in (str(row.get("exchange") or ""), str(row.get("symbol") or "")) if value
+            ) or "symbol unavailable"
+            title = str(row.get("title") or "Untitled filing").replace("\n", " ").strip()
+            filing_lines.append(
+                f"- **{company}** (`{exchange_symbol}`), stored event `{row.get('event_type') or 'unclassified'}`, "
+                f"filed `{row.get('filed_at') or 'time unavailable'}`; filing id `{row.get('filing_id')}`."
+            )
+            filing_lines.append(
+                f"  Source: [{title}]({source_url})" if source_url else f"  Source URL missing for: {title}"
+            )
+            filing_lines.append(
+                "  Triage state: "
+                f"extraction=`{extraction_status}`, event_status=`{row.get('event_status') or 'unknown'}`, "
+                f"opportunity_score=`{row.get('opportunity_score')}`, risk_score=`{row.get('risk_score')}`."
+            )
+        scope_label = "special-situation filings from the last 14 days" if special_requested else "filings from the last 2 days"
+        summary = "\n".join([
+            "### Evidence-reviewed filing set",
+            f"- Scope: {scope_label}; bounded rows returned: {len(evidence_rows)}.",
+            *(filing_lines or ["- No matching stored filing rows were found. This is an evidence gap, not a negative finding."]),
+            "",
+            "### Facts, inferences, and unknowns",
+            "- Fact: every item above is a stored NSE/BSE collector row and carries its source or attachment URL when supplied by the exchange.",
+            "- Inference boundary: the stored event label and opportunity/risk scores are triage metadata, not verified transaction terms or an investment conclusion.",
+            f"- Document gap: {unparsed_count} of {len(evidence_rows)} rows do not have a completed parsed-document status; terms inside those attachments remain unverified.",
+            "- Unknowns until document review: consideration, swap ratio, record date, approvals, conditions precedent, timeline, tax treatment, liquidity, and break risk.",
+            "- Decision boundary: this memo makes no buy, sell, sizing, capital-allocation, or execution recommendation.",
+        ])
+        lines.append(summary)
+        if evidence_rows:
+            next_actions.append("Parse the linked exchange attachments and extract the exact transaction terms before forming a thesis.")
+            next_actions.append("Route verified terms to Special Situations, independent Risk, and then human committee review; keep broker writes locked.")
+        else:
+            next_actions.append("Refine the company, symbol, event type, or date window and rerun the official filing collector.")
     elif job.get("source_kind") == "agent_message":
         message = context.get("agent_message", {})
         lines.append(
@@ -898,16 +985,6 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
             f"{strategy.get('validations', {}).get('count', 0)} validation reviews."
         )
         next_actions.append("Prioritize candidates that have data lineage, transaction costs, and validation coverage.")
-    elif skill_key == "analyze_corporate_filing":
-        research = context.get("research", {})
-        lines.append(
-            "Research inbox has "
-            f"{research.get('corporate_filings', {}).get('count', 0)} corporate filings, "
-            f"{research.get('filing_events', {}).get('count', 0)} filing events, "
-            f"{research.get('news_items', {}).get('count', 0)} news items, and "
-            f"{research.get('social_items', {}).get('count', 0)} social items."
-        )
-        next_actions.append("Next build should enable NSE/BSE collectors and filing PDF parsing before opinion generation.")
     elif skill_key == "model_runtime_check":
         runtime = context.get("runtime", {})
         lines.append(
@@ -965,6 +1042,12 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
         str(job.get("source_kind") or ""),
         str(job.get("source_ref") or ""),
     ]
+    for filing in (context.get("special_situation_filings") or context.get("recent_filings") or []):
+        evidence.append(
+            "research.v_corporate_filing_inbox "
+            f"filing_id={filing.get('filing_id')} "
+            f"source={filing.get('attachment_url') or filing.get('source_url') or 'missing'}"
+        )
     body = [
         f"# Agent Worker Run - Task {job.get('task_id')}",
         "",
@@ -1015,6 +1098,14 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
         {"source": "agent.v_agent_skill_matrix", "skill_key": skill.get("skill_key")},
         {"source": "obsidian_note", "path": relative_note},
     ]
+    for filing in (context.get("special_situation_filings") or context.get("recent_filings") or []):
+        evidence.append({
+            "source": "research.v_corporate_filing_inbox",
+            "filing_id": filing.get("filing_id"),
+            "source_url": filing.get("attachment_url") or filing.get("source_url"),
+            "event_type": filing.get("event_type"),
+            "extraction_status": filing.get("extraction_status"),
+        })
     kronos_forecast = context.get("kronos_forecast")
     if isinstance(kronos_forecast, dict):
         evidence.extend(kronos_forecast.get("evidence") or [])
