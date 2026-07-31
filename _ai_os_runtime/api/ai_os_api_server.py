@@ -13948,8 +13948,8 @@ def build_chat_context(
             LIMIT 8
         """,
         "latest_reports": """
-            SELECT id, report_key, report_name, report_family, status,
-                   output_note_path, summary, started_at, finished_at
+            SELECT id, report_key, report_name, report_family, owner_agent, status,
+                   output_note_path, summary, started_at, finished_at, updated_at
             FROM ops.v_recent_report_runs
             ORDER BY started_at DESC, id DESC
             LIMIT 8
@@ -14124,6 +14124,36 @@ def is_auto_factual_retrieval_request(message: str) -> bool:
         any(term in normalized for term in request_terms)
         and any(term in normalized for term in domain_terms)
     )
+
+
+def structured_evidence_sections_for_request(message: str, context: dict) -> list[str]:
+    """Return authoritative warehouse sections that directly answer the request."""
+    normalized = message.lower()
+    section_rules = (
+        (("report", "letter", "brief"), ("latest_reports",)),
+        (("filing", "announcement", "nse", "bse", "demerger", "merger", "arbitrage"),
+         ("filings", "filing_intelligence")),
+        (("news",), ("latest_news", "news_brief")),
+        (("watchlist",), ("watchlist",)),
+        (("idea list", "idea pipeline", "opportunity"), ("generated_ideas",)),
+        (("option", "straddle", "chain", "open interest"), ("options_summary",)),
+        (("calendar", "holiday", "result date"), ("market_events", "market_holidays")),
+        (("broker", "zerodha"), ("broker_snapshots", "zerodha_market_status")),
+        (("ohlcv", "market data"), ("ohlcv",)),
+        (("research", "paper", "article", "hypothesis"),
+         ("research_intakes", "research_cycles", "research_worker_outputs")),
+        (("workflow", "graph run", "cycle"), ("graph_catalog", "graph_runs", "graph_attention")),
+        (("agent", "department", "office"),
+         ("scoped_employee", "agent_tasks", "agent_messages", "departments")),
+        (("position", "holding", "client", "portfolio"),
+         ("latest_positions", "book_summary", "clients", "symbol_intelligence")),
+    )
+    matched: list[str] = []
+    for terms, sections in section_rules:
+        if not any(term in normalized for term in terms):
+            continue
+        matched.extend(section for section in sections if context.get(section))
+    return list(dict.fromkeys(matched))
 
 
 def message_requires_client_private_context(message: str) -> bool:
@@ -14495,9 +14525,22 @@ def deterministic_chat_reply(
             "; " + "; ".join(str(row.get('title')) for row in ideas[:3]) if ideas else ""
         ) + ".")
     if any(term in normalized for term in ("letter", "report", "brief")):
-        lines.append(f"Report ledger: {len(reports)} recent runs" + (
-            "; latest is " + str(reports[0].get('report_name')) + " at " + str(reports[0].get('output_note_path')) if reports else ""
-        ) + ".")
+        if reports:
+            latest_report = reports[0]
+            report_timestamp = (
+                latest_report.get("updated_at")
+                or latest_report.get("finished_at")
+                or latest_report.get("started_at")
+            )
+            lines.append(
+                f"Report ledger: {len(reports)} recent runs; latest is "
+                f"{latest_report.get('report_name')} produced by "
+                f"{latest_report.get('owner_agent') or 'unassigned'}; "
+                f"updated {report_timestamp or 'unknown'}; exact stored artifact: "
+                f"{latest_report.get('output_note_path') or 'not materialized'}."
+            )
+        else:
+            lines.append("Report ledger: no recent report runs were returned by the warehouse.")
     if any(term in normalized for term in ("option", "straddle", "chain", "iv", "open interest")):
         if options:
             lines.append("Options surfaces: " + "; ".join(
@@ -14514,7 +14557,11 @@ def deterministic_chat_reply(
     if retrieval_hits:
         titles = [str(hit.get("title")) for hit in retrieval_hits[:3] if hit.get("title")]
         lines.append("Most relevant memory hits: " + "; ".join(titles) + ".")
-    elif is_auto_factual_retrieval_request(message) and retrieval_status != "ok":
+    elif (
+        is_auto_factual_retrieval_request(message)
+        and retrieval_status != "ok"
+        and not structured_evidence_sections_for_request(message, context)
+    ):
         lines.append(
             "Semantic memory retrieval is unavailable for this turn "
             f"({retrieval_status}). I cannot name or cite stored notes until retrieval succeeds."
@@ -15348,6 +15395,7 @@ def chat_with_charlie(payload: dict) -> dict:
     }
     normalized_message = message.lower()
     auto_factual_retrieval = is_auto_factual_retrieval_request(message)
+    structured_evidence_sections = structured_evidence_sections_for_request(message, context)
     deterministic_only = bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
     if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
@@ -15466,7 +15514,11 @@ def chat_with_charlie(payload: dict) -> dict:
     )
     cached_response = model_decision.get("cached_response")
     model_attempt_status = "not_attempted"
-    retrieval_gate_blocked = bool(auto_factual_retrieval and retrieval_status != "ok")
+    retrieval_gate_blocked = bool(
+        auto_factual_retrieval
+        and retrieval_status != "ok"
+        and not structured_evidence_sections
+    )
     if deterministic_only:
         route = {**route, "last_model_status": "deterministic_tool_route"}
         assistant_message = deterministic_for_identity()
@@ -15527,6 +15579,13 @@ def chat_with_charlie(payload: dict) -> dict:
         "auto_factual_retrieval": auto_factual_retrieval,
     })
     truth_envelope = build_response_truth_envelope(model_status, route, retrieval_status, retrieval_hits, include_client_context)
+    if structured_evidence_sections:
+        truth_envelope["missing_evidence"] = [
+            item for item in truth_envelope.get("missing_evidence") or []
+            if not str(item).startswith("retrieval_status:")
+            and item != "no_semantic_source_hits"
+        ]
+        truth_envelope["verification_checks"]["structured_evidence_sections"] = structured_evidence_sections
     if needs_verified_facts:
         context_errors = context.get("context_errors") or []
         existing_missing_evidence = list(truth_envelope.get("missing_evidence") or [])
@@ -15547,9 +15606,10 @@ def chat_with_charlie(payload: dict) -> dict:
         ]
         truth_envelope["verification_checks"]["warehouse_context_loaded"] = True
         truth_envelope["verification_checks"]["warehouse_context_error_count"] = len(context_errors)
-        truth_envelope["verification_checks"]["semantic_retrieval_required"] = auto_factual_retrieval
+        semantic_retrieval_required = bool(auto_factual_retrieval and not structured_evidence_sections)
+        truth_envelope["verification_checks"]["semantic_retrieval_required"] = semantic_retrieval_required
         truth_envelope["verification_checks"]["semantic_retrieval_passed"] = (
-            not auto_factual_retrieval or retrieval_status == "ok"
+            not semantic_retrieval_required or retrieval_status == "ok"
         )
     metadata["truth_envelope"] = truth_envelope
     persisted_payload["metadata"] = metadata

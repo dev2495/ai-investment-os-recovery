@@ -367,6 +367,50 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertIn("cannot name or cite stored notes", reply)
         self.assertIn("embedding_model_unavailable", reply)
 
+    def test_latest_report_uses_structured_ledger_without_semantic_retrieval(self) -> None:
+        message = (
+            "Find the latest Provider Readiness Report in our knowledge library. "
+            "Tell me who produced it, when it was updated, and cite the exact stored artifact."
+        )
+        context = {
+            "latest_reports": [{
+                "report_name": "Provider Readiness Report",
+                "owner_agent": "Model Governance Agent",
+                "updated_at": "2026-07-31T02:15:00+00:00",
+                "output_note_path": "ai memory/00 AI OS/Reports/Scheduled/provider-readiness.md",
+            }],
+            "context_errors": [],
+        }
+        self.assertEqual(
+            ai_os_api_server.structured_evidence_sections_for_request(message, context),
+            ["latest_reports"],
+        )
+        reply = ai_os_api_server.deterministic_chat_reply(
+            message,
+            context,
+            [],
+            [],
+            {"default_model": "test"},
+            "disabled_for_nonprivate_context",
+        )
+        self.assertIn("produced by Model Governance Agent", reply)
+        self.assertIn("2026-07-31T02:15:00+00:00", reply)
+        self.assertIn("ai memory/00 AI OS/Reports/Scheduled/provider-readiness.md", reply)
+        self.assertNotIn("cannot name or cite stored notes", reply)
+
+    def test_structured_report_evidence_does_not_weaken_memory_title_gate(self) -> None:
+        report_request = "Find the latest report and cite the exact artifact"
+        memory_request = "Use our stored memory and name the relevant stored note"
+        context = {"latest_reports": [{"report_name": "Daily Brief"}]}
+        self.assertEqual(
+            ai_os_api_server.structured_evidence_sections_for_request(report_request, context),
+            ["latest_reports"],
+        )
+        self.assertEqual(
+            ai_os_api_server.structured_evidence_sections_for_request(memory_request, context),
+            [],
+        )
+
     def test_retrieval_gate_precedes_model_call_for_factual_memory_requests(self) -> None:
         source = Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
         gate = source.index("elif retrieval_gate_blocked:")
