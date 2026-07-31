@@ -486,9 +486,12 @@ backup_backend() {
   rsync -a --delete \
     --exclude 'node_modules/' --exclude 'dist/' --exclude '__pycache__/' --exclude '.env' \
     "${AI_OS_REPO_ROOT}/" "${staging}/code/source/"
-  printf 'created_at=%s\nsource_commit=%s\nqdrant_rebuildable=true\n' \
+  local source_commit
+  source_commit="$(cat "${AI_OS_REPO_ROOT}/DEPLOYED_COMMIT" 2>/dev/null || printf 'package-working-tree')"
+  printf 'format_version=2\ncreated_at=%s\nrepo_commit=%s\nsource_commit=%s\npostgres_archive=postgres/ai_os.dump\nchecksums=integrity/checksums.sha256\nvault_root=vault\nqdrant_rebuildable=true\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-    "$(cat "${AI_OS_REPO_ROOT}/DEPLOYED_COMMIT" 2>/dev/null || printf 'package-working-tree')" \
+    "${source_commit}" \
+    "${source_commit}" \
     > "${staging}/manifest.txt"
   (
     cd "${staging}"

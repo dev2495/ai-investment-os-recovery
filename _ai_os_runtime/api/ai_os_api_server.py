@@ -175,7 +175,11 @@ def load_key_value_manifest(path: Path) -> dict[str, str]:
 
 
 def build_recovery_status() -> dict[str, Any]:
-    backup_root = Path(os.environ.get("AI_OS_CRITICAL_BACKUP_ROOT", Path.home() / "AI_OS_CRITICAL_BACKUP"))
+    backup_root = Path(
+        os.environ.get("AI_OS_CRITICAL_BACKUP_ROOT")
+        or os.environ.get("AI_OS_OFFSITE_BACKUP_ROOT")
+        or Path.home() / "AI_OS_BACKUPS/critical"
+    )
     current = backup_root / "current"
     manifest = load_key_value_manifest(current / "manifest.txt")
     postgres_dump = current / str(manifest.get("postgres_archive", "postgres/ai_os.dump"))
@@ -215,18 +219,25 @@ def build_recovery_status() -> dict[str, Any]:
         "previous_exists": (backup_root / "previous").is_dir(),
         "created_at": manifest.get("created_at"),
         "format_version": manifest.get("format_version"),
-        "repo_commit": manifest.get("repo_commit"),
+        "repo_commit": manifest.get("repo_commit") or manifest.get("source_commit"),
         "postgres_dump_exists": postgres_dump.is_file(),
         "postgres_dump_bytes": postgres_dump.stat().st_size if postgres_dump.is_file() else 0,
         "qdrant_snapshot_exists": qdrant_snapshot.is_file(),
         "qdrant_snapshot_bytes": qdrant_snapshot.stat().st_size if qdrant_snapshot.is_file() else 0,
         "qdrant_snapshot_name": qdrant_snapshot.name if qdrant_snapshot.is_file() else None,
+        "qdrant_rebuildable": manifest.get("qdrant_rebuildable", "false").lower() == "true",
         "vault_copy_exists": vault_copy.is_dir(),
         "vault_file_count": vault_file_count,
         "checksums_exist": checksum_manifest.is_file(),
         "latest_restore_drill": latest_drill,
-        "backup_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.critical-backup.plist").is_file(),
-        "report_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.scheduled-reports.plist").is_file(),
+        "backup_schedule_installed": any(
+            (Path.home() / "Library/LaunchAgents" / name).is_file()
+            for name in ("com.devarsh.aios.imac.backup.plist", "com.devarsh.aios.critical-backup.plist")
+        ),
+        "report_schedule_installed": any(
+            (Path.home() / "Library/LaunchAgents" / name).is_file()
+            for name in ("com.devarsh.aios.imac.scheduled-reports.plist", "com.devarsh.aios.scheduled-reports.plist")
+        ),
         "vault_bookmark_exists": (Path.home() / "Library/Application Support/AIOS/backup-vault.bookmark").is_file(),
     }
 
