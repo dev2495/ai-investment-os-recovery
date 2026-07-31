@@ -30,7 +30,7 @@ export function AgentsView() {
 
   return (
     <div className="aios-destination">
-      <Header icon={Users} code="AGENTS" title="Agents & Employees" subtitle="The full agent roster — 16+ specialists across 11 departments." />
+      <Header icon={Users} code="AGENTS" title="Agents & Employees" subtitle="The full live roster, with every registered department, specialist, skill, and model route." />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
         <MetricTile><Metric label="Agents" value={agents.length} /></MetricTile>
         <MetricTile><Metric label="Departments" value={new Set(agents.map((a) => text(a, "department")).filter(Boolean)).size} /></MetricTile>
