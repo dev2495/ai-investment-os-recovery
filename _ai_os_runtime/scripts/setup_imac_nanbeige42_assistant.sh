@@ -129,6 +129,7 @@ if ! curl --max-time 3 -fsS "${BASE_URL}/models" >/dev/null 2>&1; then
     --model "${QUANT_GGUF}" --alias "${MODEL}" \
     --host 127.0.0.1 --port "${PORT}" --ctx-size 8192 \
     --n-gpu-layers 99 --parallel 1 --jinja \
+    --reasoning off --reasoning-budget 0 \
     >>"${LOG_ROOT}/nanbeige42.log" 2>>"${LOG_ROOT}/nanbeige42.err" &
   TEMP_SERVER_PID="$!"
   for _ in {1..90}; do

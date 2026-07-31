@@ -140,6 +140,7 @@ if [[ "${AI_OS_ENABLE_NANBEIGE42:-1}" == "1" ]]; then
         --model "${NANBEIGE_MODEL}" --alias "${NANBEIGE_ALIAS}" \
         --host 127.0.0.1 --port "${NANBEIGE_PORT}" --ctx-size 8192 \
         --n-gpu-layers 99 --parallel 1 --jinja \
+        --reasoning off --reasoning-budget 0 \
         >>"${LOG_ROOT}/nanbeige42.log" 2>>"${LOG_ROOT}/nanbeige42.err" &
       children+=("$!")
     fi
