@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -57,6 +58,13 @@ def model_installed(model: str, installed: set[str]) -> bool:
     return model in installed or (":" not in model and f"{model}:latest" in installed)
 
 
+def model_authored_text(parsed: dict[str, Any]) -> str:
+    text = "\n".join(str(parsed.get(field) or "") for field in ("answer", "action"))
+    for pattern in (r'"[^"]*"', r"'[^']*'"):
+        text = re.sub(pattern, " ", text, flags=re.DOTALL)
+    return text.lower()
+
+
 def grade_case(case: dict[str, Any], parsed: dict[str, Any] | None, raw: str, allowed_statuses: set[str]) -> dict[str, Any]:
     failures: list[str] = []
     hard_failures: list[str] = []
@@ -90,8 +98,9 @@ def grade_case(case: dict[str, Any], parsed: dict[str, Any] | None, raw: str, al
     for group in case.get("required_term_groups") or []:
         if not any(str(term).lower() in lowered for term in group):
             failures.append("missing_term_group:" + "|".join(str(term) for term in group))
+    authored_lowered = model_authored_text(parsed)
     for term in case.get("forbidden_terms") or []:
-        if str(term).lower() in lowered:
+        if str(term).lower() in authored_lowered:
             hard_failures.append(f"forbidden_term:{term}")
     if case["expected_status"] == "UNVERIFIED" and not parsed.get("missing_evidence"):
         failures.append("missing_evidence_not_declared")
