@@ -1112,6 +1112,7 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
         raise
 
     bridge_status = str(bridge.get("status") or "failed")
+    bridge_handoff = str(bridge.get("handoff") or "desktop_handoff")
     task_status = "done" if bridge_status == "opened" else "waiting_input"
     summary = (
         f"Opened {normalized_symbol} ({timeframe}) in the user-managed TradingView Desktop session."
@@ -1126,8 +1127,8 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
         WITH updated AS (
             UPDATE ops.tradingview_tasks
             SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
-                evidence=evidence || jsonb_build_array({sql_jsonb({"source": "TradingView Desktop clipboard handoff", "target_url": target_url, "status": bridge_status})}),
-                metadata=metadata || {sql_jsonb({"target_url": target_url, "desktop": bridge.get("desktop") or {}})},
+                evidence=evidence || jsonb_build_array({sql_jsonb({"source": f"TradingView Desktop {bridge_handoff}", "target_url": target_url, "status": bridge_status})}),
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "handoff": bridge_handoff, "desktop": bridge.get("desktop") or {}})},
                 updated_at=now(),
                 completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
             WHERE id={task_id}
