@@ -23,6 +23,7 @@ Commands:
   browser-verify  Verify and record the TradingView CDP browser heartbeat
   reports       Generate all due source-backed investment-office reports
   backup        Create a compact independent backup on iMac internal storage
+  restore-verify Verify the compact backup with a disposable Timescale restore
 EOF
 }
 
@@ -464,6 +465,12 @@ run_reports() {
     --all --trigger-type launchd --json
 }
 
+verify_compact_restore() {
+  load_env
+  ensure_ssd
+  "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/verify_imac_compact_restore.sh"
+}
+
 backup_backend() {
   load_env
   ensure_ssd
@@ -483,15 +490,33 @@ backup_backend() {
     > "${staging}/postgres/ai_os.dump"
   docker exec -i ai_os_postgres pg_restore --list < "${staging}/postgres/ai_os.dump" \
     > "${staging}/postgres/archive.list"
+  docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" \
+    -v ON_ERROR_STOP=1 -c "
+      SELECT json_build_object(
+        'clients',(SELECT count(*) FROM portfolio.clients),
+        'positions',(SELECT count(*) FROM portfolio.positions),
+        'agent_tasks',(SELECT count(*) FROM agent.tasks),
+        'raw_artifacts',(SELECT count(*) FROM core.raw_artifacts),
+        'ohlcv_rows',(SELECT count(*) FROM trading.ohlcv),
+        'tables',(SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema'))
+      );
+    " > "${staging}/postgres/inventory.json"
   rsync -a --delete \
     --exclude 'node_modules/' --exclude 'dist/' --exclude '__pycache__/' --exclude '.env' \
     "${AI_OS_REPO_ROOT}/" "${staging}/code/source/"
-  local source_commit
+  local source_commit postgres_ref postgres_image timescale_extension timescale_catalog
   source_commit="$(cat "${AI_OS_REPO_ROOT}/DEPLOYED_COMMIT" 2>/dev/null || printf 'package-working-tree')"
-  printf 'format_version=2\ncreated_at=%s\nrepo_commit=%s\nsource_commit=%s\npostgres_archive=postgres/ai_os.dump\nchecksums=integrity/checksums.sha256\nvault_root=vault\nqdrant_rebuildable=true\n' \
+  postgres_ref="$(docker inspect ai_os_postgres --format '{{.Config.Image}}')"
+  postgres_image="$(docker image inspect "${postgres_ref}" --format '{{index .RepoDigests 0}}')"
+  timescale_extension="$(docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" -c "SELECT extversion FROM pg_extension WHERE extname='timescaledb'")"
+  timescale_catalog="$(docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" -c "SELECT value FROM _timescaledb_catalog.metadata WHERE key='timescaledb_version'")"
+  printf 'format_version=2\nbackup_profile=imac_compact_rebuildable\ncreated_at=%s\nrepo_commit=%s\nsource_commit=%s\npostgres_archive=postgres/ai_os.dump\npostgres_inventory=postgres/inventory.json\npostgres_image=%s\ntimescaledb_extension_version=%s\ntimescaledb_catalog_version=%s\nchecksums=integrity/checksums.sha256\nvault_root=vault\nqdrant_rebuildable=true\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     "${source_commit}" \
     "${source_commit}" \
+    "${postgres_image}" \
+    "${timescale_extension}" \
+    "${timescale_catalog}" \
     > "${staging}/manifest.txt"
   (
     cd "${staging}"
@@ -616,5 +641,6 @@ case "${command_name}" in
   browser-verify) verify_tradingview_browser ;;
   reports) run_reports ;;
   backup) backup_backend ;;
+  restore-verify) verify_compact_restore ;;
   *) usage; exit 2 ;;
 esac

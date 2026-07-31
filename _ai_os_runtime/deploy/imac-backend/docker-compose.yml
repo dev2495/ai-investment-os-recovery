@@ -2,7 +2,7 @@ name: ai-os-imac
 
 services:
   ai_os_postgres:
-    image: ${AI_OS_TIMESCALE_IMAGE:-timescale/timescaledb:latest-pg16}
+    image: ${AI_OS_TIMESCALE_IMAGE:-timescale/timescaledb@sha256:61f891691050da6032023c01ea885730eeeba06b7c17b403e7d0b9c49c37dfe9}
     platform: linux/arm64
     container_name: ai_os_postgres
     restart: unless-stopped
@@ -28,7 +28,7 @@ services:
       timeout: 5s
       retries: 20
   ai_os_qdrant:
-    image: ${AI_OS_QDRANT_IMAGE:-qdrant/qdrant:v1.18.2}
+    image: ${AI_OS_QDRANT_IMAGE:-qdrant/qdrant@sha256:75eab8c4ba42096724fdcfde8b4de0b5713d529dde32f285a1f86fdcb2c9e50c}
     platform: linux/arm64
     container_name: ai_os_qdrant
     restart: unless-stopped
@@ -43,7 +43,7 @@ services:
     cpus: 1.5
 
   ai_os_redis:
-    image: ${AI_OS_REDIS_IMAGE:-redis:7-alpine}
+    image: ${AI_OS_REDIS_IMAGE:-redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99}
     platform: linux/arm64
     container_name: ai_os_redis
     restart: unless-stopped

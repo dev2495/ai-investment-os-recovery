@@ -62,13 +62,42 @@ class RecoveryStatusTests(unittest.TestCase):
 
         for field in (
             "format_version=2",
+            "backup_profile=imac_compact_rebuildable",
             "repo_commit=%s",
             "postgres_archive=postgres/ai_os.dump",
+            "postgres_inventory=postgres/inventory.json",
+            "postgres_image=%s",
+            "timescaledb_extension_version=%s",
+            "timescaledb_catalog_version=%s",
             "checksums=integrity/checksums.sha256",
             "vault_root=vault",
             "qdrant_rebuildable=true",
         ):
             self.assertIn(field, script)
+
+
+    def test_compact_restore_drill_is_version_aligned_and_image_pinned(self) -> None:
+        runtime_root = pathlib.Path(__file__).parents[1]
+        restore_script = (
+            runtime_root / "scripts" / "verify_imac_compact_restore.sh"
+        ).read_text(encoding="utf-8")
+        env_example = (
+            runtime_root / "deploy" / "imac-backend" / "imac.env.example"
+        ).read_text(encoding="utf-8")
+        compose = (
+            runtime_root / "deploy" / "imac-backend" / "docker-compose.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("CREATE EXTENSION timescaledb VERSION", restore_script)
+        self.assertIn("timescaledb_pre_restore()", restore_script)
+        self.assertIn("ALTER EXTENSION timescaledb UPDATE TO", restore_script)
+        self.assertIn("timescaledb_post_restore()", restore_script)
+        self.assertIn("postgres-inventory.diff", restore_script)
+        self.assertNotIn("timescale/timescaledb:latest-pg16", env_example)
+        self.assertNotIn("redis:7-alpine", env_example)
+        self.assertIn("timescale/timescaledb@sha256:", compose)
+        self.assertIn("qdrant/qdrant@sha256:", compose)
+        self.assertIn("redis@sha256:", compose)
 
 
 if __name__ == "__main__":
