@@ -18,8 +18,8 @@ import {
   TrendingUp, Notebook, LineChart, Target, Zap, ShieldCheck,
   Plus, Play, AlertTriangle, Activity, ChevronRight,
 } from "lucide-react";
-import { useTradingQuantRisk } from "../../data/queries";
-import { useRecordManualTrade, useRecordPaperTrade } from "../../data/actions";
+import { useTradingQuantRisk, useTradingViewDesktopStatus } from "../../data/queries";
+import { useCaptureTradingViewChart, useOpenTradingViewDesktop, useRecordManualTrade, useRecordPaperTrade, useRunTradingViewTemplate } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
@@ -220,47 +220,176 @@ function JournalView() {
  * ============================================================ */
 function TradingViewBridgeView() {
   const { data, isLoading } = useTradingQuantRisk();
+  const desktop = useTradingViewDesktopStatus();
+  const openDesktop = useOpenTradingViewDesktop();
+  const captureChart = useCaptureTradingViewChart();
+  const runTemplate = useRunTradingViewTemplate();
+  const pushToast = useUIStore((state) => state.pushToast);
   const tasks = data?.tradingview_tasks ?? [];
   const templates = data?.tradingview_templates ?? [];
+  const [symbol, setSymbol] = React.useState("NIFTY");
+  const [exchange, setExchange] = React.useState("NSE");
+  const [timeframe, setTimeframe] = React.useState("D");
+  const [templateKey, setTemplateKey] = React.useState("");
+  const [lastResult, setLastResult] = React.useState<LiveRow | null>(null);
+
+  React.useEffect(() => {
+    if (!templateKey && templates.length) {
+      setTemplateKey(text(templates[0], "template_key", text(templates[0], "key")));
+    }
+  }, [templateKey, templates]);
+
+  const desktopStatus = desktop.data ?? {};
+  const cdpStatus = (data?.tradingview_cdp ?? {}) as LiveRow;
+  const desktopReady = Boolean(desktopStatus.automation_permission);
+  const desktopRunning = Boolean(desktopStatus.running);
+  const cdpReady = Boolean(cdpStatus.available);
+  const busy = openDesktop.isPending || captureChart.isPending || runTemplate.isPending;
+
+  function notify(title: string, tone: "ok" | "risk" | "warn", message?: string) {
+    pushToast({ title, tone, message, duration: 6000 });
+  }
+
+  function directOpen() {
+    if (!symbol.trim()) {
+      notify("Symbol required", "warn");
+      return;
+    }
+    openDesktop.mutate(
+      { symbol: symbol.trim().toUpperCase(), exchange, timeframe, actor: "Devarsh" },
+      {
+        onSuccess: (result) => {
+          setLastResult(result);
+          const opened = text(result, "status") === "opened";
+          notify(
+            opened ? "Opened in TradingView Desktop" : "Desktop permission required",
+            opened ? "ok" : "warn",
+            opened ? `${exchange}:${symbol.toUpperCase()} | ${timeframe}` : text(result, "fallback")
+          );
+        },
+        onError: (error) => notify("TradingView Desktop action failed", "risk", error.message),
+      }
+    );
+  }
+
+  function capture() {
+    if (!symbol.trim()) {
+      notify("Symbol required", "warn");
+      return;
+    }
+    captureChart.mutate(
+      {
+        symbol: symbol.trim().toUpperCase(),
+        exchange,
+        timeframe,
+        action: "open_chart_capture",
+        capture_screenshot: true,
+        quality_check: true,
+        actor: "Devarsh",
+      },
+      {
+        onSuccess: (result) => {
+          setLastResult(result);
+          notify("Chart evidence captured", "ok", `${exchange}:${symbol.toUpperCase()} | ${timeframe}`);
+        },
+        onError: (error) => notify("Chart capture failed", "risk", error.message),
+      }
+    );
+  }
+
+  function executeTemplate() {
+    if (!templateKey || !symbol.trim()) {
+      notify("Template and symbol required", "warn");
+      return;
+    }
+    runTemplate.mutate(
+      {
+        template_key: templateKey,
+        symbol: symbol.trim().toUpperCase(),
+        exchange,
+        timeframe,
+        actor: "Devarsh",
+      },
+      {
+        onSuccess: (result) => {
+          setLastResult(result);
+          const status = text(result, "status", text(result, "approval_status", "queued"));
+          const approval = status.includes("approval") || status.includes("pending");
+          notify(approval ? "Template queued for approval" : "Template dispatched", approval ? "warn" : "ok", templateKey);
+        },
+        onError: (error) => notify("Template dispatch failed", "risk", error.message),
+      }
+    );
+  }
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
-        <Panel icon={LineChart} title="TradingView Chart Actions">
-          {isLoading ? <SkeletonGrid rows={3} /> : tasks.length === 0 ? (
-            <Empty icon={LineChart} title="No chart tasks" description="Chart actions dispatched via the TradingView CDP bridge appear here." />
-          ) : (
-            <DataTable
-              columns={[
-                { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
-                { key: "action", header: "Action", render: (r) => text(r, "action_type", text(r, "chart_action", "—")) },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "complete")} /> },
-                { key: "when", header: "When", render: (r) => formatRelative(text(r, "executed_at", text(r, "created_at"))) },
-              ]}
-              rows={tasks}
-              rowKey={(r, i) => String(text(r, "task_id", text(r, "id", i)))}
-            />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile tone={desktopRunning ? "ok" : "risk"}><Metric label="Desktop App" value={desktopRunning ? "Running" : "Offline"} sub={text(desktopStatus, "version", "not detected")} /></MetricTile>
+        <MetricTile tone={desktopReady ? "ok" : "warn"}><Metric label="Direct Control" value={desktopReady ? "Ready" : "Permission"} sub={text(desktopStatus, "interaction_mode", "unknown").replace(/_/g, " ")} /></MetricTile>
+        <MetricTile tone={cdpReady ? "ok" : "risk"}><Metric label="CDP Capture" value={cdpReady ? "Ready" : "Offline"} sub={cdpReady ? `localhost:${text(cdpStatus, "port", "9333")}` : "governed browser"} /></MetricTile>
+        <MetricTile><Metric label="Broker Writes" value="Locked" sub="visual analysis only" /></MetricTile>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(300px, .75fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={LineChart} title="Chart Workspace" actions={<Button size="sm" variant="ghost" icon={Activity} disabled={desktop.isFetching} onClick={() => desktop.refetch()}>Refresh</Button>}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) 120px 120px", gap: "var(--space-3)" }}>
+            <Field label="Symbol"><TextInput value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="RELIANCE" /></Field>
+            <Field label="Exchange"><Select value={exchange} onChange={(event) => setExchange(event.target.value)}><option>NSE</option><option>BSE</option><option>NFO</option><option>MCX</option><option>BINANCE</option></Select></Field>
+            <Field label="Timeframe"><Select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}><option value="5">5 min</option><option value="15">15 min</option><option value="60">1 hour</option><option value="D">Daily</option><option value="W">Weekly</option><option value="M">Monthly</option></Select></Field>
+          </div>
+          {!desktopReady && text(desktopStatus, "next_action") && (
+            <div className="aios-inline-alert aios-inline-alert--warn" style={{ marginTop: "var(--space-3)" }}>
+              <AlertTriangle size={16} />
+              <span>{text(desktopStatus, "next_action")}</span>
+            </div>
           )}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
+            <Button variant="primary" icon={Play} disabled={busy || !desktopRunning} onClick={directOpen}>Open Desktop</Button>
+            <Button icon={LineChart} disabled={busy || !cdpReady} onClick={capture}>Capture Evidence</Button>
+          </div>
         </Panel>
-        <Panel icon={LineChart} title="Pine Indicators / Templates">
-          {isLoading ? <SkeletonGrid rows={3} /> : templates.length === 0 ? (
-            <Empty icon={LineChart} title="No templates" description="Reusable Pine indicator templates and chart layouts." />
-          ) : (
-            <DataTable
-              columns={[
-                { key: "name", header: "Template", render: (r) => <strong>{text(r, "template_name", text(r, "name"))}</strong> },
-                { key: "indicators", header: "Indicators", align: "right", render: (r) => num(r, "indicator_count", 0) },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "ready")} /> },
-              ]}
-              rows={templates}
-              rowKey={(r, i) => String(text(r, "template_id", text(r, "id", i)))}
-            />
+
+        <Panel icon={Target} title="Saved Workflow">
+          <Field label="Template">
+            <Select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)}>
+              {templates.map((row) => {
+                const key = text(row, "template_key", text(row, "key"));
+                return <option key={key} value={key}>{text(row, "template_name", text(row, "name", key))}</option>;
+              })}
+            </Select>
+          </Field>
+          <Button style={{ width: "100%", marginTop: "var(--space-3)" }} icon={Play} disabled={busy || !templateKey} onClick={executeTemplate}>Run Template</Button>
+          {lastResult && (
+            <div style={{ marginTop: "var(--space-4)" }}>
+              <KeyValue label="Status" value={text(lastResult, "status", "recorded")} />
+              <KeyValue label="Target" value={text(lastResult, "target_url", `${exchange}:${symbol}`)} />
+            </div>
           )}
         </Panel>
       </div>
+
+      <Panel icon={LineChart} title="TradingView Activity">
+        {isLoading ? <SkeletonGrid rows={4} /> : tasks.length === 0 ? (
+          <Empty icon={LineChart} title="No chart tasks" description="Open a Desktop chart or capture evidence to create the first audited task." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "task", header: "Task", render: (row) => <strong>{text(row, "task_title", text(row, "title"))}</strong> },
+              { key: "symbols", header: "Symbols", render: (row) => Array.isArray(row.symbols) ? row.symbols.join(", ") : text(row, "symbol", "-") },
+              { key: "type", header: "Mode", render: (row) => text(row, "task_type", "chart action").replace(/_/g, " ") },
+              { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", "queued")} /> },
+              { key: "when", header: "Updated", render: (row) => formatRelative(text(row, "updated_at", text(row, "created_at"))) },
+            ]}
+            rows={tasks}
+            rowKey={(row, index) => String(text(row, "task_id", text(row, "id", index)))}
+          />
+        )}
+      </Panel>
     </>
   );
 }
+
 
 /* ============================================================
  * ALPHA TRACKER — P&L attribution + edge decay

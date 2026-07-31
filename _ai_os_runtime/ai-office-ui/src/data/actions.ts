@@ -336,6 +336,49 @@ export function useRecordPaperTrade() {
   );
 }
 
+
+export interface TradingViewDesktopInput {
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+  target_url?: string;
+  actor?: string;
+}
+
+export function useOpenTradingViewDesktop() {
+  return useInvalidating<TradingViewDesktopInput, LiveRow>(
+    "/api/tradingview/desktop/open",
+    [Q.tradingQuantRisk]
+  );
+}
+
+export interface TradingViewCaptureInput extends TradingViewDesktopInput {
+  symbols?: string[];
+  action?: string;
+  capture_screenshot?: boolean;
+  quality_check?: boolean;
+  wait_ms?: number;
+}
+
+export function useCaptureTradingViewChart() {
+  return useInvalidating<TradingViewCaptureInput, LiveRow>(
+    "/api/tradingview/chart-actions",
+    [Q.tradingQuantRisk]
+  );
+}
+
+export interface TradingViewTemplateInput extends TradingViewDesktopInput {
+  template_key: string;
+  parameters?: Record<string, unknown>;
+}
+
+export function useRunTradingViewTemplate() {
+  return useInvalidating<TradingViewTemplateInput, LiveRow>(
+    "/api/tradingview/template-actions",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
+
 /* ============================================================
  * PORTFOLIO ACTIONS
  * ============================================================ */

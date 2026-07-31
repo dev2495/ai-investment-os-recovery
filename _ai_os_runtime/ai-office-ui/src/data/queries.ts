@@ -61,6 +61,7 @@ export const queryKeys = {
   office: ["office"] as const,
   graphControl: (runId?: number | null) => ["graph-control", runId ?? "all"] as const,
   zerodhaAuth: ["zerodha-auth"] as const,
+  tradingViewDesktop: ["tradingview-desktop"] as const,
   departmentTerminal: (workspace: string) => ["department-terminal", workspace] as const,
   evidence: (kind: string, key: string) => ["evidence", kind, key] as const,
   workspaceConfig: (profileKey: string) => ["workspace-config", profileKey] as const,
@@ -129,6 +130,16 @@ export function useExchangeZerodhaToken() {
         queryClient.invalidateQueries({ queryKey: queryKeys.tradingQuantRisk }),
       ]);
     },
+  });
+}
+
+
+export function useTradingViewDesktopStatus() {
+  return useQuery<LiveRow>({
+    queryKey: queryKeys.tradingViewDesktop,
+    queryFn: () => get<LiveRow>("/api/tradingview/desktop-status"),
+    ...snapshotQueryOptions,
+    refetchInterval: 30_000,
   });
 }
 

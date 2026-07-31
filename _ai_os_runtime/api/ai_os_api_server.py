@@ -24,6 +24,11 @@ try:
 except ImportError:  # Direct script execution on the iMac.
     import graph_control_plane  # type: ignore
 
+try:
+    from .tradingview_desktop_bridge import open_link_in_desktop, probe_desktop
+except ImportError:  # Direct script execution on the iMac.
+    from tradingview_desktop_bridge import open_link_in_desktop, probe_desktop  # type: ignore
+
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
@@ -1041,6 +1046,98 @@ def probe_tradingview_cdp(port: int | None = None) -> dict:
             "error": str(exc),
             "next_action": f"Start the managed TradingView browser service on CDP port {resolved_port}.",
         }
+
+
+
+def probe_tradingview_desktop() -> dict:
+    return {**probe_desktop(), "cdp_fallback": probe_tradingview_cdp()}
+
+
+def open_tradingview_desktop_chart(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Devarsh via Charlie").strip()
+    symbol = str(payload.get("symbol") or "").strip()
+    if not symbol:
+        symbols = payload.get("symbols") or []
+        symbol = str(symbols[0]).strip() if isinstance(symbols, list) and symbols else ""
+    if not symbol:
+        raise ValueError("symbol is required")
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    timeframe = str(payload.get("timeframe") or "D").strip().upper()
+    normalized_symbol = normalize_tradingview_symbol(symbol, exchange)
+    target_url = str(payload.get("target_url") or tradingview_chart_url(normalized_symbol, timeframe)).strip()
+    if not target_url.startswith("https://www.tradingview.com/"):
+        raise ValueError("target_url must be an https://www.tradingview.com/ link")
+
+    task = create_tradingview_task({
+        "task_title": payload.get("task_title") or f"Open TradingView Desktop: {normalized_symbol}",
+        "task_type": "desktop_open_chart",
+        "requested_by": actor,
+        "owner_agent": payload.get("owner_agent") or "Trading Desk Agent",
+        "priority": payload.get("priority") or "medium",
+        "symbols": [normalized_symbol],
+        "exchange": exchange,
+        "timeframe": timeframe,
+        "instruction": payload.get("instruction") or "Open the requested chart in the user-managed TradingView Desktop session.",
+        "source_ref": payload.get("source_ref") or "ai_os_tradingview_desktop_bridge",
+        "evidence": [{"source": "TradingView Desktop bridge", "target_url": target_url}],
+        "metadata": {"target_url": target_url, "action_kind": "desktop_open_chart"},
+    })
+    task_id = int(task.get("id"))
+    try:
+        bridge = open_link_in_desktop(target_url)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        run_psql_text(f"""
+            UPDATE ops.tradingview_tasks
+            SET status='failed', result_summary={sql_literal(error)},
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "desktop_error": error})},
+                updated_at=now(), completed_at=now()
+            WHERE id={task_id}
+        """)
+        raise
+
+    bridge_status = str(bridge.get("status") or "failed")
+    task_status = "done" if bridge_status == "opened" else "waiting_input"
+    summary = (
+        f"Opened {normalized_symbol} ({timeframe}) in the user-managed TradingView Desktop session."
+        if bridge_status == "opened"
+        else (
+            "TradingView Desktop is running, but macOS Accessibility permission is required for the official clipboard-menu handoff."
+            if bridge_status == "permission_required"
+            else "TradingView Desktop is not installed on this node."
+        )
+    )
+    rows = run_psql_json_statement(f"""
+        UPDATE ops.tradingview_tasks
+        SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
+            evidence=evidence || jsonb_build_array({sql_jsonb({"source": "TradingView Desktop clipboard handoff", "target_url": target_url, "status": bridge_status})}),
+            metadata=metadata || {sql_jsonb({"target_url": target_url, "desktop": bridge.get("desktop") or {}})},
+            updated_at=now(),
+            completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
+        WHERE id={task_id}
+        RETURNING id, task_title, task_type, status, symbols, exchange, timeframe,
+                  result_summary, evidence, metadata, created_at, updated_at, completed_at
+    """)
+    response = {
+        "status": bridge_status,
+        "task": rows[0] if rows else task,
+        "target_url": target_url,
+        "desktop": {**(bridge.get("desktop") or {}), "cdp_fallback": probe_tradingview_cdp()},
+        "fallback": (
+            None
+            if bridge_status == "opened"
+            else "Use the governed CDP capture action until the one-time Desktop permission is granted."
+        ),
+    }
+    audit_api_write(
+        "ai_os_api_open_tradingview_desktop",
+        "open_tradingview_desktop_chart",
+        actor,
+        "ops.tradingview_tasks",
+        response,
+        payload,
+    )
+    return response
 
 
 def http_json(method: str, url: str, payload: object | None = None, timeout: float = 10) -> dict:
@@ -15095,6 +15192,47 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             "candidate_key",
         )
 
+
+    tradingview_desktop_command = (
+        "tradingview" in normalized
+        and re.search(r"\b(?:open|show|load)\b", message, flags=re.IGNORECASE)
+    )
+    if tradingview_desktop_command:
+        symbol_candidates = re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+        if not symbol_candidates:
+            natural_symbol = re.search(
+                r"\b(?:open|show|load)\s+(?:the\s+)?(?:chart\s+(?:for|of)\s+)?([A-Za-z][A-Za-z0-9&.-]{1,19})\b",
+                message,
+                flags=re.IGNORECASE,
+            )
+            symbol_candidates = [natural_symbol.group(1).upper()] if natural_symbol else []
+        ignored_symbols = {"TRADINGVIEW", "CHART", "DESKTOP", "APP", "THE", "NSE", "BSE", "NFO"}
+        symbol_candidates = [item.upper() for item in symbol_candidates if item.upper() not in ignored_symbols]
+        timeframe_match = re.search(
+            r"\b(1|3|5|15|30|45|60|120|240|D|W|M)\s*(?:MIN|MINS|MINUTE|MINUTES)?\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if symbol_candidates:
+            invoke(
+                "open_tradingview_desktop",
+                lambda: open_tradingview_desktop_chart({
+                    "symbol": symbol_candidates[0],
+                    "exchange": "NSE",
+                    "timeframe": timeframe_match.group(1).upper() if timeframe_match else "D",
+                    "actor": "Devarsh via Charlie",
+                    "instruction": message,
+                    "source_ref": "charlie_chat",
+                }),
+                "status",
+            )
+        else:
+            results.append({
+                "tool": "open_tradingview_desktop",
+                "status": "needs_symbol",
+                "detail": "Name the symbol Charlie should open in TradingView Desktop.",
+            })
+
     delegation_command = (
         re.search(
             r"\b(?:delegate|assign)\b[^.!?\n]{1,200}\bto\b",
@@ -15980,6 +16118,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/tradingview/cdp-status"):
                 self._send_json(probe_tradingview_cdp())
                 return
+            if request_path == "/api/tradingview/desktop-status":
+                self._send_json(probe_tradingview_desktop())
+                return
             if request_path == "/api/zerodha/auth/status":
                 self._send_json(zerodha_auth_status())
                 return
@@ -16019,6 +16160,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             payload = self._read_body()
             if self.path == "/api/tradingview/tasks":
                 self._send_json(create_tradingview_task(payload), 201)
+                return
+            if self.path == "/api/tradingview/desktop/open":
+                self._send_json(open_tradingview_desktop_chart(payload), 201)
                 return
             if self.path == "/api/artifacts/local/ingest":
                 self._send_json(ingest_local_artifact(payload), 201)
