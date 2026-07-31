@@ -65,6 +65,16 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         commands = [call.args[0][0] for call in run.call_args_list]
         self.assertEqual(commands, ["/usr/bin/pbcopy", "/usr/bin/osascript"])
 
+    def test_cdp_command_enables_websocket_on_node_20(self) -> None:
+        command = ai_os_api_server.tradingview_cdp_node_command(
+            pathlib.Path("/tmp/execute.mjs"),
+            {"symbol": "NSE:RELIANCE", "timeframe": "D"},
+        )
+
+        self.assertEqual(command[:2], ["node", "--experimental-websocket"])
+        self.assertEqual(command[2:4], ["/tmp/execute.mjs", "--payload-json"])
+        self.assertIn('"symbol": "NSE:RELIANCE"', command[4])
+
     def test_api_serializes_permission_gated_task_as_one_json_document(self) -> None:
         task = {"id": 91, "task_title": "Open TradingView Desktop: NSE:RELIANCE"}
         updated = {

@@ -6340,6 +6340,16 @@ def create_tradingview_task(payload: dict) -> dict:
     return result
 
 
+def tradingview_cdp_node_command(script_path: Path, script_payload: dict) -> list[str]:
+    return [
+        "node",
+        "--experimental-websocket",
+        str(script_path),
+        "--payload-json",
+        json.dumps(script_payload, default=str),
+    ]
+
+
 def execute_tradingview_chart_action(payload: dict) -> dict:
     actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
     symbols = payload.get("symbols")
@@ -6412,7 +6422,7 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     )
     script_path = RUNTIME_ROOT / "scripts" / "execute_tradingview_chart_action.mjs"
     completed = subprocess.run(
-        ["node", str(script_path), "--payload-json", json.dumps(script_payload, default=str)],
+        tradingview_cdp_node_command(script_path, script_payload),
         text=True,
         capture_output=True,
         check=False,
