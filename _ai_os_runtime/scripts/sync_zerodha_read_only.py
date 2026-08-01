@@ -11,12 +11,15 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 
 BASE_URL = os.environ.get("AI_OS_ZERODHA_BASE_URL", "https://api.kite.trade").rstrip("/")
 LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
 KEYCHAIN_SERVICE = os.environ.get("AI_OS_ZERODHA_TOKEN_SERVICE", "ai-os-zerodha-access-token")
+KEYCHAIN_EXPIRY_SERVICE = os.environ.get("AI_OS_ZERODHA_TOKEN_EXPIRY_SERVICE", "ai-os-zerodha-access-token-expiry")
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
 ENDPOINTS = {
     "holdings": "/portfolio/holdings",
     "positions": "/portfolio/positions",
@@ -56,13 +59,10 @@ def psql(sql: str) -> str:
     raise RuntimeError("; ".join(errors))
 
 
-def keychain_token() -> str:
-    env_token = os.environ.get("AI_OS_ZERODHA_ACCESS_TOKEN", "").strip()
-    if env_token:
-        return env_token
+def keychain_secret(service: str) -> str:
     try:
         result = subprocess.run(
-            ["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+            ["/usr/bin/security", "find-generic-password", "-s", service, "-w"],
             text=True, capture_output=True, check=False, timeout=10,
         )
     except OSError:
@@ -70,13 +70,54 @@ def keychain_token() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def store_keychain_token(token: str) -> None:
+def store_keychain_secret(service: str, account: str, value: str) -> None:
     result = subprocess.run(
-        ["/usr/bin/security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", "access_token", "-w", token],
+        ["/usr/bin/security", "add-generic-password", "-U", "-s", service, "-a", account, "-w", value],
         text=True, capture_output=True, check=False, timeout=15,
     )
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "keychain write failed").strip())
+
+
+def next_token_expiry(now: datetime | None = None) -> datetime:
+    current = (now or datetime.now(INDIA_TZ)).astimezone(INDIA_TZ)
+    expiry = current.replace(hour=6, minute=0, second=0, microsecond=0)
+    return expiry if expiry > current else expiry + timedelta(days=1)
+
+
+def parse_token_expiry(raw_value: str) -> datetime | None:
+    value = raw_value.strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(INDIA_TZ)
+
+
+def keychain_token() -> str:
+    env_token = os.environ.get("AI_OS_ZERODHA_ACCESS_TOKEN", "").strip()
+    return env_token or keychain_secret(KEYCHAIN_SERVICE)
+
+
+def token_expiry() -> datetime | None:
+    raw_value = os.environ.get("AI_OS_ZERODHA_ACCESS_TOKEN_EXPIRES", "").strip()
+    return parse_token_expiry(raw_value or keychain_secret(KEYCHAIN_EXPIRY_SERVICE))
+
+
+def token_is_current(token: str, expiry: datetime | None, now: datetime | None = None) -> bool:
+    if not token or expiry is None:
+        return False
+    current = (now or datetime.now(INDIA_TZ)).astimezone(INDIA_TZ)
+    return expiry > current
+
+
+def store_keychain_token(token: str, expiry: datetime) -> None:
+    store_keychain_secret(KEYCHAIN_SERVICE, "access_token", token)
+    store_keychain_secret(KEYCHAIN_EXPIRY_SERVICE, "expires_at", expiry.isoformat())
 
 
 def request_json(method: str, path: str, *, api_key: str, access_token: str = "", form: dict[str, str] | None = None) -> object:
@@ -101,14 +142,15 @@ def exchange_request_token(api_key: str, api_secret: str, request_token: str) ->
     access_token = str(data.get("access_token") or "") if isinstance(data, dict) else ""
     if not access_token:
         raise RuntimeError("Zerodha token response did not include access_token")
-    store_keychain_token(access_token)
+    expiry = next_token_expiry()
+    store_keychain_token(access_token, expiry)
     return {
         "status": "authenticated",
         "user_id": data.get("user_id"),
         "login_time": data.get("login_time"),
         "exchanges": data.get("exchanges") or [],
         "access_token_stored": True,
-        "access_token_expires": "06:00 Asia/Kolkata next day",
+        "access_token_expires": expiry.isoformat(),
         "broker_write_allowed": False,
     }
 
@@ -178,6 +220,8 @@ def main() -> int:
     api_key = os.environ.get("AI_OS_ZERODHA_API_KEY", "").strip()
     api_secret = os.environ.get("AI_OS_ZERODHA_API_SECRET", "").strip()
     access_token = keychain_token()
+    access_token_expiry = token_expiry()
+    access_token_current = token_is_current(access_token, access_token_expiry)
     if args.login_url:
         print(json.dumps({"status": "ready" if api_key else "needs_credentials", "login_url": LOGIN_URL.format(api_key=urllib.parse.quote(api_key)) if api_key else None, "manual_daily_login_required": True, "broker_write_allowed": False}, indent=2))
         return 0 if api_key else 2
@@ -192,13 +236,16 @@ def main() -> int:
             print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}", "broker_write_allowed": False}, indent=2))
             return 1
     status = {
-        "status": "configured" if api_key and api_secret and access_token else "needs_credentials_or_daily_login",
+        "status": "configured" if api_key and api_secret and access_token_current else "needs_credentials_or_daily_login",
         "api_key_configured": bool(api_key), "api_secret_configured": bool(api_secret),
-        "daily_access_token_available": bool(access_token),
+        "daily_access_token_available": access_token_current,
+        "access_token_expiry_known": access_token_expiry is not None,
+        "access_token_expires_at": access_token_expiry.isoformat() if access_token_expiry else None,
+        "stale_access_token_present": bool(access_token) and not access_token_current,
         "login_url": LOGIN_URL.format(api_key=urllib.parse.quote(api_key)) if api_key else None,
         "manual_daily_login_required": True, "broker_write_allowed": False,
     }
-    if args.check_config or not (api_key and api_secret and access_token):
+    if args.check_config or not (api_key and api_secret and access_token_current):
         print(json.dumps(status, indent=2))
         return 0 if status["status"] == "configured" else 2
     result = sync_account(api_key, access_token, args.datasets)
