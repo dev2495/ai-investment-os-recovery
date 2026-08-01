@@ -67,5 +67,29 @@ class FrontendRouteContractTest(unittest.TestCase):
 
 
 
+    def test_options_surfaces_use_recorded_trades_and_live_chain_inputs(self) -> None:
+        source = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "options"
+            / "OptionsDesk.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("const optionTrades = React.useMemo", source)
+        self.assertIn("tradingData?.trade_activity", source)
+        self.assertIn("const activeContracts = React.useMemo", source)
+        self.assertIn("premium: item.ltp", source)
+        self.assertIn('instrument_type: "option"', source)
+        self.assertIn("expiry_date: form.expiry_date", source)
+        self.assertIn('text(row, "trade_ts"', source)
+        self.assertNotIn("trade_date: form.expiry_date", source)
+        self.assertIn("disabled={!liveChainReady}", source)
+        self.assertNotIn("React.useState(22000)", source)
+        self.assertNotRegex(source, r"premium:\s*(?:40|80|100|200)\b")
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2847,8 +2847,13 @@ def build_trading_quant_risk_snapshot() -> dict:
                    client_code, account_code, strategy_key, symbol, exchange,
                    instrument_type, side, quantity, price, trade_ts, status,
                    thesis, setup_type, timeframe, stop_loss, target_price,
-                   realized_pnl, fees, created_by, created_at, updated_at
-            FROM trading.v_trade_activity_ledger
+                   realized_pnl, fees, created_by, created_at, updated_at,
+                   payload->>'option_type' AS option_type,
+                   payload->>'strike' AS strike,
+                   payload->>'expiry_date' AS expiry_date,
+                   payload->>'strategy_name' AS strategy_name,
+                   evidence, payload
+            FROM trading.trade_activity_ledger
             ORDER BY trade_ts DESC, created_at DESC
             LIMIT 120
         """,
@@ -5828,8 +5833,13 @@ def build_snapshot() -> dict:
                    client_code, account_code, strategy_key, symbol, exchange,
                    instrument_type, side, quantity, price, trade_ts, status,
                    thesis, setup_type, timeframe, stop_loss, target_price,
-                   realized_pnl, fees, tags, evidence, created_by, created_at, updated_at
-            FROM trading.v_trade_activity_ledger
+                   realized_pnl, fees, tags, created_by, created_at, updated_at,
+                   payload->>\x27option_type\x27 AS option_type,
+                   payload->>\x27strike\x27 AS strike,
+                   payload->>\x27expiry_date\x27 AS expiry_date,
+                   payload->>\x27strategy_name\x27 AS strategy_name,
+                   evidence, payload
+            FROM trading.trade_activity_ledger
             ORDER BY trade_ts DESC, created_at DESC
             LIMIT 100
         """,
@@ -10389,6 +10399,14 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
     if side not in {"buy", "sell", "long", "short", "watch", "exit"}:
         raise ValueError("side must be one of buy, sell, long, short, watch, exit")
     actor = str(payload.get("created_by") or payload.get("actor") or actor_default).strip()
+    persisted_payload = {
+        key: payload.get(key)
+        for key in (
+            "option_type", "strike", "expiry_date", "strategy_name", "notes",
+            "book_key", "purpose_key", "trade_date", "trade_ts",
+        )
+        if payload.get(key) is not None
+    }
     rows = run_psql_json_statement(
         f"""
         WITH inserted AS (
@@ -10397,7 +10415,7 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 client_code, account_code, strategy_key, symbol, exchange,
                 instrument_type, side, quantity, price, trade_ts, status,
                 thesis, setup_type, timeframe, stop_loss, target_price,
-                realized_pnl, fees, tags, evidence, created_by
+                realized_pnl, fees, tags, evidence, payload, created_by
             )
             VALUES (
                 {sql_literal(payload.get("activity_type") or "trade")},
@@ -10413,10 +10431,10 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 {sql_literal(side)},
                 {sql_numeric(payload.get("quantity"), field_name="quantity")},
                 {sql_numeric(payload.get("price"), field_name="price")},
-                COALESCE({sql_literal(payload.get("trade_ts"))}::timestamptz, now()),
+                COALESCE({sql_literal(payload.get("trade_ts") or payload.get("trade_date"))}::timestamptz, now()),
                 {sql_literal(payload.get("status") or "recorded")},
-                {sql_literal(payload.get("thesis"))},
-                {sql_literal(payload.get("setup_type"))},
+                {sql_literal(payload.get("thesis") or payload.get("notes"))},
+                {sql_literal(payload.get("setup_type") or payload.get("strategy_name"))},
                 {sql_literal(payload.get("timeframe"))},
                 {sql_numeric(payload.get("stop_loss"), field_name="stop_loss")},
                 {sql_numeric(payload.get("target_price"), field_name="target_price")},
@@ -10424,13 +10442,14 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 {sql_numeric(payload.get("fees"), field_name="fees")},
                 {sql_text_array(payload.get("tags"))},
                 {sql_jsonb(payload.get("evidence") or [{"source": "AI Office API"}])},
+                {sql_jsonb(persisted_payload)},
                 {sql_literal(actor)}
             )
             RETURNING id, activity_type, execution_mode, source_kind, source_ref,
                       client_code, account_code, strategy_key, symbol, exchange,
                       instrument_type, side, quantity, price, trade_ts, status,
                       thesis, setup_type, timeframe, stop_loss, target_price,
-                      realized_pnl, fees, tags, evidence, created_by, created_at, updated_at
+                      realized_pnl, fees, tags, evidence, payload, created_by, created_at, updated_at
         )
         SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
         FROM inserted

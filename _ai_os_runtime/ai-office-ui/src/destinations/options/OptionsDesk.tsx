@@ -27,7 +27,7 @@ import {
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select,
 } from "../../system/primitives";
 import { BarSeriesChart, LineSeriesChart, AreaSeriesChart } from "../../system/charts";
-import { text, num, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
+import { text, num, formatCurrency, formatCompact, formatPercent, formatRelative } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -106,8 +106,18 @@ function useChain() {
  * ============================================================ */
 function DeskView() {
   const { parsed, underlyings, isLoading } = useChain();
+  const { data: tradingData } = useTradingQuantRisk();
   const [showTicket, setShowTicket] = React.useState(false);
   const analytics = React.useMemo(() => computeAnalytics(parsed), [parsed]);
+  const optionTrades = React.useMemo(
+    () => (tradingData?.trade_activity ?? []).filter((row) => {
+      const instrumentType = text(row, "instrument_type", text(row, "asset_class", "")).toLowerCase();
+      const optionType = text(row, "option_type", "").toUpperCase();
+      const notes = text(row, "notes", text(row, "thesis", "")).toUpperCase();
+      return instrumentType.includes("option") || ["CE", "PE"].includes(optionType) || /\b(CE|PE)\b/.test(notes);
+    }),
+    [tradingData?.trade_activity],
+  );
 
   return (
     <>
@@ -141,7 +151,31 @@ function DeskView() {
       <Panel icon={TrendingDown} title="Options Blotter"
         actions={<Button size="sm" variant="primary" icon={Plus} onClick={() => setShowTicket(true)}>New Option Trade</Button>}
       >
-        <Empty icon={TrendingDown} title="No option trades recorded" description="Record a manual option trade — it flows into the blotter and journal." action={<Button size="sm" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>} />
+        {optionTrades.length === 0 ? (
+          <Empty icon={TrendingDown} title="No option trades recorded" description="Record a manual option trade - it flows into the blotter and journal." action={<Button size="sm" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>} />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "contract", header: "Contract", render: (row) => {
+                const parts = [
+                  text(row, "symbol"),
+                  text(row, "expiry_date"),
+                  num(row, "strike", 0) || "",
+                  text(row, "option_type"),
+                ].filter(Boolean);
+                return <><strong>{parts.join(" ")}</strong><div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{text(row, "strategy_name", text(row, "thesis", "manual option trade"))}</div></>;
+              } },
+              { key: "side", header: "Side", render: (row) => <StatusPill status={text(row, "side", text(row, "direction"))} /> },
+              { key: "quantity", header: "Qty", align: "right", render: (row) => num(row, "quantity", num(row, "qty", 0)) },
+              { key: "price", header: "Premium", align: "right", render: (row) => formatCurrency(num(row, "price", num(row, "trade_price", 0))) },
+              { key: "book", header: "Book", render: (row) => text(row, "book_key", text(row, "book_name", "unassigned")) },
+              { key: "when", header: "Recorded", render: (row) => formatRelative(text(row, "trade_ts", text(row, "created_at"))) },
+            ]}
+            rows={optionTrades}
+            rowKey={(row, index) => text(row, "trade_id", text(row, "id", `option-trade-${index}`))}
+            dense
+          />
+        )}
       </Panel>
 
       <OptionTicketDrawer open={showTicket} onClose={() => setShowTicket(false)} />
@@ -354,21 +388,36 @@ function OiAnalysisView() {
 interface Leg { id: string; type: "CE" | "PE"; action: "buy" | "sell"; strike: number; qty: number; premium: number; }
 
 function StrategiesView() {
-  const { parsed, underlyings, expiries } = useChain();
-  const [symbol, setSymbol] = React.useState("NIFTY");
+  const { parsed, underlyings } = useChain();
+  const [symbol, setSymbol] = React.useState("");
   const [expiry, setExpiry] = React.useState("");
-  const [spot, setSpot] = React.useState(22000);
   const [legs, setLegs] = React.useState<Leg[]>([]);
   const [showAdd, setShowAdd] = React.useState(false);
 
+  const symbolExpiries = React.useMemo(
+    () => Array.from(new Set(parsed.filter((contract) => contract.symbol === symbol).map((contract) => contract.expiry))).sort(),
+    [parsed, symbol],
+  );
   React.useEffect(() => {
-    if (!expiry && expiries.length) setExpiry(expiries[0]);
-    const s = parsed.find((c) => c.symbol === symbol)?.spot;
-    if (s) setSpot(s);
-  }, [parsed, symbol, expiries, expiry]);
+    if (underlyings.length && !underlyings.includes(symbol)) setSymbol(underlyings[0]);
+  }, [underlyings, symbol]);
+  React.useEffect(() => {
+    if (symbolExpiries.length && !symbolExpiries.includes(expiry)) setExpiry(symbolExpiries[0]);
+  }, [symbolExpiries, expiry]);
+
+  const activeContracts = React.useMemo(
+    () => parsed.filter((contract) => contract.symbol === symbol && contract.expiry === expiry),
+    [parsed, symbol, expiry],
+  );
+  const spot = activeContracts.find((contract) => contract.spot > 0)?.spot ?? 0;
+  const strikes = Array.from(new Set(activeContracts.map((contract) => contract.strike))).sort((a, b) => a - b);
+  const atmIndex = spot > 0 && strikes.length
+    ? strikes.reduce((best, strike, index) => Math.abs(strike - spot) < Math.abs(strikes[best] - spot) ? index : best, 0)
+    : -1;
+  const atmStrike = atmIndex >= 0 ? strikes[atmIndex] : 0;
 
   const payoff = React.useMemo(() => {
-    if (legs.length === 0) return [];
+    if (legs.length === 0 || spot <= 0) return [];
     const min = spot * 0.85; const max = spot * 1.15; const steps = 60;
     return Array.from({ length: steps }, (_, i) => {
       const s = min + ((max - min) * i) / (steps - 1);
@@ -385,36 +434,62 @@ function StrategiesView() {
   function addLeg(leg: Omit<Leg, "id">) { setLegs((prev) => [...prev, { ...leg, id: `leg-${Date.now()}` }]); setShowAdd(false); }
   function removeLeg(id: string) { setLegs((prev) => prev.filter((l) => l.id !== id)); }
   function loadPreset(name: string) {
-    const atm = Math.round(spot / 50) * 50;
-    if (name === "long-straddle") setLegs([
-      { id: "l1", type: "CE", action: "buy", strike: atm, qty: 1, premium: 200 },
-      { id: "l2", type: "PE", action: "buy", strike: atm, qty: 1, premium: 200 },
-    ]);
-    if (name === "iron-condor") setLegs([
-      { id: "l1", type: "CE", action: "sell", strike: atm + 200, qty: 1, premium: 80 },
-      { id: "l2", type: "CE", action: "buy", strike: atm + 400, qty: 1, premium: 40 },
-      { id: "l3", type: "PE", action: "sell", strike: atm - 200, qty: 1, premium: 80 },
-      { id: "l4", type: "PE", action: "buy", strike: atm - 400, qty: 1, premium: 40 },
-    ]);
-    if (name === "bull-call-spread") setLegs([
-      { id: "l1", type: "CE", action: "buy", strike: atm, qty: 1, premium: 200 },
-      { id: "l2", type: "CE", action: "sell", strike: atm + 200, qty: 1, premium: 100 },
-    ]);
+    const contract = (type: "CE" | "PE", index: number) => {
+      const strike = strikes[index];
+      return strike === undefined
+        ? undefined
+        : activeContracts.find((item) => item.type === type && item.strike === strike && item.ltp > 0);
+    };
+    const leg = (item: ParsedContract, action: "buy" | "sell", id: string): Leg => ({
+      id: `${id}-${Date.now()}`,
+      type: item.type,
+      action,
+      strike: item.strike,
+      qty: 1,
+      premium: item.ltp,
+    });
+
+    if (name === "long-straddle") {
+      const call = contract("CE", atmIndex);
+      const put = contract("PE", atmIndex);
+      if (call && put) setLegs([leg(call, "buy", "straddle-call"), leg(put, "buy", "straddle-put")]);
+    }
+    if (name === "iron-condor") {
+      const shortCall = contract("CE", atmIndex + 1);
+      const longCall = contract("CE", atmIndex + 2);
+      const shortPut = contract("PE", atmIndex - 1);
+      const longPut = contract("PE", atmIndex - 2);
+      if (shortCall && longCall && shortPut && longPut) {
+        setLegs([
+          leg(shortCall, "sell", "condor-short-call"),
+          leg(longCall, "buy", "condor-long-call"),
+          leg(shortPut, "sell", "condor-short-put"),
+          leg(longPut, "buy", "condor-long-put"),
+        ]);
+      }
+    }
+    if (name === "bull-call-spread") {
+      const longCall = contract("CE", atmIndex);
+      const shortCall = contract("CE", atmIndex + 1);
+      if (longCall && shortCall) setLegs([leg(longCall, "buy", "spread-long-call"), leg(shortCall, "sell", "spread-short-call")]);
+    }
   }
+
+  const liveChainReady = spot > 0 && activeContracts.some((contract) => contract.ltp > 0);
 
   return (
     <>
       <Panel icon={Layers} title="Strategy Builder"
         actions={<>
           <Select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ width: 110 }}>{underlyings.map((u) => <option key={u}>{u}</option>)}</Select>
-          <Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 120 }}>{expiries.map((e) => <option key={e}>{e}</option>)}</Select>
+          <Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{symbolExpiries.map((e) => <option key={e}>{e}</option>)}</Select>
         </>}
       >
         <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-3)", flexWrap: "wrap" }}>
-          <Button size="sm" variant="ghost" onClick={() => loadPreset("long-straddle")}>Long Straddle</Button>
-          <Button size="sm" variant="ghost" onClick={() => loadPreset("iron-condor")}>Iron Condor</Button>
-          <Button size="sm" variant="ghost" onClick={() => loadPreset("bull-call-spread")}>Bull Call Spread</Button>
-          <Button size="sm" variant="ghost" icon={Plus} onClick={() => setShowAdd(true)}>Add Leg</Button>
+          <Button size="sm" variant="ghost" onClick={() => loadPreset("long-straddle")} disabled={!liveChainReady}>Long Straddle</Button>
+          <Button size="sm" variant="ghost" onClick={() => loadPreset("iron-condor")} disabled={!liveChainReady}>Iron Condor</Button>
+          <Button size="sm" variant="ghost" onClick={() => loadPreset("bull-call-spread")} disabled={!liveChainReady}>Bull Call Spread</Button>
+          <Button size="sm" variant="ghost" icon={Plus} onClick={() => setShowAdd(true)} disabled={!liveChainReady}>Add Leg</Button>
           <Button size="sm" variant="ghost" onClick={() => setLegs([])}>Clear</Button>
         </div>
         {legs.length === 0 ? (
@@ -443,16 +518,19 @@ function StrategiesView() {
         </Panel>
       )}
 
-      <AddLegDrawer open={showAdd} onClose={() => setShowAdd(false)} onAdd={addLeg} defaultStrike={Math.round(spot / 50) * 50} />
+      <AddLegDrawer open={showAdd} onClose={() => setShowAdd(false)} onAdd={addLeg} defaultStrike={atmStrike} />
     </>
   );
 }
 
 function AddLegDrawer({ open, onClose, onAdd, defaultStrike }: { open: boolean; onClose: () => void; onAdd: (leg: Omit<Leg, "id">) => void; defaultStrike: number }) {
-  const [leg, setLeg] = React.useState<Omit<Leg, "id">>({ type: "CE", action: "buy", strike: defaultStrike, qty: 1, premium: 100 });
+  const [leg, setLeg] = React.useState<Omit<Leg, "id">>({ type: "CE", action: "buy", strike: defaultStrike, qty: 1, premium: 0 });
+  React.useEffect(() => {
+    if (open) setLeg({ type: "CE", action: "buy", strike: defaultStrike, qty: 1, premium: 0 });
+  }, [open, defaultStrike]);
   return (
     <Drawer open={open} onClose={onClose} title="Add Leg" icon={Plus} width={440}
-      footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon={Plus} onClick={() => onAdd(leg)}>Add</Button></div>}
+      footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon={Plus} onClick={() => onAdd(leg)} disabled={leg.strike <= 0 || leg.premium <= 0 || leg.qty <= 0}>Add</Button></div>}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
@@ -511,7 +589,23 @@ function OptionTicketDrawer({ open, onClose }: { open: boolean; onClose: () => v
   function submit() {
     if (!form.symbol || !form.strike || !form.expiry_date) { pushToast({ title: "Symbol, strike, and expiry required", tone: "warn", duration: 2500 }); return; }
     tradeMut.mutate(
-      { symbol: form.symbol, side: form.side, quantity: Number(form.quantity), price: Number(form.price), trade_date: form.expiry_date, notes: `${form.option_type} ${form.strike} ${form.expiry_date} — ${form.notes}`, actor: "Devarsh" },
+      {
+        symbol: form.symbol,
+        exchange: "NFO",
+        instrument_type: "option",
+        option_type: form.option_type as "CE" | "PE",
+        strike: Number(form.strike),
+        expiry_date: form.expiry_date,
+        strategy_name: form.notes.trim() || undefined,
+        setup_type: form.notes.trim() || "manual_option_trade",
+        side: form.side,
+        quantity: Number(form.quantity),
+        price: Number(form.price),
+        thesis: form.notes.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+        tags: ["option", form.option_type.toLowerCase(), "manual_actual"],
+        actor: "Devarsh",
+      },
       { onSuccess: () => { pushToast({ title: "Option trade recorded", message: `${form.symbol} ${form.option_type} ${form.strike}`, tone: "ok", duration: 3000 }); onClose(); }, onError: (e) => pushToast({ title: "Record failed", message: e.message, tone: "risk", duration: 5000 }) }
     );
   }

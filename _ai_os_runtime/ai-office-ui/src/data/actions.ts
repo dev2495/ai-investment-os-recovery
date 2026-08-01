@@ -307,6 +307,13 @@ export function useStartPaperMonitor() {
 export interface ManualTradeInput {
   symbol: string;
   exchange?: string;
+  instrument_type?: "equity" | "future" | "option" | string;
+  option_type?: "CE" | "PE";
+  strike?: number;
+  expiry_date?: string;
+  strategy_name?: string;
+  setup_type?: string;
+  tags?: string[];
   side: "buy" | "sell";
   quantity: number;
   price: number;
