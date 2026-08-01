@@ -128,6 +128,7 @@ class LunaModelRoutePolicyTest(unittest.TestCase):
         self.assertEqual(ai_os_api_server.cloud_reasoning_effort("openai/gpt-5.6-luna"), "none")
         self.assertEqual(ai_os_api_server.cloud_reasoning_effort("openai/gpt-5.6-terra"), "medium")
         self.assertEqual(ai_os_api_server.cloud_reasoning_effort("openai/gpt-5.6-sol"), "high")
+        self.assertEqual(ai_os_api_server.cloud_reasoning_effort("google/gemini-3.6-flash"), "medium")
 
     def test_explicit_internal_luna_route_is_allowed_under_budget(self) -> None:
         decision = self.choose(privacy_class="internal", contains_client_data=False)

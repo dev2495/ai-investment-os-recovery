@@ -88,6 +88,31 @@ class OpenRouterChatTest(unittest.TestCase):
         payload = json.loads(captured_request.data.decode("utf-8"))
         self.assertEqual(payload["messages"][0]["content"], "You are the Research Analyst. Speak in first person.")
 
+    def test_gemini_36_uses_supported_request_shape(self) -> None:
+        captured_request = None
+
+        def fake_urlopen(request, timeout):
+            nonlocal captured_request
+            captured_request = request
+            return FakeResponse({"choices": [{"message": {"content": "Evidence review ready."}}]})
+
+        with (
+            mock.patch.object(ai_os_api_server, "OPENROUTER_API_KEY", "test-key"),
+            mock.patch.object(ai_os_api_server.urllib.request, "urlopen", fake_urlopen),
+        ):
+            content, status, _ = ai_os_api_server.openrouter_chat(
+                "google/gemini-3.6-flash",
+                "Review this public filing packet.",
+            )
+
+        payload = json.loads(captured_request.data.decode("utf-8"))
+        self.assertNotIn("temperature", payload)
+        self.assertNotIn("top_p", payload)
+        self.assertNotIn("top_k", payload)
+        self.assertEqual(payload["reasoning"], {"effort": "medium", "exclude": True})
+        self.assertEqual(content, "Evidence review ready.")
+        self.assertEqual(status, "called")
+
     def test_rejects_unsupported_capital_recommendation_while_execution_locked(self) -> None:
         def fake_psql(query: str):
             if "FROM agent.model_routes" in query:

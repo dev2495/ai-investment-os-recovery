@@ -23,6 +23,7 @@ import {
   Zap,
   Microscope,
   ClipboardCheck,
+  BookOpenCheck,
   Lightbulb,
   Trash2,
 } from "lucide-react";
@@ -39,7 +40,7 @@ import { text, formatRelative, initials } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { useNavigate } from "react-router-dom";
 
-type ReasoningRoute = "local" | "fast" | "deep" | "review";
+type ReasoningRoute = "local" | "fast" | "research" | "deep" | "review";
 
 /** An actionable proposal Charlie surfaces — governance, delegation, screen change. */
 interface AssistantAction {
@@ -69,6 +70,7 @@ interface ChatMessage {
 const ROUTES: Array<{ key: ReasoningRoute; label: string; icon: typeof Brain; desc: string }> = [
   { key: "local", label: "Private", icon: Brain, desc: "Natural local Charlie with private portfolio context" },
   { key: "fast", label: "Fast", icon: Zap, desc: "Capped Luna volume model; no client data" },
+  { key: "research", label: "Research", icon: BookOpenCheck, desc: "Gemini 3.6 Flash multimodal research; explicit use, no client data" },
   { key: "deep", label: "Deep", icon: Microscope, desc: "Terra deep research; explicit use, no client data" },
   { key: "review", label: "Review", icon: ClipboardCheck, desc: "Sol frontier review; explicit use, no client data" },
 ];
@@ -76,6 +78,7 @@ const ROUTES: Array<{ key: ReasoningRoute; label: string; icon: typeof Brain; de
 const ROUTE_CONFIG: Record<ReasoningRoute, { routeName: string; privateContext: boolean }> = {
   local: { routeName: "charlie_munger_orchestration", privateContext: true },
   fast: { routeName: "openrouter_luna_volume", privateContext: false },
+  research: { routeName: "openrouter_gemini36_research", privateContext: false },
   deep: { routeName: "openrouter_terra_research", privateContext: false },
   review: { routeName: "openrouter_sol_review", privateContext: false },
 };

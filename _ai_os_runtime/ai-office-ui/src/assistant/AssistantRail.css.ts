@@ -257,6 +257,7 @@ export const AssistantRailCss = `
 /* Routes */
 .aios-assistant__routes {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--border-subtle);

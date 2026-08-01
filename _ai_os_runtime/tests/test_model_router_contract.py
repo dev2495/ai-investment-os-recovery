@@ -19,6 +19,7 @@ class ModelRouterContractTest(unittest.TestCase):
             for migration_name in (
                 "176_hybrid_luna_model_router_v1.sql",
                 "177_final_hybrid_model_fleet_v1.sql",
+                "178_hybrid_model_router_v2.sql",
             )
         )
 
@@ -37,6 +38,10 @@ class ModelRouterContractTest(unittest.TestCase):
         )
         self.assertIn("Capped Luna volume model; no client data", self.assistant)
         self.assertIn(
+            'research: { routeName: "openrouter_gemini36_research", privateContext: false }',
+            self.assistant,
+        )
+        self.assertIn(
             'deep: { routeName: "openrouter_terra_research", privateContext: false }',
             self.assistant,
         )
@@ -47,12 +52,15 @@ class ModelRouterContractTest(unittest.TestCase):
 
     def test_registry_matches_hybrid_cost_and_privacy_policy(self) -> None:
         required_registry_fragments = (
-            "version: 4",
+            "version: 5",
             "model: mlx-community/Qwen3.5-9B-4bit",
             "production_fallback_model: prism-ml/Bonsai-27B-Q1_0",
             "status: production_conversation_only",
-            "conversation_fallback_candidate: mlx-community/Qwen3.5-2B-4bit",
+            "model: nanbeige/nanbeige4.2:3b-Q4_K_M",
+            "fallback_route: nanbeige42_local_assistant",
             "openrouter_luna_volume:",
+            "openrouter_gemini36_research:",
+            "default_model: google/gemini-3.6-flash",
             "always_on_daily_driver:",
             "local_workhorse_synthesis:",
             "multimodal_document_analysis:",
@@ -80,6 +88,8 @@ class ModelRouterContractTest(unittest.TestCase):
         )
         self.assertIn("'openrouter_terra_research'", self.migration)
         self.assertIn("'openrouter_sol_review'", self.migration)
+        self.assertIn("'openrouter_gemini36_research'", self.migration)
+        self.assertIn("'google/gemini-3.6-flash'", self.migration)
         self.assertIn("CREATE OR REPLACE FUNCTION agent.activate_final_local_model_fleet()", self.migration)
         self.assertIn("registry.promotion_status='approved'", self.migration)
         self.assertIn("registry.eval_suite='conversation_v1'", self.migration)

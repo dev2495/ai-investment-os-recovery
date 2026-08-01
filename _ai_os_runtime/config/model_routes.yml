@@ -1,4 +1,4 @@
-version: 4
+version: 5
 purpose: >
   Charlie handles natural operator conversation and delegates typed work to Jarvis
   and role-scoped agents. Private context stays on evaluated local models. Public
@@ -14,14 +14,19 @@ providers:
     storage_root: ~/Library/Application Support/AIOS/models
     notes: "Qwen3.5 9B passed conversation_v1 on MLX-VLM 0.6.6 with unquantized KV cache. It failed the broader mid_v1 gate and is restricted to conversation, task intake, and tool selection. Bonsai remains the rollback route. No model has direct arithmetic, capital authority, or broker writes."
   ollama:
-    role: imac_local_runtime_and_embeddings
+    role: imac_embeddings
     base_url: http://127.0.0.1:11434
     storage_root: /Volumes/Devarsh SSD/AI OS Data/ollama/models
     models:
-      conversation_fallback_candidate: mlx-community/Qwen3.5-2B-4bit
-      deck_draft_candidate: nanbeige/nanbeige4.2:3b-Q4_K_M
       embedding: qwen3-embedding:0.6b
     notes: "One model at a time on the 8 GB iMac. Client-private retrieval remains local."
+  imac_local_openai:
+    role: always_on_private_conversation_fallback
+    base_url: http://127.0.0.1:11436/v1
+    storage_root: /Volumes/Devarsh SSD/AI OS Data/models/nanbeige42-runtime
+    model: nanbeige/nanbeige4.2:3b-Q4_K_M
+    secondary_candidate: mlx-community/Qwen3.5-2B-4bit
+    notes: "Nanbeige is assignable only after exact-digest conversation_v1 promotion. It has no calculation, research-authority, capital, approval, or execution authority."
   openrouter:
     role: capped_public_internal_cloud_gateway
     base_url: https://openrouter.ai/api/v1
@@ -40,7 +45,7 @@ routes:
     task_class: private_conversation_and_delegation
     default_provider: local_openai
     default_model: mlx-community/Qwen3.5-9B-4bit
-    fallback_route: imac_qwen35_2b_private
+    fallback_route: nanbeige42_local_assistant
     escalation_route: openrouter_luna_volume
     max_autonomous_cost_tier: cloud_low
     privacy: client_private_local_only
@@ -62,6 +67,16 @@ routes:
     privacy: client_private_local_only
     status: promotion_gated
 
+  nanbeige42_local_assistant:
+    task_class: always_on_private_conversation_task_intake_and_business_drafts
+    default_provider: local_openai
+    default_model: nanbeige/nanbeige4.2:3b-Q4_K_M
+    escalation_provider: openrouter
+    escalation_model: openai/gpt-5.6-luna
+    max_cost_tier: local
+    privacy: client_private_local_only
+    status: promotion_gated
+
   openrouter_luna_volume:
     task_class: public_internal_routine_conversation_and_drafts
     default_provider: openrouter
@@ -71,6 +86,16 @@ routes:
     max_autonomous_cost_tier: cloud_low
     privacy: no_client_data
     status: production_capped
+
+  openrouter_gemini36_research:
+    task_class: public_internal_multimodal_research_and_agentic_synthesis
+    default_provider: openrouter
+    default_model: google/gemini-3.6-flash
+    fallback_provider: openrouter
+    fallback_model: openai/gpt-5.6-terra
+    max_cost_tier: cloud_medium
+    privacy: no_client_data
+    status: explicit_operator_selection
 
   openrouter_terra_research:
     task_class: deep_public_internal_research_and_synthesis

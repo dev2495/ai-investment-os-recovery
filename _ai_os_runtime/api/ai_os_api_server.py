@@ -1482,6 +1482,8 @@ def cloud_reasoning_effort(model_name: str) -> str:
         return "high"
     if "terra" in normalized:
         return "medium"
+    if "gemini-3.6-flash" in normalized:
+        return "medium"
     return "none"
 
 
@@ -1543,6 +1545,26 @@ def openrouter_chat(model_name: str, prompt: str, system_prompt: str | None = No
     if not OPENROUTER_API_KEY:
         return None, "openrouter_key_unavailable", {}
     try:
+        request_payload = {
+            "model": model_name,
+            "stream": False,
+            "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
+            "reasoning": {"effort": cloud_reasoning_effort(model_name), "exclude": True},
+            "provider": {
+                "zdr": True,
+                "data_collection": "deny",
+                "sort": "price",
+                "allow_fallbacks": True,
+            },
+            "messages": [
+                {"role": "system", "content": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        # Gemini 3.6 deprecated sampling parameters. Omitting them also keeps
+        # this request portable to a future direct Google endpoint.
+        if "gemini-3.6-flash" not in model_name.lower():
+            request_payload["temperature"] = 0.2
         request = urllib.request.Request(
             f"{OPENROUTER_BASE_URL}/chat/completions",
             method="POST",
@@ -1552,25 +1574,7 @@ def openrouter_chat(model_name: str, prompt: str, system_prompt: str | None = No
                 "HTTP-Referer": "https://devarshs-imac.tail8dd383.ts.net",
                 "X-Title": "AI Investment OS",
             },
-            data=json.dumps(
-                {
-                    "model": model_name,
-                    "stream": False,
-                    "temperature": 0.2,
-                    "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
-                    "reasoning": {"effort": cloud_reasoning_effort(model_name), "exclude": True},
-                    "provider": {
-                        "zdr": True,
-                        "data_collection": "deny",
-                        "sort": "price",
-                        "allow_fallbacks": True,
-                    },
-                    "messages": [
-                        {"role": "system", "content": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                }
-            ).encode("utf-8"),
+            data=json.dumps(request_payload).encode("utf-8"),
         )
         with urllib.request.urlopen(request, timeout=240) as response:
             payload = json.loads(response.read().decode("utf-8"))
