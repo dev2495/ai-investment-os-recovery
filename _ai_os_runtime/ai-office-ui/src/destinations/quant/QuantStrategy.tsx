@@ -30,7 +30,7 @@ import {
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select,
 } from "../../system/primitives";
 import { AreaSeriesChart, Sparkline } from "../../system/charts";
-import { text, num, timestamp, formatRelative, formatPercent } from "../../data/liveRow";
+import { text, num, value, formatRelative, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -317,9 +317,9 @@ function BacktestsView() {
               { key: "name", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
               { key: "period", header: "Period", render: (r) => `${text(r, "start_date", "—")} → ${text(r, "end_date", "—")}` },
               { key: "sharpe", header: "Sharpe", align: "right", render: (r) => num(r, "sharpe", 0).toFixed(2) },
-              { key: "cagr", header: "CAGR", align: "right", render: (r) => formatPercent(num(r, "cagr", 0), { alreadyPercent: true }) },
+              { key: "return", header: "Total Return", align: "right", render: (r) => formatPercent(num(r, "total_return", 0)) },
               { key: "trades", header: "Trades", align: "right", render: (r) => num(r, "trade_count", 0) },
-              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "run_status", text(r, "status", "complete"))} /> },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "run_status", "not_run")} /> },
               { key: "actions", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Play} onClick={(e) => { e.stopPropagation(); runBacktest(num(r, "strategy_id", 0)); }}>Run</Button> },
             ]}
             rows={runs}
@@ -335,38 +335,30 @@ function BacktestsView() {
 }
 
 function BacktestDrawer({ run, onClose }: { run: LiveRow | null; onClose: () => void }) {
+  const equityCurve = value<LiveRow[]>(run, "equity_curve", [])
+    .map((point) => ({ label: text(point, "ts"), value: num(point, "equity", Number.NaN) }))
+    .filter((point) => point.label && Number.isFinite(point.value));
   if (!run) return null;
-  // Synthesize an equity curve from available metrics (heuristic)
-  const equityCurve = React.useMemo(() => {
-    const cagr = num(run, "cagr", 10);
-    const maxDd = num(run, "max_drawdown", 15);
-    const points = 60;
-    return Array.from({ length: points }, (_, i) => {
-      const t = i / (points - 1);
-      const trend = 100 * Math.pow(1 + cagr / 100, t * 3);
-      const noise = Math.sin(i * 0.7) * maxDd * 0.3 + Math.sin(i * 0.3) * maxDd * 0.2;
-      return { label: `T${i}`, value: Math.max(50, trend + noise) };
-    });
-  }, [run]);
 
   return (
-    <Drawer open={Boolean(run)} onClose={onClose} title={text(run, "strategy_name", text(run, "name", "Backtest"))} subtitle="Backtest detail + equity curve" icon={LineChart} width={620}>
+    <Drawer open={Boolean(run)} onClose={onClose} title={text(run, "strategy_name", text(run, "name", "Backtest"))} subtitle="Persisted backtest evidence" icon={LineChart} width={620}>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "var(--space-2)" }}>
           <MetricTile><Metric label="Sharpe" value={num(run, "sharpe", 0).toFixed(2)} size="sm" /></MetricTile>
-          <MetricTile><Metric label="CAGR" value={formatPercent(num(run, "cagr", 0), { alreadyPercent: true })} size="sm" /></MetricTile>
-          <MetricTile><Metric label="Max DD" value={formatPercent(num(run, "max_drawdown", 0), { alreadyPercent: true })} size="sm" /></MetricTile>
-          <MetricTile><Metric label="Win Rate" value={formatPercent(num(run, "win_rate", 0), { alreadyPercent: true })} size="sm" /></MetricTile>
+          <MetricTile><Metric label="Total Return" value={formatPercent(num(run, "total_return", 0))} size="sm" /></MetricTile>
+          <MetricTile><Metric label="Max DD" value={formatPercent(num(run, "max_drawdown", 0))} size="sm" /></MetricTile>
+          <MetricTile><Metric label="Win Rate" value={formatPercent(num(run, "win_rate", 0))} size="sm" /></MetricTile>
         </div>
         <Panel variant="soft" title="Equity Curve">
-          <AreaSeriesChart data={equityCurve} series={[{ key: "value", name: "Equity" }]} xKey="label" height={220} />
+          {equityCurve.length > 0 ? <AreaSeriesChart data={equityCurve} series={[{ key: "value", name: "Equity" }]} xKey="label" height={220} /> : <Empty icon={LineChart} title="No persisted equity curve" description="Rerun this backtest with the current engine to store a source-backed equal-weight curve." />}
         </Panel>
         <Panel variant="soft" title="Data Lineage">
           <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
-            <div><span className="micro">Source</span> {text(run, "data_source", "Local OHLCV warehouse")}</div>
+            <div><span className="micro">Source</span> {text(run, "data_source", "—")}</div>
             <div style={{ marginTop: 4 }}><span className="micro">Universe</span> {text(run, "universe", "—")}</div>
             <div style={{ marginTop: 4 }}><span className="micro">Window</span> {text(run, "start_date")} → {text(run, "end_date")}</div>
-            <div style={{ marginTop: 4 }}><span className="micro">Reproducible</span> {text(run, "commit_hash", text(run, "artifact_hash", "yes"))}</div>
+            <div style={{ marginTop: 4 }}><span className="micro">Curve method</span> {text(run, "equity_curve_method", "—")}</div>
+            <div style={{ marginTop: 4 }}><span className="micro">Artifact</span> {text(run, "artifact_path", "missing")}</div>
           </div>
         </Panel>
       </div>

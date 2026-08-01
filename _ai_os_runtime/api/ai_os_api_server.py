@@ -2732,17 +2732,42 @@ def build_trading_quant_risk_snapshot() -> dict:
     """Return the bounded quant-validation, trading-control, and risk read model."""
     queries = {
         "quant_lab": """
-            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
-                   timeframe, validation_status, activation_gate, parse_status,
-                   data_quality_status, data_quality_reasons, allocation_key,
-                   target_weight, target_notional, expected_return,
-                   expected_volatility, risk_contribution, allocation_status,
-                   ruin_probability, max_drawdown_p95, ruin_quality_flags,
-                   review_key, review_status, recommended_action, severity,
-                   trigger_reasons, assigned_agents, open_assignments,
-                   total_assignments, updated_at
-            FROM strategy.v_quant_lab_dashboard_v2
-            ORDER BY updated_at DESC, strategy_id DESC
+            SELECT dashboard.strategy_id, dashboard.candidate_key,
+                   dashboard.strategy_name, dashboard.candidate_status,
+                   dashboard.timeframe, dashboard.validation_status,
+                   dashboard.activation_gate, dashboard.parse_status,
+                   dashboard.data_quality_status, dashboard.data_quality_reasons,
+                   dashboard.allocation_key, dashboard.target_weight,
+                   dashboard.target_notional, dashboard.expected_return,
+                   dashboard.expected_volatility, dashboard.risk_contribution,
+                   dashboard.allocation_status, dashboard.ruin_probability,
+                   dashboard.max_drawdown_p95, dashboard.ruin_quality_flags,
+                   dashboard.review_key, dashboard.review_status,
+                   dashboard.recommended_action, dashboard.severity,
+                   dashboard.trigger_reasons, dashboard.assigned_agents,
+                   dashboard.open_assignments, dashboard.total_assignments,
+                   backtest.id AS backtest_id, backtest.run_status,
+                   backtest.data_start AS start_date, backtest.data_end AS end_date,
+                   backtest.universe, backtest.timeframe AS backtest_timeframe,
+                   nullif(backtest.metrics->>'sharpe_estimate','')::numeric AS sharpe,
+                   nullif(backtest.metrics->>'total_return','')::numeric AS total_return,
+                   nullif(backtest.metrics->>'max_drawdown','')::numeric AS max_drawdown,
+                   nullif(backtest.metrics->>'win_rate_by_bar','')::numeric AS win_rate,
+                   nullif(backtest.metrics->>'trades_count','')::numeric AS trade_count,
+                   backtest.diagnostics->'equity_curve' AS equity_curve,
+                   backtest.diagnostics->>'equity_curve_method' AS equity_curve_method,
+                   coalesce(backtest.diagnostics->>'equity_curve_source',
+                            backtest.diagnostics->>'data_source') AS data_source,
+                   backtest.artifact_path, backtest.finished_at,
+                   dashboard.updated_at
+            FROM strategy.v_quant_lab_dashboard_v2 dashboard
+            LEFT JOIN LATERAL (
+                SELECT run.* FROM strategy.backtest_runs run
+                WHERE run.strategy_id=dashboard.strategy_id
+                ORDER BY run.finished_at DESC NULLS LAST, run.started_at DESC, run.id DESC
+                LIMIT 1
+            ) backtest ON true
+            ORDER BY dashboard.updated_at DESC, dashboard.strategy_id DESC
             LIMIT 100
         """,
         "model_validation": """

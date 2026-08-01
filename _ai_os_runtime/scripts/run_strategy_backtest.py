@@ -220,6 +220,7 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         by_symbol.setdefault(bar.symbol, []).append(bar)
 
     all_returns: list[float] = []
+    returns_by_ts: dict[str, list[float]] = {}
     trade_count = 0
     symbol_results: list[dict[str, Any]] = []
     total_cost = (cost_bps + slippage_bps) / 10000.0
@@ -239,8 +240,8 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
                 trade_count += 1
             net_return = positions[index - 1] * raw_return - turnover * total_cost
             returns.append(net_return)
+            returns_by_ts.setdefault(symbol_bars[index].ts, []).append(net_return)
             equity.append(equity[-1] * (1.0 + net_return))
-        all_returns.extend(returns)
         symbol_results.append(
             {
                 "symbol": symbol,
@@ -255,13 +256,22 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
             }
         )
 
+    portfolio_returns = [
+        (ts, statistics.mean(values))
+        for ts, values in sorted(returns_by_ts.items())
+        if values
+    ]
+    all_returns = [value for _, value in portfolio_returns]
+    equity = [1.0]
+    equity_curve: list[dict[str, Any]] = []
+    for ts, value in portfolio_returns:
+        equity.append(equity[-1] * (1.0 + value))
+        equity_curve.append({"ts": ts, "equity": equity[-1], "return": value})
+
     if all_returns:
         average = statistics.mean(all_returns)
         stdev = statistics.pstdev(all_returns)
         sharpe = average / stdev * math.sqrt(periods_per_year(timeframe)) if stdev else None
-        equity = [1.0]
-        for value in all_returns:
-            equity.append(equity[-1] * (1.0 + value))
         total_return = equity[-1] - 1.0
         win_rate = sum(1 for value in all_returns if value > 0) / len(all_returns)
         status = "completed"
@@ -271,8 +281,15 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         sharpe = None
         total_return = 0.0
         win_rate = 0.0
-        equity = [1.0]
         status = "insufficient_data"
+
+    curve_points_total = len(equity_curve)
+    if curve_points_total > 500:
+        step = math.ceil(curve_points_total / 499)
+        sampled_curve = equity_curve[::step]
+        if sampled_curve[-1] != equity_curve[-1]:
+            sampled_curve.append(equity_curve[-1])
+        equity_curve = sampled_curve
 
     bars_tested = sum(item["bars"] for item in symbol_results)
     warnings = []
@@ -282,6 +299,10 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         warnings.append("Symbol coverage is narrow; run broader universe data before committee review.")
     if status != "completed":
         warnings.append("No valid return stream was produced.")
+
+    tested_results = [item for item in symbol_results if item.get("status") == "tested"]
+    data_start = min((str(item["first_ts"])[:10] for item in tested_results), default=None)
+    data_end = max((str(item["last_ts"])[:10] for item in tested_results), default=None)
 
     return {
         "candidate": {
@@ -295,6 +316,8 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         "timeframe": timeframe,
         "symbols_requested": symbols,
         "symbols_tested": sorted(by_symbol),
+        "data_start": data_start,
+        "data_end": data_end,
         "metrics": {
             "total_return": total_return,
             "average_bar_return": average,
@@ -313,9 +336,13 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
             "slippage_bps": slippage_bps,
             "paper_first": True,
             "live_execution_allowed": False,
+            "equity_curve": equity_curve,
+            "equity_curve_points_total": curve_points_total,
+            "equity_curve_method": "equal_weight_mean_of_available_symbol_returns_by_timestamp",
+            "equity_curve_source": "trading.ohlcv",
             "warnings": warnings,
             "symbol_results": symbol_results,
-            "method": "Close-to-close long/flat signal simulation with transaction cost on position changes.",
+            "method": "Close-to-close long/flat signal simulation with transaction cost on position changes; portfolio returns are equal-weighted by timestamp across available symbols.",
         },
     }
 
@@ -371,8 +398,8 @@ def persist_result(candidate: dict[str, Any], result: dict[str, Any]) -> dict[st
         VALUES (
             {int(candidate["id"])},
             {sql_literal(run_status)},
-            NULL,
-            NULL,
+            {sql_literal(result.get("data_start"))}::date,
+            {sql_literal(result.get("data_end"))}::date,
             {sql_literal(candidate.get("universe"))},
             {sql_literal(result["timeframe"])},
             {sql_jsonb(metrics)},
