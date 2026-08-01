@@ -232,6 +232,23 @@ function TradingViewBridgeView() {
   const [timeframe, setTimeframe] = React.useState("D");
   const [templateKey, setTemplateKey] = React.useState("");
   const [lastResult, setLastResult] = React.useState<LiveRow | null>(null);
+  const [templateValues, setTemplateValues] = React.useState<Record<string, string>>({
+    benchmark: "NSE:NIFTY",
+    leg_a: "",
+    leg_b: "",
+    hedge_ratio: "1",
+    expiry: "",
+    strike: "",
+    call_symbol: "",
+    put_symbol: "",
+    indicators: "VWAP, Volume, RSI, MACD, ATR, Supertrend",
+    fields: "TOTAL_REVENUE, NET_INCOME, OPERATING_MARGIN, RETURN_ON_INVESTED_CAPITAL, TOTAL_DEBT, PRICE_EARNINGS, PRICE_BOOK",
+    equity_index: "NSE:NIFTY",
+    volatility_index: "NSE:INDIAVIX",
+    bond_yield: "TVC:IN10Y",
+    currency: "FX_IDC:USDINR",
+    condition: "",
+  });
 
   React.useEffect(() => {
     if (!templateKey && templates.length) {
@@ -246,6 +263,98 @@ function TradingViewBridgeView() {
   const desktopRunning = Boolean(desktopStatus.running);
   const cdpReady = Boolean(cdpStatus.available);
   const busy = openDesktop.isPending || captureChart.isPending || runTemplate.isPending;
+
+  function updateTemplateValue(key: string, value: string) {
+    setTemplateValues((current) => ({ ...current, [key]: value }));
+  }
+
+  function csvValues(key: string) {
+    return (templateValues[key] ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  function templateParametersFor(key: string): Record<string, unknown> {
+    if (key === "relative_strength_ratio_chart") {
+      return { benchmark: templateValues.benchmark.trim() };
+    }
+    if (key === "spread_pair_formula_chart") {
+      return {
+        leg_a: templateValues.leg_a.trim() || symbol.trim(),
+        leg_b: templateValues.leg_b.trim(),
+        hedge_ratio: templateValues.hedge_ratio.trim(),
+      };
+    }
+    if (key === "open_option_straddle_layout" || key === "option_straddle_four_pane") {
+      return {
+        underlying: symbol.trim(),
+        expiry: templateValues.expiry.trim(),
+        strike: templateValues.strike.trim(),
+        call_symbol: templateValues.call_symbol.trim(),
+        put_symbol: templateValues.put_symbol.trim(),
+      };
+    }
+    if (key === "technical_indicator_stack") {
+      return { indicators: csvValues("indicators") };
+    }
+    if (key === "fundamental_ratio_dashboard") {
+      return { fields: csvValues("fields"), filing_cross_check_required: true };
+    }
+    if (key === "market_regime_four_pane") {
+      return {
+        equity_index: templateValues.equity_index.trim() || symbol.trim(),
+        volatility_index: templateValues.volatility_index.trim(),
+        bond_yield: templateValues.bond_yield.trim(),
+        currency: templateValues.currency.trim(),
+      };
+    }
+    if (key === "create_alert_request") {
+      return { condition: templateValues.condition.trim() };
+    }
+    return {};
+  }
+
+  function templateParameterFields() {
+    const gridStyle: React.CSSProperties = {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+      gap: "var(--space-3)",
+      marginTop: "var(--space-3)",
+    };
+    const input = (key: string, label: string, placeholder: string) => (
+      <Field key={key} label={label}>
+        <TextInput
+          value={templateValues[key] ?? ""}
+          onChange={(event) => updateTemplateValue(key, event.target.value)}
+          placeholder={placeholder}
+        />
+      </Field>
+    );
+
+    if (templateKey === "relative_strength_ratio_chart") {
+      return <div style={gridStyle}>{input("benchmark", "Benchmark", "NSE:NIFTY")}</div>;
+    }
+    if (templateKey === "spread_pair_formula_chart") {
+      return <div style={gridStyle}>{input("leg_a", "Leg A", "NSE:RELIANCE")}{input("leg_b", "Leg B", "NSE:NIFTY")}{input("hedge_ratio", "Hedge Ratio", "1")}</div>;
+    }
+    if (templateKey === "open_option_straddle_layout" || templateKey === "option_straddle_four_pane") {
+      return <div style={gridStyle}>{input("expiry", "Expiry", "2026-08-27")}{input("strike", "Strike", "25000")}{input("call_symbol", "Call Symbol", "NFO:NIFTY...")}{input("put_symbol", "Put Symbol", "NFO:NIFTY...")}</div>;
+    }
+    if (templateKey === "technical_indicator_stack") {
+      return <div style={gridStyle}>{input("indicators", "Indicators", "VWAP, Volume, RSI")}</div>;
+    }
+    if (templateKey === "fundamental_ratio_dashboard") {
+      return <div style={gridStyle}>{input("fields", "Financial Fields", "TOTAL_REVENUE, NET_INCOME")}</div>;
+    }
+    if (templateKey === "market_regime_four_pane") {
+      return <div style={gridStyle}>{input("equity_index", "Equity Index", "NSE:NIFTY")}{input("volatility_index", "Volatility", "NSE:INDIAVIX")}{input("bond_yield", "Bond Yield", "TVC:IN10Y")}{input("currency", "Currency", "FX_IDC:USDINR")}</div>;
+    }
+    if (templateKey === "create_alert_request") {
+      return <div style={gridStyle}>{input("condition", "Alert Condition", "Crossing or indicator condition")}</div>;
+    }
+    return null;
+  }
 
   function notify(title: string, tone: "ok" | "risk" | "warn", message?: string) {
     pushToast({ title, tone, message, duration: 6000 });
@@ -310,6 +419,7 @@ function TradingViewBridgeView() {
         symbol: symbol.trim().toUpperCase(),
         exchange,
         timeframe,
+        parameters: templateParametersFor(templateKey),
         actor: "Devarsh",
       },
       {
@@ -352,7 +462,7 @@ function TradingViewBridgeView() {
           </div>
         </Panel>
 
-        <Panel icon={Target} title="Saved Workflow">
+        <Panel icon={Target} title="Advanced Chart Templates">
           <Field label="Template">
             <Select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)}>
               {templates.map((row) => {
@@ -361,6 +471,7 @@ function TradingViewBridgeView() {
               })}
             </Select>
           </Field>
+          {templateParameterFields()}
           <Button style={{ width: "100%", marginTop: "var(--space-3)" }} icon={Play} disabled={busy || !templateKey} onClick={executeTemplate}>Run Template</Button>
           {lastResult && (
             <div style={{ marginTop: "var(--space-4)" }}>

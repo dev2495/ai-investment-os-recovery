@@ -148,6 +148,117 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertIn('disabled={busy || !desktopInstalled}', frontend)
         self.assertNotIn('disabled={busy || !desktopRunning}', frontend)
 
+    def test_template_parameter_reads_nested_allowlisted_payload(self) -> None:
+        payload = {
+            "parameters": {"benchmark": "NSE:NIFTY", "unexpected": "ignored"},
+            "metadata": {"benchmark": "NSE:BANKNIFTY"},
+        }
+
+        self.assertEqual(
+            ai_os_api_server.tradingview_parameter(payload, "benchmark"),
+            "NSE:NIFTY",
+        )
+        self.assertEqual(
+            ai_os_api_server.sanitize_tradingview_template_parameters(payload),
+            {"benchmark": "NSE:NIFTY"},
+        )
+
+    def test_ratio_template_compiles_nested_benchmark(self) -> None:
+        template = {
+            "template_key": "relative_strength_ratio_chart",
+            "default_exchange": "NSE",
+            "default_timeframe": "D",
+        }
+
+        plan = ai_os_api_server.compile_tradingview_template_plan(
+            template,
+            {
+                "symbol": "RELIANCE",
+                "parameters": {"benchmark": "NSE:NIFTY"},
+            },
+            ["RELIANCE"],
+        )
+
+        self.assertTrue(plan["execution_ready"])
+        self.assertEqual(plan["symbol_expression"], "100*NSE:RELIANCE/NSE:NIFTY")
+        self.assertFalse(plan["broker_order_allowed"])
+
+    def test_market_regime_template_compiles_four_chart_board(self) -> None:
+        template = {
+            "template_key": "market_regime_four_pane",
+            "default_exchange": "NSE",
+            "default_timeframe": "D",
+        }
+        parameters = {
+            "equity_index": "NSE:NIFTY",
+            "volatility_index": "NSE:INDIAVIX",
+            "bond_yield": "TVC:IN10Y",
+            "currency": "FX_IDC:USDINR",
+        }
+
+        plan = ai_os_api_server.compile_tradingview_template_plan(
+            template,
+            {"symbol": "NIFTY", "parameters": parameters},
+            ["NIFTY"],
+        )
+
+        self.assertTrue(plan["execution_ready"])
+        self.assertEqual(plan["fulfillment"], "complete_four_chart_evidence_board")
+        self.assertEqual(len(plan["panes"]), 4)
+        self.assertEqual(plan["validated_parameters"], parameters)
+        self.assertFalse(plan["broker_order_allowed"])
+
+    def test_incomplete_gated_template_is_rejected_before_approval_write(self) -> None:
+        template = {
+            "template_key": "create_alert_request",
+            "template_name": "Create Alert Request",
+            "category": "alert",
+            "action_kind": "alert_request",
+            "default_exchange": "NSE",
+            "default_timeframe": "D",
+            "default_chart_layout": "single",
+            "requires_symbol": True,
+            "approval_required": True,
+            "execution_mode": "human_gated_request",
+            "status": "gated",
+            "owner_agent": "Trading Desk Agent",
+            "description": "Create a governed TradingView alert request.",
+            "risk_notes": "Manual confirmation required.",
+            "default_payload": {},
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[template]),
+            mock.patch.object(ai_os_api_server, "run_psql_json_statement") as write_query,
+        ):
+            with self.assertRaisesRegex(ValueError, "required: condition"):
+                ai_os_api_server.execute_tradingview_template_action(
+                    {"template_key": "create_alert_request", "symbol": "RELIANCE"}
+                )
+
+        write_query.assert_not_called()
+
+    def test_frontend_exposes_advanced_template_parameters(self) -> None:
+        frontend = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "trading"
+            / "TradingDesk.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('title="Advanced Chart Templates"', frontend)
+        self.assertIn('parameters: templateParametersFor(templateKey)', frontend)
+        for label in (
+            "Benchmark",
+            "Hedge Ratio",
+            "Call Symbol",
+            "Financial Fields",
+            "Bond Yield",
+            "Alert Condition",
+        ):
+            self.assertIn(f'"{label}"', frontend)
+
     def test_charlie_routes_explicit_desktop_chart_command(self) -> None:
         with mock.patch.object(
             ai_os_api_server,

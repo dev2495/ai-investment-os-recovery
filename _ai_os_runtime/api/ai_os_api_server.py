@@ -6766,11 +6766,45 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     return result
 
 
+TRADINGVIEW_TEMPLATE_PARAMETER_KEYS = {
+    "benchmark",
+    "leg_a",
+    "leg_b",
+    "hedge_ratio",
+    "underlying",
+    "expiry",
+    "strike",
+    "call_symbol",
+    "put_symbol",
+    "indicators",
+    "fields",
+    "filing_cross_check_required",
+    "equity_index",
+    "volatility_index",
+    "bond_yield",
+    "currency",
+    "condition",
+    "secondary_symbols",
+}
+
+
 def tradingview_parameter(payload: dict, key: str, default: object = None) -> object:
     if payload.get(key) not in (None, ""):
         return payload.get(key)
+    parameters = payload.get("parameters") if isinstance(payload.get("parameters"), dict) else {}
+    if parameters.get(key) not in (None, ""):
+        return parameters.get(key)
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     return metadata.get(key, default)
+
+
+def sanitize_tradingview_template_parameters(payload: dict) -> dict[str, object]:
+    parameters = payload.get("parameters") if isinstance(payload.get("parameters"), dict) else {}
+    return {
+        str(key): value
+        for key, value in parameters.items()
+        if str(key) in TRADINGVIEW_TEMPLATE_PARAMETER_KEYS
+    }
 
 
 def normalize_tradingview_symbol(value: object, default_exchange: str) -> str:
@@ -6947,19 +6981,71 @@ def compile_tradingview_template_plan(template: dict, payload: dict, symbols: li
             "validated_parameters": {
                 "requested_fields": fields,
                 "unsupported_fields": unsupported,
-                "filing_cross_check_required": bool(payload.get("filing_cross_check_required", True)),
+                "filing_cross_check_required": bool(tradingview_parameter(payload, "filing_cross_check_required", True)),
             },
         })
     elif template_key == "market_regime_four_pane":
-        plan.update({
-            "required_parameters": ["equity_index", "volatility_index", "bond_yield", "currency"],
-            "remaining_manual_step": "Resolve entitled symbols and synchronize four TradingView panes.",
-        })
+        equity_index = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "equity_index") or primary, exchange
+        )
+        volatility_index = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "volatility_index"), exchange
+        )
+        bond_yield = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "bond_yield"), exchange
+        )
+        currency = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "currency"), exchange
+        )
+        regime_symbols = {
+            "equity_index": equity_index,
+            "volatility_index": volatility_index,
+            "bond_yield": bond_yield,
+            "currency": currency,
+        }
+        missing = [key for key, value in regime_symbols.items() if not value]
+        if missing:
+            plan["required_parameters"] = missing
+        else:
+            panes = [
+                {"label": "Equity index", "symbol": equity_index, "url": tradingview_chart_url(equity_index, timeframe)},
+                {"label": "Volatility", "symbol": volatility_index, "url": tradingview_chart_url(volatility_index, timeframe)},
+                {"label": "Bond yield", "symbol": bond_yield, "url": tradingview_chart_url(bond_yield, timeframe)},
+                {"label": "Currency", "symbol": currency, "url": tradingview_chart_url(currency, timeframe)},
+            ]
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "complete_four_chart_evidence_board",
+                "browser_action": "market_regime_layout_request",
+                "symbol_expression": equity_index,
+                "target_url": tradingview_chart_url(equity_index, timeframe),
+                "panes": panes,
+                "validated_parameters": regime_symbols,
+                "remaining_manual_step": "Interactive pane synchronization remains manual; the approved controller produces a deterministic four-chart evidence board.",
+            })
     elif template_key == "create_alert_request":
-        plan.update({
-            "required_parameters": ["symbol", "condition", "timeframe", "manual TradingView alert confirmation"],
-            "remaining_manual_step": "Use the dedicated alert-request resolver; automatic account-level alert mutation is disabled.",
-        })
+        condition = str(tradingview_parameter(payload, "condition") or "").strip()
+        missing = []
+        if not primary:
+            missing.append("symbol")
+        if not condition:
+            missing.append("condition")
+        if not timeframe:
+            missing.append("timeframe")
+        if missing:
+            plan["required_parameters"] = missing
+        else:
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "manual_alert_approval",
+                "browser_action": "alert_request",
+                "validated_parameters": {
+                    "symbol": primary,
+                    "condition": condition,
+                    "timeframe": str(timeframe),
+                },
+                "remaining_manual_step": "After approval, the controller opens the chart context. Account-level TradingView alert mutation remains disabled and requires manual confirmation.",
+            })
     else:
         plan.update({"execution_ready": bool(primary), "fulfillment": "single_chart_only"})
     return plan
@@ -6997,10 +7083,19 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         raise ValueError("symbol or symbols is required for this TradingView template")
 
     default_payload = template.get("default_payload") if isinstance(template.get("default_payload"), dict) else {}
-    compiled_plan = compile_tradingview_template_plan(template, {**default_payload, **payload}, symbols)
+    default_parameters = (
+        default_payload.get("parameters")
+        if isinstance(default_payload.get("parameters"), dict)
+        else {}
+    )
+    requested_parameters = sanitize_tradingview_template_parameters(payload)
+    parameters = {**default_parameters, **requested_parameters}
+    plan_payload = {**default_payload, **payload, "parameters": parameters}
+    compiled_plan = compile_tradingview_template_plan(template, plan_payload, symbols)
     merged_payload = {
         **default_payload,
         **payload,
+        "parameters": parameters,
         "template_key": template_key,
         "symbols": symbols,
         "exchange": payload.get("exchange") or template.get("default_exchange") or "NSE",
@@ -7022,6 +7117,10 @@ def execute_tradingview_template_action(payload: dict) -> dict:
             "compiled_plan": compiled_plan,
         },
     }
+
+    if not compiled_plan.get("execution_ready"):
+        missing = ", ".join(compiled_plan.get("required_parameters") or []) or "deterministic browser capability"
+        raise ValueError(f"TradingView template is not executable yet; required: {missing}")
 
     if template.get("approval_required") or str(template.get("execution_mode")) == "human_gated_request":
         title = str(payload.get("task_title") or f"TradingView gated template: {template.get('template_name')}").strip()
@@ -7105,9 +7204,6 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         audit_api_write("ai_os_api_execute_tradingview_template_action", "create_template_approval_request", actor, "agent.approvals", result, payload)
         return result
 
-    if not compiled_plan.get("execution_ready"):
-        missing = ", ".join(compiled_plan.get("required_parameters") or []) or "deterministic browser capability"
-        raise ValueError(f"TradingView template is not executable yet; required: {missing}")
     result = execute_tradingview_chart_action(merged_payload)
     result["template_key"] = template_key
     result["template_name"] = template.get("template_name")
