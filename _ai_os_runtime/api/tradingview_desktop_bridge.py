@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 
@@ -92,20 +91,22 @@ def open_link_in_desktop(target_url: str) -> dict:
     status = probe_desktop()
     if not status["installed"]:
         return {"status": "app_missing", "desktop": status, "target_url": target_url}
-    direct = subprocess.run(
-        ["/usr/bin/open", "-a", "TradingView", target_url],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=15,
-    )
-    if direct.returncode == 0:
-        if not status["running"]:
-            time.sleep(2)
+    try:
+        direct = subprocess.Popen(
+            ["/usr/bin/open", "-g", "-a", "TradingView", target_url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        direct_error = f"{type(exc).__name__}: {exc}"
+    else:
         return {
-            "status": "opened",
-            "handoff": "direct_url",
-            "desktop": probe_desktop(),
+            "status": "handoff_requested",
+            "handoff": "direct_url_async",
+            "launch_pid": direct.pid,
+            "desktop": status,
             "target_url": target_url,
         }
 
@@ -113,7 +114,7 @@ def open_link_in_desktop(target_url: str) -> dict:
         return {
             "status": "permission_required",
             "handoff": "direct_url_failed",
-            "error": (direct.stderr or direct.stdout or "TradingView direct URL handoff failed").strip(),
+            "error": direct_error,
             "desktop": status,
             "target_url": target_url,
         }

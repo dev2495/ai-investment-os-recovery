@@ -36,25 +36,26 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
             "automation_permission": False,
         }
         target_url = "https://www.tradingview.com/chart/?symbol=NSE%3ARELIANCE"
-        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        process = mock.Mock(pid=4321)
         with (
             mock.patch.object(tradingview_desktop_bridge, "probe_desktop", return_value=ready),
             mock.patch.object(
                 tradingview_desktop_bridge.subprocess,
-                "run",
-                return_value=completed,
-            ) as run,
+                "Popen",
+                return_value=process,
+            ) as popen,
         ):
             result = tradingview_desktop_bridge.open_link_in_desktop(target_url)
 
-        self.assertEqual(result["status"], "opened")
-        self.assertEqual(result["handoff"], "direct_url")
-        run.assert_called_once_with(
-            ["/usr/bin/open", "-a", "TradingView", target_url],
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=15,
+        self.assertEqual(result["status"], "handoff_requested")
+        self.assertEqual(result["handoff"], "direct_url_async")
+        self.assertEqual(result["launch_pid"], 4321)
+        popen.assert_called_once_with(
+            ["/usr/bin/open", "-g", "-a", "TradingView", target_url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
 
     def test_open_link_uses_clipboard_and_accessibility_menu(self) -> None:
@@ -63,14 +64,14 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
             "running": True,
             "automation_permission": True,
         }
-        direct_failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="direct failed")
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         with (
             mock.patch.object(tradingview_desktop_bridge, "probe_desktop", return_value=ready),
+            mock.patch.object(tradingview_desktop_bridge.subprocess, "Popen", side_effect=OSError("direct failed")),
             mock.patch.object(
                 tradingview_desktop_bridge.subprocess,
                 "run",
-                side_effect=[direct_failed, completed, completed],
+                side_effect=[completed, completed],
             ) as run,
         ):
             result = tradingview_desktop_bridge.open_link_in_desktop(
@@ -80,7 +81,7 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertEqual(result["status"], "opened")
         self.assertEqual(result["handoff"], "clipboard_menu")
         commands = [call.args[0][0] for call in run.call_args_list]
-        self.assertEqual(commands, ["/usr/bin/open", "/usr/bin/pbcopy", "/usr/bin/osascript"])
+        self.assertEqual(commands, ["/usr/bin/pbcopy", "/usr/bin/osascript"])
 
     def test_cdp_command_enables_websocket_on_node_20(self) -> None:
         command = ai_os_api_server.tradingview_cdp_node_command(

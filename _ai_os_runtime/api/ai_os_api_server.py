@@ -1117,10 +1117,13 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
 
     bridge_status = str(bridge.get("status") or "failed")
     bridge_handoff = str(bridge.get("handoff") or "desktop_handoff")
-    task_status = "done" if bridge_status == "opened" else "waiting_input"
+    handoff_accepted = bridge_status in {"opened", "handoff_requested"}
+    task_status = "done" if handoff_accepted else "waiting_input"
     summary = (
         f"Opened {normalized_symbol} ({timeframe}) in the user-managed TradingView Desktop session."
         if bridge_status == "opened"
+        else f"Submitted {normalized_symbol} ({timeframe}) to the user-managed TradingView Desktop session."
+        if bridge_status == "handoff_requested"
         else (
             "TradingView Desktop is running, but macOS Accessibility permission is required for the official clipboard-menu handoff."
             if bridge_status == "permission_required"
@@ -1132,7 +1135,7 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
             UPDATE ops.tradingview_tasks
             SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
                 evidence=evidence || jsonb_build_array({sql_jsonb({"source": f"TradingView Desktop {bridge_handoff}", "target_url": target_url, "status": bridge_status})}),
-                metadata=metadata || {sql_jsonb({"target_url": target_url, "handoff": bridge_handoff, "desktop": bridge.get("desktop") or {}})},
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "handoff": bridge_handoff, "launch_pid": bridge.get("launch_pid"), "desktop": bridge.get("desktop") or {}})},
                 updated_at=now(),
                 completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
             WHERE id={task_id}
@@ -1148,7 +1151,7 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
         "desktop": {**(bridge.get("desktop") or {}), "cdp_fallback": probe_tradingview_cdp()},
         "fallback": (
             None
-            if bridge_status == "opened"
+            if handoff_accepted
             else "Use the governed CDP capture action until the one-time Desktop permission is granted."
         ),
     }
