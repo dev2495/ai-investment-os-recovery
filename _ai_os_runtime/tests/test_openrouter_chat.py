@@ -133,6 +133,34 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertNotIn("reasoning_or_prompt_leak", violations)
         self.assertNotIn("unsupported_capital_recommendation", violations)
 
+    def test_delegation_fallback_returns_concise_mailbox_receipt(self) -> None:
+        reply = ai_os_api_server.deterministic_chat_reply(
+            "Assign Research Analyst to review the latest INFY filing.",
+            {
+                "tool_results": [{
+                    "tool": "delegate_agent_work",
+                    "status": "unread",
+                    "result": {
+                        "id": 137,
+                        "to_agent": "Research Analyst",
+                        "processing_status": "pending",
+                    },
+                }],
+                "research_intakes": [{"title": "Unrelated source"}],
+            },
+            [],
+            [],
+            {"default_model": "test-model"},
+            "ok",
+        )
+
+        self.assertIn("mailbox message #137 for Research Analyst", reply)
+        self.assertIn("has not assigned a task ID yet", reply)
+        self.assertIn("evidence-backed memo", reply)
+        self.assertIn("broker writes and live execution remain locked", reply)
+        self.assertNotIn("Research pipeline", reply)
+        self.assertNotIn("Unrelated source", reply)
+
     def test_rejects_agent_message_id_mislabelled_as_task_id(self) -> None:
         def fake_psql(query: str):
             if "FROM agent.model_routes" in query:

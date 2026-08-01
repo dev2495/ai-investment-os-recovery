@@ -14428,6 +14428,41 @@ def deterministic_chat_reply(
             "I cannot approve capital or place broker orders; those remain locked behind explicit human and risk gates."
         )
 
+    delegation_results = [
+        operation
+        for operation in tool_results
+        if str(operation.get("tool") or "") == "delegate_agent_work"
+    ]
+    if delegation_results:
+        delegation_lines: list[str] = []
+        for operation in delegation_results:
+            result = operation.get("result") if isinstance(operation.get("result"), dict) else {}
+            target = str(result.get("to_agent") or "the assigned employee")
+            message_id = result.get("id")
+            task_id = result.get("generated_task_id")
+            if str(task_id or "").isdigit():
+                delegation_lines.append(
+                    f"I assigned {target}; task #{task_id} is {result.get('processing_status') or operation.get('status') or 'queued'}."
+                )
+            elif str(message_id or "").isdigit():
+                delegation_lines.append(
+                    f"I created mailbox message #{message_id} for {target}. It is "
+                    f"{result.get('processing_status') or operation.get('status') or 'pending'}; "
+                    "the agent daemon has not assigned a task ID yet."
+                )
+            else:
+                delegation_lines.append(
+                    f"I sent the request to {target}; routing status is "
+                    f"{result.get('processing_status') or operation.get('status') or 'pending'}."
+                )
+        delegation_lines.append(
+            "The requested output remains an evidence-backed memo separating verified facts, inference, and missing evidence."
+        )
+        delegation_lines.append(
+            "No trade was proposed or placed; broker writes and live execution remain locked."
+        )
+        return "\n".join(delegation_lines)
+
     attention_request = any(phrase in normalized for phrase in (
         "needs my attention", "need my attention", "what should i decide",
         "what do i need to decide", "what needs my review", "needs my review",
