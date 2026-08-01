@@ -10,15 +10,17 @@ the provider gateway for explicit public/internal cloud work.
 
 | Work class | Primary route | Fallback or escalation | Guardrail |
 |---|---|---|---|
-| Private conversation and tool intake | Evaluated local Charlie route | Evaluated iMac Qwen instruct route | Client data stays local; exact model digest must pass `conversation_v1` |
+| Private conversation and tool intake | Evaluated MacBook Bonsai route | Pinned iMac Nanbeige route after `conversation_v1` promotion | Client data stays local; exact model digest must pass `conversation_v1` |
 | Deterministic office work | SQL/Python/tool worker | None | Calculations and writes use typed tools, not model prose |
-| Fast public/internal research | `deepseek/deepseek-v4-flash` | `qwen/qwen3.7-plus` | Explicit selection, ZDR, provider price sort, cost preflight |
+| Volume public/internal work | `openrouter/openai/gpt-5.6-luna` | Direct `openai/gpt-5.6-luna` when configured | Explicit selection or policy escalation, no client data, ZDR, cost preflight |
 | Long public/internal synthesis | `minimax/minimax-m3` | `z-ai/glm-5.2` | Explicit selection, no client data, cost preflight |
 | Independent public/internal review | `z-ai/glm-5.2` | None | Explicit selection; no execution authority |
 
-Charlie retains USD 1/day and USD 25/month hard stops. Cloud calls are blocked
-when the API key, current rate, explicit approval, privacy policy, or remaining
-budget is missing.
+The office-wide cloud budget is INR 3,000/month soft, INR 4,500/month hard,
+and INR 150/day hard, with 20% reserved for genuinely difficult work. Per-agent
+caps are subordinate to these global gates. Cloud calls are blocked when the
+API key, current rate, required approval, privacy policy, or remaining budget
+is missing.
 
 ## Local Model Placement
 
@@ -26,10 +28,11 @@ budget is missing.
   about 3.4 GB, but a catalog fit is not a production promotion: this project
   previously rejected its tested digest at `light_v1` score 0.50. It remains an
   evaluation candidate until a new exact digest passes the current suite.
-- `qwen3:4b-instruct` is the bounded iMac conversation candidate. It can become
-  Charlie's private fallback only after `conversation_v1` passes.
-- Bonsai remains a MacBook conversation route only when its exact evaluated
-  runtime is reachable. It is not a research authority or calculation engine.
+- The pinned iMac Nanbeige4.2 3B Q4 runtime is the private fallback candidate.
+  It is activated only after its exact digest passes `conversation_v1`.
+- Bonsai is the evaluated MacBook private-conversation default while its pinned
+  runtime is reachable. It handles natural dialogue and delegation, but it is
+  not a research authority, calculation engine, or investment decision maker.
 - Laguna S 2.1 is a 118B/8B-active coding model. Its published weight size and
   runtime requirements do not fit either workstation, and its task profile is
   not the default investment-office conversation workload.

@@ -1,82 +1,130 @@
-version: 2
+version: 3
 purpose: >
-  Jarvis model routing map. Charlie delegates to Jarvis, Jarvis classifies the task,
-  retrieves role-scoped evidence, then selects the cheapest promoted model. A model
-  being installed is not sufficient: the exact digest and task suite must pass.
+  Charlie handles natural operator conversation and delegates typed work to Jarvis
+  and role-scoped agents. Private context stays on evaluated local models. Public
+  and internal work can use capped cloud routes. Deterministic tools own arithmetic,
+  research extraction, risk, backtests, approvals, and execution state.
 
 providers:
+  local_openai:
+    role: macbook_private_conversation
+    base_url: http://100.75.156.32:11435/v1
+    model: prism-ml/Bonsai-27B-Q1_0
+    storage_root: ~/Library/Application Support/AIOS/models
+    notes: "Evaluated conversation-only route. No direct arithmetic, research authority, capital authority, or broker writes."
   ollama:
-    role: governed_local_runtime
+    role: imac_local_runtime_and_embeddings
     base_url: http://127.0.0.1:11434
     storage_root: /Volumes/Devarsh SSD/AI OS Data/ollama/models
-    notes: "Concurrency one. Client-private data is local-only. Models never own arithmetic, risk, backtests, approvals, or execution."
+    models:
+      conversation_fallback: nanbeige/nanbeige4.2:3b-Q4_K_M
+      embedding: qwen3-embedding:0.6b
+    notes: "One model at a time on the 8 GB iMac. Client-private retrieval remains local."
+  openrouter:
+    role: capped_public_internal_cloud_gateway
+    base_url: https://openrouter.ai/api/v1
+    notes: "ZDR, data collection denied, no client data, no raw prompt retention, and hard cost caps."
+  openai:
+    role: optional_direct_cloud_gateway
+    base_url: https://api.openai.com/v1
+    notes: "Use after a direct key is configured; store=false and the same privacy/budget controls apply."
   codex:
     role: engineering_escalation
     base_url: codex_desktop
-    notes: "Use for code changes, debugging, architecture, repo work, and hard verification."
-  cloud_optional:
-    role: approval_gated_reasoning_escalation
-    base_url: configured_later
-    notes: "Public or redacted context only after privacy, cost, and human approval."
+    notes: "Repository implementation, debugging, architecture changes, and release verification."
 
 routes:
+  charlie_munger_orchestration:
+    task_class: private_conversation_and_delegation
+    default_provider: local_openai
+    default_model: prism-ml/Bonsai-27B-Q1_0
+    fallback_provider: ollama
+    fallback_model: nanbeige/nanbeige4.2:3b-Q4_K_M
+    escalation_route: openrouter_luna_volume
+    max_autonomous_cost_tier: cloud_low
+    privacy: client_private_local_only
+    status: production
+
+  openrouter_luna_volume:
+    task_class: public_internal_routine_conversation_and_drafts
+    default_provider: openrouter
+    default_model: openai/gpt-5.6-luna
+    fallback_provider: openai
+    fallback_model: gpt-5.6-luna
+    max_autonomous_cost_tier: cloud_low
+    privacy: no_client_data
+    status: production_capped
+
+  openrouter_research_deep:
+    task_class: deep_public_internal_research_and_synthesis
+    default_provider: openrouter
+    default_model: minimax/minimax-m3
+    fallback_model: z-ai/glm-5.2
+    max_cost_tier: cloud_medium
+    privacy: no_client_data
+    status: explicit_operator_selection
+
+  openrouter_research_review:
+    task_class: independent_public_internal_review
+    default_provider: openrouter
+    default_model: z-ai/glm-5.2
+    max_cost_tier: cloud_medium
+    privacy: no_client_data
+    status: explicit_operator_selection
+
   always_on_daily_driver:
     task_class: routing_and_routine_work
     default_provider: local_tools
     default_model: deterministic_router_v1
     fallback_route: deterministic_tools
-    escalation_route: local_workhorse_synthesis
+    escalation_route: charlie_munger_orchestration
     max_cost_tier: local
     context_tokens: 0
-    status: production
+    status: production_deterministic
 
   local_workhorse_synthesis:
     task_class: investment_research_synthesis
-    default_provider: mlx
-    default_model: DreamFoundries/Qwen3.5-9B-4bit
+    default_provider: ollama
+    default_model: nanbeige/nanbeige4.2:3b-Q4_K_M
     fallback_route: always_on_daily_driver
-    escalation_provider: cloud_optional
+    escalation_route: openrouter_luna_volume
     max_cost_tier: local_plus
     context_tokens: 16384
-    status: rejected_until_mid_v1_passes
-
-  filings_analysis:
-    task_class: filing_analysis
-    default_provider: local_tools
-    default_model: deterministic_filings_pipeline_v1
-    fallback_route: deterministic_tools
-    escalation_provider: cloud_optional
-    max_cost_tier: local_plus
-    context_tokens: 0
-    status: production_deterministic
-
-  strategy_generation:
-    task_class: strategy_research
-    default_provider: local_tools
-    default_model: governed_strategy_pipeline_v1
-    fallback_route: deterministic_tools
-    escalation_provider: codex
-    max_cost_tier: local_plus
-    context_tokens: 0
-    status: production_deterministic
+    privacy: client_private_local_only
+    status: evaluation_required
 
   multimodal_document_analysis:
     task_class: multimodal_document_analysis
     default_provider: local_tools
     default_model: deterministic_document_extraction_v1
     fallback_route: deterministic_tools
-    escalation_provider: cloud_optional
+    escalation_route: openrouter_research_deep
+    max_cost_tier: cloud_medium
+    privacy: no_client_data_on_cloud
+    status: production_deterministic
+
+  filings_analysis:
+    task_class: filing_analysis
+    default_provider: local_tools
+    default_model: deterministic_filings_pipeline_v1
+    escalation_route: openrouter_research_deep
+    max_cost_tier: cloud_medium
+    status: production_deterministic
+
+  strategy_generation:
+    task_class: strategy_research
+    default_provider: local_tools
+    default_model: governed_strategy_pipeline_v1
+    escalation_provider: codex
     max_cost_tier: local_plus
-    context_tokens: 0
-    status: rejected_until_multimodal_v1_passes
+    status: production_deterministic
 
   local_embedding_retrieval:
     task_class: embedding
     default_provider: ollama
     default_model: qwen3-embedding:0.6b
-    fallback_model: null
-    max_cost_tier: local
     vector_dimensions: 1024
+    max_cost_tier: local
     status: production
 
   software_engineering:
@@ -84,3 +132,18 @@ routes:
     default_provider: codex
     default_model: current_codex
     max_cost_tier: codex
+
+budget:
+  currency: INR
+  monthly_soft_cap: 3000
+  monthly_hard_cap: 4500
+  daily_hard_cap: 150
+  heavy_route_reserve_pct: 20
+  hard_stop_on_breach: true
+
+safety:
+  broker_writes: false
+  client_private_cloud: false
+  raw_cloud_prompt_storage: false
+  autonomous_heavy_models: false
+  human_final_investment_authority: Devarsh

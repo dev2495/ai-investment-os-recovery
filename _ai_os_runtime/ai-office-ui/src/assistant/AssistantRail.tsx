@@ -68,14 +68,14 @@ interface ChatMessage {
 
 const ROUTES: Array<{ key: ReasoningRoute; label: string; icon: typeof Brain; desc: string }> = [
   { key: "local", label: "Private", icon: Brain, desc: "Natural local Charlie with private portfolio context" },
-  { key: "fast", label: "Fast", icon: Zap, desc: "Low-cost cloud model; no client data" },
+  { key: "fast", label: "Fast", icon: Zap, desc: "Capped Luna volume model; no client data" },
   { key: "deep", label: "Deep", icon: Microscope, desc: "Deep cloud research; no client data" },
   { key: "review", label: "Review", icon: ClipboardCheck, desc: "Independent cloud review; no client data" },
 ];
 
 const ROUTE_CONFIG: Record<ReasoningRoute, { routeName: string; privateContext: boolean }> = {
   local: { routeName: "charlie_munger_orchestration", privateContext: true },
-  fast: { routeName: "openrouter_research_fast", privateContext: false },
+  fast: { routeName: "openrouter_luna_volume", privateContext: false },
   deep: { routeName: "openrouter_research_deep", privateContext: false },
   review: { routeName: "openrouter_research_review", privateContext: false },
 };
@@ -113,7 +113,7 @@ export function AssistantRail() {
     }
   });
   const [input, setInput] = React.useState("");
-  const [route, setRoute] = React.useState<ReasoningRoute>("fast");
+  const [route, setRoute] = React.useState<ReasoningRoute>("local");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const scopeProfile = React.useMemo(() => {
     if (scope === "charlie") return employeeDirectory.data?.primary?.find((row) => text(row, "agent_name") === "Charlie Munger");
