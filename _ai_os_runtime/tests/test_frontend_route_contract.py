@@ -59,11 +59,36 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 71)
+        self.assertEqual(len(paths), 72)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),
             [],
         )
+
+    def test_portfolio_writes_are_actionable_and_governed(self) -> None:
+        actions = (
+            self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts"
+        ).read_text(encoding="utf-8")
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "portfolio"
+            / "PortfolioTerminal.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"/api/client-office/onboarding/stage"', actions)
+        self.assertIn('"/api/portfolio/holding-updates/stage"', actions)
+        self.assertIn("Stage for approval", terminal)
+        self.assertIn("source_evidence", terminal)
+        self.assertIn("useStageClientOnboarding", terminal)
+        self.assertIn("useStageHoldingUpdate", terminal)
+        self.assertNotIn(
+            '<Button size="sm" variant="primary" icon={Plus}>Onboard Client</Button>',
+            terminal,
+        )
+
 
 
 

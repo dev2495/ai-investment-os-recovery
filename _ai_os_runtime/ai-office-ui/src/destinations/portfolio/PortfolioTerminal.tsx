@@ -13,10 +13,10 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Briefcase, PieChart, BookOpen, Users, DollarSign, GitBranch, Activity,
-  Plus, ChevronRight, TrendingUp, Wallet,
+  Plus, Save,
 } from "lucide-react";
 import { usePortfolioOffice } from "../../data/queries";
-import { useStageHoldingUpdate } from "../../data/actions";
+import { useStageClientOnboarding, useStageHoldingUpdate } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
@@ -214,34 +214,38 @@ function PositionsView() {
   const positions = data?.latest_positions ?? [];
   const openEvidence = useUIStore((s) => s.openEvidence);
   const [filter, setFilter] = React.useState("");
+  const [showUpdate, setShowUpdate] = React.useState(false);
 
   const filtered = filter ? positions.filter((r) => text(r, "symbol").toLowerCase().includes(filter.toLowerCase())) : positions;
   const totalMarketValue = positions.reduce((sum, r) => sum + Math.abs(num(r, "market_value", 0)), 0);
 
   return (
-    <Panel icon={PieChart} title="Positions"
-      actions={<TextInput placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 160 }} />}
-    >
-      {isLoading ? <SkeletonGrid rows={6} /> : filtered.length === 0 ? (
-        <Empty icon={PieChart} title="No positions" />
-      ) : (
-        <DataTable
-          columns={[
-            { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
-            { key: "client", header: "Client", render: (r) => text(r, "display_name", text(r, "client_name", "—")) },
-            { key: "book", header: "Book", render: (r) => text(r, "book_key", "—") },
-            { key: "qty", header: "Qty", align: "right", render: (r) => num(r, "quantity", 0) },
-            { key: "avg", header: "Avg Cost", align: "right", render: (r) => formatCurrency(num(r, "average_cost", num(r, "average_price", 0))) },
-            { key: "mv", header: "Mkt Value", align: "right", render: (r) => formatCompact(num(r, "market_value", 0), "INR") },
-            { key: "weight", header: "Weight", align: "right", render: (r) => formatPercent(totalMarketValue > 0 ? Math.abs(num(r, "market_value", 0)) / totalMarketValue : 0) },
-            { key: "purpose", header: "Purpose", render: (r) => text(r, "purpose", "—") },
-          ]}
-          rows={filtered}
-          rowKey={(r, i) => String(text(r, "position_id", text(r, "id", i)))}
-          onRowClick={(r) => openEvidence({ kind: "strategy", key: String(text(r, "thesis_id", text(r, "position_id", text(r, "id")))), title: `${text(r, "symbol")} — ${text(r, "display_name", text(r, "client_name", "position"))}` })}
-        />
-      )}
-    </Panel>
+    <>
+      <Panel icon={PieChart} title="Positions"
+        actions={<div style={{ display: "flex", gap: "var(--space-2)" }}><TextInput placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 160 }} /><Button size="sm" variant="primary" icon={Plus} onClick={() => setShowUpdate(true)}>Update holding</Button></div>}
+      >
+        {isLoading ? <SkeletonGrid rows={6} /> : filtered.length === 0 ? (
+          <Empty icon={PieChart} title="No positions" description="Stage a verified holding snapshot to begin tracking this account." action={<Button size="sm" icon={Plus} onClick={() => setShowUpdate(true)}>Update holding</Button>} />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
+              { key: "client", header: "Client", render: (r) => text(r, "display_name", text(r, "client_name", "—")) },
+              { key: "book", header: "Book", render: (r) => text(r, "book_key", "—") },
+              { key: "qty", header: "Qty", align: "right", render: (r) => num(r, "quantity", 0) },
+              { key: "avg", header: "Avg Cost", align: "right", render: (r) => formatCurrency(num(r, "average_cost", num(r, "average_price", 0))) },
+              { key: "mv", header: "Mkt Value", align: "right", render: (r) => formatCompact(num(r, "market_value", 0), "INR") },
+              { key: "weight", header: "Weight", align: "right", render: (r) => formatPercent(totalMarketValue > 0 ? Math.abs(num(r, "market_value", 0)) / totalMarketValue : 0) },
+              { key: "purpose", header: "Purpose", render: (r) => text(r, "purpose", "—") },
+            ]}
+            rows={filtered}
+            rowKey={(r, i) => String(text(r, "position_id", text(r, "id", i)))}
+            onRowClick={(r) => openEvidence({ kind: "strategy", key: String(text(r, "thesis_id", text(r, "position_id", text(r, "id")))), title: `${text(r, "symbol")} — ${text(r, "display_name", text(r, "client_name", "position"))}` })}
+          />
+        )}
+      </Panel>
+      <HoldingUpdateDrawer open={showUpdate} onClose={() => setShowUpdate(false)} />
+    </>
   );
 }
 
@@ -297,14 +301,15 @@ function ClientsView() {
   const { data, isLoading } = usePortfolioOffice();
   const clients = data?.clients ?? [];
   const onboarding = data?.client_onboarding ?? [];
+  const [showOnboarding, setShowOnboarding] = React.useState(false);
 
   return (
     <>
       <Panel icon={Users} title="Client Registry"
-        actions={<Button size="sm" variant="primary" icon={Plus}>Onboard Client</Button>}
+        actions={<Button size="sm" variant="primary" icon={Plus} onClick={() => setShowOnboarding(true)}>Onboard Client</Button>}
       >
         {isLoading ? <SkeletonGrid rows={3} /> : clients.length === 0 ? (
-          <Empty icon={Users} title="No clients" description="Onboard a client to begin portfolio management." />
+          <Empty icon={Users} title="No clients" description="Stage a suitability-reviewed client onboarding case." action={<Button size="sm" icon={Plus} onClick={() => setShowOnboarding(true)}>Onboard client</Button>} />
         ) : (
           <DataTable
             columns={[
@@ -334,8 +339,99 @@ function ClientsView() {
           />
         </Panel>
       )}
+      <ClientOnboardingDrawer open={showOnboarding} onClose={() => setShowOnboarding(false)} />
     </>
   );
+}
+
+function ClientOnboardingDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const mutation = useStageClientOnboarding();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const [form, setForm] = React.useState({
+    client_code: "", display_name: "", risk_profile: "moderate", objectives: "", constraints: "",
+    investment_horizon: "5-10 years", liquidity_needs: "", risk_tolerance: "moderate",
+    risk_capacity: "moderate", suitability_status: "needs_review", suitability_notes: "",
+    account_code: "", broker: "Zerodha", source_evidence: "",
+  });
+  function update(key: string, value: string) { setForm((current) => ({ ...current, [key]: value })); }
+  function lines(value: string) { return value.split("\n").map((item) => item.trim()).filter(Boolean); }
+  function submit() {
+    const objectives = lines(form.objectives);
+    const sourceEvidence = lines(form.source_evidence);
+    if (!form.client_code.trim() || !form.display_name.trim() || objectives.length === 0 || sourceEvidence.length === 0) {
+      pushToast({ title: "Complete required onboarding evidence", message: "Client code, name, at least one objective, and source evidence are required.", tone: "warn", duration: 5000 });
+      return;
+    }
+    mutation.mutate({
+      client_code: form.client_code.trim(), display_name: form.display_name.trim(), risk_profile: form.risk_profile,
+      objectives, constraints: lines(form.constraints), investment_horizon: form.investment_horizon,
+      liquidity_needs: form.liquidity_needs, risk_tolerance: form.risk_tolerance, risk_capacity: form.risk_capacity,
+      suitability_status: form.suitability_status as "needs_review" | "suitable" | "conditionally_suitable" | "unsuitable",
+      suitability_notes: form.suitability_notes, source_evidence: sourceEvidence,
+      account: form.account_code.trim() ? { account_code: form.account_code.trim(), account_name: form.display_name.trim(), account_type: "investment", broker: form.broker.trim(), base_currency: "INR" } : undefined,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => { pushToast({ title: "Onboarding staged", message: "Charlie and the Client Office must review suitability before activation.", tone: "ok", duration: 5000 }); onClose(); },
+      onError: (error) => pushToast({ title: "Onboarding failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+  return <Drawer open={open} onClose={onClose} title="Governed Client Onboarding" icon={Users} width={620}
+    footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon={Save} onClick={submit} disabled={mutation.isPending}>Stage for approval</Button></div>}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+      <Field label="Client code" required><TextInput value={form.client_code} onChange={(e) => update("client_code", e.target.value)} /></Field>
+      <Field label="Display name" required><TextInput value={form.display_name} onChange={(e) => update("display_name", e.target.value)} /></Field>
+      <Field label="Risk profile"><Select value={form.risk_profile} onChange={(e) => update("risk_profile", e.target.value)}><option value="conservative">Conservative</option><option value="moderate">Moderate</option><option value="aggressive">Aggressive</option></Select></Field>
+      <Field label="Investment horizon"><TextInput value={form.investment_horizon} onChange={(e) => update("investment_horizon", e.target.value)} /></Field>
+      <Field label="Risk tolerance"><Select value={form.risk_tolerance} onChange={(e) => update("risk_tolerance", e.target.value)}><option value="low">Low</option><option value="moderate">Moderate</option><option value="high">High</option></Select></Field>
+      <Field label="Risk capacity"><Select value={form.risk_capacity} onChange={(e) => update("risk_capacity", e.target.value)}><option value="low">Low</option><option value="moderate">Moderate</option><option value="high">High</option></Select></Field>
+      <Field label="Suitability"><Select value={form.suitability_status} onChange={(e) => update("suitability_status", e.target.value)}><option value="needs_review">Needs review</option><option value="suitable">Suitable</option><option value="conditionally_suitable">Conditionally suitable</option><option value="unsuitable">Unsuitable</option></Select></Field>
+      <Field label="Liquidity needs"><TextInput value={form.liquidity_needs} onChange={(e) => update("liquidity_needs", e.target.value)} /></Field>
+      <Field label="Account code"><TextInput value={form.account_code} onChange={(e) => update("account_code", e.target.value)} /></Field>
+      <Field label="Broker"><TextInput value={form.broker} onChange={(e) => update("broker", e.target.value)} /></Field>
+    </div>
+    <Field label="Investment objectives (one per line)" required><TextArea rows={3} value={form.objectives} onChange={(e) => update("objectives", e.target.value)} /></Field>
+    <Field label="Constraints (one per line)"><TextArea rows={2} value={form.constraints} onChange={(e) => update("constraints", e.target.value)} /></Field>
+    <Field label="Suitability notes"><TextArea rows={2} value={form.suitability_notes} onChange={(e) => update("suitability_notes", e.target.value)} /></Field>
+    <Field label="Source evidence (statement path, URL, or reference; one per line)" required><TextArea rows={3} value={form.source_evidence} onChange={(e) => update("source_evidence", e.target.value)} /></Field>
+  </Drawer>;
+}
+
+function HoldingUpdateDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { data } = usePortfolioOffice();
+  const mutation = useStageHoldingUpdate();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const clients = data?.clients ?? [];
+  const accounts = data?.client_accounts ?? [];
+  const [form, setForm] = React.useState({ client_code: "", account_code: "", symbol: "", exchange: "NSE", quantity: "", average_price: "", market_price: "", update_reason: "manual verified holding snapshot", source_evidence: "" });
+  function update(key: string, value: string) { setForm((current) => ({ ...current, [key]: value })); }
+  const scopedAccounts = accounts.filter((row) => !form.client_code || text(row, "client_code") === form.client_code);
+  function submit() {
+    const quantity = Number(form.quantity);
+    if (!form.client_code || !form.account_code || !form.symbol.trim() || !Number.isFinite(quantity) || !form.source_evidence.trim()) {
+      pushToast({ title: "Complete holding evidence", message: "Client, account, symbol, quantity, and a source reference are required.", tone: "warn", duration: 5000 });
+      return;
+    }
+    const averagePrice = form.average_price ? Number(form.average_price) : undefined;
+    const marketPrice = form.market_price ? Number(form.market_price) : undefined;
+    mutation.mutate({ client_code: form.client_code, account_code: form.account_code, symbol: form.symbol.trim().toUpperCase(), exchange: form.exchange, quantity, average_price: averagePrice, market_price: marketPrice, update_reason: form.update_reason, payload: { source_evidence: [form.source_evidence.trim()], entered_from: "portfolio_positions_ui" }, actor: "Devarsh" }, {
+      onSuccess: () => { pushToast({ title: "Holding update staged", message: "The Portfolio Manager must verify and approve it before the position book changes.", tone: "ok", duration: 5000 }); onClose(); },
+      onError: (error) => pushToast({ title: "Holding update failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+  return <Drawer open={open} onClose={onClose} title="Stage Holding Update" icon={PieChart} width={560}
+    footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon={Save} onClick={submit} disabled={mutation.isPending}>Stage for approval</Button></div>}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+      <Field label="Client" required><Select value={form.client_code} onChange={(e) => { update("client_code", e.target.value); update("account_code", ""); }}><option value="">Select client</option>{clients.map((row, index) => <option key={text(row, "client_code", index)} value={text(row, "client_code")}>{text(row, "display_name", text(row, "client_code"))}</option>)}</Select></Field>
+      <Field label="Account" required><Select value={form.account_code} onChange={(e) => update("account_code", e.target.value)}><option value="">Select account</option>{scopedAccounts.map((row, index) => <option key={text(row, "account_code", index)} value={text(row, "account_code")}>{text(row, "account_name", text(row, "account_code"))}</option>)}</Select></Field>
+      <Field label="Symbol" required><TextInput value={form.symbol} onChange={(e) => update("symbol", e.target.value)} /></Field>
+      <Field label="Exchange"><Select value={form.exchange} onChange={(e) => update("exchange", e.target.value)}><option value="NSE">NSE</option><option value="BSE">BSE</option><option value="NFO">NFO</option><option value="MCX">MCX</option></Select></Field>
+      <Field label="Quantity" required><TextInput type="number" value={form.quantity} onChange={(e) => update("quantity", e.target.value)} /></Field>
+      <Field label="Average price"><TextInput type="number" value={form.average_price} onChange={(e) => update("average_price", e.target.value)} /></Field>
+      <Field label="Market price"><TextInput type="number" value={form.market_price} onChange={(e) => update("market_price", e.target.value)} /></Field>
+    </div>
+    <Field label="Update reason"><TextArea rows={2} value={form.update_reason} onChange={(e) => update("update_reason", e.target.value)} /></Field>
+    <Field label="Source statement or evidence reference" required><TextArea rows={2} value={form.source_evidence} onChange={(e) => update("source_evidence", e.target.value)} /></Field>
+  </Drawer>;
 }
 
 /* ============================================================

@@ -402,16 +402,50 @@ export function useRunTradingViewTemplate() {
  * PORTFOLIO ACTIONS
  * ============================================================ */
 
+export interface ClientOnboardingInput {
+  client_code: string;
+  display_name: string;
+  risk_profile: string;
+  objectives: string[];
+  constraints?: string[];
+  investment_horizon: string;
+  liquidity_needs?: string;
+  risk_tolerance: string;
+  risk_capacity: string;
+  suitability_status: "needs_review" | "suitable" | "conditionally_suitable" | "unsuitable";
+  suitability_notes?: string;
+  source_evidence: Array<string | Record<string, unknown>>;
+  account?: {
+    account_code: string;
+    account_name?: string;
+    account_type?: string;
+    broker?: string;
+    base_currency?: string;
+    external_account_ref?: string;
+  };
+  actor?: string;
+}
+
+export function useStageClientOnboarding() {
+  return useInvalidating<ClientOnboardingInput, LiveRow>(
+    "/api/client-office/onboarding/stage",
+    [Q.portfolioOffice, Q.office, Q.missionControl]
+  );
+}
+
 export interface HoldingUpdateInput {
-  client_id?: number;
+  client_code: string;
+  account_code: string;
   symbol: string;
   exchange?: string;
   quantity?: number;
-  average_cost?: number;
-  book_key?: string;
-  purpose?: string;
-  thesis_id?: number;
-  horizon?: string;
+  average_price?: number;
+  market_price?: number;
+  market_value?: number;
+  instrument_type?: string;
+  as_of?: string;
+  update_reason: string;
+  payload?: Record<string, unknown>;
   actor?: string;
 }
 
