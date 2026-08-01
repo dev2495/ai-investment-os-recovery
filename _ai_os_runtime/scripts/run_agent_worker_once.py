@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -19,6 +20,13 @@ VAULT_ROOT = Path(
     or RUNTIME_ROOT.parent
 )
 OUTPUT_DIR = VAULT_ROOT / "ai memory" / "00 AI OS" / "Agent Outputs" / "Worker Runs"
+WORKER_SPOOL_ROOT = Path(
+    os.environ.get("AI_OS_WORKER_SPOOL_ROOT")
+    or (Path.home() / "AI_OS_NODE" / "spool" / "agent-worker")
+)
+WORKER_MIRROR_TIMEOUT_SECONDS = max(
+    1, int(os.environ.get("AI_OS_WORKER_MIRROR_TIMEOUT_SECONDS") or 8)
+)
 
 
 def load_runtime_env() -> dict[str, str]:
@@ -54,7 +62,14 @@ def sql_jsonb(value: Any) -> str:
 
 
 def psql_text(sql: str) -> str:
-    psql_bin = RUNTIME_ENV.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
+    configured_psql = str(RUNTIME_ENV.get("AI_OS_PSQL_BIN") or "").strip()
+    psql_candidates = [
+        configured_psql,
+        shutil.which("psql") or "",
+        "/opt/homebrew/bin/psql",
+        "/usr/local/bin/psql",
+    ]
+    psql_bin = next((candidate for candidate in psql_candidates if candidate and Path(candidate).exists()), "")
     db_host = RUNTIME_ENV.get("AI_OS_POSTGRES_HOST") or "127.0.0.1"
     db_port = RUNTIME_ENV.get("AI_OS_POSTGRES_PORT") or "54329"
     db_user = RUNTIME_ENV.get("AI_OS_POSTGRES_USER") or "ai_os"
@@ -82,10 +97,13 @@ def psql_text(sql: str) -> str:
         ]
         env = os.environ.copy()
         env["PGPASSWORD"] = db_password
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env)
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=30)
     else:
+        docker_bin = shutil.which("docker") or "/usr/local/bin/docker"
+        if not Path(docker_bin).exists():
+            raise RuntimeError("Neither psql nor docker is available for the agent worker")
         command = [
-            "docker",
+            docker_bin,
             "exec",
             "ai_os_postgres",
             "psql",
@@ -101,7 +119,7 @@ def psql_text(sql: str) -> str:
             "-c",
             sql,
         ]
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, timeout=30)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "psql command failed").strip()
         raise RuntimeError(detail)
@@ -1131,7 +1149,6 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
 
 
 def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any], summary: str, next_actions: list[str]) -> Path:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     today = datetime.now().strftime("%Y-%m-%d")
     filename = (
         f"{today} task-{job.get('task_id')} "
@@ -1139,6 +1156,8 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
         f"{slugify(str(job.get('suggested_skill_key') or 'skill'))}.md"
     )
     path = OUTPUT_DIR / filename
+    relative_path = path.relative_to(VAULT_ROOT)
+    spool_path = WORKER_SPOOL_ROOT / relative_path
     evidence = [
         "agent.v_live_agent_worker_queue",
         "agent.v_active_agents",
@@ -1197,7 +1216,40 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
             "",
         ]
     )
-    path.write_text("\n".join(body), encoding="utf-8")
+    note_text = "\n".join(body)
+    spool_path.parent.mkdir(parents=True, exist_ok=True)
+    spool_tmp = spool_path.with_suffix(spool_path.suffix + ".tmp")
+    spool_tmp.write_text(note_text, encoding="utf-8")
+    spool_tmp.replace(spool_path)
+
+    mirror = {
+        "status": "pending",
+        "vault_path": str(path),
+        "spool_path": str(spool_path),
+    }
+    try:
+        subprocess.run(
+            ["/bin/mkdir", "-p", str(path.parent)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=WORKER_MIRROR_TIMEOUT_SECONDS,
+        )
+        subprocess.run(
+            ["/bin/cp", "-f", str(spool_path), str(path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=WORKER_MIRROR_TIMEOUT_SECONDS,
+        )
+        mirror["status"] = "mirrored"
+    except subprocess.TimeoutExpired as exc:
+        mirror.update({"status": "deferred_timeout", "error": f"{type(exc).__name__}: {exc}"[:500]})
+    except (OSError, subprocess.CalledProcessError) as exc:
+        mirror.update({"status": "deferred_error", "error": f"{type(exc).__name__}: {exc}"[:500]})
+    context["note_persistence"] = mirror
     return path
 
 
@@ -1206,7 +1258,15 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     evidence = [
         {"source": "agent.v_live_agent_worker_queue", "task_id": job.get("task_id")},
         {"source": "agent.v_agent_skill_matrix", "skill_key": skill.get("skill_key")},
-        {"source": "obsidian_note", "path": relative_note},
+        {
+            "source": "obsidian_note" if (context.get("note_persistence") or {}).get("status") == "mirrored" else "obsidian_mirror_pending",
+            "path": relative_note,
+            "mirror_status": (context.get("note_persistence") or {}).get("status"),
+        },
+        {
+            "source": "durable_internal_spool",
+            "path": (context.get("note_persistence") or {}).get("spool_path"),
+        },
     ]
     for filing in (context.get("selected_filing_evidence") or context.get("special_situation_filings") or context.get("recent_filings") or []):
         evidence.append({

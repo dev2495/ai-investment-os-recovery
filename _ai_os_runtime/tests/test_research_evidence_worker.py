@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +75,64 @@ class ResearchEvidenceWorkerTest(unittest.TestCase):
         self.assertIn("Broker orders allowed: false", summary)
         self.assertNotIn("Processed internal message", summary)
         self.assertTrue(any("rerun this skill" in action for action in next_actions))
+
+
+    def test_worker_note_uses_internal_spool_before_vault_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vault = root / "vault"
+            output = vault / "ai memory" / "00 AI OS" / "Agent Outputs" / "Worker Runs"
+            spool = root / "spool"
+            context: dict = {}
+            with (
+                mock.patch.object(run_agent_worker_once, "VAULT_ROOT", vault),
+                mock.patch.object(run_agent_worker_once, "OUTPUT_DIR", output),
+                mock.patch.object(run_agent_worker_once, "WORKER_SPOOL_ROOT", spool),
+            ):
+                path = run_agent_worker_once.write_note(
+                    {"task_id": 501, "task_status": "queued", "suggested_skill_key": "company_research_note"},
+                    {"agent_name": "Research Analyst", "display_title": "Company Research Analyst"},
+                    {"skill_name": "Company Research Note"},
+                    context,
+                    "Verified output.",
+                    ["Review the evidence."],
+                )
+
+            relative = path.relative_to(vault)
+            self.assertTrue((spool / relative).exists())
+            self.assertTrue(path.exists())
+            self.assertEqual(context["note_persistence"]["status"], "mirrored")
+
+    def test_worker_note_defers_unhealthy_vault_without_losing_spool(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vault = root / "vault"
+            output = vault / "ai memory" / "00 AI OS" / "Agent Outputs" / "Worker Runs"
+            spool = root / "spool"
+            context: dict = {}
+            with (
+                mock.patch.object(run_agent_worker_once, "VAULT_ROOT", vault),
+                mock.patch.object(run_agent_worker_once, "OUTPUT_DIR", output),
+                mock.patch.object(run_agent_worker_once, "WORKER_SPOOL_ROOT", spool),
+                mock.patch.object(
+                    run_agent_worker_once.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired(["/bin/mkdir"], 8),
+                ),
+            ):
+                path = run_agent_worker_once.write_note(
+                    {"task_id": 502, "task_status": "queued", "suggested_skill_key": "company_research_note"},
+                    {"agent_name": "Research Analyst", "display_title": "Company Research Analyst"},
+                    {"skill_name": "Company Research Note"},
+                    context,
+                    "Verified output.",
+                    ["Review the evidence."],
+                )
+
+            relative = path.relative_to(vault)
+            self.assertTrue((spool / relative).exists())
+            self.assertFalse(path.exists())
+            self.assertEqual(context["note_persistence"]["status"], "deferred_timeout")
 
 
 if __name__ == "__main__":

@@ -15949,9 +15949,20 @@ def run_agent_worker(payload: dict) -> dict:
         except (TypeError, ValueError) as exc:
             raise ValueError("task_id must be an integer") from exc
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, cwd=str(VAULT_ROOT), timeout=90)
+        worker_timeout = max(30, int(os.environ.get("AI_OS_AGENT_WORKER_TIMEOUT_SECONDS") or 300))
+    except ValueError:
+        worker_timeout = 300
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=str(VAULT_ROOT),
+            timeout=worker_timeout,
+        )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("agent worker timed out after 90 seconds") from exc
+        raise RuntimeError(f"agent worker timed out after {worker_timeout} seconds") from exc
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "agent worker failed").strip())
     result = json.loads(completed.stdout or "{}")
