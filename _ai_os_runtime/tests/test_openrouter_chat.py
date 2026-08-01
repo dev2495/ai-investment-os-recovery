@@ -434,7 +434,7 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertEqual(content, "I am online and ready.")
         self.assertEqual(status, "called")
         self.assertEqual(captured["timeout"], 240)
-        self.assertEqual(captured["payload"]["max_tokens"], 128)
+        self.assertEqual(captured["payload"]["max_tokens"], 1200)
         self.assertFalse(captured["payload"]["chat_template_kwargs"]["enable_thinking"])
 
     def test_local_openai_uses_model_specific_endpoint(self) -> None:
@@ -468,6 +468,40 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertEqual(captured["url"], "http://127.0.0.1:11436/v1/chat/completions")
         self.assertEqual(captured["payload"]["model"], "nanbeige/nanbeige4.2:3b-Q4_K_M")
         self.assertEqual(captured["payload"]["max_tokens"], 384)
+
+    def test_local_openai_uses_mlx_vlm_request_contract(self) -> None:
+        captured: dict = {}
+
+        def fake_http_json(method, url, payload, timeout):
+            captured.update({"url": url, "payload": payload, "timeout": timeout})
+            return {"choices": [{"message": {"content": "Qwen is ready."}}]}
+
+        with (
+            mock.patch.object(ai_os_api_server, "local_openai_model_available", return_value=True),
+            mock.patch.object(ai_os_api_server, "local_model_governance", return_value={"assignable": True}),
+            mock.patch.object(
+                ai_os_api_server,
+                "local_openai_endpoint",
+                return_value={
+                    "base_url": "http://100.75.156.32:11436/v1",
+                    "request_model": "/Users/devarshthakkar/Library/Application Support/AIOS/models/qwen3.5-9b-4bit-8b2b98c",
+                    "max_output_tokens": 1200,
+                    "config": {"runtime": "MLX-VLM", "enable_thinking": False},
+                },
+            ),
+            mock.patch.object(ai_os_api_server, "http_json", fake_http_json),
+        ):
+            content, status = ai_os_api_server.local_openai_chat(
+                "mlx-community/Qwen3.5-9B-4bit",
+                "Give me a concise private status.",
+            )
+
+        self.assertEqual(content, "Qwen is ready.")
+        self.assertEqual(status, "called")
+        self.assertEqual(captured["payload"]["model"], "/Users/devarshthakkar/Library/Application Support/AIOS/models/qwen3.5-9b-4bit-8b2b98c")
+        self.assertFalse(captured["payload"]["enable_thinking"])
+        self.assertNotIn("cache_prompt", captured["payload"])
+        self.assertNotIn("chat_template_kwargs", captured["payload"])
 
     def test_local_openai_rejects_truncated_output(self) -> None:
         with (

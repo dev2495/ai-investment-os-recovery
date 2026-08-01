@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime/scripts/start_charlie_mlx.sh</string>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/bin/start-charlie-qwen35.sh</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -16,8 +16,8 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>/Users/devarshthakkar/Library/Logs/AIOS/charlie-mlx.log</string>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/charlie-qwen35.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/devarshthakkar/Library/Logs/AIOS/charlie-mlx.error.log</string>
+  <string>/Users/devarshthakkar/Library/Logs/AIOS/charlie-qwen35.error.log</string>
 </dict>
 </plist>

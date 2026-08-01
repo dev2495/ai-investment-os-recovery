@@ -125,6 +125,12 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
         "additionalProperties": False,
     }
     results: list[dict[str, Any]] = []
+    runtime_name = str(model_config.get("runtime") or "").lower()
+    request_model = (
+        model_config.get("local_path")
+        if provider == "mlx" or (provider == "local_openai" and "mlx-vlm" in runtime_name)
+        else model
+    )
 
     for case_id in suite["case_ids"]:
         case = cases_by_id[case_id]
@@ -142,7 +148,7 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
         started = time.perf_counter()
         try:
             request_payload = {
-                    "model": model_config.get("local_path") if provider == "mlx" else model,
+                    "model": request_model,
                     "stream": False,
                     "messages": [
                         {"role": "system", "content": ("/no_think\n" + system_prompt) if provider == "ollama" else system_prompt},
@@ -247,7 +253,7 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
                     "POST",
                     f"{base_url}/chat/completions",
                     {
-                        "model": model,
+                        "model": request_model,
                         "stream": False,
                         "temperature": 0.0,
                         "top_p": 0.9,
@@ -520,7 +526,8 @@ def persist_result(result: dict[str, Any], promote: bool) -> None:
         sql += f"""
         UPDATE agent.local_model_registry
         SET promotion_status='approved', last_eval_run_key={sql_literal(run_key)},
-            last_eval_score={summary['score']}, last_eval_at=now(), updated_at=now()
+            last_eval_score={summary['score']}, eval_suite={sql_literal(result['suite'])},
+            last_eval_at=now(), updated_at=now()
         WHERE model_name={sql_literal(result['model'])};
         """
     elif promote:
@@ -555,6 +562,7 @@ def main() -> int:
     parser.add_argument("--model", action="append", help="Exact Ollama model tag. Repeat for multiple models.")
     parser.add_argument("--provider", choices=("ollama", "mlx", "local_openai"), default="ollama")
     parser.add_argument("--base-url")
+    parser.add_argument("--suite", help="Override the registered suite for a scoped qualification run.")
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--promote", action="store_true")
@@ -585,7 +593,7 @@ def main() -> int:
             print(json.dumps({"model": model, "status": "not_registered"}, sort_keys=True))
             overall_passed = False
             continue
-        suite_name = str(model_config["eval_suite"])
+        suite_name = str(args.suite or model_config["eval_suite"])
         started_at = datetime.now(timezone.utc)
         if suite_name == "retrieval_v1":
             summary = run_retrieval_suite(args.base_url, model, config)

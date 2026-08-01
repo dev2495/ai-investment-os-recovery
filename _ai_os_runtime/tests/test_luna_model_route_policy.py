@@ -124,6 +124,11 @@ class LunaModelRoutePolicyTest(unittest.TestCase):
                 "Summarize public market developments without client data.",
             )
 
+    def test_cloud_reasoning_effort_matches_the_model_ladder(self) -> None:
+        self.assertEqual(ai_os_api_server.cloud_reasoning_effort("openai/gpt-5.6-luna"), "none")
+        self.assertEqual(ai_os_api_server.cloud_reasoning_effort("openai/gpt-5.6-terra"), "medium")
+        self.assertEqual(ai_os_api_server.cloud_reasoning_effort("openai/gpt-5.6-sol"), "high")
+
     def test_explicit_internal_luna_route_is_allowed_under_budget(self) -> None:
         decision = self.choose(privacy_class="internal", contains_client_data=False)
 

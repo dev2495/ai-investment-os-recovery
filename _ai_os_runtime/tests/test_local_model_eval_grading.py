@@ -56,6 +56,13 @@ class LocalModelEvalGradingTests(unittest.TestCase):
         self.assertFalse(grade["passed"])
         self.assertIn("forbidden_term:merger is verified", grade["hard_failures"])
 
+    def test_scoped_suite_is_persisted_when_promoted(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn('parser.add_argument("--suite"', source)
+        self.assertIn('suite_name = str(args.suite or model_config["eval_suite"])', source)
+        self.assertIn("eval_suite={sql_literal(result['suite'])}", source)
+
 
 if __name__ == "__main__":
     unittest.main()

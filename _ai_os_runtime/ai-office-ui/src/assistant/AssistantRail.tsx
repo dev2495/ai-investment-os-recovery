@@ -69,15 +69,15 @@ interface ChatMessage {
 const ROUTES: Array<{ key: ReasoningRoute; label: string; icon: typeof Brain; desc: string }> = [
   { key: "local", label: "Private", icon: Brain, desc: "Natural local Charlie with private portfolio context" },
   { key: "fast", label: "Fast", icon: Zap, desc: "Capped Luna volume model; no client data" },
-  { key: "deep", label: "Deep", icon: Microscope, desc: "Deep cloud research; no client data" },
-  { key: "review", label: "Review", icon: ClipboardCheck, desc: "Independent cloud review; no client data" },
+  { key: "deep", label: "Deep", icon: Microscope, desc: "Terra deep research; explicit use, no client data" },
+  { key: "review", label: "Review", icon: ClipboardCheck, desc: "Sol frontier review; explicit use, no client data" },
 ];
 
 const ROUTE_CONFIG: Record<ReasoningRoute, { routeName: string; privateContext: boolean }> = {
   local: { routeName: "charlie_munger_orchestration", privateContext: true },
   fast: { routeName: "openrouter_luna_volume", privateContext: false },
-  deep: { routeName: "openrouter_research_deep", privateContext: false },
-  review: { routeName: "openrouter_research_review", privateContext: false },
+  deep: { routeName: "openrouter_terra_research", privateContext: false },
+  review: { routeName: "openrouter_sol_review", privateContext: false },
 };
 
 const QUICK_ACTIONS = [

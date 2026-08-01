@@ -45,9 +45,12 @@ MLX_REQUEST_MODEL = os.environ.get(
     "AI_OS_MLX_REQUEST_MODEL",
     "default_model",
 )
-LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
-LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
-LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "128"))
+LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11436/v1").rstrip("/")
+LOCAL_OPENAI_REQUEST_MODEL = os.environ.get(
+    "AI_OS_LOCAL_OPENAI_REQUEST_MODEL",
+    "/Users/devarshthakkar/Library/Application Support/AIOS/models/qwen3.5-9b-4bit-8b2b98c",
+)
+LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "1200"))
 LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "240"))
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
@@ -1255,6 +1258,7 @@ def local_openai_endpoint(model_name: str) -> dict:
         "base_url": LOCAL_OPENAI_BASE_URL,
         "request_model": LOCAL_OPENAI_REQUEST_MODEL,
         "max_output_tokens": LOCAL_OPENAI_MAX_TOKENS,
+        "config": {},
     }
     try:
         rows = run_psql_json(
@@ -1262,7 +1266,7 @@ def local_openai_endpoint(model_name: str) -> dict:
             SELECT base_url,
                    coalesce(nullif(config->>'request_model',''), model_name) AS request_model,
                    coalesce((config->>'max_output_tokens')::INTEGER, {LOCAL_OPENAI_MAX_TOKENS}) AS max_output_tokens,
-                   endpoint_key, status, health_status
+                   endpoint_key, status, health_status, config
             FROM agent.model_endpoints
             WHERE provider='local_openai'
               AND model_name={sql_literal(model_name)}
@@ -1287,6 +1291,7 @@ def local_openai_endpoint(model_name: str) -> dict:
         "base_url": str(row.get("base_url") or LOCAL_OPENAI_BASE_URL).rstrip("/"),
         "request_model": str(row.get("request_model") or LOCAL_OPENAI_REQUEST_MODEL),
         "max_output_tokens": max(32, min(max_output_tokens, 1200)),
+        "config": row.get("config") if isinstance(row.get("config"), dict) else {},
     }
 
 
@@ -1432,24 +1437,32 @@ def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = 
     if not governance.get("assignable"):
         return None, str(governance.get("reason") or "model_not_promoted")
     endpoint = local_openai_endpoint(model_name)
+    endpoint_config = endpoint.get("config") if isinstance(endpoint.get("config"), dict) else {}
+    runtime_name = str(endpoint_config.get("runtime") or "").lower()
+    request_payload = {
+        "model": endpoint["request_model"],
+        "stream": False,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": endpoint["max_output_tokens"],
+        "messages": [
+            {"role": "system", "content": system_prompt or CHARLIE_LOCAL_CONVERSATION_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if "mlx-vlm" in runtime_name:
+        request_payload["enable_thinking"] = bool(endpoint_config.get("enable_thinking", False))
+    else:
+        request_payload.update({
+            "top_k": 20,
+            "cache_prompt": True,
+            "chat_template_kwargs": {"enable_thinking": False},
+        })
     try:
         payload = http_json(
             "POST",
             f"{endpoint['base_url']}/chat/completions",
-            {
-                "model": endpoint["request_model"],
-                "stream": False,
-                "temperature": 0.7,
-                "top_p": 0.95,
-                "top_k": 20,
-                "max_tokens": endpoint["max_output_tokens"],
-                "cache_prompt": True,
-                "chat_template_kwargs": {"enable_thinking": False},
-                "messages": [
-                    {"role": "system", "content": system_prompt or CHARLIE_LOCAL_CONVERSATION_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-            },
+            request_payload,
             timeout=LOCAL_OPENAI_TIMEOUT_SECONDS,
         )
         choices = payload.get("choices") if isinstance(payload, dict) else None
@@ -1461,6 +1474,15 @@ def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = 
         return str(content).strip() if content else None, "called"
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         return None, f"call_failed:{type(exc).__name__}"
+
+
+def cloud_reasoning_effort(model_name: str) -> str:
+    normalized = model_name.lower()
+    if "sol" in normalized:
+        return "high"
+    if "terra" in normalized:
+        return "medium"
+    return "none"
 
 
 def openai_responses_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str, dict]:
@@ -1479,11 +1501,11 @@ def openai_responses_chat(model_name: str, prompt: str, system_prompt: str | Non
                 {
                     "model": model_name,
                     "store": False,
-                    "reasoning": {"effort": "none"},
+                    "reasoning": {"effort": cloud_reasoning_effort(model_name)},
                     "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
                     "instructions": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT,
                     "input": prompt,
-                    "text": {"verbosity": "low"},
+                    "text": {"verbosity": "medium" if cloud_reasoning_effort(model_name) != "none" else "low"},
                 }
             ).encode("utf-8"),
         )
@@ -1536,7 +1558,7 @@ def openrouter_chat(model_name: str, prompt: str, system_prompt: str | None = No
                     "stream": False,
                     "temperature": 0.2,
                     "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
-                    "reasoning": {"effort": "none", "exclude": True},
+                    "reasoning": {"effort": cloud_reasoning_effort(model_name), "exclude": True},
                     "provider": {
                         "zdr": True,
                         "data_collection": "deny",

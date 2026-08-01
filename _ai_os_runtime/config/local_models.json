@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "storage_root": "/Volumes/Devarsh SSD/AI OS Data/ollama/models",
   "runtime": {
     "provider": "ollama",
@@ -167,6 +167,61 @@
       "uses": [
         "charlie_conversation",
         "task_intake",
+        "evidence_bound_summary"
+      ]
+    },
+    {
+      "model": "mlx-community/Qwen3.5-9B-4bit",
+      "provider": "local_openai",
+      "source": "https://huggingface.co/mlx-community/Qwen3.5-9B-4bit",
+      "revision": "8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "local_path": "/Users/devarshthakkar/Library/Application Support/AIOS/models/qwen3.5-9b-4bit-8b2b98c",
+      "runtime": "mlx-vlm==0.6.6",
+      "tier": "mid",
+      "required_profiles": [
+        "macbook"
+      ],
+      "context_tokens": 8192,
+      "max_kv_tokens": 8192,
+      "max_output_tokens": 1400,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "approved",
+      "uses": [
+        "charlie_conversation",
+        "tool_intake",
+        "task_delegation",
+        "evidence_bound_summary"
+      ],
+      "qualification": {
+        "runtime": "mlx-vlm==0.6.6",
+        "kv_cache_quantization": false,
+        "conversation_v1_score": 1.0,
+        "conversation_v1_hard_failures": 0,
+        "mid_v1_score": 0.7143,
+        "mid_v1_allowed": false,
+        "qualified_at": "2026-08-02T03:04:00+05:30"
+      }
+    },
+    {
+      "model": "mlx-community/Qwen3.5-2B-4bit",
+      "provider": "local_openai",
+      "source": "https://huggingface.co/mlx-community/Qwen3.5-2B-4bit",
+      "revision": "674aaa7240b91e8012fcad5d791b7dfe5ba90207",
+      "local_path": "/Volumes/Devarsh SSD/AI OS Data/mlx/models/qwen3.5-2b-4bit-674aaa7",
+      "runtime": "mlx-vlm==0.6.6",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_kv_tokens": 4096,
+      "max_output_tokens": 600,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": [
+        "charlie_conversation_fallback",
+        "task_intake",
+        "tool_selection",
         "evidence_bound_summary"
       ]
     },
