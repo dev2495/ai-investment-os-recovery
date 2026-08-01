@@ -306,36 +306,82 @@ def run_psql_json(query: str) -> list[dict]:
     return json.loads(output or "[]")
 
 
-def run_psql_json_object(queries: dict[str, str], *, row_limit: int | None = None) -> dict[str, list[dict]]:
-    ctes: list[str] = []
-    rows: list[str] = []
-    for index, (name, query) in enumerate(queries.items()):
-        alias = f"q_{index}"
-        limit_clause = f" LIMIT {row_limit}" if row_limit is not None else ""
-        ctes.append(
-            f"""
-            {alias} AS (
-                SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
-                FROM (
-                    SELECT *
-                    FROM ({query}) source_rows{limit_clause}
-                ) result_rows
-            )
-            """
-        )
-        rows.append(f"SELECT {sql_literal(name)} AS key, (SELECT payload::jsonb FROM {alias}) AS value")
-    sql = f"""
-    WITH {','.join(ctes)},
-    payload_rows AS (
-        {' UNION ALL '.join(rows)}
-    )
-    SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb)::text
-    FROM payload_rows;
-    """
-    output = run_psql_text(sql)
-    payload = json.loads(output or "{}")
-    return {key: (value if isinstance(value, list) else []) for key, value in payload.items()}
+SNAPSHOT_SQL_BATCH_SIZE = max(
+    1, int(os.environ.get("AI_OS_SNAPSHOT_SQL_BATCH_SIZE") or 12)
+)
+SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS = max(
+    1000, int(os.environ.get("AI_OS_SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS") or 30000)
+)
 
+
+def run_psql_json_object(
+    queries: dict[str, str],
+    *,
+    row_limit: int | None = None,
+    batch_size: int | None = None,
+    error_collector: list[dict] | None = None,
+) -> dict[str, list[dict]]:
+    """Execute snapshot sections in bounded SQL batches to cap PostgreSQL memory."""
+    query_items = list(queries.items())
+    if not query_items:
+        return {}
+
+    effective_batch_size = max(1, int(batch_size or SNAPSHOT_SQL_BATCH_SIZE))
+    data: dict[str, list[dict]] = {}
+    for offset in range(0, len(query_items), effective_batch_size):
+        batch_items = query_items[offset:offset + effective_batch_size]
+        ctes: list[str] = []
+        rows: list[str] = []
+        for index, (name, query) in enumerate(batch_items):
+            alias = f"q_{index}"
+            limit_clause = f" LIMIT {row_limit}" if row_limit is not None else ""
+            ctes.append(
+                f"""
+                {alias} AS (
+                    SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
+                    FROM (
+                        SELECT *
+                        FROM ({query}) source_rows{limit_clause}
+                    ) result_rows
+                )
+                """
+            )
+            rows.append(
+                f"SELECT {sql_literal(name)} AS key, "
+                f"(SELECT payload::jsonb FROM {alias}) AS value"
+            )
+        sql = f"""
+        SET statement_timeout = '{SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS}ms';
+        SET work_mem = '4MB';
+        SET hash_mem_multiplier = 1.0;
+        WITH {','.join(ctes)},
+        payload_rows AS (
+            {' UNION ALL '.join(rows)}
+        )
+        SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb)::text
+        FROM payload_rows;
+        """
+        batch_names = [name for name, _query in batch_items]
+        try:
+            output = run_psql_text(sql)
+            payload = json.loads(output or "{}")
+            data.update({
+                key: (value if isinstance(value, list) else [])
+                for key, value in payload.items()
+            })
+            for name in batch_names:
+                data.setdefault(name, [])
+        except Exception as exc:  # noqa: BLE001
+            if error_collector is None:
+                raise
+            error_collector.append({
+                "section": "snapshot_query_batch",
+                "batch_offset": offset,
+                "query_keys": batch_names,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            data.update({name: [] for name in batch_names})
+    return data
 
 def run_psql_json_statement(sql: str) -> list[dict]:
     output = run_psql_text(sql)
@@ -484,11 +530,11 @@ def build_office_snapshot() -> dict:
             LIMIT 1
         """,
     }
-    try:
-        data = run_psql_json_object(queries, row_limit=160)
-    except Exception as exc:  # noqa: BLE001
-        issues.append({"section": "office_snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
-        data = {name: [] for name in queries}
+    data = run_psql_json_object(
+        queries,
+        row_limit=160,
+        error_collector=issues,
+    )
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -6391,11 +6437,11 @@ def build_snapshot() -> dict:
             ORDER BY record_class, area
         """,
     }
-    try:
-        data = run_psql_json_object(queries, row_limit=160)
-    except Exception as exc:  # noqa: BLE001
-        issues.append({"section": "snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
-        data = {name: [] for name in queries}
+    data = run_psql_json_object(
+        queries,
+        row_limit=160,
+        error_collector=issues,
+    )
 
     # Preserve the previous snapshot contract while clients migrate to canonical keys.
     data["blueprint_v9_summary"] = data.get("blueprint_summary", [])

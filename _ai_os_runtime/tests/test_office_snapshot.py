@@ -11,9 +11,15 @@ class OfficeSnapshotContractTest(unittest.TestCase):
     def test_graph_node_worker_summary_uses_view_output_column(self) -> None:
         captured: dict[str, str] = {}
 
-        def fake_batch(queries: dict[str, str], *, row_limit: int | None = None) -> dict[str, list[dict]]:
+        def fake_batch(
+            queries: dict[str, str],
+            *,
+            row_limit: int | None = None,
+            error_collector: list[dict] | None = None,
+        ) -> dict[str, list[dict]]:
             captured.update(queries)
             self.assertEqual(row_limit, 160)
+            self.assertIsNotNone(error_collector)
             return {key: [] for key in queries}
 
         with mock.patch.object(ai_os_api_server, "run_psql_json_object", fake_batch):
