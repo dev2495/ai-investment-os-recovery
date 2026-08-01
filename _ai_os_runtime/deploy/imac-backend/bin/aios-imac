@@ -570,11 +570,11 @@ verify_backend() {
   printf 'DATABASE_INVARIANTS=%s\n' "${invariants}"
   [[ "$(printf '%s' "${invariants}" | jq -r '.execution_locked')" == "true" ]] || die "Execution lock invariant failed"
 
-  if ! curl -fsS "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" \
+  if ! curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" \
     | jq -e '.result.collections | length >= 6' >/dev/null; then
     die "Qdrant must expose at least six indexed collections"
   fi
-  if ! curl -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" \
+  if ! curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" \
     | jq -e --arg model "${AI_OS_EMBEDDING_MODEL}" '.models | any((.name // .model) == $model)' >/dev/null; then
     die "Ollama is missing the configured embedding model: ${AI_OS_EMBEDDING_MODEL}"
   fi

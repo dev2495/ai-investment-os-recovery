@@ -468,6 +468,72 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertIn("'fallback_used', true", statements[0])
         self.assertIn("error_message='call_failed:TimeoutError'", statements[0])
 
+    def test_openai_responses_is_stateless_and_normalizes_usage(self) -> None:
+        captured_request = None
+
+        def fake_urlopen(request, timeout):
+            nonlocal captured_request
+            captured_request = request
+            self.assertEqual(timeout, 240)
+            return FakeResponse(
+                {
+                    "output_text": "The evidence is incomplete.",
+                    "usage": {"input_tokens": 21, "output_tokens": 7, "total_tokens": 28},
+                }
+            )
+
+        with (
+            mock.patch.object(ai_os_api_server, "OPENAI_API_KEY", "test-key"),
+            mock.patch.object(ai_os_api_server.urllib.request, "urlopen", fake_urlopen),
+        ):
+            content, status, usage = ai_os_api_server.openai_responses_chat(
+                "gpt-5.6-luna", "Review the evidence.", "Use verified facts only."
+            )
+
+        request_payload = json.loads(captured_request.data.decode("utf-8"))
+        self.assertEqual(captured_request.full_url, "https://api.openai.com/v1/responses")
+        self.assertFalse(request_payload["store"])
+        self.assertEqual(request_payload["reasoning"], {"effort": "none"})
+        self.assertEqual(request_payload["instructions"], "Use verified facts only.")
+        self.assertEqual(request_payload["input"], "Review the evidence.")
+        self.assertEqual(content, "The evidence is incomplete.")
+        self.assertEqual(status, "called")
+        self.assertEqual(usage["prompt_tokens"], 21)
+        self.assertEqual(usage["completion_tokens"], 7)
+
+    def test_openai_responses_parses_nested_output(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server, "OPENAI_API_KEY", "test-key"),
+            mock.patch.object(
+                ai_os_api_server.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(
+                    {"output": [{"content": [{"type": "output_text", "text": "Bounded answer."}]}]}
+                ),
+            ),
+        ):
+            content, status, _ = ai_os_api_server.openai_responses_chat(
+                "gpt-5.6-luna", "Answer."
+            )
+
+        self.assertEqual(content, "Bounded answer.")
+        self.assertEqual(status, "called")
+
+    def test_openai_responses_fails_closed_without_key(self) -> None:
+        with mock.patch.object(ai_os_api_server, "OPENAI_API_KEY", ""):
+            content, status, usage = ai_os_api_server.openai_responses_chat(
+                "gpt-5.6-luna", "Answer."
+            )
+
+        self.assertIsNone(content)
+        self.assertEqual(status, "openai_key_unavailable")
+        self.assertEqual(usage, {})
+
+    def test_cost_tier_order_blocks_heavy_autonomous_escalation(self) -> None:
+        self.assertTrue(ai_os_api_server.cost_tier_allowed("cloud_low", "cloud_low"))
+        self.assertFalse(ai_os_api_server.cost_tier_allowed("cloud_medium", "cloud_low"))
+        self.assertFalse(ai_os_api_server.cost_tier_allowed("frontier", "cloud_medium"))
+
 
 if __name__ == "__main__":
     unittest.main()

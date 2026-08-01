@@ -52,6 +52,10 @@ LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SE
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MAX_COMPLETION_TOKENS = int(os.environ.get("AI_OS_OPENROUTER_MAX_COMPLETION_TOKENS", "1200"))
+OPENAI_BASE_URL = os.environ.get("AI_OS_OPENAI_URL", "https://api.openai.com/v1").rstrip("/")
+OPENAI_API_KEY = os.environ.get("AI_OS_OPENAI_API_KEY", "").strip()
+OPENAI_MAX_OUTPUT_TOKENS = int(os.environ.get("AI_OS_OPENAI_MAX_OUTPUT_TOKENS", "1200"))
+CLOUD_CHAT_PROVIDERS = {"openai", "openrouter"}
 TRADINGVIEW_CDP_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
 EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "charlie_munger_orchestration")
@@ -1408,6 +1412,59 @@ def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = 
         return str(content).strip() if content else None, "called"
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         return None, f"call_failed:{type(exc).__name__}"
+
+
+def openai_responses_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str, dict]:
+    """Call OpenAI Responses with stateless storage and normalized token usage."""
+    if not OPENAI_API_KEY:
+        return None, "openai_key_unavailable", {}
+    try:
+        request = urllib.request.Request(
+            f"{OPENAI_BASE_URL}/responses",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(
+                {
+                    "model": model_name,
+                    "store": False,
+                    "reasoning": {"effort": "none"},
+                    "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
+                    "instructions": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT,
+                    "input": prompt,
+                    "text": {"verbosity": "low"},
+                }
+            ).encode("utf-8"),
+        )
+        with urllib.request.urlopen(request, timeout=240) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        content = payload.get("output_text") if isinstance(payload, dict) else None
+        if not content and isinstance(payload, dict):
+            parts: list[str] = []
+            for output_item in payload.get("output") or []:
+                if not isinstance(output_item, dict):
+                    continue
+                for content_item in output_item.get("content") or []:
+                    if isinstance(content_item, dict) and content_item.get("type") == "output_text":
+                        value = content_item.get("text")
+                        if value:
+                            parts.append(str(value))
+            content = "\n".join(parts)
+        raw_usage = payload.get("usage") if isinstance(payload, dict) and isinstance(payload.get("usage"), dict) else {}
+        usage = {
+            **raw_usage,
+            "prompt_tokens": int(raw_usage.get("input_tokens") or 0),
+            "completion_tokens": int(raw_usage.get("output_tokens") or 0),
+            "total_tokens": int(raw_usage.get("total_tokens") or 0),
+        }
+        return (str(content).strip() if content else None), "called", usage
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        return None, f"call_failed:HTTPError:{exc.code}:{detail}", {}
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return None, f"call_failed:{type(exc).__name__}", {}
 
 
 def openrouter_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str, dict]:
@@ -13314,6 +13371,19 @@ def estimate_model_call_cost(
     }
 
 
+COST_TIER_RANK = {
+    "local": 0,
+    "local_plus": 1,
+    "cloud_low": 2,
+    "cloud_medium": 3,
+    "frontier": 4,
+}
+
+
+def cost_tier_allowed(route_tier: str | None, maximum_tier: str | None) -> bool:
+    return COST_TIER_RANK.get(str(route_tier or ""), 99) <= COST_TIER_RANK.get(str(maximum_tier or ""), -1)
+
+
 def choose_chat_model_call(payload: dict, prompt: str) -> dict:
     agent_name = str(payload.get("assistant_name") or payload.get("assistantName") or "Charlie Munger").strip()
     privacy_class = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
@@ -13328,6 +13398,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                assignment.fallback_route, assignment.escalation_route,
                assignment.max_autonomous_cost_tier,
                cap.cloud_requires_approval, cap.autonomous_cloud_allowed,
+               cap.max_cost_tier AS cap_max_cost_tier,
                cap.hard_stop_on_breach, cap.daily_cap_usd, cap.monthly_cap_usd,
                cap.cost_today_usd, cap.cost_month_usd,
                cap.daily_remaining_usd, cap.monthly_remaining_usd,
@@ -13347,7 +13418,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
     # Specialist prompts must fail closed. A conversation-only model is not a
     # valid fallback for research, valuation, filing, strategy, or backtest work.
     fallback_candidates = (
-        (requested_route, assignment.get("fallback_route"), CHAT_MODEL_ROUTE)
+        (requested_route, assignment.get("fallback_route"), assignment.get("escalation_route"), CHAT_MODEL_ROUTE)
         if requested_route == CHAT_MODEL_ROUTE
         else (requested_route,)
     )
@@ -13386,13 +13457,23 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                 reason = "model_unavailable"
             else:
                 reason = str(governance.get("reason") or "evaluation_required")
-        elif provider == "openrouter":
+        elif provider in CLOUD_CHAT_PROVIDERS:
+            max_completion_tokens = (
+                OPENAI_MAX_OUTPUT_TOKENS if provider == "openai" else OPENROUTER_MAX_COMPLETION_TOKENS
+            )
             cost_estimate = estimate_model_call_cost(
                 provider,
                 model_name,
                 len(prompt),
-                OPENROUTER_MAX_COMPLETION_TOKENS,
+                max_completion_tokens,
             )
+            try:
+                system_budget_rows = run_psql_json(
+                    "SELECT * FROM agent.v_system_model_budget_status WHERE policy_key='ai_os_cloud' LIMIT 1"
+                )
+            except RuntimeError:
+                system_budget_rows = []
+            system_budget = system_budget_rows[0] if system_budget_rows else None
             daily_cap = Decimal(str(assignment.get("daily_cap_usd") or 0))
             monthly_cap = Decimal(str(assignment.get("monthly_cap_usd") or 0))
             cost_today = Decimal(str(assignment.get("cost_today_usd") or 0))
@@ -13400,6 +13481,8 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             cost_block_reason = None
             if cost_estimate is None:
                 cost_block_reason = "cost_rate_missing"
+            elif system_budget is None:
+                cost_block_reason = "system_cloud_budget_unavailable"
             elif daily_cap <= 0 or monthly_cap <= 0:
                 cost_block_reason = "cloud_budget_disabled"
             else:
@@ -13408,23 +13491,44 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                     cost_block_reason = "daily_cost_cap_would_breach"
                 elif cost_month + estimated_cost > monthly_cap:
                     cost_block_reason = "monthly_cost_cap_would_breach"
+                elif estimated_cost > Decimal(str(system_budget.get("daily_remaining_usd") or 0)):
+                    cost_block_reason = "system_daily_cost_cap_would_breach"
+                elif estimated_cost > Decimal(str(system_budget.get("monthly_remaining_usd") or 0)):
+                    cost_block_reason = "system_monthly_cost_cap_would_breach"
+                elif str(system_budget.get("budget_status") or "unconfigured") in {
+                    "daily_hard_cap_breach", "monthly_hard_cap_breach", "disabled"
+                }:
+                    cost_block_reason = "system_cloud_budget_hard_stop"
+            route_cost_tier = str((cost_estimate or {}).get("cost_tier") or route.get("max_cost_tier") or "frontier")
+            autonomous_cloud = (
+                bool(assignment.get("autonomous_cloud_allowed"))
+                and not bool(assignment.get("cloud_requires_approval", True))
+                and cost_tier_allowed(route_cost_tier, assignment.get("max_autonomous_cost_tier"))
+            )
+            approved_cloud = (
+                cloud_approved
+                and cost_tier_allowed(route_cost_tier, assignment.get("cap_max_cost_tier"))
+            )
+            provider_has_key = bool(OPENAI_API_KEY) if provider == "openai" else bool(OPENROUTER_API_KEY)
             available = (
-                bool(OPENROUTER_API_KEY)
-                and cloud_approved
+                provider_has_key
+                and (autonomous_cloud or approved_cloud)
                 and privacy_class in {"public", "internal"}
                 and not contains_client_data
                 and cost_block_reason is None
             )
-            if not OPENROUTER_API_KEY:
-                reason = "openrouter_key_unavailable"
-            elif not cloud_approved:
-                reason = "explicit_cloud_approval_required"
+            if not provider_has_key:
+                reason = f"{provider}_key_unavailable"
             elif privacy_class not in {"public", "internal"} or contains_client_data:
                 reason = "cloud_route_blocks_client_private_context"
+            elif not autonomous_cloud and not cloud_approved:
+                reason = "explicit_cloud_approval_required"
+            elif cloud_approved and not approved_cloud:
+                reason = "approved_route_exceeds_agent_cost_tier"
             elif cost_block_reason:
                 reason = cost_block_reason
             else:
-                reason = "available"
+                reason = "available_autonomous_capped" if autonomous_cloud and not cloud_approved else "available_explicit_approval"
         elif provider in {"local_python", "deterministic", "local_tools"}:
             available = False
             reason = "deterministic_tool_route_not_chat_model"
@@ -13435,13 +13539,14 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             "route_name": route_name, "provider": provider,
             "model_name": model_name, "available_for_chat": available, "reason": reason,
         }
-        if provider == "openrouter":
+        if provider in CLOUD_CHAT_PROVIDERS:
             candidate_record["cost_estimate"] = cost_estimate
             candidate_record["cost_cap"] = {
                 "daily_cap_usd": float(Decimal(str(assignment.get("daily_cap_usd") or 0))),
                 "monthly_cap_usd": float(Decimal(str(assignment.get("monthly_cap_usd") or 0))),
                 "cost_today_usd": float(Decimal(str(assignment.get("cost_today_usd") or 0))),
                 "cost_month_usd": float(Decimal(str(assignment.get("cost_month_usd") or 0))),
+                "system_budget": system_budget,
                 "hard_stop_on_breach": bool(assignment.get("hard_stop_on_breach", True)),
                 "cap_status": str(assignment.get("cap_status") or "unconfigured"),
             }
@@ -13449,7 +13554,11 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             candidate_record["governance"] = governance
         candidates.append(candidate_record)
         if selected is None and available:
-            selected = {**route, "_cost_estimate": cost_estimate if provider == "openrouter" else None}
+            selected = {
+                **route,
+                "_cost_estimate": cost_estimate if provider in CLOUD_CHAT_PROVIDERS else None,
+                "_autonomous_cloud": autonomous_cloud if provider in CLOUD_CHAT_PROVIDERS else False,
+            }
 
     policy = run_psql_json(
         f"SELECT * FROM agent.model_privacy_policies WHERE privacy_class={sql_literal(privacy_class)} LIMIT 1"
@@ -13460,10 +13569,10 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
         block_reasons.append("client_data_requires_client_private_or_restricted_class")
     if len(prompt) > int(policy["max_context_chars"]):
         block_reasons.append("context_exceeds_privacy_policy_limit")
-    if selected and str(selected.get("default_provider")) == "openrouter":
+    if selected and str(selected.get("default_provider")) in CLOUD_CHAT_PROVIDERS:
         if not bool(policy.get("cloud_model_allowed")):
             block_reasons.append("privacy_policy_blocks_cloud_model")
-        if not cloud_approved:
+        if not cloud_approved and not bool(selected.get("_autonomous_cloud")):
             block_reasons.append("explicit_cloud_approval_required")
         if contains_client_data or privacy_class not in {"public", "internal"}:
             block_reasons.append("cloud_route_blocks_client_private_context")
@@ -13644,7 +13753,8 @@ def request_model_escalation(payload: dict) -> dict:
 
 
 def record_selected_model_usage(decision: dict, model_status: str, usage: dict | None = None) -> None:
-    if str(decision.get("selected_provider") or "") != "openrouter":
+    provider = str(decision.get("selected_provider") or "")
+    if provider not in CLOUD_CHAT_PROVIDERS:
         return
     route_record = decision.get("selected_route_record") or {}
     estimate = route_record.get("_cost_estimate") or {}
@@ -13652,7 +13762,8 @@ def record_selected_model_usage(decision: dict, model_status: str, usage: dict |
         return
     usage = usage or {}
     prompt_tokens_est = int(estimate.get("prompt_tokens_est") or 1)
-    completion_tokens_est = int(estimate.get("completion_tokens_reserved") or OPENROUTER_MAX_COMPLETION_TOKENS)
+    default_completion_tokens = OPENAI_MAX_OUTPUT_TOKENS if provider == "openai" else OPENROUTER_MAX_COMPLETION_TOKENS
+    completion_tokens_est = int(estimate.get("completion_tokens_reserved") or default_completion_tokens)
     actual_prompt_tokens = int(usage.get("prompt_tokens") or 0)
     actual_completion_tokens = int(usage.get("completion_tokens") or 0)
     actual_total_tokens = int(usage.get("total_tokens") or 0)
@@ -13678,7 +13789,7 @@ def record_selected_model_usage(decision: dict, model_status: str, usage: dict |
             ) VALUES (
                 'model_call_decision', {sql_literal(source_ref)},
                 {sql_literal(decision.get('agent_name'))}, {sql_literal(decision.get('selected_route'))},
-                'openrouter', {sql_literal(decision.get('selected_model'))},
+                {sql_literal(provider)}, {sql_literal(decision.get('selected_model'))},
                 'chat', 'chat', {sql_literal(model_status)},
                 {prompt_tokens_est}, {completion_tokens_est}, {prompt_tokens_est + completion_tokens_est},
                 {actual_prompt_tokens if actual_prompt_tokens else 'NULL'},
@@ -13690,7 +13801,7 @@ def record_selected_model_usage(decision: dict, model_status: str, usage: dict |
                 'pre_call_rate_and_reserved_completion',
                 {int(estimate['rate_id'])},
                 {sql_jsonb([{'table':'agent.model_call_decisions','id':decision.get('id')},{'raw_prompt_stored':False}])},
-                {sql_jsonb({'explicit_cloud_approval':True,'zdr_required':True,'data_collection':'deny','usage':usage})},
+                {sql_jsonb({'explicit_cloud_approval':not bool(route_record.get('_autonomous_cloud')),'autonomous_capped':bool(route_record.get('_autonomous_cloud')),'store':False,'zdr_required':provider == 'openrouter','data_collection':'deny','usage':usage})},
                 'AI OS model call control plane'
             )
             ON CONFLICT (source_kind, source_ref) WHERE source_ref IS NOT NULL
@@ -14214,7 +14325,7 @@ def message_requires_client_private_context(message: str) -> bool:
 
 def is_explicit_cloud_route_selection(payload: dict, route: dict) -> bool:
     route_name = str(payload.get("route_name") or payload.get("routeName") or "").strip()
-    return bool(route_name and str(route.get("default_provider") or "") == "openrouter")
+    return bool(route_name and str(route.get("default_provider") or "") in CLOUD_CHAT_PROVIDERS)
 
 
 def deterministic_chat_reply(
@@ -15456,14 +15567,14 @@ def chat_with_charlie(payload: dict) -> dict:
     preview_route = get_model_route(requested_route)
     requires_client_private_context = bool(include_client_context and message_requires_client_private_context(message))
     model_retrieval_hits = retrieval_hits
-    if str(preview_route.get("default_provider") or "") == "openrouter":
+    if str(preview_route.get("default_provider") or "") in CLOUD_CHAT_PROVIDERS:
         # Cloud receives only the bounded deterministic draft. Local Qdrant
         # snippets may contain unrelated client material and never cross this boundary.
         model_retrieval_hits = []
     base_session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
     session_key = base_session_key + ":" + slug_for_text(str(identity.get("agent_name") or "charlie"))
     history: list[dict] = []
-    if include_client_context and str(preview_route.get("default_provider") or "") != "openrouter":
+    if include_client_context and str(preview_route.get("default_provider") or "") not in CLOUD_CHAT_PROVIDERS:
         history = load_chat_history(session_key, limit=4)
     verified_draft = deterministic_chat_reply(
         message,
@@ -15534,7 +15645,7 @@ def chat_with_charlie(payload: dict) -> dict:
     started = time.perf_counter()
     control_payload = dict(payload)
     control_payload["contains_client_data"] = requires_client_private_context
-    if str(preview_route.get("default_provider") or "") == "openrouter":
+    if str(preview_route.get("default_provider") or "") in CLOUD_CHAT_PROVIDERS:
         if requires_client_private_context:
             control_payload["route_name"] = CHAT_MODEL_ROUTE
             control_payload["privacy_class"] = "client_private"
@@ -15580,6 +15691,8 @@ def chat_with_charlie(payload: dict) -> dict:
             assistant_message, model_status = mlx_chat(selected_model, prompt, identity_system_prompt)
         elif route.get("default_provider") == "local_openai":
             assistant_message, model_status = local_openai_chat(selected_model, prompt, identity_system_prompt)
+        elif route.get("default_provider") == "openai":
+            assistant_message, model_status, cloud_usage = openai_responses_chat(selected_model, prompt, identity_system_prompt)
         elif route.get("default_provider") == "openrouter":
             assistant_message, model_status, cloud_usage = openrouter_chat(selected_model, prompt, identity_system_prompt)
         else:
@@ -15711,6 +15824,8 @@ def chat_with_charlie(payload: dict) -> dict:
             "mlx_url": MLX_BASE_URL,
             "local_openai_url": LOCAL_OPENAI_BASE_URL,
             "openrouter_key_available": bool(OPENROUTER_API_KEY),
+            "openai_url": OPENAI_BASE_URL,
+            "openai_key_available": bool(OPENAI_API_KEY),
             "embedding_model": EMBEDDING_MODEL,
             "embedding_available": ollama_model_available(EMBEDDING_MODEL),
             "chat_model_available": (
@@ -15718,6 +15833,8 @@ def chat_with_charlie(payload: dict) -> dict:
                 if route.get("default_provider") == "mlx"
                 else local_openai_model_available(str(route.get("default_model") or ""))
                 if route.get("default_provider") == "local_openai"
+                else bool(OPENAI_API_KEY)
+                if route.get("default_provider") == "openai"
                 else bool(OPENROUTER_API_KEY)
                 if route.get("default_provider") == "openrouter"
                 else ollama_model_available(str(route.get("default_model") or ""))
