@@ -534,6 +534,52 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertFalse(ai_os_api_server.cost_tier_allowed("cloud_medium", "cloud_low"))
         self.assertFalse(ai_os_api_server.cost_tier_allowed("frontier", "cloud_medium"))
 
+    def test_zerodha_stream_status_marks_stale_token_as_login_required(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[{"status": "running", "health_status": "connected_no_recent_ticks", "connection_state": "connected", "live_count": 8}],
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "zerodha_auth_status",
+                return_value={
+                    "status": "needs_credentials_or_daily_login",
+                    "daily_access_token_available": False,
+                    "stale_access_token_present": True,
+                    "login_url": "https://kite.test/login",
+                },
+            ),
+        ):
+            result = ai_os_api_server.zerodha_stream_status()
+
+        self.assertEqual(result["status"]["status"], "paused_for_daily_login")
+        self.assertEqual(result["status"]["health_status"], "login_required")
+        self.assertEqual(result["status"]["connection_state"], "disconnected")
+        self.assertEqual(result["status"]["live_count"], 0)
+        self.assertTrue(result["session"]["stale_access_token_present"])
+        self.assertFalse(result["broker_write_allowed"])
+
+    def test_zerodha_stream_status_preserves_current_connection(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[{"status": "running", "health_status": "live", "connection_state": "connected", "live_count": 8}],
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "zerodha_auth_status",
+                return_value={"status": "configured", "daily_access_token_available": True},
+            ),
+        ):
+            result = ai_os_api_server.zerodha_stream_status()
+
+        self.assertEqual(result["status"]["health_status"], "live")
+        self.assertEqual(result["status"]["connection_state"], "connected")
+        self.assertEqual(result["status"]["live_count"], 8)
+
 
 if __name__ == "__main__":
     unittest.main()

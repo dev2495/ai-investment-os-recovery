@@ -8350,19 +8350,33 @@ def sync_zerodha_read_only(payload: dict) -> dict:
 def zerodha_stream_status() -> dict:
     health = run_psql_json("SELECT * FROM market.v_zerodha_stream_health")
     session = zerodha_auth_status()
-    return {
-        "status": health[0] if health else {
-            "health_status": "not_started",
+    current_session = bool(session.get("daily_access_token_available"))
+    effective_status = health[0] if health else {
+        "health_status": "not_started",
+        "connection_state": "disconnected",
+        "quote_count": 0,
+        "live_count": 0,
+        "broker_write_allowed": False,
+    }
+    if not current_session:
+        effective_status = {
+            **effective_status,
+            "status": "paused_for_daily_login",
+            "health_status": "login_required",
             "connection_state": "disconnected",
-            "quote_count": 0,
             "live_count": 0,
-            "broker_write_allowed": False,
-        },
+            "error_message": None,
+        }
+    return {
+        "status": effective_status,
         "session": {
             "status": session.get("status"),
             "api_key_configured": bool(session.get("api_key_configured")),
             "api_secret_configured": bool(session.get("api_secret_configured")),
-            "daily_access_token_available": bool(session.get("daily_access_token_available")),
+            "daily_access_token_available": current_session,
+            "access_token_expiry_known": bool(session.get("access_token_expiry_known")),
+            "access_token_expires_at": session.get("access_token_expires_at"),
+            "stale_access_token_present": bool(session.get("stale_access_token_present")),
             "manual_daily_login_required": True,
             "renewal_mode": "human_login_with_automatic_callback_exchange",
             "login_url": session.get("login_url"),
