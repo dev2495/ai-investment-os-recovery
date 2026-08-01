@@ -1620,6 +1620,20 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
         )
         if scoped_is_executing and idle_claim and not re.search(r"\bnot\s+idle\b", normalized):
             violations.append("scoped_employee_activity_contradiction")
+    for operation in (context or {}).get("tool_results") or []:
+        if str(operation.get("tool") or "") != "delegate_agent_work":
+            continue
+        result = operation.get("result") if isinstance(operation.get("result"), dict) else {}
+        message_id = result.get("id")
+        generated_task_id = result.get("generated_task_id")
+        if not str(message_id or "").isdigit() or str(generated_task_id or "").isdigit():
+            continue
+        task_id_claim = re.search(
+            rf"\btask\s+(?:id\s*)?#?{int(message_id)}\b|\btask\s*#{int(message_id)}\b",
+            normalized,
+        )
+        if task_id_claim:
+            violations.append("agent_message_id_mislabelled_as_task_id")
     if (context or {}).get("broad_office_request"):
         if not re.search(r"\bportfolio\b.{0,180}\b(?:inr|exposure|market value|holding|nav)\b", normalized):
             violations.append("office_brief_portfolio_missing")

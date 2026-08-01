@@ -133,6 +133,37 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertNotIn("reasoning_or_prompt_leak", violations)
         self.assertNotIn("unsupported_capital_recommendation", violations)
 
+    def test_rejects_agent_message_id_mislabelled_as_task_id(self) -> None:
+        def fake_psql(query: str):
+            if "FROM agent.model_routes" in query:
+                return []
+            if "FROM trading.execution_control_state" in query:
+                return [{
+                    "global_execution_locked": True,
+                    "live_broker_writes_allowed": False,
+                }]
+            return []
+
+        context = {
+            "filing_summary": [{"filing_count": 12}],
+            "tool_results": [{
+                "tool": "delegate_agent_work",
+                "status": "unread",
+                "result": {
+                    "id": 136,
+                    "status": "unread",
+                    "processing_status": "pending",
+                },
+            }],
+        }
+        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+            violations = ai_os_api_server.validate_charlie_model_response(
+                "I assigned the analyst. The task is stored as task ID 136 and is pending.",
+                context,
+            )
+
+        self.assertIn("agent_message_id_mislabelled_as_task_id", violations)
+
     def test_rejects_explicit_prompt_or_chain_of_thought_leak(self) -> None:
         with mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[]):
             violations = ai_os_api_server.validate_charlie_model_response(
