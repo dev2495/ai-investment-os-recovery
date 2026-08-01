@@ -11,6 +11,7 @@ VENV_DIR="${KRONOS_HOME}/venv"
 CACHE_DIR="${KRONOS_HOME}/huggingface"
 PIP_CACHE_DIR="${KRONOS_HOME}/pip-cache"
 TMP_DIR="${KRONOS_HOME}/tmp"
+XDG_CACHE_DIR="${KRONOS_HOME}/xdg-cache"
 REVISION="67b630e67f6a18c9e9be918d9b4337c960db1e9a"
 
 if [[ ! -d "/Volumes/Devarsh SSD" ]]; then
@@ -22,7 +23,7 @@ if [[ ! -x "${PYTHON_BOOTSTRAP}" ]]; then
   exit 1
 fi
 
-mkdir -p "${KRONOS_HOME}/source" "${CACHE_DIR}" "${PIP_CACHE_DIR}" "${TMP_DIR}"
+mkdir -p "${KRONOS_HOME}/source" "${CACHE_DIR}/hub" "${CACHE_DIR}/xet" "${PIP_CACHE_DIR}" "${TMP_DIR}" "${XDG_CACHE_DIR}"
 export PIP_CACHE_DIR TMPDIR="${TMP_DIR}"
 export AI_OS_KRONOS_HOME="${KRONOS_HOME}"
 export AI_OS_KRONOS_REPO="${SOURCE_DIR}"
@@ -30,6 +31,8 @@ export AI_OS_KRONOS_CACHE="${CACHE_DIR}"
 export AI_OS_KRONOS_PYTHON="${VENV_DIR}/bin/python"
 export HF_HOME="${CACHE_DIR}"
 export HF_HUB_CACHE="${CACHE_DIR}/hub"
+export HF_XET_CACHE="${CACHE_DIR}/xet"
+export XDG_CACHE_HOME="${XDG_CACHE_DIR}"
 
 if [[ ! -d "${SOURCE_DIR}/.git" ]]; then
   git clone --filter=blob:none https://github.com/shiyu-coder/Kronos.git "${SOURCE_DIR}"

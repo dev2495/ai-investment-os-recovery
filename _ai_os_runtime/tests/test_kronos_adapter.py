@@ -36,6 +36,13 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertEqual(len(kronos_inference_worker.KRONOS_MODEL_SHA256), 64)
         self.assertEqual(len(kronos_inference_worker.KRONOS_TOKENIZER_SHA256), 64)
 
+    def test_setup_contains_all_huggingface_caches_in_runtime_home(self) -> None:
+        setup = (RUNTIME_ROOT / "scripts" / "setup_kronos_runtime.sh").read_text(encoding="utf-8")
+        self.assertIn('export HF_HOME="${CACHE_DIR}"', setup)
+        self.assertIn('export HF_HUB_CACHE="${CACHE_DIR}/hub"', setup)
+        self.assertIn('export HF_XET_CACHE="${CACHE_DIR}/xet"', setup)
+        self.assertIn('export XDG_CACHE_HOME="${XDG_CACHE_DIR}"', setup)
+
     def test_graph_studio_uses_model_revision_not_source_revision(self) -> None:
         source = (
             RUNTIME_ROOT
