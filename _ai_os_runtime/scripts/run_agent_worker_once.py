@@ -51,6 +51,28 @@ def slugify(value: str) -> str:
     return cleaned[:80] or "agent-run"
 
 
+COMPANY_TOKEN_STOP_WORDS = {
+    "AI", "ANALYST", "AND", "AVAILABLE", "CHARLIE", "COMPANY", "DECISION",
+    "EVIDENCE", "FILING", "FACTS", "LATEST", "MEMO", "MISSING", "NO", "PREPARE",
+    "RESEARCH", "REVIEW", "RISK", "SEPARATE", "THE", "TRADE",
+}
+
+
+def extract_company_query(job: dict[str, Any], message: dict[str, Any]) -> str:
+    """Extract an explicit exchange-style symbol from a delegated research request."""
+    text = " ".join(
+        str(value or "")
+        for value in (
+            job.get("title"),
+            job.get("objective"),
+            message.get("subject"),
+            message.get("body"),
+        )
+    )
+    candidates = re.findall(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9&.-]{1,19}(?![A-Za-z0-9])", text)
+    return next((token for token in candidates if token not in COMPANY_TOKEN_STOP_WORDS), "")
+
+
 def sql_literal(value: Any) -> str:
     if value is None:
         return "NULL"
@@ -407,6 +429,74 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                 LIMIT 1
                 """
             )
+        if skill_key == "company_research_note" and not base.get("research_source"):
+            company_query = extract_company_query(job, message)
+            base["company_research"] = {
+                "query": company_query,
+                "filing_inventory": psql_one(
+                    """
+                    SELECT count(*)::INT AS total_filings,
+                           max(filed_at) AS latest_filed_at
+                    FROM research.v_corporate_filing_inbox
+                    """
+                ),
+                "filings": [],
+                "holding_theses": [],
+                "ideas": [],
+                "notes": [],
+            }
+            if company_query:
+                match = "%" + company_query.lower() + "%"
+                base["company_research"]["filings"] = psql_json(
+                    f"""
+                    SELECT filing_id,source_name,exchange,symbol,company_name,title,
+                           filing_type,event_type,filed_at,source_url,attachment_url,
+                           extraction_status,opportunity_score,risk_score,event_status
+                    FROM research.v_corporate_filing_inbox
+                    WHERE upper(coalesce(symbol,''))={sql_literal(company_query.upper())}
+                       OR lower(coalesce(company_name,'')) LIKE {sql_literal(match)}
+                       OR lower(coalesce(title,'')) LIKE {sql_literal(match)}
+                    ORDER BY filed_at DESC NULLS LAST,filing_id DESC
+                    LIMIT 10
+                    """
+                )
+                base["company_research"]["holding_theses"] = psql_json(
+                    f"""
+                    SELECT id,symbol,exchange,thesis_status,thesis_note_path,
+                           valuation_note_path,risk_note_path,last_reviewed_at,
+                           next_review_due_at,conviction_score,valuation_range,risks
+                    FROM portfolio.holding_theses
+                    WHERE upper(symbol)={sql_literal(company_query.upper())}
+                    ORDER BY last_reviewed_at DESC NULLS LAST,id DESC
+                    LIMIT 10
+                    """
+                )
+                base["company_research"]["ideas"] = psql_json(
+                    f"""
+                    SELECT id,idea_type,title,symbols,thesis,catalyst,expected_timeframe,
+                           opportunity_score,risk_score,status,owner_agent,evidence,
+                           output_note_path,updated_at
+                    FROM research.ideas
+                    WHERE {sql_literal(company_query.upper())}=ANY(symbols)
+                       OR lower(title) LIKE {sql_literal(match)}
+                    ORDER BY updated_at DESC,id DESC
+                    LIMIT 10
+                    """
+                )
+                base["company_research"]["notes"] = psql_json(
+                    f"""
+                    SELECT id,note_path,title,note_type,tags,body_summary,last_modified_at,indexed_at
+                    FROM knowledge.obsidian_notes
+                    WHERE lower(title) LIKE {sql_literal(match)}
+                       OR lower(coalesce(body_summary,'')) LIKE {sql_literal(match)}
+                       OR {sql_literal(company_query.lower())}=ANY(
+                           SELECT lower(tag) FROM unnest(tags) AS tag
+                       )
+                    ORDER BY coalesce(last_modified_at,indexed_at) DESC,id DESC
+                    LIMIT 10
+                    """
+                )
+                base["selected_filing_evidence"] = base["company_research"]["filings"]
         if skill_key in {"head_quant_governance", "validate_strategy_model", "generate_strategy_hypothesis"}:
             base["workflow_contracts"] = psql_json(
                 """
@@ -929,6 +1019,77 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
             "Open the stored source artifact and approve or reject each extracted claim before durable thesis use.",
             "Send only approved, falsifiable claims to Head of Quant for point-in-time testing.",
         ])
+    elif skill_key == "company_research_note":
+        research = context.get("company_research") or {}
+        query = str(research.get("query") or "").strip()
+        inventory = research.get("filing_inventory") or {}
+        filings = list(research.get("filings") or [])
+        theses = list(research.get("holding_theses") or [])
+        ideas = list(research.get("ideas") or [])
+        notes = list(research.get("notes") or [])
+        as_of = inventory.get("latest_filed_at") or "unavailable"
+        filing_lines = [
+            f"- Filing `{row.get('filing_id')}`: {row.get('source_name')} "
+            f"{row.get('exchange') or ''}:{row.get('symbol') or ''}, "
+            f"filed `{row.get('filed_at') or 'unknown'}`; "
+            f"[{row.get('title') or 'Untitled filing'}]"
+            f"({row.get('attachment_url') or row.get('source_url') or ''}); "
+            f"extraction=`{row.get('extraction_status') or 'unknown'}`."
+            for row in filings
+        ]
+        thesis_lines = [
+            f"- Holding thesis `{row.get('id')}`: status=`{row.get('thesis_status')}`, "
+            f"last_reviewed=`{row.get('last_reviewed_at') or 'never'}`, "
+            f"conviction=`{row.get('conviction_score')}`."
+            for row in theses
+        ]
+        idea_lines = [
+            f"- Idea `{row.get('id')}`: {row.get('title')} status=`{row.get('status')}`, "
+            f"owner=`{row.get('owner_agent') or 'unassigned'}`, updated=`{row.get('updated_at')}`."
+            for row in ideas
+        ]
+        note_lines = [
+            f"- Note `{row.get('note_path')}`: {row.get('title')}, "
+            f"indexed=`{row.get('indexed_at')}`."
+            for row in notes
+        ]
+        lines.append("\n".join([
+            "## Company Research Decision Memo",
+            f"- Requested company/symbol: `{query or 'not identified'}`.",
+            f"- Filing warehouse boundary: {inventory.get('total_filings', 0)} rows; latest filed_at `{as_of}`.",
+            "",
+            "### Verified facts",
+            *(filing_lines or [f"- No official filing row matched `{query}` in the current warehouse. This is a missing-evidence result, not evidence that no filing exists."]),
+            *(thesis_lines or [f"- No holding-thesis row matched `{query}`."]),
+            *(idea_lines or [f"- No research-idea row matched `{query}`."]),
+            *(note_lines or [f"- No indexed Obsidian note matched `{query}`."]),
+            "",
+            "### Inference",
+            "- No investment inference is promoted unless it is traceable to the matched source rows above.",
+            "- Existing triage scores, thesis status, and idea status are workflow metadata, not a buy or sell conclusion.",
+            "",
+            "### Missing evidence",
+            *(
+                ["- The matched filing attachments still require document-level extraction and term verification."]
+                if filings
+                else ["- The requested official filing is absent from the current matched warehouse set; collector coverage or entity mapping must be checked."]
+            ),
+            "- Current market context, management commentary, valuation, disconfirming evidence, and portfolio fit were not supplied by this bounded request.",
+            "",
+            "### Decision status",
+            "- Insufficient evidence for a trade, price target, sizing, or client action.",
+            "- Broker write allowed: false. Live execution allowed: false. Human review required: true.",
+        ]))
+        if not query:
+            next_actions.append("Ask the operator for an exact exchange symbol or company name, then rerun the evidence lookup.")
+        elif not filings:
+            next_actions.append(
+                f"Run the official NSE/BSE collector and entity-resolution check for `{query}`, "
+                "then repeat this memo with the matched filing ID."
+            )
+        else:
+            next_actions.append("Extract and verify every matched official attachment before updating the durable company thesis.")
+        next_actions.append("Route any verified material finding to independent Risk and human review; do not place an order.")
     elif context.get("research_source") and skill_key in {"generate_strategy_hypothesis", "head_quant_governance", "validate_strategy_model"}:
         source = context.get("research_source") or {}
         hypotheses = context.get("research_hypotheses") or []
@@ -1360,12 +1521,28 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
             updated_at = now()
         WHERE id = {int(job.get('inbox_item_id')) if job.get('inbox_item_id') is not None else -1}
         RETURNING id, status, updated_at
+    ),
+    updated_message AS (
+        UPDATE agent.agent_messages
+        SET status = 'read',
+            read_at = coalesce(read_at, now()),
+            processing_status = 'processed',
+            processed_at = now(),
+            error_message = NULL,
+            metadata = coalesce(metadata, '{{}}'::jsonb) || jsonb_build_object(
+                'completed_worker_run_id', (SELECT id FROM inserted_run),
+                'completed_output_note_path', {sql_literal(relative_note)},
+                'completed_at', now()
+            )
+        WHERE generated_task_id = {int(job.get('task_id'))}
+        RETURNING id,status,processing_status,processed_at
     )
     SELECT json_build_object(
         'worker_run', (SELECT row_to_json(inserted_run) FROM inserted_run),
         'task', (SELECT row_to_json(updated_task) FROM updated_task),
         'widget', (SELECT row_to_json(updated_widget) FROM updated_widget),
-        'inbox', (SELECT row_to_json(updated_inbox) FROM updated_inbox)
+        'inbox', (SELECT row_to_json(updated_inbox) FROM updated_inbox),
+        'message', (SELECT row_to_json(updated_message) FROM updated_message)
     )::text;
     """
     return json.loads(psql_text(sql))

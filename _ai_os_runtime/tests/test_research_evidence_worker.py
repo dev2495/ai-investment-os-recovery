@@ -77,6 +77,81 @@ class ResearchEvidenceWorkerTest(unittest.TestCase):
         self.assertTrue(any("rerun this skill" in action for action in next_actions))
 
 
+    def test_company_research_request_extracts_symbol(self) -> None:
+        query = run_agent_worker_once.extract_company_query(
+            {"objective": "Review latest available RELIANCE filing and prepare a decision memo."},
+            {"subject": "Company research", "body": "Separate facts from inference. No trade."},
+        )
+        self.assertEqual(query, "RELIANCE")
+
+    def test_company_research_missing_filing_is_explicit_and_non_actionable(self) -> None:
+        summary, next_actions = run_agent_worker_once.summary_for(
+            {
+                "task_id": 503,
+                "owner_agent": "Research Analyst",
+                "suggested_skill_key": "company_research_note",
+                "source_kind": "agent_message",
+            },
+            {
+                "agent_name": "Research Analyst",
+                "display_title": "Company Research Analyst",
+                "cost_policy": "local_first_cloud_only_after_approval",
+            },
+            {"skill_key": "company_research_note", "skill_name": "Company Research Note"},
+            {
+                "company_research": {
+                    "query": "RELIANCE",
+                    "filing_inventory": {
+                        "total_filings": 1365,
+                        "latest_filed_at": "2026-07-31T10:20:42+00:00",
+                    },
+                    "filings": [],
+                    "holding_theses": [{"id": 9, "thesis_status": "needs_review"}],
+                    "ideas": [],
+                    "notes": [],
+                }
+            },
+        )
+
+        self.assertIn("Company Research Decision Memo", summary)
+        self.assertIn("No official filing row matched `RELIANCE`", summary)
+        self.assertIn("missing-evidence result", summary)
+        self.assertIn("Insufficient evidence for a trade", summary)
+        self.assertIn("Broker write allowed: false", summary)
+        self.assertNotIn("Processed internal message", summary)
+        self.assertTrue(any("entity-resolution" in action for action in next_actions))
+
+    def test_complete_job_marks_originating_message_processed(self) -> None:
+        captured: dict[str, str] = {}
+
+        def fake_psql(sql: str) -> str:
+            captured["sql"] = sql
+            return '{"worker_run":{"id":408},"message":{"id":136,"status":"read","processing_status":"processed"}}'
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(run_agent_worker_once, "VAULT_ROOT", Path(directory)),
+            mock.patch.object(run_agent_worker_once, "psql_text", side_effect=fake_psql),
+        ):
+            note_path = Path(directory) / "ai memory" / "output.md"
+            result = run_agent_worker_once.complete_job(
+                {
+                    "task_id": 503,
+                    "owner_agent": "Research Analyst",
+                    "suggested_skill_key": "company_research_note",
+                },
+                {"agent_name": "Research Analyst"},
+                {"skill_key": "company_research_note"},
+                {"note_persistence": {"status": "deferred_error", "spool_path": "/tmp/output.md"}},
+                "Evidence-backed output.",
+                note_path,
+            )
+
+        self.assertEqual(result["message"]["processing_status"], "processed")
+        self.assertIn("UPDATE agent.agent_messages", captured["sql"])
+        self.assertIn("processing_status = 'processed'", captured["sql"])
+        self.assertIn("WHERE generated_task_id = 503", captured["sql"])
+
     def test_worker_note_uses_internal_spool_before_vault_mirror(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
