@@ -275,6 +275,54 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertEqual(payload["symbol"], "RELIANCE")
         self.assertEqual(payload["timeframe"], "15")
 
+    def test_charlie_routes_relative_strength_template_without_duplicate_open(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "execute_tradingview_template_action",
+                return_value={"status": "approval_required", "template_key": "relative_strength_ratio_chart"},
+            ) as template_action,
+            mock.patch.object(ai_os_api_server, "open_tradingview_desktop_chart") as desktop_open,
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Build RELIANCE versus NIFTY relative strength chart in TradingView"
+            )
+
+        self.assertEqual(len(operations), 1)
+        self.assertEqual(operations[0]["tool"], "execute_tradingview_template_action")
+        payload = template_action.call_args.args[0]
+        self.assertEqual(payload["template_key"], "relative_strength_ratio_chart")
+        self.assertEqual(payload["symbol"], "RELIANCE")
+        self.assertEqual(payload["parameters"]["benchmark"], "NIFTY")
+        desktop_open.assert_not_called()
+
+    def test_charlie_straddle_template_names_missing_contract_fields(self) -> None:
+        with mock.patch.object(ai_os_api_server, "execute_tradingview_template_action") as template_action:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Open NIFTY straddle four chart layout in TradingView"
+            )
+
+        self.assertEqual(operations[0]["status"], "needs_input")
+        self.assertIn("expiry", operations[0]["detail"])
+        self.assertIn("call_symbol", operations[0]["detail"])
+        self.assertIn("put_symbol", operations[0]["detail"])
+        template_action.assert_not_called()
+
+    def test_charlie_fundamental_dashboard_uses_filing_cross_check(self) -> None:
+        with mock.patch.object(
+            ai_os_api_server,
+            "execute_tradingview_template_action",
+            return_value={"status": "approval_required", "template_key": "fundamental_ratio_dashboard"},
+        ) as template_action:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Build RELIANCE fundamental ratio dashboard in TradingView"
+            )
+
+        self.assertEqual(operations[0]["status"], "approval_required")
+        payload = template_action.call_args.args[0]
+        self.assertTrue(payload["parameters"]["filing_cross_check_required"])
+        self.assertIn("RETURN_ON_INVESTED_CAPITAL", payload["parameters"]["fields"])
+
 
 if __name__ == "__main__":
     unittest.main()

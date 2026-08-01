@@ -21,8 +21,8 @@ import {
 import { useStrategyArsenal, useTradingQuantRisk } from "../../data/queries";
 import {
   useCreateStrategyIntake, useRunBacktest, useRunOptimization,
-  useRunUserOptimizer, useRunDiscovery, useRunJournalMining,
-  useRunModelValidation, useStartPaperMonitor,
+  useRunDiscovery, useRunJournalMining, useRunModelValidation,
+  useStartPaperMonitor,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -299,8 +299,8 @@ function BacktestsView() {
   const runs = data?.quant_lab ?? [];
   const [selected, setSelected] = React.useState<LiveRow | null>(null);
 
-  function runBacktest(intakeId: number) {
-    backtestMut.mutate({ intake_id: intakeId, actor: "Devarsh" }, {
+  function runBacktest(candidateId: number) {
+    backtestMut.mutate({ candidate_id: candidateId, actor: "Devarsh" }, {
       onSuccess: () => pushToast({ title: "Backtest started", tone: "ok", duration: 3000 }),
       onError: (e) => pushToast({ title: "Backtest failed", message: e.message, tone: "risk", duration: 5000 }),
     });
@@ -320,7 +320,7 @@ function BacktestsView() {
               { key: "cagr", header: "CAGR", align: "right", render: (r) => formatPercent(num(r, "cagr", 0), { alreadyPercent: true }) },
               { key: "trades", header: "Trades", align: "right", render: (r) => num(r, "trade_count", 0) },
               { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "run_status", text(r, "status", "complete"))} /> },
-              { key: "actions", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Play} onClick={(e) => { e.stopPropagation(); runBacktest(num(r, "intake_id", num(r, "strategy_id", 0))); }}>Re-run</Button> },
+              { key: "actions", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Play} onClick={(e) => { e.stopPropagation(); runBacktest(num(r, "strategy_id", 0)); }}>Run</Button> },
             ]}
             rows={runs}
             rowKey={(r, i) => String(text(r, "backtest_id", text(r, "id", i)))}
@@ -379,7 +379,7 @@ function BacktestDrawer({ run, onClose }: { run: LiveRow | null; onClose: () => 
  * ============================================================ */
 function OptimizerView() {
   const { data, isLoading } = useTradingQuantRisk();
-  const optMut = useRunUserOptimizer();
+  const optMut = useRunOptimization();
   const pushToast = useUIStore((s) => s.pushToast);
   const runs = data?.quant_lab ?? [];
   const [selected, setSelected] = React.useState("");
@@ -387,7 +387,7 @@ function OptimizerView() {
 
   function optimize() {
     if (!selected) { pushToast({ title: "Pick a strategy", tone: "warn", duration: 2500 }); return; }
-    optMut.mutate({ intake_id: Number(selected), parameters: { walk_forward: walkForward }, actor: "Devarsh" }, {
+    optMut.mutate({ candidate_id: Number(selected), walk_forward: walkForward, actor: "Devarsh" }, {
       onSuccess: () => pushToast({ title: "Optimization started", tone: "ok", duration: 3000 }),
       onError: (e) => pushToast({ title: "Optimization failed", message: e.message, tone: "risk", duration: 5000 }),
     });
@@ -400,7 +400,7 @@ function OptimizerView() {
           <>
             <Select value={selected} onChange={(e) => setSelected(e.target.value)} style={{ width: 220 }}>
               <option value="">Pick a strategy…</option>
-              {runs.map((r, i) => <option key={i} value={text(r, "intake_id", text(r, "strategy_id", i))}>{text(r, "strategy_name", text(r, "name"))}</option>)}
+              {runs.map((r, i) => <option key={i} value={text(r, "strategy_id", i)}>{text(r, "strategy_name", text(r, "name"))}</option>)}
             </Select>
             <Button size="sm" variant="primary" icon={Zap} onClick={optimize} disabled={optMut.isPending}>Run</Button>
           </>

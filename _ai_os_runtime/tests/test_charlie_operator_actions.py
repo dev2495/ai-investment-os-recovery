@@ -82,6 +82,60 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertFalse(operations[0]["result"]["live_execution_allowed"])
         generic_delegation.assert_not_called()
 
+    def test_multiple_article_urls_are_deduplicated_and_ingested(self) -> None:
+        captured: list[dict] = []
+
+        def fake_ingest(payload: dict) -> dict:
+            captured.append(payload)
+            return {"status": "assigned", "live_execution_allowed": False, "paper": {"id": len(captured)}}
+
+        with mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Read and analyze https://example.com/a https://example.com/b https://example.com/a"
+            )
+
+        self.assertEqual([item["tool"] for item in operations], [
+            "ingest_research_source", "ingest_research_source",
+        ])
+        self.assertEqual(
+            [item["source_url"] for item in captured],
+            ["https://example.com/a", "https://example.com/b"],
+        )
+        self.assertTrue(all(item["desired_outputs"][-1] == "backtest_spec" for item in captured))
+
+    def test_explicit_article_hypothesis_is_queued_once_for_a_source_batch(self) -> None:
+        captured: list[dict] = []
+
+        def fake_ingest(payload: dict) -> dict:
+            captured.append(payload)
+            return {"status": "assigned", "live_execution_allowed": False, "paper": {"id": len(captured)}}
+
+        with mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest):
+            ai_os_api_server.execute_charlie_safe_tools(
+                "Read https://example.com/a and https://example.com/b and test hypothesis that "
+                "post-earnings gap downs mean revert within five sessions, then delegate evidence review"
+            )
+
+        self.assertEqual(
+            captured[0]["hypothesis"],
+            "post-earnings gap downs mean revert within five sessions",
+        )
+        self.assertNotIn("hypothesis", captured[1])
+
+    def test_generic_testable_hypotheses_request_does_not_invent_one(self) -> None:
+        captured = {}
+
+        def fake_ingest(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "assigned", "live_execution_allowed": False, "paper": {"id": 1}}
+
+        with mock.patch.object(ai_os_api_server, "ingest_research_source", fake_ingest):
+            ai_os_api_server.execute_charlie_safe_tools(
+                "Analyze https://example.com/a and produce testable hypotheses"
+            )
+
+        self.assertNotIn("hypothesis", captured)
+
     def test_negated_source_command_does_not_ingest(self) -> None:
         with mock.patch.object(ai_os_api_server, "ingest_research_source") as ingest:
             operations = ai_os_api_server.execute_charlie_safe_tools(
@@ -181,6 +235,81 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(operations[0]["tool"], "delegate_agent_work")
         self.assertEqual(captured["to_agent"], "Head of Quant")
         self.assertEqual(captured["related_skill_key"], "head_quant_governance")
+
+    def test_explicit_candidate_backtest_runs_deterministic_engine(self) -> None:
+        captured = {}
+
+        def fake_backtest(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "completed", "backtest_run_id": 17, "live_execution_allowed": False}
+
+        with mock.patch.object(ai_os_api_server, "run_strategy_backtest", fake_backtest):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Run a backtest for candidate 42"
+            )
+
+        self.assertEqual(operations[0]["tool"], "run_strategy_backtest")
+        self.assertEqual(captured["candidate_id"], 42)
+        self.assertEqual(captured["actor"], "Devarsh via Charlie")
+        self.assertFalse(operations[0]["result"]["live_execution_allowed"])
+
+    def test_named_candidate_backtest_requires_one_unique_match(self) -> None:
+        captured = {}
+
+        def fake_backtest(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "completed", "backtest_run_id": 18}
+
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[
+                    {"id": 7, "candidate_key": "nifty-rsi-reversal", "name": "NIFTY RSI reversal"},
+                    {"id": 9, "candidate_key": "banknifty-breakout", "name": "BANKNIFTY breakout"},
+                ],
+            ),
+            mock.patch.object(ai_os_api_server, "run_strategy_backtest", fake_backtest),
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Backtest strategy NIFTY RSI reversal"
+            )
+
+        self.assertEqual(operations[0]["status"], "completed")
+        self.assertEqual(captured["candidate_id"], 7)
+
+    def test_ambiguous_backtest_request_does_not_guess(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[
+                    {"id": 7, "candidate_key": "rsi-one", "name": "RSI reversal"},
+                    {"id": 8, "candidate_key": "rsi-two", "name": "RSI reversal intraday"},
+                ],
+            ),
+            mock.patch.object(ai_os_api_server, "run_strategy_backtest") as backtest,
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Run a backtest on RSI reversal intraday"
+            )
+
+        self.assertEqual(operations[0]["status"], "needs_candidate")
+        self.assertEqual(len(operations[0]["matches"]), 2)
+        backtest.assert_not_called()
+
+    def test_explicit_candidate_optimization_runs_deterministic_engine(self) -> None:
+        with mock.patch.object(
+            ai_os_api_server,
+            "run_strategy_optimization",
+            return_value={"status": "completed", "optimization_run_id": 4},
+        ) as optimize:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Optimize candidate 42"
+            )
+
+        self.assertEqual(operations[0]["tool"], "run_strategy_optimization")
+        self.assertEqual(optimize.call_args.args[0]["candidate_id"], 42)
 
     def test_explicit_quant_team_outranks_research_subject_words(self) -> None:
         captured = {}

@@ -209,7 +209,7 @@ export function useCreateStrategyIntake() {
 }
 
 export interface BacktestInput {
-  intake_id: number;
+  candidate_id: number;
   start_date?: string;
   end_date?: string;
   parameters?: Record<string, unknown>;
@@ -224,7 +224,7 @@ export function useRunBacktest() {
 }
 
 export interface OptimizationInput {
-  intake_id: number;
+  candidate_id: number;
   parameter_space?: Record<string, unknown>;
   walk_forward?: boolean;
   actor?: string;
@@ -238,9 +238,21 @@ export function useRunOptimization() {
 }
 
 export interface UserOptimizerInput {
-  intake_id: number;
-  parameters?: Record<string, unknown>;
-  data_source?: string;
+  strategy_name: string;
+  intake_text: string;
+  asset_class?: string;
+  universe?: string;
+  timeframe?: string;
+  template?: string;
+  symbols?: string[];
+  dsl_text?: string;
+  constraints_text?: string;
+  risk_notes?: string;
+  cost_bps?: number;
+  slippage_bps?: number;
+  max_symbols?: number;
+  min_rows_per_symbol?: number;
+  min_total_rows?: number;
   actor?: string;
 }
 

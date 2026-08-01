@@ -15303,6 +15303,158 @@ def _graph_subject_from_message(message: str, fallback: str) -> str:
     return subject[:500] or fallback
 
 
+def _explicit_hypothesis_from_message(message: str) -> str:
+    """Extract only an operator-stated hypothesis, never invent one from a source URL."""
+    patterns = (
+        r"\btest\s+(?:the\s+)?hypothesis\s+that\s+(.{8,800})$",
+        r"\btest\s+whether\s+(.{8,800})$",
+        r"\bhypothesis\s+(?:is|that)\s+(.{8,800})$",
+        r"\bhypothesis\s*(?::|=|-)\s*(.{8,800})$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+        hypothesis = re.sub(r"https://[^\s<>\]\[()]+", "", match.group(1))
+        hypothesis = re.split(
+            r"\b(?:then\s+)?(?:and\s+)?(?:delegate|assign|send)\b",
+            hypothesis,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        hypothesis = re.sub(r"\s+", " ", hypothesis).strip(" \t\r\n.,;:-\"'")
+        if len(hypothesis) >= 8:
+            return hypothesis[:800]
+    return ""
+
+
+def _resolve_strategy_candidate_from_message(message: str) -> dict:
+    explicit = re.search(
+        r"\b(?:candidate|strategy)(?:\s+id)?\s*#?\s*(\d+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if explicit:
+        return {"status": "resolved", "candidate_id": int(explicit.group(1)), "match": "explicit_id"}
+
+    candidates = run_psql_json(
+        "SELECT id,candidate_key,name FROM strategy.strategy_candidates "
+        "ORDER BY updated_at DESC,id DESC LIMIT 100"
+    )
+    normalized = re.sub(r"\s+", " ", message.lower())
+    matches: list[dict] = []
+    seen_ids: set[int] = set()
+    for candidate in candidates:
+        candidate_id = int(candidate.get("id") or 0)
+        labels = [str(candidate.get("candidate_key") or "").strip(), str(candidate.get("name") or "").strip()]
+        if candidate_id and any(len(label) >= 4 and label.lower() in normalized for label in labels):
+            if candidate_id not in seen_ids:
+                matches.append(candidate)
+                seen_ids.add(candidate_id)
+    if len(matches) == 1:
+        return {"status": "resolved", "candidate_id": int(matches[0]["id"]), "match": "unique_name"}
+    return {
+        "status": "needs_candidate",
+        "detail": "Name one unique strategy candidate or include its candidate ID.",
+        "matches": [{"id": row.get("id"), "candidate_key": row.get("candidate_key"), "name": row.get("name")} for row in matches[:8]],
+    }
+
+
+def infer_tradingview_template_request(message: str) -> dict | None:
+    normalized = re.sub(r"\s+", " ", message.lower()).strip()
+    if "tradingview" not in normalized or not re.search(r"\b(?:open|show|load|build|create)\b", normalized):
+        return None
+
+    template_key = ""
+    if "straddle" in normalized and any(term in normalized for term in ("four pane", "4 pane", "four chart", "4 chart", "layout")):
+        template_key = "option_straddle_four_pane"
+    elif "relative strength" in normalized or "ratio chart" in normalized:
+        template_key = "relative_strength_ratio_chart"
+    elif "spread" in normalized and any(term in normalized for term in ("pair", "formula", "chart")):
+        template_key = "spread_pair_formula_chart"
+    elif "fundamental" in normalized and any(term in normalized for term in ("ratio", "chart", "dashboard")):
+        template_key = "fundamental_ratio_dashboard"
+    elif "market regime" in normalized:
+        template_key = "market_regime_four_pane"
+    elif "indicator" in normalized and any(
+        term in normalized for term in ("stack", "rsi", "macd", "atr", "vwap", "supertrend", "volume")
+    ):
+        template_key = "technical_indicator_stack"
+    elif "alert" in normalized:
+        template_key = "create_alert_request"
+    if not template_key:
+        return None
+
+    ignored = {
+        "TRADINGVIEW", "NSE", "BSE", "NFO", "BFO", "MCX", "RSI", "MACD", "ATR", "VWAP",
+        "CALL", "PUT", "OI", "IV", "ROCE", "ROIC", "USDINR", "INDIAVIX",
+    }
+    symbol_candidates = [
+        item.upper() for item in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,29}\b", message)
+        if item.upper() not in ignored
+    ]
+    if not symbol_candidates:
+        natural_symbol = re.search(
+            r"\b(?:for|of)\s+([A-Za-z][A-Za-z0-9&.-]{1,29})\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if natural_symbol and natural_symbol.group(1).lower() != "tradingview":
+            symbol_candidates = [natural_symbol.group(1).upper()]
+    symbol_candidates = list(dict.fromkeys(symbol_candidates))
+
+    timeframe_match = re.search(
+        r"\b(1|3|5|15|30|45|60|120|240|D|W|M)\s*(?:MIN|MINS|MINUTE|MINUTES)?\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    payload: dict[str, object] = {
+        "template_key": template_key,
+        "symbol": symbol_candidates[0] if symbol_candidates else "",
+        "exchange": "NSE",
+        "timeframe": timeframe_match.group(1).upper() if timeframe_match else "D",
+        "actor": "Devarsh via Charlie",
+        "instruction": message,
+        "source_ref": "charlie_chat",
+        "parameters": {},
+    }
+    parameters = payload["parameters"]
+    missing: list[str] = []
+
+    if template_key == "relative_strength_ratio_chart":
+        benchmark_match = re.search(r"\b(?:versus|vs\.?|against|benchmark)\s*[:=-]?\s*([A-Za-z][A-Za-z0-9&.-]{1,29})", message, flags=re.IGNORECASE)
+        benchmark = benchmark_match.group(1).upper() if benchmark_match else (symbol_candidates[1] if len(symbol_candidates) > 1 else "")
+        parameters["benchmark"] = benchmark
+        missing = [key for key, value in (("symbol", payload["symbol"]), ("benchmark", benchmark)) if not value]
+    elif template_key == "spread_pair_formula_chart":
+        parameters.update({"leg_a": symbol_candidates[0] if symbol_candidates else "", "leg_b": symbol_candidates[1] if len(symbol_candidates) > 1 else "", "hedge_ratio": "1"})
+        missing = [key for key in ("leg_a", "leg_b") if not parameters[key]]
+    elif template_key == "option_straddle_four_pane":
+        call_match = re.search(r"\bcall(?:\s+symbol)?\s*[:=-]?\s*([A-Za-z0-9&.-]{4,40})", message, flags=re.IGNORECASE)
+        put_match = re.search(r"\bput(?:\s+symbol)?\s*[:=-]?\s*([A-Za-z0-9&.-]{4,40})", message, flags=re.IGNORECASE)
+        expiry_match = re.search(r"\bexpiry\s*[:=-]?\s*([A-Za-z0-9-]{4,20})", message, flags=re.IGNORECASE)
+        strike_match = re.search(r"\bstrike\s*[:=-]?\s*(\d{2,8}(?:\.\d+)?)", message, flags=re.IGNORECASE)
+        parameters.update({"underlying": payload["symbol"], "expiry": expiry_match.group(1).upper() if expiry_match else "", "strike": strike_match.group(1) if strike_match else "", "call_symbol": call_match.group(1).upper() if call_match else "", "put_symbol": put_match.group(1).upper() if put_match else ""})
+        missing = [key for key in ("underlying", "expiry", "strike", "call_symbol", "put_symbol") if not parameters[key]]
+    elif template_key == "technical_indicator_stack":
+        catalog = ("VWAP", "Volume", "RSI", "MACD", "ATR", "Supertrend")
+        requested = [item for item in catalog if item.lower() in normalized]
+        parameters["indicators"] = requested or list(catalog)
+        missing = [] if payload["symbol"] else ["symbol"]
+    elif template_key == "fundamental_ratio_dashboard":
+        parameters.update({"fields": ["TOTAL_REVENUE", "NET_INCOME", "OPERATING_MARGIN", "RETURN_ON_INVESTED_CAPITAL", "TOTAL_DEBT", "PRICE_EARNINGS", "PRICE_BOOK"], "filing_cross_check_required": True})
+        missing = [] if payload["symbol"] else ["symbol"]
+    elif template_key == "market_regime_four_pane":
+        payload["symbol"] = payload["symbol"] or "NIFTY"
+        parameters.update({"equity_index": "NSE:NIFTY", "volatility_index": "NSE:INDIAVIX", "bond_yield": "TVC:IN10Y", "currency": "FX_IDC:USDINR"})
+    elif template_key == "create_alert_request":
+        condition_match = re.search(r"\balert\s+(?:me\s+)?(?:when|if)\s+(.{4,500})$", message, flags=re.IGNORECASE)
+        parameters["condition"] = condition_match.group(1).strip() if condition_match else ""
+        missing = [key for key, value in (("symbol", payload["symbol"]), ("condition", parameters["condition"])) if not value]
+
+    return {"payload": payload, "missing": missing}
+
+
 def infer_graph_control_command(message: str) -> dict | None:
     """Return an explicit, bounded graph command; never infer writes from questions."""
     normalized = re.sub(r"\s+", " ", message.lower()).strip()
@@ -15533,7 +15685,10 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             tool_name, callback = handlers[graph_action]
             invoke(tool_name, callback, "graph_run_id")
 
-    source_urls = re.findall(r"https://[^\s<>\]\[()]+", message)
+    source_urls = list(dict.fromkeys(
+        url.rstrip(".,;:!?")
+        for url in re.findall(r"https://[^\s<>\]\[()]+", message)
+    ))[:5]
     source_intent = bool(
         re.search(
             r"\b(?:ingest|read|analy[sz]e|review|extract|summari[sz]e|study|research)\b",
@@ -15548,19 +15703,24 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
         )
     )
     if source_urls and source_intent and not source_intent_negated:
-        source_url = source_urls[0].rstrip(".,;:!?")
-        invoke(
-            "ingest_research_source",
-            lambda: ingest_research_source({
+        explicit_hypothesis = _explicit_hypothesis_from_message(message)
+        for source_index, source_url in enumerate(source_urls):
+            source_payload = {
                 "source_url": source_url,
                 "source_key": "github" if "github.com" in source_url.lower() else "web",
                 "research_objective": message,
                 "desired_outputs": ["research_note", "hypothesis_review", "backtest_spec"],
                 "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
                 "actor": f"Devarsh via {actor}",
-            }),
-            "live_execution_allowed",
-        )
+            }
+            # A batch-level hypothesis is recorded once; every source still gets its own evidence task.
+            if explicit_hypothesis and source_index == 0:
+                source_payload["hypothesis"] = explicit_hypothesis
+            invoke(
+                "ingest_research_source",
+                lambda payload=source_payload: ingest_research_source(payload),
+                "live_execution_allowed",
+            )
 
     if explicit_refresh and "news" in normalized:
         invoke(
@@ -15677,10 +15837,68 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             "candidate_key",
         )
 
+    backtest_command = bool(
+        re.search(
+            r"\b(?:(?:run|start|re-run|rerun|queue)\s+(?:a\s+|the\s+)?(?:strategy\s+)?backtest|backtest\s+(?:candidate|strategy))\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+    )
+    optimization_command = bool(
+        re.search(
+            r"\b(?:(?:run|start)\s+(?:an?\s+|the\s+)?(?:strategy\s+)?optimi[sz]ation|optimi[sz]e\s+(?:candidate|strategy))\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+    )
+    if backtest_command and not strategy_command and not graph_command:
+        resolved = _resolve_strategy_candidate_from_message(message)
+        if resolved.get("status") == "resolved":
+            invoke(
+                "run_strategy_backtest",
+                lambda: run_strategy_backtest({
+                    "candidate_id": resolved["candidate_id"],
+                    "actor": "Devarsh via Charlie",
+                }),
+                "status",
+            )
+        else:
+            results.append({"tool": "run_strategy_backtest", **resolved})
+    if optimization_command and not strategy_command and not graph_command:
+        resolved = _resolve_strategy_candidate_from_message(message)
+        if resolved.get("status") == "resolved":
+            invoke(
+                "run_strategy_optimization",
+                lambda: run_strategy_optimization({
+                    "candidate_id": resolved["candidate_id"],
+                    "actor": "Devarsh via Charlie",
+                }),
+                "status",
+            )
+        else:
+            results.append({"tool": "run_strategy_optimization", **resolved})
+
+    tradingview_template_request = infer_tradingview_template_request(message)
+    if tradingview_template_request:
+        missing = tradingview_template_request.get("missing") or []
+        if missing:
+            results.append({
+                "tool": "execute_tradingview_template_action",
+                "status": "needs_input",
+                "detail": "TradingView template requires: " + ", ".join(str(item) for item in missing),
+                "template_key": tradingview_template_request["payload"]["template_key"],
+            })
+        else:
+            invoke(
+                "execute_tradingview_template_action",
+                lambda: execute_tradingview_template_action(tradingview_template_request["payload"]),
+                "status",
+            )
 
     tradingview_desktop_command = (
         "tradingview" in normalized
         and re.search(r"\b(?:open|show|load)\b", message, flags=re.IGNORECASE)
+        and not tradingview_template_request
     )
     if tradingview_desktop_command:
         symbol_candidates = re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
