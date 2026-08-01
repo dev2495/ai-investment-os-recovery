@@ -133,6 +133,21 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertEqual(result["task"]["status"], "waiting_input")
         self.assertTrue(result["desktop"]["cdp_fallback"]["available"])
 
+    def test_frontend_can_launch_an_installed_stopped_desktop(self) -> None:
+        frontend = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "trading"
+            / "TradingDesk.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("const desktopInstalled = Boolean(desktopStatus.installed)", frontend)
+        self.assertIn("status === \"handoff_requested\"", frontend)
+        self.assertIn('disabled={busy || !desktopInstalled}', frontend)
+        self.assertNotIn('disabled={busy || !desktopRunning}', frontend)
+
     def test_charlie_routes_explicit_desktop_chart_command(self) -> None:
         with mock.patch.object(
             ai_os_api_server,

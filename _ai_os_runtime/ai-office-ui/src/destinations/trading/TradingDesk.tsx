@@ -241,7 +241,8 @@ function TradingViewBridgeView() {
 
   const desktopStatus = desktop.data ?? {};
   const cdpStatus = (data?.tradingview_cdp ?? {}) as LiveRow;
-  const desktopReady = Boolean(desktopStatus.automation_permission);
+  const desktopInstalled = Boolean(desktopStatus.installed);
+  const desktopReady = desktopInstalled;
   const desktopRunning = Boolean(desktopStatus.running);
   const cdpReady = Boolean(cdpStatus.available);
   const busy = openDesktop.isPending || captureChart.isPending || runTemplate.isPending;
@@ -260,11 +261,12 @@ function TradingViewBridgeView() {
       {
         onSuccess: (result) => {
           setLastResult(result);
-          const opened = text(result, "status") === "opened";
+          const status = text(result, "status");
+          const handedOff = status === "opened" || status === "handoff_requested";
           notify(
-            opened ? "Opened in TradingView Desktop" : "Desktop permission required",
-            opened ? "ok" : "warn",
-            opened ? `${exchange}:${symbol.toUpperCase()} | ${timeframe}` : text(result, "fallback")
+            handedOff ? "Sent to TradingView Desktop" : "Desktop action needs attention",
+            handedOff ? "ok" : "warn",
+            handedOff ? `${exchange}:${symbol.toUpperCase()} | ${timeframe}` : text(result, "fallback", text(result, "next_action"))
           );
         },
         onError: (error) => notify("TradingView Desktop action failed", "risk", error.message),
@@ -325,8 +327,8 @@ function TradingViewBridgeView() {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
-        <MetricTile tone={desktopRunning ? "ok" : "risk"}><Metric label="Desktop App" value={desktopRunning ? "Running" : "Offline"} sub={text(desktopStatus, "version", "not detected")} /></MetricTile>
-        <MetricTile tone={desktopReady ? "ok" : "warn"}><Metric label="Direct Control" value={desktopReady ? "Ready" : "Permission"} sub={text(desktopStatus, "interaction_mode", "unknown").replace(/_/g, " ")} /></MetricTile>
+        <MetricTile tone={desktopRunning ? "ok" : desktopInstalled ? "warn" : "risk"}><Metric label="Desktop App" value={desktopRunning ? "Running" : desktopInstalled ? "Installed" : "Unavailable"} sub={text(desktopStatus, "version", "not detected")} /></MetricTile>
+        <MetricTile tone={desktopReady ? "ok" : "warn"}><Metric label="Direct Handoff" value={desktopReady ? "Ready" : "Unavailable"} sub={text(desktopStatus, "interaction_mode", "unknown").replace(/_/g, " ")} /></MetricTile>
         <MetricTile tone={cdpReady ? "ok" : "risk"}><Metric label="CDP Capture" value={cdpReady ? "Ready" : "Offline"} sub={cdpReady ? `localhost:${text(cdpStatus, "port", "9333")}` : "governed browser"} /></MetricTile>
         <MetricTile><Metric label="Broker Writes" value="Locked" sub="visual analysis only" /></MetricTile>
       </div>
@@ -345,7 +347,7 @@ function TradingViewBridgeView() {
             </div>
           )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
-            <Button variant="primary" icon={Play} disabled={busy || !desktopRunning} onClick={directOpen}>Open Desktop</Button>
+            <Button variant="primary" icon={Play} disabled={busy || !desktopInstalled} onClick={directOpen}>{desktopRunning ? "Open Chart" : "Launch & Open"}</Button>
             <Button icon={LineChart} disabled={busy || !cdpReady} onClick={capture}>Capture Evidence</Button>
           </div>
         </Panel>
