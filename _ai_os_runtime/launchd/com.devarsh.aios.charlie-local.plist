@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime/scripts/start_charlie_bonsai.sh</string>
+    <string>/Users/devarshthakkar/Library/Application Support/AIOS/bin/start-charlie-bonsai.sh</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

@@ -20,6 +20,18 @@ class OllamaLaunchdContractTest(unittest.TestCase):
             wrapper,
         )
 
+    def test_bonsai_agent_uses_stable_internal_wrapper(self) -> None:
+        runtime_root = Path(__file__).resolve().parents[1]
+        plist = (
+            runtime_root / "launchd" / "com.devarsh.aios.charlie-local.plist"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "/Users/devarshthakkar/Library/Application Support/AIOS/bin/start-charlie-bonsai.sh",
+            plist,
+        )
+        self.assertNotIn("AI_OS_ACTIVE_RECOVERY", plist)
+
 
 if __name__ == "__main__":
     unittest.main()
