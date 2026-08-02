@@ -1118,7 +1118,7 @@ def probe_tradingview_cdp(port: int | None = None) -> dict:
 
 
 def probe_tradingview_desktop() -> dict:
-    return {**probe_desktop(), "cdp_fallback": probe_tradingview_cdp()}
+    return probe_desktop()
 
 
 def open_tradingview_desktop_chart(payload: dict) -> dict:
@@ -1184,7 +1184,7 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
             UPDATE ops.tradingview_tasks
             SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
                 evidence=evidence || jsonb_build_array({sql_jsonb({"source": f"TradingView Desktop {bridge_handoff}", "target_url": target_url, "status": bridge_status})}),
-                metadata=metadata || {sql_jsonb({"target_url": target_url, "handoff": bridge_handoff, "launch_pid": bridge.get("launch_pid"), "desktop": bridge.get("desktop") or {}})},
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "handoff": bridge_handoff, "launch_pid": bridge.get("launch_pid"), "clipboard_prepared": bridge.get("clipboard_prepared", False), "next_action": bridge.get("next_action"), "desktop": bridge.get("desktop") or {}})},
                 updated_at=now(),
                 completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
             WHERE id={task_id}
@@ -1197,11 +1197,13 @@ def open_tradingview_desktop_chart(payload: dict) -> dict:
         "status": bridge_status,
         "task": rows[0] if rows else task,
         "target_url": target_url,
-        "desktop": {**(bridge.get("desktop") or {}), "cdp_fallback": probe_tradingview_cdp()},
+        "desktop": bridge.get("desktop") or {},
+        "next_action": bridge.get("next_action"),
         "fallback": (
             None
             if handoff_accepted
-            else "Use the governed CDP capture action until the one-time Desktop permission is granted."
+            else bridge.get("next_action")
+            or "Open the prepared link from the clipboard in TradingView Desktop."
         ),
     }
     audit_api_write(
@@ -7145,6 +7147,97 @@ def compile_tradingview_template_plan(template: dict, payload: dict, symbols: li
     return plan
 
 
+def execute_tradingview_desktop_plan(payload: dict) -> dict:
+    actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
+    plan = payload.get("compiled_plan") if isinstance(payload.get("compiled_plan"), dict) else {}
+    pane_rows = plan.get("panes") if isinstance(plan.get("panes"), list) else []
+    urls = [str(row.get("url") or "").strip() for row in pane_rows if isinstance(row, dict)]
+    urls = [url for url in urls if url.startswith("https://www.tradingview.com/")]
+    target_url = str(payload.get("target_url") or plan.get("target_url") or "").strip()
+    if not urls and target_url.startswith("https://www.tradingview.com/"):
+        urls = [target_url]
+    if not urls:
+        raise ValueError("compiled TradingView Desktop plan has no valid chart URL")
+
+    symbols = payload.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [item.strip() for item in symbols.split(",") if item.strip()]
+    if not isinstance(symbols, list):
+        symbols = []
+    if not symbols and payload.get("symbol"):
+        symbols = [str(payload.get("symbol")).strip()]
+
+    task_id = payload.get("task_id")
+    if task_id in (None, ""):
+        task = create_tradingview_task({
+            "task_title": payload.get("task_title") or f"Open TradingView Desktop plan: {', '.join(map(str, symbols[:3]))}",
+            "task_type": "native_desktop_template",
+            "requested_by": actor,
+            "owner_agent": payload.get("owner_agent") or "Trading Desk Agent",
+            "priority": payload.get("priority") or "medium",
+            "symbols": symbols,
+            "exchange": payload.get("exchange"),
+            "timeframe": payload.get("timeframe"),
+            "chart_layout": payload.get("chart_layout"),
+            "instruction": payload.get("instruction") or "Open the compiled plan in the logged-in TradingView Desktop app.",
+            "source_ref": payload.get("source_ref") or "ai_os_tradingview_desktop_plan",
+            "evidence": [{"source": "TradingView Desktop plan", "urls": urls}],
+            "metadata": {**(payload.get("metadata") or {}), "execution_surface": "native_desktop", "compiled_plan": plan},
+        })
+        task_id = task.get("id")
+    try:
+        task_id_int = int(task_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("task_id must be an integer when provided") from exc
+
+    handoffs = []
+    for index, url in enumerate(urls):
+        bridge = open_link_in_desktop(url)
+        handoffs.append({
+            "url": url,
+            "status": bridge.get("status"),
+            "handoff": bridge.get("handoff"),
+            "next_action": bridge.get("next_action"),
+        })
+        if index + 1 < len(urls):
+            time.sleep(0.8)
+
+    accepted = all(item.get("status") in {"opened", "handoff_requested"} for item in handoffs)
+    task_status = "done" if accepted else "waiting_input"
+    summary = (
+        f"Opened {len(handoffs)} chart{'s' if len(handoffs) != 1 else ''} in the logged-in TradingView Desktop app."
+        if accepted
+        else "TradingView Desktop plan is prepared but requires a local app action or Accessibility permission."
+    )
+    next_actions = list(dict.fromkeys(str(item.get("next_action")) for item in handoffs if item.get("next_action")))
+    evidence_item = {
+        "source": "TradingView Desktop native bridge",
+        "execution_surface": "native_desktop",
+        "handoffs": handoffs,
+        "broker_order_allowed": False,
+    }
+    rows = run_psql_json_statement(f"""
+        WITH updated AS (
+            UPDATE ops.tradingview_tasks
+            SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
+                evidence=evidence || jsonb_build_array({sql_jsonb(evidence_item)}),
+                metadata=metadata || {sql_jsonb({"execution_surface": "native_desktop", "desktop_handoffs": handoffs, "next_actions": next_actions})},
+                updated_at=now(), completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
+            WHERE id={task_id_int}
+            RETURNING id, task_title, task_type, status, symbols, exchange, timeframe,
+                      result_summary, evidence, metadata, created_at, updated_at, completed_at
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
+    """)
+    result = rows[0] if rows else {"task_id": task_id_int, "status": task_status}
+    result["desktop_handoffs"] = handoffs
+    result["next_actions"] = next_actions
+    result["execution_surface"] = "native_desktop"
+    result["broker_order_allowed"] = False
+    audit_api_write("ai_os_api_execute_tradingview_desktop_plan", "execute_tradingview_desktop_plan", actor, "ops.tradingview_tasks", result, payload)
+    return result
+
+
 def execute_tradingview_template_action(payload: dict) -> dict:
     template_key = str(payload.get("template_key") or payload.get("template") or "").strip()
     if not template_key:
@@ -7298,7 +7391,7 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         audit_api_write("ai_os_api_execute_tradingview_template_action", "create_template_approval_request", actor, "agent.approvals", result, payload)
         return result
 
-    result = execute_tradingview_chart_action(merged_payload)
+    result = execute_tradingview_desktop_plan(merged_payload)
     result["template_key"] = template_key
     result["template_name"] = template.get("template_name")
     result["template_status"] = template.get("status")
@@ -7380,7 +7473,7 @@ def resolve_tradingview_template_approval(payload: dict) -> dict:
     if not claimed:
         raise ValueError("TradingView template approval could not be claimed")
     try:
-        result = execute_tradingview_chart_action({**requested_action, "task_id": int(task_id), "actor": actor})
+        result = execute_tradingview_desktop_plan({**requested_action, "task_id": int(task_id), "actor": actor})
     except Exception:
         run_psql_text(
             f"UPDATE agent.inbox_items SET status='blocked', updated_at=now() WHERE evidence @> jsonb_build_array(jsonb_build_object('table','agent.approvals','id',{approval_id}));"

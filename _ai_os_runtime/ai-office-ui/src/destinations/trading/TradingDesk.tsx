@@ -19,7 +19,7 @@ import {
   Plus, Play, AlertTriangle, Activity, ChevronRight,
 } from "lucide-react";
 import { useTradingQuantRisk, useTradingViewDesktopStatus } from "../../data/queries";
-import { useCaptureTradingViewChart, useOpenTradingViewDesktop, useRecordManualTrade, useRecordPaperTrade, useRunTradingViewTemplate } from "../../data/actions";
+import { useOpenTradingViewDesktop, useRecordManualTrade, useRecordPaperTrade, useRunTradingViewTemplate } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
@@ -222,7 +222,6 @@ function TradingViewBridgeView() {
   const { data, isLoading } = useTradingQuantRisk();
   const desktop = useTradingViewDesktopStatus();
   const openDesktop = useOpenTradingViewDesktop();
-  const captureChart = useCaptureTradingViewChart();
   const runTemplate = useRunTradingViewTemplate();
   const pushToast = useUIStore((state) => state.pushToast);
   const tasks = data?.tradingview_tasks ?? [];
@@ -257,12 +256,11 @@ function TradingViewBridgeView() {
   }, [templateKey, templates]);
 
   const desktopStatus = desktop.data ?? {};
-  const cdpStatus = (data?.tradingview_cdp ?? {}) as LiveRow;
   const desktopInstalled = Boolean(desktopStatus.installed);
-  const desktopReady = desktopInstalled;
+  const desktopMode = text(desktopStatus, "interaction_mode", "unknown");
+  const desktopReady = desktopInstalled && (desktopMode !== "clipboard_menu" || Boolean(desktopStatus.automation_permission));
   const desktopRunning = Boolean(desktopStatus.running);
-  const cdpReady = Boolean(cdpStatus.available);
-  const busy = openDesktop.isPending || captureChart.isPending || runTemplate.isPending;
+  const busy = openDesktop.isPending || runTemplate.isPending;
 
   function updateTemplateValue(key: string, value: string) {
     setTemplateValues((current) => ({ ...current, [key]: value }));
@@ -383,31 +381,6 @@ function TradingViewBridgeView() {
     );
   }
 
-  function capture() {
-    if (!symbol.trim()) {
-      notify("Symbol required", "warn");
-      return;
-    }
-    captureChart.mutate(
-      {
-        symbol: symbol.trim().toUpperCase(),
-        exchange,
-        timeframe,
-        action: "open_chart_capture",
-        capture_screenshot: true,
-        quality_check: true,
-        actor: "Devarsh",
-      },
-      {
-        onSuccess: (result) => {
-          setLastResult(result);
-          notify("Chart evidence captured", "ok", `${exchange}:${symbol.toUpperCase()} | ${timeframe}`);
-        },
-        onError: (error) => notify("Chart capture failed", "risk", error.message),
-      }
-    );
-  }
-
   function executeTemplate() {
     if (!templateKey || !symbol.trim()) {
       notify("Template and symbol required", "warn");
@@ -438,8 +411,8 @@ function TradingViewBridgeView() {
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
         <MetricTile tone={desktopRunning ? "ok" : desktopInstalled ? "warn" : "risk"}><Metric label="Desktop App" value={desktopRunning ? "Running" : desktopInstalled ? "Installed" : "Unavailable"} sub={text(desktopStatus, "version", "not detected")} /></MetricTile>
-        <MetricTile tone={desktopReady ? "ok" : "warn"}><Metric label="Direct Handoff" value={desktopReady ? "Ready" : "Unavailable"} sub={text(desktopStatus, "interaction_mode", "unknown").replace(/_/g, " ")} /></MetricTile>
-        <MetricTile tone={cdpReady ? "ok" : "risk"}><Metric label="CDP Capture" value={cdpReady ? "Ready" : "Offline"} sub={cdpReady ? `localhost:${text(cdpStatus, "port", "9333")}` : "governed browser"} /></MetricTile>
+        <MetricTile tone={desktopReady ? "ok" : desktopInstalled ? "warn" : "risk"}><Metric label="Native Handoff" value={desktopReady ? "Ready" : desktopInstalled ? "Manual" : "Unavailable"} sub={desktopMode.replace(/_/g, " ")} /></MetricTile>
+        <MetricTile tone={desktopInstalled ? "ok" : "warn"}><Metric label="Desktop Workspace" value="User Managed" sub="existing signed-in app session" /></MetricTile>
         <MetricTile><Metric label="Broker Writes" value="Locked" sub="visual analysis only" /></MetricTile>
       </div>
 
@@ -457,12 +430,11 @@ function TradingViewBridgeView() {
             </div>
           )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
-            <Button variant="primary" icon={Play} disabled={busy || !desktopInstalled} onClick={directOpen}>{desktopRunning ? "Open Chart" : "Launch & Open"}</Button>
-            <Button icon={LineChart} disabled={busy || !cdpReady} onClick={capture}>Capture Evidence</Button>
+            <Button variant="primary" icon={Play} disabled={busy || !desktopInstalled} onClick={directOpen}>{desktopReady ? (desktopRunning ? "Open in App" : "Launch & Open") : "Prepare App Link"}</Button>
           </div>
         </Panel>
 
-        <Panel icon={Target} title="Advanced Chart Templates">
+        <Panel icon={Target} title="Desktop App Templates">
           <Field label="Template">
             <Select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)}>
               {templates.map((row) => {
@@ -484,7 +456,7 @@ function TradingViewBridgeView() {
 
       <Panel icon={LineChart} title="TradingView Activity">
         {isLoading ? <SkeletonGrid rows={4} /> : tasks.length === 0 ? (
-          <Empty icon={LineChart} title="No chart tasks" description="Open a Desktop chart or capture evidence to create the first audited task." />
+          <Empty icon={LineChart} title="No chart tasks" description="Open a chart or desktop template to create the first audited task." />
         ) : (
           <DataTable
             columns={[

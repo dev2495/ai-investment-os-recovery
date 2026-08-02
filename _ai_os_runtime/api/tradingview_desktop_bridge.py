@@ -73,14 +73,22 @@ def probe_desktop() -> dict:
         "bundle_id": TRADINGVIEW_DESKTOP_BUNDLE_ID,
         "automation_permission": automation_permission,
         "session_state": "user_managed",
-        "interaction_mode": "direct_url" if installed else "managed_browser_fallback",
+        "interaction_mode": (
+            "clipboard_menu"
+            if installed and sys.platform == "darwin"
+            else "direct_url"
+            if installed
+            else "unavailable"
+        ),
         "authoritative_market_data": False,
         "broker_execution_allowed": False,
         "errors": errors,
         "next_action": (
-            None
-            if installed
-            else "Install TradingView Desktop on this node or use the governed browser session."
+            "Install TradingView Desktop on this node."
+            if not installed
+            else "Grant Accessibility access to the AI OS service for automatic TradingView clipboard-menu handoff."
+            if sys.platform == "darwin" and not automation_permission
+            else None
         ),
     }
 
@@ -91,6 +99,70 @@ def open_link_in_desktop(target_url: str) -> dict:
     status = probe_desktop()
     if not status["installed"]:
         return {"status": "app_missing", "desktop": status, "target_url": target_url}
+
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["/usr/bin/pbcopy"],
+            input=target_url,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        if not status["automation_permission"]:
+            launch = subprocess.Popen(
+                ["/usr/bin/open", "-g", "-a", "TradingView"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return {
+                "status": "permission_required",
+                "handoff": "clipboard_prepared",
+                "clipboard_prepared": True,
+                "launch_pid": launch.pid,
+                "desktop": status,
+                "target_url": target_url,
+                "next_action": "In TradingView, choose TradingView > Open link from clipboard, or grant Accessibility permission for automatic handoff.",
+            }
+
+        script = f'''set openedLink to false
+tell application id "{TRADINGVIEW_DESKTOP_BUNDLE_ID}" to activate
+delay 0.5
+tell application "System Events"
+  tell process "TradingView"
+    repeat with topMenu in every menu bar item of menu bar 1
+      try
+        if exists menu item "Open link from clipboard" of menu 1 of topMenu then
+          click menu item "Open link from clipboard" of menu 1 of topMenu
+          set openedLink to true
+          exit repeat
+        end if
+      end try
+    end repeat
+  end tell
+end tell
+if openedLink is false then error "TradingView Open link from clipboard menu item was not found"
+'''
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+        if completed.returncode != 0:
+            error = (completed.stderr or completed.stdout or "TradingView Desktop automation failed").strip()
+            raise RuntimeError(error)
+        return {
+            "status": "opened",
+            "handoff": "clipboard_menu",
+            "clipboard_prepared": True,
+            "desktop": probe_desktop(),
+            "target_url": target_url,
+        }
+
     try:
         direct = subprocess.Popen(
             ["/usr/bin/open", "-g", "-a", "TradingView", target_url],
@@ -110,54 +182,10 @@ def open_link_in_desktop(target_url: str) -> dict:
             "target_url": target_url,
         }
 
-    if not status["automation_permission"]:
-        return {
-            "status": "permission_required",
-            "handoff": "direct_url_failed",
-            "error": direct_error,
-            "desktop": status,
-            "target_url": target_url,
-        }
-
-    subprocess.run(
-        ["/usr/bin/pbcopy"],
-        input=target_url,
-        text=True,
-        capture_output=True,
-        check=True,
-        timeout=5,
-    )
-    script = f'''set openedLink to false
-tell application id "{TRADINGVIEW_DESKTOP_BUNDLE_ID}" to activate
-delay 0.5
-tell application "System Events"
-  tell process "TradingView"
-    repeat with topMenu in every menu bar item of menu bar 1
-      try
-        if exists menu item "Open link from clipboard" of menu 1 of topMenu then
-          click menu item "Open link from clipboard" of menu 1 of topMenu
-          set openedLink to true
-          exit repeat
-        end if
-      end try
-    end repeat
-  end tell
-end tell
-if openedLink is false then error "TradingView Open link from clipboard menu item was not found"
-'''
-    completed = subprocess.run(
-        ["/usr/bin/osascript", "-e", script],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=15,
-    )
-    if completed.returncode != 0:
-        error = (completed.stderr or completed.stdout or "TradingView Desktop automation failed").strip()
-        raise RuntimeError(error)
     return {
-        "status": "opened",
-        "handoff": "clipboard_menu",
-        "desktop": probe_desktop(),
+        "status": "permission_required",
+        "handoff": "direct_url_failed",
+        "error": direct_error,
+        "desktop": status,
         "target_url": target_url,
     }

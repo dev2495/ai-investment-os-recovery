@@ -23,13 +23,15 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertFalse(status["running"])
         self.assertFalse(status["automation_permission"])
         self.assertEqual(status["session_state"], "user_managed")
+        self.assertEqual(status["interaction_mode"], "unavailable")
+        self.assertNotIn("browser", status["next_action"].lower())
         self.assertFalse(status["broker_execution_allowed"])
 
     def test_open_link_rejects_non_tradingview_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "tradingview.com"):
             tradingview_desktop_bridge.open_link_in_desktop("https://example.com/chart")
 
-    def test_open_link_uses_direct_url_without_accessibility_permission(self) -> None:
+    def test_macos_open_prepares_clipboard_without_accessibility_permission(self) -> None:
         ready = {
             "installed": True,
             "running": True,
@@ -37,8 +39,11 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         }
         target_url = "https://www.tradingview.com/chart/?symbol=NSE%3ARELIANCE"
         process = mock.Mock(pid=4321)
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         with (
             mock.patch.object(tradingview_desktop_bridge, "probe_desktop", return_value=ready),
+            mock.patch.object(tradingview_desktop_bridge.sys, "platform", "darwin"),
+            mock.patch.object(tradingview_desktop_bridge.subprocess, "run", return_value=completed) as run,
             mock.patch.object(
                 tradingview_desktop_bridge.subprocess,
                 "Popen",
@@ -47,11 +52,13 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         ):
             result = tradingview_desktop_bridge.open_link_in_desktop(target_url)
 
-        self.assertEqual(result["status"], "handoff_requested")
-        self.assertEqual(result["handoff"], "direct_url_async")
+        self.assertEqual(result["status"], "permission_required")
+        self.assertEqual(result["handoff"], "clipboard_prepared")
+        self.assertTrue(result["clipboard_prepared"])
         self.assertEqual(result["launch_pid"], 4321)
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/pbcopy"])
         popen.assert_called_once_with(
-            ["/usr/bin/open", "-g", "-a", "TradingView", target_url],
+            ["/usr/bin/open", "-g", "-a", "TradingView"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -67,7 +74,8 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         with (
             mock.patch.object(tradingview_desktop_bridge, "probe_desktop", return_value=ready),
-            mock.patch.object(tradingview_desktop_bridge.subprocess, "Popen", side_effect=OSError("direct failed")),
+            mock.patch.object(tradingview_desktop_bridge.sys, "platform", "darwin"),
+            mock.patch.object(tradingview_desktop_bridge.subprocess, "Popen") as popen,
             mock.patch.object(
                 tradingview_desktop_bridge.subprocess,
                 "run",
@@ -80,8 +88,10 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "opened")
         self.assertEqual(result["handoff"], "clipboard_menu")
+        self.assertTrue(result["clipboard_prepared"])
         commands = [call.args[0][0] for call in run.call_args_list]
         self.assertEqual(commands, ["/usr/bin/pbcopy", "/usr/bin/osascript"])
+        popen.assert_not_called()
 
     def test_cdp_command_enables_websocket_on_node_20(self) -> None:
         command = ai_os_api_server.tradingview_cdp_node_command(
@@ -115,11 +125,6 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
                 "run_psql_json_statement",
                 return_value=[updated],
             ) as json_query,
-            mock.patch.object(
-                ai_os_api_server,
-                "probe_tradingview_cdp",
-                return_value={"available": True, "port": 9333},
-            ),
             mock.patch.object(ai_os_api_server, "audit_api_write"),
         ):
             result = ai_os_api_server.open_tradingview_desktop_chart(
@@ -131,7 +136,7 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertIn("json_agg(row_to_json(updated))", sql)
         self.assertEqual(result["status"], "permission_required")
         self.assertEqual(result["task"]["status"], "waiting_input")
-        self.assertTrue(result["desktop"]["cdp_fallback"]["available"])
+        self.assertNotIn("cdp_fallback", result["desktop"])
 
     def test_frontend_can_launch_an_installed_stopped_desktop(self) -> None:
         frontend = (
@@ -144,9 +149,58 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("const desktopInstalled = Boolean(desktopStatus.installed)", frontend)
+        self.assertIn('desktopMode !== "clipboard_menu"', frontend)
         self.assertIn("status === \"handoff_requested\"", frontend)
         self.assertIn('disabled={busy || !desktopInstalled}', frontend)
+        self.assertIn('"Prepare App Link"', frontend)
         self.assertNotIn('disabled={busy || !desktopRunning}', frontend)
+        self.assertIn('label="Desktop Workspace"', frontend)
+        self.assertNotIn("useCaptureTradingViewChart", frontend)
+        self.assertNotIn("CDP Capture", frontend)
+        self.assertNotIn("localhost:9333", frontend)
+
+    def test_desktop_plan_opens_every_chart_in_the_native_app(self) -> None:
+        payload = {
+            "actor": "Devarsh",
+            "symbol": "NIFTY",
+            "symbols": ["NSE:NIFTY", "NSE:INDIAVIX"],
+            "compiled_plan": {
+                "panes": [
+                    {"url": "https://www.tradingview.com/chart/?symbol=NSE%3ANIFTY"},
+                    {"url": "https://www.tradingview.com/chart/?symbol=NSE%3AINDIAVIX"},
+                ]
+            },
+        }
+        persisted = {"id": 121, "status": "done"}
+        with (
+            mock.patch.object(ai_os_api_server, "create_tradingview_task", return_value={"id": 121}),
+            mock.patch.object(
+                ai_os_api_server,
+                "open_link_in_desktop",
+                side_effect=[
+                    {"status": "opened", "handoff": "clipboard_menu"},
+                    {"status": "opened", "handoff": "clipboard_menu"},
+                ],
+            ) as desktop_open,
+            mock.patch.object(ai_os_api_server, "run_psql_json_statement", return_value=[persisted]) as write_query,
+            mock.patch.object(ai_os_api_server.time, "sleep"),
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.execute_tradingview_desktop_plan(payload)
+
+        self.assertEqual(desktop_open.call_count, 2)
+        self.assertEqual(result["execution_surface"], "native_desktop")
+        self.assertFalse(result["broker_order_allowed"])
+        self.assertIn("execution_surface", write_query.call_args.args[0])
+
+    def test_template_execution_uses_native_desktop_plan(self) -> None:
+        source = pathlib.Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
+        template_block = source.split("def execute_tradingview_template_action", 1)[1].split(
+            "def resolve_tradingview_template_approval", 1
+        )[0]
+
+        self.assertIn("execute_tradingview_desktop_plan(merged_payload)", template_block)
+        self.assertNotIn("execute_tradingview_chart_action(merged_payload)", template_block)
 
     def test_template_parameter_reads_nested_allowlisted_payload(self) -> None:
         payload = {
@@ -247,7 +301,7 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
             / "TradingDesk.tsx"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('title="Advanced Chart Templates"', frontend)
+        self.assertIn('title="Desktop App Templates"', frontend)
         self.assertIn('parameters: templateParametersFor(templateKey)', frontend)
         for label in (
             "Benchmark",
