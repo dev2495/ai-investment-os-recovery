@@ -34,6 +34,7 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         runtime_root = Path(__file__).resolve().parents[1]
         office_view = (runtime_root / "ai-office-ui" / "src" / "destinations" / "firm" / "OfficeView.tsx").read_text(encoding="utf-8")
         live_office = (runtime_root / "ai-office-ui" / "src" / "office3d" / "LiveOffice.tsx").read_text(encoding="utf-8")
+        live_office_css = (runtime_root / "ai-office-ui" / "src" / "office3d" / "LiveOffice.css.ts").read_text(encoding="utf-8")
 
         for source in (office_view, live_office):
             self.assertIn("\"executing\"", source)
@@ -44,6 +45,12 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertIn("leftLegRef", live_office)
         self.assertIn('activity={data?.agent_messages ?? []}', live_office)
         self.assertIn("Latest inter-agent handoffs", live_office)
+        self.assertIn("Delegate task", live_office)
+        self.assertIn("Inspect task", live_office)
+        self.assertIn("aios:assistant-prefill", live_office)
+        self.assertIn('kind: "task"', live_office)
+        self.assertIn("selectedAgent={selectedAgent}", live_office)
+        self.assertIn(".office-fallback__selected", live_office_css)
 
 
 if __name__ == "__main__":

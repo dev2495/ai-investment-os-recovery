@@ -568,6 +568,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   const cameraTarget = useUIStore((state) => state.cameraTarget);
   const focusRoom = useUIStore((state) => state.focusRoom);
   const setAssistantScope = useUIStore((state) => state.setAssistantScope);
+  const openEvidence = useUIStore((state) => state.openEvidence);
   const [hoveredRoom, setHoveredRoom] = React.useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = React.useState<LiveRow | null>(null);
   const [errored, setErrored] = React.useState(false);
@@ -620,6 +621,25 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     setAssistantScope({ agentKey: name, agentName: name });
   }
 
+  function delegateToAgent(agent: LiveRow) {
+    const name = text(agent, "agent_name");
+    setAssistantScope("charlie");
+    window.dispatchEvent(new CustomEvent("aios:assistant-prefill", {
+      detail: `Delegate a task to ${name}: `,
+    }));
+  }
+
+  function inspectAgentTask(agent: LiveRow) {
+    const taskId = num(agent, "current_task_id");
+    if (!taskId) return;
+    openEvidence({
+      kind: "task",
+      key: String(taskId),
+      title: text(agent, "current_task_title", `Task ${taskId}`),
+      subtitle: `${text(agent, "agent_name")} · current assignment`,
+    });
+  }
+
   if (webglOk === false || reducedMotion || errored) {
     return (
       <OfficeFallback
@@ -627,8 +647,13 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
         agents={agents}
         roomAgents={roomAgents}
         selectedRoom={cameraTarget.roomKey}
+        selectedAgent={selectedAgent}
         onFocusRoom={focusRoom}
         onSelectAgent={selectAgent}
+        onTalk={talkToAgent}
+        onDelegate={delegateToAgent}
+        onInspectTask={inspectAgentTask}
+        onNavigate={(path) => navigate(path)}
       />
     );
   }
@@ -725,6 +750,8 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
           }}
           onClearAgent={() => setSelectedAgent(null)}
           onTalk={talkToAgent}
+          onDelegate={delegateToAgent}
+          onInspectTask={inspectAgentTask}
           onNavigate={(path) => navigate(path)}
         />
       </div>
@@ -755,6 +782,8 @@ function OfficeHud({
   onBack,
   onClearAgent,
   onTalk,
+  onDelegate,
+  onInspectTask,
   onNavigate,
 }: {
   focusedRoom: string | null;
@@ -768,6 +797,8 @@ function OfficeHud({
   onBack: () => void;
   onClearAgent: () => void;
   onTalk: (agent: LiveRow) => void;
+  onDelegate: (agent: LiveRow) => void;
+  onInspectTask: (agent: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
   const room = focusedRoom ? roomByKey(focusedRoom) : null;
@@ -818,6 +849,10 @@ function OfficeHud({
             </div>
             <div className="office-hud__room-actions">
               <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
+              <button className="office-hud__btn" onClick={() => onDelegate(selectedAgent)}>Delegate task</button>
+              {num(selectedAgent, "current_task_id") > 0 && (
+                <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>
+              )}
               {room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open department</button>}
               <button className="office-hud__btn" onClick={onClearAgent}>Close employee</button>
             </div>
@@ -849,22 +884,49 @@ function OfficeFallback({
   agents,
   roomAgents,
   selectedRoom,
+  selectedAgent,
   onFocusRoom,
   onSelectAgent,
+  onTalk,
+  onDelegate,
+  onInspectTask,
+  onNavigate,
 }: {
   height: number | string;
   agents: LiveRow[];
   roomAgents: Map<string, LiveRow[]>;
   selectedRoom: string | null;
+  selectedAgent: LiveRow | null;
   onFocusRoom: (key: string | null) => void;
   onSelectAgent: (agent: LiveRow) => void;
+  onTalk: (agent: LiveRow) => void;
+  onDelegate: (agent: LiveRow) => void;
+  onInspectTask: (agent: LiveRow) => void;
+  onNavigate: (path: string) => void;
 }) {
+  const selectedRoomDefinition = selectedAgent ? roomByKey(agentDepartment(selectedAgent)) : undefined;
   return (
     <div className="office-fallback" style={{ height }}>
       <style>{LiveOfficeCss}</style>
       <div className="office-fallback__inner">
         <div className="office-fallback__title">AI Investment Firm · Live Floor Plan</div>
         <div className="office-fallback__sub">{agents.length} employees across {ROOMS.filter((room) => room.key !== "lobby" && room.key !== "committee").length} departments</div>
+        {selectedAgent && (
+          <section className="office-fallback__selected">
+            <div>
+              <strong>{text(selectedAgent, "agent_name")}</strong>
+              <span>{text(selectedAgent, "display_title", text(selectedAgent, "role_scope"))}</span>
+              <b>{text(selectedAgent, "current_work_title", text(selectedAgent, "current_task_title", "No active assignment"))}</b>
+              <small>{text(selectedAgent, "current_work_detail", text(selectedAgent, "latest_worker_summary", "No worker output recorded."))}</small>
+            </div>
+            <div className="office-hud__room-actions">
+              <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
+              <button className="office-hud__btn" onClick={() => onDelegate(selectedAgent)}>Delegate task</button>
+              {num(selectedAgent, "current_task_id") > 0 && <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>}
+              {selectedRoomDefinition?.link && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open department</button>}
+            </div>
+          </section>
+        )}
         <div className="office-fallback__grid">
           {ROOMS.map((room) => {
             const occupants = roomAgents.get(room.key) ?? [];
