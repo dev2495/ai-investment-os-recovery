@@ -46,7 +46,7 @@ import {
   TextArea,
   TextInput,
 } from "../../system/primitives";
-import { formatRelative, num, text, truncate, value } from "../../data/liveRow";
+import { formatPercent, formatRelative, num, text, truncate, value } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 import { useUIStore } from "../../store";
 import { GraphStudioCss } from "./GraphStudio.css";
@@ -442,6 +442,19 @@ export function GraphStudio() {
   const openCorrections = (data?.corrections ?? []).filter((row) =>
     ["open", "in_progress", "verification"].includes(text(row, "status"))
   );
+  const kronosRuns = data?.kronos_runs ?? [];
+  const kronosAdapter = data?.kronos_adapter?.[0];
+  const kronosAdapterConfig = asObject(kronosAdapter, "config");
+  const kronosRuntimeStatus = String(
+    kronosAdapterConfig.runtime_status ?? (kronosAdapter?.enabled ? "ready" : "setup_required")
+  );
+  const selectedKronosRun = kronosRuns.find((row) => rowId(row, "graph_run_id") === selectedRunId) ?? kronosRuns[0];
+  const kronosFeatures = asObject(selectedKronosRun, "feature_payload");
+  const kronosTerminal = (
+    kronosFeatures.terminal_return && typeof kronosFeatures.terminal_return === "object"
+      ? kronosFeatures.terminal_return
+      : {}
+  ) as LiveRow;
 
   const currentInputs = inputs[graphKey] ?? {};
   const launchFields = LAUNCH_FIELDS[graphKey] ?? [];
@@ -824,6 +837,62 @@ export function GraphStudio() {
           </Panel>
         </aside>
       </div>
+
+      {graphKey === "kronos_forecast_research" && (
+        <Panel
+          icon={Activity}
+          title="Kronos Forecast Research"
+          actions={<StatusPill status={kronosRuntimeStatus}>{kronosRuntimeStatus.replace(/_/g, " ")}</StatusPill>}
+        >
+          <div className="graph-studio__metrics">
+            <MetricTile tone={kronosAdapter?.enabled ? "ok" : "warn"}>
+              <Metric label="Adapter" value={kronosAdapter?.enabled ? "Enabled" : "Setup Required"} sub={text(kronosAdapter, "permission_level", "write scoped")} />
+            </MetricTile>
+            <MetricTile tone={text(selectedKronosRun, "validation_status") === "passed" ? "ok" : selectedKronosRun ? "warn" : "default"}>
+              <Metric label="Validation" value={text(selectedKronosRun, "validation_status", "No Run").replace(/_/g, " ")} sub={text(selectedKronosRun, "device", "no inference yet")} />
+            </MetricTile>
+            <MetricTile><Metric label="Stored Paths" value={selectedKronosRun ? num(selectedKronosRun, "stored_paths") : "—"} sub={selectedKronosRun ? `${num(selectedKronosRun, "stored_points")} forecast points` : "no inference yet"} /></MetricTile>
+            <MetricTile><Metric label="Mean Return" value={selectedKronosRun ? formatPercent(num(kronosTerminal, "mean")) : "—"} sub={selectedKronosRun ? `P10 ${formatPercent(num(kronosTerminal, "p10"))} · P90 ${formatPercent(num(kronosTerminal, "p90"))}` : "no distribution yet"} /></MetricTile>
+            <MetricTile><Metric label="Positive Paths" value={selectedKronosRun ? formatPercent(num(kronosTerminal, "positive_path_share")) : "—"} sub={selectedKronosRun ? `${num(selectedKronosRun, "horizon")} bar horizon` : "no distribution yet"} /></MetricTile>
+          </div>
+          {!selectedKronosRun ? (
+            <Empty
+              icon={Activity}
+              title="No Kronos forecast run"
+              description={kronosAdapter?.enabled ? "Launch a governed run above using point-in-time OHLCV." : "The pinned adapter must pass local readiness before a forecast can run."}
+            />
+          ) : (
+            <div className="graph-node-inspector">
+              <div className="graph-node-inspector__identity">
+                <span className={`graph-node-inspector__state tone-${graphTone(text(selectedKronosRun, "status"))}`} />
+                <div>
+                  <strong>{text(selectedKronosRun, "exchange")}:{text(selectedKronosRun, "symbol")}</strong>
+                  <span>{text(selectedKronosRun, "timeframe")} · as of {text(selectedKronosRun, "as_of")} · {num(selectedKronosRun, "path_count")} paths</span>
+                </div>
+              </div>
+              <div className="graph-node-inspector__facts">
+                <span><b>Model</b>{text(selectedKronosRun, "model_variant", "mini")}</span>
+                <span><b>Lookback</b>{num(selectedKronosRun, "lookback")} bars</span>
+                <span><b>OHLC validity</b>{formatPercent(num(selectedKronosRun, "ohlc_validity"))}</span>
+                <span><b>Volume validity</b>{formatPercent(num(selectedKronosRun, "volume_validity"))}</span>
+              </div>
+              <details className="graph-node-inspector__evidence">
+                <summary>Distribution, validation, and immutable lineage</summary>
+                <pre>{jsonPreview({
+                  feature_payload: kronosFeatures,
+                  validation: value(selectedKronosRun, "validation", {}),
+                  evidence: value(selectedKronosRun, "evidence", []),
+                  model_revision: text(selectedKronosRun, "model_revision"),
+                  source_hash: text(selectedKronosRun, "source_hash"),
+                  output_hash: text(selectedKronosRun, "output_hash"),
+                  research_only: true,
+                  broker_order_allowed: false,
+                })}</pre>
+              </details>
+            </div>
+          )}
+        </Panel>
+      )}
 
       <div className="graph-studio__lower">
         <Panel icon={Clock3} title="Run Ledger" actions={<Badge>{selectedEvents.length}</Badge>}>

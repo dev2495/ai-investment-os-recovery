@@ -16632,6 +16632,22 @@ def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
     raw_run_id = str(query.get("run_id", query.get("graph_run_id", [""]))[0]).strip()
     run_id = int(raw_run_id) if raw_run_id else None
     snapshot = graph_control_plane.build_snapshot(run_psql_json, run_id=run_id)
+    issues: list[dict] = []
+    try:
+        kronos_filter = f"WHERE graph_run_id={run_id}" if run_id is not None else ""
+        snapshot["kronos_runs"] = run_psql_json(
+            f"SELECT * FROM strategy.v_kronos_research_runs {kronos_filter} "
+            "ORDER BY created_at DESC,forecast_run_id DESC LIMIT 80"
+        )
+        snapshot["kronos_adapter"] = run_psql_json(
+            "SELECT tool_name,tool_type,owning_agent,permission_level,enabled,"
+            "description,config,updated_at FROM agent.tool_registry "
+            "WHERE tool_name='kronos_inference_adapter' LIMIT 1"
+        )
+    except Exception as exc:  # noqa: BLE001
+        snapshot["kronos_runs"] = []
+        snapshot["kronos_adapter"] = []
+        issues.append({"section": "kronos_research", "error": f"{type(exc).__name__}: {exc}"})
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
@@ -16639,6 +16655,7 @@ def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
             "seed_data_allowed": False,
             "execution_policy": "Declarative graph tasks only; arbitrary code and broker writes are disabled.",
         },
+        "issues": issues,
         **snapshot,
     }
 

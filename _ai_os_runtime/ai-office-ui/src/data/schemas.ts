@@ -392,6 +392,9 @@ export const GraphControlSnapshotSchema = z.object({
   change_requests: z.array(liveRow).default([]),
   corrections: z.array(liveRow).default([]),
   waiting: z.array(liveRow).default([]),
+  kronos_runs: z.array(liveRow).default([]),
+  kronos_adapter: z.array(liveRow).default([]),
+  issues: z.array(liveRow).default([]),
 }).passthrough();
 
 export type GraphControlSnapshot = z.infer<typeof GraphControlSnapshotSchema>;

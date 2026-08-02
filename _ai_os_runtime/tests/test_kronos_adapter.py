@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import kronos_inference_worker
 import run_agent_worker_once
 import run_kronos_forecast
+from _ai_os_runtime.api import ai_os_api_server
 
 
 class KronosAdapterTest(unittest.TestCase):
@@ -76,6 +77,57 @@ class KronosAdapterTest(unittest.TestCase):
             styles,
         )
         self.assertIn("flex: 0 1 auto;", styles)
+
+    def test_graph_snapshot_exposes_kronos_adapter_and_real_runs(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server.graph_control_plane, "build_snapshot", return_value={"graphs": []}),
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                side_effect=[
+                    [{"forecast_run_id": 31, "symbol": "NIFTY", "stored_paths": 20}],
+                    [{"tool_name": "kronos_inference_adapter", "enabled": True}],
+                ],
+            ) as query,
+        ):
+            snapshot = ai_os_api_server.build_graph_control_snapshot({})
+
+        self.assertEqual(snapshot["kronos_runs"][0]["forecast_run_id"], 31)
+        self.assertTrue(snapshot["kronos_adapter"][0]["enabled"])
+        self.assertEqual(snapshot["issues"], [])
+        self.assertIn("strategy.v_kronos_research_runs", query.call_args_list[0].args[0])
+        self.assertIn("kronos_inference_adapter", query.call_args_list[1].args[0])
+
+    def test_graph_snapshot_reports_missing_kronos_schema_without_fake_rows(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server.graph_control_plane, "build_snapshot", return_value={"graphs": []}),
+            mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=RuntimeError("missing view")),
+        ):
+            snapshot = ai_os_api_server.build_graph_control_snapshot({})
+
+        self.assertEqual(snapshot["kronos_runs"], [])
+        self.assertEqual(snapshot["kronos_adapter"], [])
+        self.assertEqual(snapshot["issues"][0]["section"], "kronos_research")
+
+    def test_graph_studio_renders_kronos_distribution_and_lineage(self) -> None:
+        source = (
+            RUNTIME_ROOT
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "firm"
+            / "GraphStudio.tsx"
+        ).read_text(encoding="utf-8")
+        schema = (RUNTIME_ROOT / "ai-office-ui" / "src" / "data" / "schemas.ts").read_text(encoding="utf-8")
+
+        self.assertIn('title="Kronos Forecast Research"', source)
+        self.assertIn('label="Mean Return"', source)
+        self.assertIn('label="Positive Paths"', source)
+        self.assertIn("model_revision: text(selectedKronosRun", source)
+        self.assertIn("source_hash: text(selectedKronosRun", source)
+        self.assertIn("broker_order_allowed: false", source)
+        self.assertIn("kronos_runs: z.array(liveRow).default([])", schema)
+        self.assertIn("kronos_adapter: z.array(liveRow).default([])", schema)
 
     def test_daily_forecast_timestamps_skip_weekend_and_exchange_holiday(self) -> None:
         timestamps = run_kronos_forecast.future_timestamps(
