@@ -534,34 +534,53 @@ function ValidationView() {
   const valMut = useRunModelValidation();
   const pushToast = useUIStore((s) => s.pushToast);
   const reviews = data?.model_validation ?? [];
+  const eligibleBacktests = (data?.quant_lab ?? []).filter((row) => num(row, "backtest_id", num(row, "latest_backtest_run_id", 0)) > 0);
 
   function runValidation(btId: number) {
     valMut.mutate({ backtest_id: btId, actor: "Devarsh" }, {
-      onSuccess: () => pushToast({ title: "Validation sweep started", tone: "ok", duration: 3000 }),
+      onSuccess: () => pushToast({ title: "Validation sweep completed", message: "Leakage, overfit, walk-forward, and robustness evidence was persisted.", tone: "ok", duration: 4500 }),
       onError: (e) => pushToast({ title: "Validation failed", message: e.message, tone: "risk", duration: 5000 }),
     });
   }
 
   return (
-    <Panel icon={Brain} title="Model Validation — adversarial review">
-      {isLoading ? <SkeletonGrid rows={3} /> : reviews.length === 0 ? (
-        <Empty icon={Brain} title="No validation reviews"
-          description="The Model Validation Agent adversarially reviews backtests for data leakage, overfit, walk-forward degradation, and robustness. Run one from a backtest."
-          action={<Button size="sm" icon={Brain} onClick={() => pushToast({ title: "Open a backtest first", tone: "info", duration: 2500 })}>How to validate</Button>} />
-      ) : (
-        <DataTable
-          columns={[
-            { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
-            { key: "leakage", header: "Leakage", render: (r) => <StatusPill status={text(r, "leakage_risk", "none")} /> },
-            { key: "overfit", header: "Overfit", render: (r) => <StatusPill status={text(r, "overfit_risk", "none")} /> },
-            { key: "wf", header: "Walk-Fwd", render: (r) => <StatusPill status={text(r, "walk_forward_status", "ok")} /> },
-            { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "review"))} /> },
-          ]}
-          rows={reviews}
-          rowKey={(r, i) => String(text(r, "validation_id", text(r, "id", i)))}
-        />
-      )}
-    </Panel>
+    <>
+      <Panel icon={Brain} title="Backtests Ready for Adversarial Validation">
+        {isLoading ? <SkeletonGrid rows={3} /> : eligibleBacktests.length === 0 ? (
+          <Empty icon={Brain} title="No persisted backtest is ready" description="Run a source-backed backtest first; it will appear here with its database run identity." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
+              { key: "backtest", header: "Backtest", render: (r) => `#${num(r, "backtest_id", num(r, "latest_backtest_run_id", 0))}` },
+              { key: "window", header: "Window", render: (r) => `${text(r, "start_date", "—")} → ${text(r, "end_date", "—")}` },
+              { key: "source", header: "Source", render: (r) => text(r, "data_source", "warehouse OHLCV") },
+              { key: "action", header: "", render: (r) => <Button size="sm" icon={Brain} disabled={valMut.isPending} onClick={(event) => { event.stopPropagation(); runValidation(num(r, "backtest_id", num(r, "latest_backtest_run_id", 0))); }}>Validate</Button> },
+            ]}
+            rows={eligibleBacktests}
+            rowKey={(r, i) => String(text(r, "backtest_id", text(r, "latest_backtest_run_id", i)))}
+          />
+        )}
+      </Panel>
+
+      <Panel icon={AlertTriangle} title="Validation Reviews">
+        {isLoading ? <SkeletonGrid rows={3} /> : reviews.length === 0 ? (
+          <Empty icon={AlertTriangle} title="No validation reviews" description="Select a persisted backtest above to create the first adversarial review." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
+              { key: "leakage", header: "Leakage", render: (r) => <StatusPill status={text(r, "leakage_risk", "none")} /> },
+              { key: "overfit", header: "Overfit", render: (r) => <StatusPill status={text(r, "overfit_risk", "none")} /> },
+              { key: "wf", header: "Walk-Fwd", render: (r) => <StatusPill status={text(r, "walk_forward_status", "ok")} /> },
+              { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "review"))} /> },
+            ]}
+            rows={reviews}
+            rowKey={(r, i) => String(text(r, "validation_id", text(r, "id", i)))}
+          />
+        )}
+      </Panel>
+    </>
   );
 }
 

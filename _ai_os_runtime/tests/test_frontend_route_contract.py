@@ -112,6 +112,9 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("Run full research pipeline", terminal)
         self.assertIn("Allocate paper capital", terminal)
         self.assertIn("It cannot place a broker order", terminal)
+        self.assertIn("Backtests Ready for Adversarial Validation", terminal)
+        self.assertIn("useRunModelValidation", terminal)
+        self.assertNotIn("How to validate", terminal)
 
 
 
