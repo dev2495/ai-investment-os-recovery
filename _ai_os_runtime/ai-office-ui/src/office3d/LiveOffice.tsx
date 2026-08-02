@@ -277,13 +277,47 @@ function DeskAndAgent({
   const body = blocked ? "#8f261d" : bodyColors[seed % bodyColors.length];
   const statusColor = blocked ? "#d9564c" : busy ? "#48a879" : state.includes("wait") ? "#d7a536" : "#8b8278";
   const figureRef = React.useRef<THREE.Group>(null);
+  const leftArmRef = React.useRef<THREE.Group>(null);
+  const rightArmRef = React.useRef<THREE.Group>(null);
+  const leftLegRef = React.useRef<THREE.Group>(null);
+  const rightLegRef = React.useRef<THREE.Group>(null);
 
   useFrame((frame) => {
     if (!figureRef.current) return;
-    const speed = busy ? 1.5 : 0.45;
-    const amount = busy ? 0.035 : 0.012;
-    figureRef.current.position.y = 1.02 + Math.sin(frame.clock.elapsedTime * speed + seed) * amount;
-    figureRef.current.rotation.y = Math.sin(frame.clock.elapsedTime * 0.35 + seed) * (busy ? 0.05 : 0.02);
+    const elapsed = frame.clock.elapsedTime;
+    const cycle = (elapsed + (seed % 13)) % 16;
+    let progress = 0;
+    let direction = 1;
+    let moving = false;
+    if (busy && !blocked) {
+      if (cycle >= 2 && cycle < 4) {
+        progress = THREE.MathUtils.smoothstep((cycle - 2) / 2, 0, 1);
+        moving = true;
+      } else if (cycle >= 4 && cycle < 10) {
+        progress = 1;
+      } else if (cycle >= 10 && cycle < 12) {
+        progress = 1 - THREE.MathUtils.smoothstep((cycle - 10) / 2, 0, 1);
+        direction = -1;
+        moving = true;
+      }
+    }
+    const laneX = ((seed % 5) - 2) * 0.2;
+    const laneZ = (((seed >> 3) % 5) - 2) * 0.16;
+    const targetX = (-position[0] * 0.55 + laneX) / scale;
+    const targetZ = (-position[1] * 0.55 + laneZ) / scale;
+    const gait = moving ? Math.sin(elapsed * 9 + seed) * 0.58 : 0;
+    figureRef.current.position.set(
+      targetX * progress,
+      1.02 + Math.abs(Math.sin(elapsed * 9 + seed)) * (moving ? 0.035 : 0.01),
+      0.12 + targetZ * progress,
+    );
+    figureRef.current.rotation.y = moving
+      ? Math.atan2(targetX * direction, targetZ * direction)
+      : Math.sin(elapsed * 0.35 + seed) * (busy ? 0.05 : 0.02);
+    if (leftArmRef.current) leftArmRef.current.rotation.x = gait;
+    if (rightArmRef.current) rightArmRef.current.rotation.x = -gait;
+    if (leftLegRef.current) leftLegRef.current.rotation.x = -gait;
+    if (rightLegRef.current) rightLegRef.current.rotation.x = gait;
   });
 
   return (
@@ -335,6 +369,30 @@ function DeskAndAgent({
           <capsuleGeometry args={[0.22, 0.44, 6, 12]} />
           <meshStandardMaterial color={body} roughness={0.62} />
         </mesh>
+        <group ref={leftArmRef} position={[-0.27, 0.05, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.065, 0.3, 5, 8]} />
+            <meshStandardMaterial color={body} roughness={0.62} />
+          </mesh>
+        </group>
+        <group ref={rightArmRef} position={[0.27, 0.05, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.065, 0.3, 5, 8]} />
+            <meshStandardMaterial color={body} roughness={0.62} />
+          </mesh>
+        </group>
+        <group ref={leftLegRef} position={[-0.11, -0.43, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.07, 0.3, 5, 8]} />
+            <meshStandardMaterial color="#242b32" roughness={0.72} />
+          </mesh>
+        </group>
+        <group ref={rightLegRef} position={[0.11, -0.43, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.07, 0.3, 5, 8]} />
+            <meshStandardMaterial color="#242b32" roughness={0.72} />
+          </mesh>
+        </group>
       </group>
 
       <mesh position={[0, 0.045, 0.43]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -660,6 +718,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
           totalAgents={agents.length}
           activeGraphRuns={activeGraphRuns}
           generatedAt={data?.generated_at ?? ""}
+          activity={data?.agent_messages ?? []}
           onBack={() => {
             setSelectedAgent(null);
             focusRoom(null);
@@ -692,6 +751,7 @@ function OfficeHud({
   totalAgents,
   activeGraphRuns,
   generatedAt,
+  activity,
   onBack,
   onClearAgent,
   onTalk,
@@ -704,6 +764,7 @@ function OfficeHud({
   totalAgents: number;
   activeGraphRuns: number;
   generatedAt: string;
+  activity: LiveRow[];
   onBack: () => void;
   onClearAgent: () => void;
   onTalk: (agent: LiveRow) => void;
@@ -716,6 +777,17 @@ function OfficeHud({
         <div>
           <div className="office-hud__title">AI Investment Firm · Live</div>
           <div className="office-hud__hint">{totalAgents} employees · {workingAgents} working · {activeGraphRuns} graph runs · {formatRelative(generatedAt)}</div>
+          {activity.length > 0 && (
+            <div className="office-hud__activity" aria-label="Latest inter-agent handoffs">
+              {activity.slice(0, 3).map((item, index) => (
+                <div key={String(num(item, "id", index))}>
+                  <span>{text(item, "from_agent", "Agent")} → {text(item, "to_agent", "Agent")}</span>
+                  <b>{text(item, "subject", "Work handoff")}</b>
+                  <time>{formatRelative(text(item, "created_at"))}</time>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="office-hud__legend">
           <span><i className="is-working" />Working</span>

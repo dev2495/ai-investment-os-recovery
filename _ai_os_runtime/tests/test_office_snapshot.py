@@ -40,6 +40,10 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertIn("header: \"Active\"", office_view)
         self.assertIn("{activeCount} active", live_office)
         self.assertNotIn("{activeCount} working", live_office)
+        self.assertIn("targetX * progress", live_office)
+        self.assertIn("leftLegRef", live_office)
+        self.assertIn('activity={data?.agent_messages ?? []}', live_office)
+        self.assertIn("Latest inter-agent handoffs", live_office)
 
 
 if __name__ == "__main__":

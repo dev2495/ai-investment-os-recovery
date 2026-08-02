@@ -122,6 +122,31 @@ export const LiveOfficeCss = `
   font-size: var(--text-2xs);
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.68);
 }
+.office-hud__activity {
+  width: min(560px, 58vw);
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+}
+.office-hud__activity > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.6fr) minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 7px;
+  color: rgba(246, 241, 232, 0.7);
+  background: rgba(22, 19, 16, 0.78);
+  border-left: 2px solid rgba(100, 209, 186, 0.7);
+  font-size: 9px;
+}
+.office-hud__activity span,
+.office-hud__activity b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.office-hud__activity b { color: rgba(246, 241, 232, 0.92); font-weight: 550; }
+.office-hud__activity time { color: rgba(246, 241, 232, 0.5); font-family: var(--font-mono); white-space: nowrap; }
 .office-hud__legend {
   display: flex;
   gap: var(--space-3);
@@ -347,6 +372,7 @@ export const LiveOfficeCss = `
 
 @media (max-width: 850px) {
   .office-hud { padding: var(--space-2); }
+  .office-hud__activity { display: none; }
   .office-hud__legend { display: none; }
   .office-hud__room-card,
   .office-hud__agent-card { width: min(100%, 520px); min-width: 0; }
