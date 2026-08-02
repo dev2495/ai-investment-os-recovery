@@ -263,6 +263,56 @@ export function useRunUserOptimizer() {
   );
 }
 
+export interface QuantAnalyticsInput {
+  strategy_ids?: number[];
+  timeframe?: string;
+  limit?: number;
+  max_symbols?: number;
+  cost_bps?: number;
+  slippage_bps?: number;
+  participation_rate?: number;
+  actor?: string;
+}
+
+export function useRunQuantAnalytics() {
+  return useInvalidating<QuantAnalyticsInput, LiveRow>(
+    "/api/strategy/quant-analytics/run",
+    [Q.strategyArsenal, Q.tradingQuantRisk]
+  );
+}
+
+export interface StrategyPortfolioAllocationInput {
+  capital_base?: number;
+  max_weight?: number;
+  ruin_threshold_pct?: number;
+  horizon_bars?: number;
+  simulation_count?: number;
+  analytics_run_key?: string;
+  timeframe?: string;
+  actor?: string;
+}
+
+export function useRunStrategyPortfolioAllocation() {
+  return useInvalidating<StrategyPortfolioAllocationInput, LiveRow>(
+    "/api/strategy/portfolio-allocation/run",
+    [Q.strategyArsenal, Q.tradingQuantRisk]
+  );
+}
+
+export interface StrategyRetirementInput {
+  analytics_run_key?: string;
+  allocation_key?: string;
+  review_key_prefix?: string;
+  actor?: string;
+}
+
+export function useRunStrategyRetirementReview() {
+  return useInvalidating<StrategyRetirementInput, LiveRow>(
+    "/api/strategy/retirement/run",
+    [Q.strategyArsenal, Q.tradingQuantRisk]
+  );
+}
+
 export interface DiscoveryInput {
   theme?: string;
   universe?: string;

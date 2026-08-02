@@ -3277,6 +3277,49 @@ def build_strategy_arsenal_snapshot() -> dict:
             ORDER BY created_at DESC, strategy_name_a, strategy_name_b
             LIMIT 120
         """,
+        "strategy_portfolio_optimizer_runs": """
+            SELECT id, analytics_run_id, run_key, optimizer_method,
+                   candidate_count, weights, expected_return,
+                   expected_volatility, sharpe_proxy, constraints,
+                   diagnostics, status, created_by, created_at
+            FROM strategy.v_strategy_portfolio_optimizer_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "strategy_portfolio_allocation_runs": """
+            SELECT id, allocation_key, analytics_run_id, analytics_run_key,
+                   optimizer_run_id, capital_base, timeframe, status,
+                   allocation_method, expected_return, expected_volatility,
+                   expected_max_drawdown, allocation_payload, constraints,
+                   diagnostics, quality_flags, artifact_path, created_by,
+                   created_at, allocation_rows, ruin_metric_rows
+            FROM strategy.v_strategy_portfolio_allocation_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "strategy_portfolio_allocations": """
+            SELECT id, allocation_run_id, allocation_key, analytics_run_id,
+                   analytics_run_key, strategy_id, candidate_key, strategy_name,
+                   target_weight, target_notional, expected_return,
+                   expected_volatility, risk_contribution, allocation_status,
+                   diagnostics, created_at
+            FROM strategy.v_strategy_portfolio_allocations
+            ORDER BY created_at DESC, target_weight DESC
+            LIMIT 80
+        """,
+        "strategy_retirement_queue": """
+            SELECT id, review_key, strategy_id, candidate_key, strategy_name,
+                   analytics_run_id, analytics_run_key, allocation_run_id,
+                   allocation_key, optimizer_run_id, review_status,
+                   recommended_action, severity, trigger_source,
+                   trigger_reasons, assigned_agents, evidence, decision_notes,
+                   human_decision, decided_by, decided_at, created_by,
+                   created_at, updated_at, open_assignments,
+                   completed_assignments, total_assignments
+            FROM strategy.v_strategy_retirement_queue
+            ORDER BY created_at DESC, severity DESC, review_key
+            LIMIT 80
+        """,
         "execution_control": """
             SELECT state_key, global_execution_locked, broker_execution_policy,
                    paper_trading_allowed, limited_live_allowed,
@@ -11042,7 +11085,7 @@ def run_user_defined_strategy_optimizer(payload: dict) -> dict:
         sys.executable,
         str(RUNTIME_ROOT / "scripts" / "run_user_defined_strategy_optimizer.py"),
         "--run-key",
-        str(payload.get("run_key") or payload.get("runKey") or "user_strategy_optimizer_ui"),
+        str(payload.get("run_key") or payload.get("runKey") or f"user_strategy_optimizer_ui_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"),
         "--actor",
         str(payload.get("actor") or "Devarsh"),
         "--strategy-name",

@@ -59,7 +59,7 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 72)
+        self.assertEqual(len(paths), 75)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),
             [],
@@ -88,6 +88,30 @@ class FrontendRouteContractTest(unittest.TestCase):
             '<Button size="sm" variant="primary" icon={Plus}>Onboard Client</Button>',
             terminal,
         )
+
+    def test_quant_lifecycle_actions_are_live_and_governed(self) -> None:
+        actions = (
+            self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts"
+        ).read_text(encoding="utf-8")
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "quant"
+            / "QuantStrategy.tsx"
+        ).read_text(encoding="utf-8")
+
+        for path in (
+            "/api/strategy/user-defined-optimizer/run",
+            "/api/strategy/quant-analytics/run",
+            "/api/strategy/portfolio-allocation/run",
+            "/api/strategy/retirement/run",
+        ):
+            self.assertIn(path, actions)
+        self.assertIn("Run full research pipeline", terminal)
+        self.assertIn("Allocate paper capital", terminal)
+        self.assertIn("It cannot place a broker order", terminal)
 
 
 

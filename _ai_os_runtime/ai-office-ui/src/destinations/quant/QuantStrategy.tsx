@@ -22,7 +22,8 @@ import { useStrategyArsenal, useTradingQuantRisk } from "../../data/queries";
 import {
   useCreateStrategyIntake, useRunBacktest, useRunOptimization,
   useRunDiscovery, useRunJournalMining, useRunModelValidation,
-  useStartPaperMonitor,
+  useRunQuantAnalytics, useRunStrategyPortfolioAllocation,
+  useRunStrategyRetirementReview, useRunUserOptimizer, useStartPaperMonitor,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -232,10 +233,19 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
 function FactorAnalysisView() {
   const risk = useTradingQuantRisk();
   const arsenal = useStrategyArsenal();
+  const analyticsMut = useRunQuantAnalytics();
+  const pushToast = useUIStore((s) => s.pushToast);
   const portfolioFactors = risk.data?.institutional_factors ?? [];
   const strategyFactors = arsenal.data?.strategy_factor_attribution ?? [];
   const analyticsRuns = arsenal.data?.quant_analytics_runs ?? [];
   const loading = risk.isLoading || arsenal.isLoading;
+  function runAnalytics() {
+    analyticsMut.mutate({ actor: "Devarsh", timeframe: "5m" }, {
+      onSuccess: () => pushToast({ title: "Quant analytics completed", message: "Regimes, factors, capacity, correlations, and portfolio optimization were persisted.", tone: "ok", duration: 4500 }),
+      onError: (error) => pushToast({ title: "Quant analytics failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+
 
   return (
     <>
@@ -248,7 +258,9 @@ function FactorAnalysisView() {
         </MetricTile>
       </div>
 
-      <Panel icon={Target} title="Portfolio & Book Factor Exposure">
+      <Panel icon={Target} title="Portfolio & Book Factor Exposure"
+        actions={<Button size="sm" variant="primary" icon={Activity} onClick={runAnalytics} disabled={analyticsMut.isPending}>
+          {analyticsMut.isPending ? "Running…" : "Run strategy analytics"}</Button>}>
         {loading ? <SkeletonGrid rows={5} /> : portfolioFactors.length === 0 ? (
           <Empty icon={Target} title="No factor run available" description="Run Institutional Risk to calculate portfolio and book factor exposure from warehouse positions and OHLCV." />
         ) : (
@@ -371,17 +383,58 @@ function BacktestDrawer({ run, onClose }: { run: LiveRow | null; onClose: () => 
  * ============================================================ */
 function OptimizerView() {
   const { data, isLoading } = useTradingQuantRisk();
+  const arsenal = useStrategyArsenal();
   const optMut = useRunOptimization();
+  const workflowMut = useRunUserOptimizer();
   const pushToast = useUIStore((s) => s.pushToast);
   const runs = data?.quant_lab ?? [];
+  const workflowRuns = arsenal.data?.user_optimizer_runs ?? [];
   const [selected, setSelected] = React.useState("");
   const [walkForward, setWalkForward] = React.useState(true);
+  const [showWorkflow, setShowWorkflow] = React.useState(false);
+  const [workflow, setWorkflow] = React.useState({
+    strategy_name: "",
+    intake_text: "",
+    template: "momentum",
+    symbols: "",
+    universe: "NSE",
+    timeframe: "5m",
+    dsl_text: "",
+    constraints_text: "Paper-first research only. No live execution.",
+    risk_notes: "Requires data quality, backtest, optimizer, model validation, and committee approval.",
+    cost_bps: "3",
+    slippage_bps: "2",
+  });
 
   function optimize() {
     if (!selected) { pushToast({ title: "Pick a strategy", tone: "warn", duration: 2500 }); return; }
     optMut.mutate({ candidate_id: Number(selected), walk_forward: walkForward, actor: "Devarsh" }, {
       onSuccess: () => pushToast({ title: "Optimization started", tone: "ok", duration: 3000 }),
       onError: (e) => pushToast({ title: "Optimization failed", message: e.message, tone: "risk", duration: 5000 }),
+    });
+  }
+
+  function runWorkflow() {
+    if (!workflow.strategy_name.trim() || !workflow.intake_text.trim()) {
+      pushToast({ title: "Name and hypothesis are required", tone: "warn", duration: 3000 });
+      return;
+    }
+    workflowMut.mutate({
+      strategy_name: workflow.strategy_name.trim(),
+      intake_text: workflow.intake_text.trim(),
+      template: workflow.template,
+      symbols: workflow.symbols.split(",").map((symbol) => symbol.trim().toUpperCase()).filter(Boolean),
+      universe: workflow.universe.trim() || "NSE",
+      timeframe: workflow.timeframe,
+      dsl_text: workflow.dsl_text.trim() || undefined,
+      constraints_text: workflow.constraints_text.trim(),
+      risk_notes: workflow.risk_notes.trim(),
+      cost_bps: Number(workflow.cost_bps),
+      slippage_bps: Number(workflow.slippage_bps),
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => { setShowWorkflow(false); pushToast({ title: "Strategy research pipeline completed", message: "Review its persisted backtest, optimization, and validation evidence before promotion.", tone: "ok", duration: 5000 }); },
+      onError: (error) => pushToast({ title: "Strategy pipeline failed", message: error.message, tone: "risk", duration: 6000 }),
     });
   }
 
@@ -395,6 +448,7 @@ function OptimizerView() {
               {runs.map((r, i) => <option key={i} value={text(r, "strategy_id", i)}>{text(r, "strategy_name", text(r, "name"))}</option>)}
             </Select>
             <Button size="sm" variant="primary" icon={Zap} onClick={optimize} disabled={optMut.isPending}>Run</Button>
+            <Button size="sm" icon={Sparkles} onClick={() => setShowWorkflow(true)}>Define & validate</Button>
           </>
         }
       >
@@ -427,6 +481,47 @@ function OptimizerView() {
           />
         )}
       </Panel>
+      <Panel icon={GitBranch} title="End-to-End Strategy Pipeline">
+        {arsenal.isLoading ? <SkeletonGrid rows={3} /> : workflowRuns.length === 0 ? (
+          <Empty icon={GitBranch} title="No full pipeline runs" description="Define a strategy to run intake, DSL parsing, warehouse data quality, backtest, optimization, and validation in one governed workflow." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name")}</strong> },
+              { key: "template", header: "Template", render: (r) => text(r, "requested_template", "—") },
+              { key: "timeframe", header: "Timeframe", render: (r) => text(r, "requested_timeframe", "—") },
+              { key: "stage", header: "Stage", render: (r) => text(r, "current_stage", "—") },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "unknown")} /> },
+              { key: "created", header: "Created", render: (r) => formatRelative(text(r, "created_at")) },
+              { key: "artifact", header: "Evidence", render: (r) => text(r, "artifact_path", "—") },
+            ]}
+            rows={workflowRuns}
+            rowKey={(r, i) => String(text(r, "run_key", i))}
+          />
+        )}
+      </Panel>
+
+      <Drawer open={showWorkflow} onClose={() => setShowWorkflow(false)} title="Define and validate a strategy" subtitle="Runs only on the research and paper path" icon={Sparkles} width={680}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <Field label="Strategy name" required><TextInput value={workflow.strategy_name} onChange={(e) => setWorkflow({ ...workflow, strategy_name: e.target.value })} placeholder="Nifty opening-range continuation" /></Field>
+          <Field label="Hypothesis and rules" required><TextArea value={workflow.intake_text} onChange={(e) => setWorkflow({ ...workflow, intake_text: e.target.value })} rows={4} placeholder="State the edge, entry, exit, holding period, market regime, and why it should persist." /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+            <Field label="Template"><Select value={workflow.template} onChange={(e) => setWorkflow({ ...workflow, template: e.target.value })}><option value="momentum">Momentum</option><option value="mean_reversion">Mean reversion</option><option value="breakout">Breakout</option><option value="low_volatility">Low volatility</option></Select></Field>
+            <Field label="Universe"><TextInput value={workflow.universe} onChange={(e) => setWorkflow({ ...workflow, universe: e.target.value })} /></Field>
+            <Field label="Timeframe"><Select value={workflow.timeframe} onChange={(e) => setWorkflow({ ...workflow, timeframe: e.target.value })}><option value="5m">5 minute</option><option value="15m">15 minute</option><option value="1h">1 hour</option><option value="1d">Daily</option></Select></Field>
+          </div>
+          <Field label="Symbols"><TextInput value={workflow.symbols} onChange={(e) => setWorkflow({ ...workflow, symbols: e.target.value })} placeholder="RELIANCE, HDFCBANK, NIFTY 50" /></Field>
+          <Field label="Strategy DSL (optional)"><TextArea value={workflow.dsl_text} onChange={(e) => setWorkflow({ ...workflow, dsl_text: e.target.value })} rows={5} placeholder={"Entry: close > sma(close, 20)\nExit: close < sma(close, 20) or holding_days >= 10\nRisk: stop_loss_pct <= 2"} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} /></Field>
+          <Field label="Constraints"><TextArea value={workflow.constraints_text} onChange={(e) => setWorkflow({ ...workflow, constraints_text: e.target.value })} rows={2} /></Field>
+          <Field label="Risk and invalidation"><TextArea value={workflow.risk_notes} onChange={(e) => setWorkflow({ ...workflow, risk_notes: e.target.value })} rows={2} /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+            <Field label="Cost (bps)"><TextInput type="number" min="0" step="0.5" value={workflow.cost_bps} onChange={(e) => setWorkflow({ ...workflow, cost_bps: e.target.value })} /></Field>
+            <Field label="Slippage (bps)"><TextInput type="number" min="0" step="0.5" value={workflow.slippage_bps} onChange={(e) => setWorkflow({ ...workflow, slippage_bps: e.target.value })} /></Field>
+          </div>
+          <div style={{ padding: "var(--space-3)", border: "1px solid var(--status-warn)", color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>This creates research evidence and paper-monitor candidates only. It cannot place a broker order or activate autonomous live execution.</div>
+          <Button variant="primary" icon={Play} onClick={runWorkflow} disabled={workflowMut.isPending}>{workflowMut.isPending ? "Running full pipeline…" : "Run full research pipeline"}</Button>
+        </div>
+      </Drawer>
     </>
   );
 }
@@ -476,12 +571,16 @@ function ValidationView() {
 function IdeasView() {
   const { data } = useTradingQuantRisk();
   const paperMut = useStartPaperMonitor();
+  const mineMut = useRunJournalMining();
   const pushToast = useUIStore((s) => s.pushToast);
   const ideas = data?.signals ?? [];
 
   return (
     <Panel icon={Lightbulb} title="Quant Idea Generator"
-      actions={<Button size="sm" variant="ghost" icon={Sparkles} onClick={() => pushToast({ title: "Ask Charlie to mine your journal", tone: "info", duration: 3000 })}>Mine ideas</Button>}
+      actions={<Button size="sm" variant="primary" icon={Sparkles} disabled={mineMut.isPending} onClick={() => mineMut.mutate({ actor: "Devarsh" }, {
+        onSuccess: () => pushToast({ title: "Trade-journal ideas refreshed", tone: "ok", duration: 3500 }),
+        onError: (error) => pushToast({ title: "Idea mining failed", message: error.message, tone: "risk", duration: 6000 }),
+      })}>{mineMut.isPending ? "Mining…" : "Mine ideas"}</Button>}
     >
       <div style={{ padding: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--text-muted)", marginBottom: "var(--space-3)" }}>
         Strategy candidates mined from your trade journal, market regime, and the discovery pipeline.
@@ -554,26 +653,80 @@ function MiningView() {
  * PROMOTION BOARD — paper → live-ready → retired
  * ============================================================ */
 function PromotionView() {
-  const { data, isLoading } = useTradingQuantRisk();
-  const board = data?.promotion_board ?? [];
+  const risk = useTradingQuantRisk();
+  const arsenal = useStrategyArsenal();
+  const allocationMut = useRunStrategyPortfolioAllocation();
+  const retirementMut = useRunStrategyRetirementReview();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const board = risk.data?.promotion_board ?? [];
+  const allocations = arsenal.data?.strategy_portfolio_allocations ?? [];
+  const allocationRuns = arsenal.data?.strategy_portfolio_allocation_runs ?? [];
+  const retirement = arsenal.data?.strategy_retirement_queue ?? [];
+  const isLoading = risk.isLoading || arsenal.isLoading;
+  const latestAnalyticsKey = text(arsenal.data?.quant_analytics_runs?.[0], "run_key", "");
+
   return (
-    <Panel icon={TrendingUp} title="Promotion Board">
-      {isLoading ? <SkeletonGrid rows={3} /> : board.length === 0 ? (
-        <Empty icon={TrendingUp} title="No strategies in promotion" description="Strategies that pass validation move here for paper monitoring, then live-readiness review." />
-      ) : (
-        <DataTable
-          columns={[
-            { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
-            { key: "stage", header: "Stage", render: (r) => <StatusPill status={text(r, "stage", "paper")} /> },
-            { key: "monitor_days", header: "Days Monitored", align: "right", render: (r) => num(r, "days_monitored", 0) },
-            { key: "drift", header: "Drift", align: "right", render: (r) => formatPercent(num(r, "drift_pct", 0), { alreadyPercent: true }) },
-            { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "monitoring"))} /> },
-          ]}
-          rows={board}
-          rowKey={(r, i) => String(text(r, "promotion_id", text(r, "id", i)))}
-        />
-      )}
-    </Panel>
+    <>
+      <Panel icon={TrendingUp} title="Promotion Board"
+        actions={
+          <>
+            <Button size="sm" icon={Target} disabled={allocationMut.isPending} onClick={() => allocationMut.mutate(
+              { actor: "Devarsh", analytics_run_key: latestAnalyticsKey || undefined },
+              {
+                onSuccess: () => pushToast({ title: "Strategy allocation completed", tone: "ok", duration: 4000 }),
+                onError: (error) => pushToast({ title: "Allocation failed", message: error.message, tone: "risk", duration: 6000 }),
+              }
+            )}>Allocate paper capital</Button>
+            <Button size="sm" variant="ghost" icon={AlertTriangle} disabled={retirementMut.isPending} onClick={() => retirementMut.mutate(
+              { actor: "Devarsh", analytics_run_key: latestAnalyticsKey || undefined },
+              {
+                onSuccess: () => pushToast({ title: "Retirement review completed", tone: "ok", duration: 4000 }),
+                onError: (error) => pushToast({ title: "Retirement review failed", message: error.message, tone: "risk", duration: 6000 }),
+              }
+            )}>Review retirement</Button>
+          </>
+        }>
+        {isLoading ? <SkeletonGrid rows={3} /> : board.length === 0 ? (
+          <Empty icon={TrendingUp} title="No strategies in promotion" description="Strategies that pass validation move here for paper monitoring, then live-readiness review." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
+              { key: "stage", header: "Stage", render: (r) => <StatusPill status={text(r, "stage", "paper")} /> },
+              { key: "monitor_days", header: "Days Monitored", align: "right", render: (r) => num(r, "days_monitored", 0) },
+              { key: "drift", header: "Drift", align: "right", render: (r) => formatPercent(num(r, "drift_pct", 0), { alreadyPercent: true }) },
+              { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "monitoring"))} /> },
+            ]}
+            rows={board}
+            rowKey={(r, i) => String(text(r, "promotion_id", text(r, "id", i)))}
+          />
+        )}
+      </Panel>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Target} title={allocationRuns.length ? `Latest Strategy Allocation · ${text(allocationRuns[0], "allocation_key", "")}` : "Latest Strategy Allocation"}>
+          {allocations.length === 0 ? <Empty icon={Target} title="No allocation run" description="Run quant analytics, then allocate paper capital across validated strategies with concentration and ruin constraints." /> : (
+            <DataTable columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name")}</strong> },
+              { key: "weight", header: "Weight", align: "right", render: (r) => formatPercent(num(r, "target_weight", 0) * 100, { alreadyPercent: true }) },
+              { key: "notional", header: "Paper Notional", align: "right", render: (r) => num(r, "target_notional", 0).toLocaleString("en-IN", { maximumFractionDigits: 0 }) },
+              { key: "risk", header: "Risk Contribution", align: "right", render: (r) => formatPercent(num(r, "risk_contribution", 0) * 100, { alreadyPercent: true }) },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "allocation_status", "review")} /> },
+            ]} rows={allocations} rowKey={(r, i) => String(text(r, "id", i))} />
+          )}
+        </Panel>
+        <Panel icon={AlertTriangle} title="Retirement Reviews">
+          {retirement.length === 0 ? <Empty icon={AlertTriangle} title="No retirement candidates" description="Run a retirement review to flag drift, decay, capacity, correlation, and validation failures." /> : (
+            <DataTable columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name")}</strong> },
+              { key: "severity", header: "Severity", render: (r) => <StatusPill status={text(r, "severity", "review")} /> },
+              { key: "action", header: "Action", render: (r) => text(r, "recommended_action", "review") },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "review_status", "pending")} /> },
+            ]} rows={retirement} rowKey={(r, i) => String(text(r, "review_key", i))} />
+          )}
+        </Panel>
+      </div>
+    </>
   );
 }
 

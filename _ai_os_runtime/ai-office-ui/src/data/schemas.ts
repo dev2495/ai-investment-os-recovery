@@ -279,6 +279,10 @@ export const StrategyArsenalSchema = z.object({
   strategy_factor_attribution: z.array(liveRow).default([]),
   strategy_capacity_liquidity: z.array(liveRow).default([]),
   strategy_correlation_matrix: z.array(liveRow).default([]),
+  strategy_portfolio_optimizer_runs: z.array(liveRow).default([]),
+  strategy_portfolio_allocation_runs: z.array(liveRow).default([]),
+  strategy_portfolio_allocations: z.array(liveRow).default([]),
+  strategy_retirement_queue: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 
