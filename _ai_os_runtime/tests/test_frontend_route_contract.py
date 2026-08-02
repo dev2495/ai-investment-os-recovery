@@ -141,6 +141,37 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertNotIn("React.useState(22000)", source)
         self.assertNotRegex(source, r"premium:\s*(?:40|80|100|200)\b")
 
+    def test_fundamental_workbenches_use_persisted_evidence_contracts(self) -> None:
+        actions = (
+            self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts"
+        ).read_text(encoding="utf-8")
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "fundamental"
+            / "FundamentalResearch.tsx"
+        ).read_text(encoding="utf-8")
+        backend = (
+            self.runtime_root / "api" / "ai_os_api_server.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("holding_thesis_id: number", actions)
+        self.assertIn("checklist_key: string", actions)
+        self.assertIn("model_key: string", actions)
+        self.assertIn("evidence?: unknown[]", actions)
+        self.assertIn("Scorecard persisted", terminal)
+        self.assertIn("Valuation model persisted", terminal)
+        self.assertIn("Source evidence is required", terminal)
+        self.assertIn('num(r, "fair_value_low", 0)', terminal)
+        self.assertIn('num(r, "fair_value_base", 0)', terminal)
+        self.assertIn('num(r, "fair_value_high", 0)', terminal)
+        self.assertNotIn('num(r, "fair_value", 0)', terminal)
+        self.assertNotIn('num(r, "upside_pct", 0)', terminal)
+        self.assertIn("evidence, owner_agent, updated_at", backend)
+        self.assertIn("assumptions, outputs, note_path", backend)
+
 
 
 if __name__ == "__main__":

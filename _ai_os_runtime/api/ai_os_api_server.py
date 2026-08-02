@@ -2441,7 +2441,7 @@ def build_research_ideas_snapshot() -> dict:
         "long_term_checklists": """
             SELECT id, holding_thesis_id, symbol, exchange, company_name,
                    checklist_key, checklist_name, status, score, findings,
-                   owner_agent, updated_at,
+                   evidence, owner_agent, updated_at,
                    long_term_gross_exposure, client_count, clients
             FROM portfolio.v_long_term_thesis_checklists
             ORDER BY updated_at DESC, long_term_gross_exposure DESC NULLS LAST,
@@ -2452,7 +2452,7 @@ def build_research_ideas_snapshot() -> dict:
             SELECT id, holding_thesis_id, symbol, exchange, company_name,
                    model_key, model_name, model_type, status, fair_value_low,
                    fair_value_base, fair_value_high, expected_cagr_pct,
-                   note_path, owner_agent, updated_at,
+                   assumptions, outputs, note_path, owner_agent, updated_at,
                    long_term_gross_exposure, client_count, clients
             FROM portfolio.v_long_term_valuation_models
             ORDER BY updated_at DESC, long_term_gross_exposure DESC NULLS LAST,

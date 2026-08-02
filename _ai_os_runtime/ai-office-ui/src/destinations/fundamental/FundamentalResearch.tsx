@@ -16,7 +16,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen, Microscope, Calculator, ClipboardCheck, Lightbulb,
   FlaskConical, TrendingUp, AlertTriangle, ChevronRight, Sparkles,
-  Send, GitBranch, Target, FileText,
+  Send, GitBranch, Target, FileText, Save,
 } from "lucide-react";
 import { useResearchIdeas, usePortfolioOffice } from "../../data/queries";
 import {
@@ -30,7 +30,7 @@ import {
   Button, Tabs, Drawer, ScrollList, KeyValue, Field, TextInput, TextArea, Select,
 } from "../../system/primitives";
 import { AreaSeriesChart, DonutChart } from "../../system/charts";
-import { text, num, bool, timestamp, formatRelative, formatCompact, formatPercent, formatCurrency } from "../../data/liveRow";
+import { text, num, bool, timestamp, value, formatRelative, formatCompact, formatPercent, formatCurrency } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -101,7 +101,7 @@ function ThesesView() {
         {isLoading ? (
           <SkeletonGrid rows={4} />
         ) : theses.length === 0 ? (
-          <Empty icon={BookOpen} title="No long-term theses yet" description="Theses are generated per holding once research packets are built. Use the Idea Generator to seed candidates." />
+          <Empty icon={BookOpen} title="No long-term theses yet" description="Theses are generated per holding once research packets are built. Use the Idea Generator to start coverage for a candidate." />
         ) : (
           <DataTable
             columns={[
@@ -266,8 +266,10 @@ function ScorecardsView() {
   const dispatchMut = useDispatchSpecialists();
   const pushToast = useUIStore((s) => s.pushToast);
   const outputs = data?.long_term_research_updates ?? [];
+  const checklists = data?.long_term_checklists ?? [];
   const theses = data?.long_term_theses ?? [];
   const [selectedThesis, setSelectedThesis] = React.useState<string>("");
+  const [selectedChecklist, setSelectedChecklist] = React.useState<LiveRow | null>(null);
 
   function runAll() {
     if (!selectedThesis) {
@@ -295,7 +297,10 @@ function ScorecardsView() {
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--space-3)", padding: "var(--space-3)" }}>
           {SPECIALIST_MODULES.map((mod) => {
-            const found = outputs.find((o) => text(o, "module_key", text(o, "specialist_module")) === mod.key);
+            const found = selectedThesis
+              ? checklists.find((row) => num(row, "holding_thesis_id", 0) === Number(selectedThesis)
+                  && text(row, "checklist_key") === mod.key)
+              : null;
             return (
               <div key={mod.key} style={{ padding: "var(--space-3)", background: "var(--surface-soft)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-2)" }}>
@@ -310,8 +315,9 @@ function ScorecardsView() {
                     </div>
                   </>
                 ) : (
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>Not yet run</div>
+                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>{selectedThesis ? "Not yet initialized" : "Pick a thesis"}</div>
                 )}
+                {found ? <Button size="sm" variant="subtle" icon={ClipboardCheck} onClick={() => setSelectedChecklist(found)} style={{ marginTop: "var(--space-3)" }}>Review</Button> : null}
               </div>
             );
           })}
@@ -325,7 +331,7 @@ function ScorecardsView() {
           <DataTable
             columns={[
               { key: "thesis", header: "Thesis", render: (r) => <strong>{text(r, "symbol", text(r, "holding_symbol"))}</strong> },
-              { key: "module", header: "Module", render: (r) => text(r, "module_key", text(r, "specialist_module")) },
+              { key: "module", header: "Module", render: (r) => text(r, "checklist_key", text(r, "model_key", text(r, "update_kind"))) },
               { key: "score", header: "Score", align: "right", render: (r) => num(r, "score", 0).toFixed(1) },
               { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "complete")} /> },
               { key: "when", header: "When", render: (r) => formatRelative(text(r, "completed_at", text(r, "updated_at"))) },
@@ -335,6 +341,8 @@ function ScorecardsView() {
           />
         )}
       </Panel>
+
+      <ChecklistReviewDrawer checklist={selectedChecklist} onClose={() => setSelectedChecklist(null)} />
     </>
   );
 }
@@ -363,9 +371,9 @@ function ValuationView() {
             <DataTable
               columns={[
                 { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
-                { key: "type", header: "Model Type", render: (r) => text(r, "model_type", "DCF") },
-                { key: "fair", header: "Fair Value", align: "right", render: (r) => formatCurrency(num(r, "fair_value", 0)) },
-                { key: "upside", header: "Upside", align: "right", render: (r) => <span style={{ color: num(r, "upside_pct", 0) >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{formatPercent(num(r, "upside_pct", 0), { alreadyPercent: true })}</span> },
+                { key: "type", header: "Model", render: (r) => text(r, "model_name", text(r, "model_type", "Valuation")) },
+                { key: "range", header: "Fair Value Range", align: "right", render: (r) => `${formatCurrency(num(r, "fair_value_low", 0))} / ${formatCurrency(num(r, "fair_value_base", 0))} / ${formatCurrency(num(r, "fair_value_high", 0))}` },
+                { key: "cagr", header: "Expected CAGR", align: "right", render: (r) => num(r, "expected_cagr_pct", 0) ? formatPercent(num(r, "expected_cagr_pct", 0), { alreadyPercent: true }) : "—" },
                 { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "active")} /> },
               ]}
               rows={models}
@@ -397,7 +405,166 @@ function ValuationView() {
           )}
         </Panel>
       </div>
+
+      <ValuationModelDrawer model={selected} onClose={() => setSelected(null)} />
     </>
+  );
+}
+
+function ChecklistReviewDrawer({ checklist, onClose }: { checklist: LiveRow | null; onClose: () => void }) {
+  const mutation = useUpdateChecklist();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const [form, setForm] = React.useState({ status: "in_progress", score: "", findings: "", evidence: "" });
+
+  React.useEffect(() => {
+    const findings = value<unknown[]>(checklist, "findings", []);
+    const evidence = value<unknown[]>(checklist, "evidence", []);
+    setForm({
+      status: text(checklist, "status", "in_progress"),
+      score: text(checklist, "score", ""),
+      findings: listToLines(findings, "finding"),
+      evidence: listToLines(evidence, "source"),
+    });
+  }, [checklist]);
+
+  function submit() {
+    const holdingThesisId = num(checklist, "holding_thesis_id", 0);
+    const checklistKey = text(checklist, "checklist_key");
+    const evidence = linesToEvidence(form.evidence);
+    if (!holdingThesisId || !checklistKey) {
+      pushToast({ title: "Checklist identity is missing", tone: "risk", duration: 4000 });
+      return;
+    }
+    if (["complete", "reviewed"].includes(form.status) && evidence.length === 0) {
+      pushToast({ title: "Source evidence is required", message: "Add filing, transcript, note, or dataset references before completing a scorecard.", tone: "warn", duration: 5000 });
+      return;
+    }
+    mutation.mutate({
+      holding_thesis_id: holdingThesisId,
+      checklist_key: checklistKey,
+      status: form.status,
+      score: optionalNumber(form.score),
+      findings: form.findings.split("\n").map((item) => item.trim()).filter(Boolean).map((finding) => ({ finding })),
+      evidence,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => { pushToast({ title: "Scorecard persisted", tone: "ok", duration: 3000 }); onClose(); },
+      onError: (error) => pushToast({ title: "Scorecard update failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  }
+
+  return (
+    <Drawer
+      open={Boolean(checklist)}
+      onClose={onClose}
+      title={`${text(checklist, "symbol")} — ${text(checklist, "checklist_name", text(checklist, "checklist_key"))}`}
+      subtitle="Evidence-backed specialist scorecard"
+      icon={ClipboardCheck}
+      width={620}
+      footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon={Save} onClick={submit} disabled={mutation.isPending}>Save review</Button></div>}
+    >
+      <div style={{ display: "grid", gap: "var(--space-4)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+          <Field label="Status" required><Select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="not_started">Not started</option><option value="in_progress">In progress</option><option value="source_required">Source required</option><option value="complete">Complete</option><option value="reviewed">Reviewed</option></Select></Field>
+          <Field label="Score (0-10)"><TextInput type="number" min="0" max="10" step="0.1" value={form.score} onChange={(event) => setForm({ ...form, score: event.target.value })} /></Field>
+        </div>
+        <Field label="Findings" hint="One finding per line"><TextArea rows={8} value={form.findings} onChange={(event) => setForm({ ...form, findings: event.target.value })} /></Field>
+        <Field label="Evidence references" hint="One filing URL, document path, note ID, or dataset reference per line" required><TextArea rows={6} value={form.evidence} onChange={(event) => setForm({ ...form, evidence: event.target.value })} /></Field>
+      </div>
+    </Drawer>
+  );
+}
+
+function ValuationModelDrawer({ model, onClose }: { model: LiveRow | null; onClose: () => void }) {
+  const mutation = useUpdateValuation();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const [form, setForm] = React.useState({
+    status: "in_progress", fair_value_low: "", fair_value_base: "", fair_value_high: "",
+    expected_cagr_pct: "", assumptions: "{}", outputs: "{}", evidence: "",
+  });
+
+  React.useEffect(() => {
+    setForm({
+      status: text(model, "status", "in_progress"),
+      fair_value_low: text(model, "fair_value_low", ""),
+      fair_value_base: text(model, "fair_value_base", ""),
+      fair_value_high: text(model, "fair_value_high", ""),
+      expected_cagr_pct: text(model, "expected_cagr_pct", ""),
+      assumptions: jsonText(value(model, "assumptions", {})),
+      outputs: jsonText(value(model, "outputs", {})),
+      evidence: "",
+    });
+  }, [model]);
+
+  function submit() {
+    const holdingThesisId = num(model, "holding_thesis_id", 0);
+    const modelKey = text(model, "model_key");
+    const evidence = linesToEvidence(form.evidence);
+    const low = optionalNumber(form.fair_value_low);
+    const base = optionalNumber(form.fair_value_base);
+    const high = optionalNumber(form.fair_value_high);
+    if (!holdingThesisId || !modelKey) {
+      pushToast({ title: "Valuation identity is missing", tone: "risk", duration: 4000 });
+      return;
+    }
+    if (low !== undefined && base !== undefined && high !== undefined && !(low <= base && base <= high)) {
+      pushToast({ title: "Fair-value range is invalid", message: "Low must be less than or equal to base, and base less than or equal to high.", tone: "warn", duration: 5000 });
+      return;
+    }
+    let assumptions: Record<string, unknown>;
+    let outputs: Record<string, unknown>;
+    try {
+      assumptions = parseJsonObject(form.assumptions, "Assumptions");
+      outputs = parseJsonObject(form.outputs, "Outputs");
+    } catch (error) {
+      pushToast({ title: "Invalid JSON", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 5000 });
+      return;
+    }
+    if (["complete", "reviewed"].includes(form.status) && (base === undefined || evidence.length === 0)) {
+      pushToast({ title: "Completion requires value and evidence", message: "Add a base fair value and at least one source reference.", tone: "warn", duration: 5000 });
+      return;
+    }
+    mutation.mutate({
+      holding_thesis_id: holdingThesisId,
+      model_key: modelKey,
+      status: form.status,
+      fair_value_low: low,
+      fair_value_base: base,
+      fair_value_high: high,
+      expected_cagr_pct: optionalNumber(form.expected_cagr_pct),
+      assumptions,
+      outputs,
+      evidence,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => { pushToast({ title: "Valuation model persisted", message: text(model, "model_name", modelKey), tone: "ok", duration: 3500 }); onClose(); },
+      onError: (error) => pushToast({ title: "Valuation update failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  }
+
+  return (
+    <Drawer
+      open={Boolean(model)}
+      onClose={onClose}
+      title={`${text(model, "symbol")} — ${text(model, "model_name", text(model, "model_key"))}`}
+      subtitle="Source-backed valuation workbench"
+      icon={Calculator}
+      width={700}
+      footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon={Save} onClick={submit} disabled={mutation.isPending}>Save model</Button></div>}
+    >
+      <div style={{ display: "grid", gap: "var(--space-4)" }}>
+        <Field label="Status" required><Select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="not_started">Not started</option><option value="in_progress">In progress</option><option value="source_required">Source required</option><option value="complete">Complete</option><option value="reviewed">Reviewed</option></Select></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+          <Field label="Bear / Low"><TextInput type="number" value={form.fair_value_low} onChange={(event) => setForm({ ...form, fair_value_low: event.target.value })} /></Field>
+          <Field label="Base"><TextInput type="number" value={form.fair_value_base} onChange={(event) => setForm({ ...form, fair_value_base: event.target.value })} /></Field>
+          <Field label="Bull / High"><TextInput type="number" value={form.fair_value_high} onChange={(event) => setForm({ ...form, fair_value_high: event.target.value })} /></Field>
+          <Field label="Expected CAGR %"><TextInput type="number" step="0.1" value={form.expected_cagr_pct} onChange={(event) => setForm({ ...form, expected_cagr_pct: event.target.value })} /></Field>
+        </div>
+        <Field label="Assumptions (JSON)" hint="Growth, margins, discount rate, terminal multiple, peer set, or scenario weights"><TextArea rows={8} value={form.assumptions} onChange={(event) => setForm({ ...form, assumptions: event.target.value })} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} /></Field>
+        <Field label="Calculated outputs (JSON)" hint="Persist deterministic model outputs and sensitivities"><TextArea rows={6} value={form.outputs} onChange={(event) => setForm({ ...form, outputs: event.target.value })} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} /></Field>
+        <Field label="Evidence references" hint="One filing URL, report path, price snapshot, or dataset reference per line" required><TextArea rows={5} value={form.evidence} onChange={(event) => setForm({ ...form, evidence: event.target.value })} /></Field>
+      </div>
+    </Drawer>
   );
 }
 
@@ -408,6 +575,7 @@ function CoverageView() {
   const { data, isLoading } = useResearchIdeas();
   const queue = data?.coverage_queue ?? [];
   const checklists = data?.long_term_checklists ?? [];
+  const [selectedChecklist, setSelectedChecklist] = React.useState<LiveRow | null>(null);
 
   return (
     <>
@@ -435,15 +603,19 @@ function CoverageView() {
           <DataTable
             columns={[
               { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
-              { key: "item", header: "Checklist Item", render: (r) => text(r, "item_text", text(r, "checklist_item", "—")) },
+              { key: "item", header: "Checklist Item", render: (r) => text(r, "checklist_name", text(r, "checklist_key", "—")) },
               { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "open")} /> },
-              { key: "due", header: "Due", render: (r) => text(r, "due_date", "—") },
+              { key: "score", header: "Score", align: "right", render: (r) => text(r, "score", "—") },
+              { key: "owner", header: "Owner", render: (r) => text(r, "owner_agent", "Research Analyst") },
             ]}
             rows={checklists}
             rowKey={(r, i) => String(text(r, "checklist_id", text(r, "id", i)))}
+            onRowClick={setSelectedChecklist}
           />
         )}
       </Panel>
+
+      <ChecklistReviewDrawer checklist={selectedChecklist} onClose={() => setSelectedChecklist(null)} />
     </>
   );
 }
@@ -508,6 +680,45 @@ function IdeasView() {
 /* ============================================================
  * Shared helpers
  * ============================================================ */
+function optionalNumber(input: string): number | undefined {
+  const normalized = input.trim();
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function jsonText(input: unknown): string {
+  if (typeof input === "string") return input || "{}";
+  try {
+    return JSON.stringify(input ?? {}, null, 2);
+  } catch {
+    return "{}";
+  }
+}
+
+function parseJsonObject(input: string, label: string): Record<string, unknown> {
+  const parsed = JSON.parse(input || "{}");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function listToLines(items: unknown[], preferredKey: string): string {
+  return items.map((item) => {
+    if (typeof item === "string") return item;
+    if (item && typeof item === "object") {
+      const row = item as Record<string, unknown>;
+      return String(row[preferredKey] ?? row.source ?? row.finding ?? row.ref ?? "");
+    }
+    return "";
+  }).filter(Boolean).join("\n");
+}
+
+function linesToEvidence(input: string): Array<{ source: string }> {
+  return input.split("\n").map((source) => source.trim()).filter(Boolean).map((source) => ({ source }));
+}
+
 function ScoreBar({ score, max }: { score: number; max: number }) {
   const pct = max > 0 ? Math.min(100, (score / max) * 100) : 0;
   const color = pct >= 70 ? "var(--status-ok)" : pct >= 40 ? "var(--status-warn)" : "var(--status-risk)";

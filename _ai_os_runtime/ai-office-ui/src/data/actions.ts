@@ -92,9 +92,12 @@ export function useGenerateResearchPacket() {
 }
 
 export interface UpdateChecklistInput {
-  checklist_id: number;
+  holding_thesis_id: number;
+  checklist_key: string;
   status?: string;
-  notes?: string;
+  score?: number;
+  findings?: unknown[];
+  evidence?: unknown[];
   actor?: string;
 }
 
@@ -106,11 +109,17 @@ export function useUpdateChecklist() {
 }
 
 export interface UpdateValuationInput {
-  valuation_model_id: number;
-  model_type?: string;
-  inputs?: Record<string, unknown>;
+  holding_thesis_id: number;
+  model_key: string;
+  status?: string;
+  fair_value_low?: number;
+  fair_value_base?: number;
+  fair_value_high?: number;
+  expected_cagr_pct?: number;
+  assumptions?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
-  notes?: string;
+  evidence?: unknown[];
+  note_path?: string;
   actor?: string;
 }
 
