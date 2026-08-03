@@ -599,6 +599,48 @@ def run_research_hub_refresh(timeout_seconds: int) -> dict[str, Any]:
         payload["error"] = (
             completed.stderr or completed.stdout or "research hub refresh failed"
         ).strip()[:4000]
+        return payload
+
+    if os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_VECTOR_REFRESH", "1") == "0":
+        payload["vector_index"] = {"status": "disabled"}
+        return payload
+
+    vector_script = WORKLOAD_SCRIPT_DIR / "index_qdrant_documents.py"
+    if not vector_script.is_file():
+        payload["status"] = "failed"
+        payload["vector_index"] = {
+            "status": "failed",
+            "error": f"required workload script is missing: {vector_script}",
+        }
+        return payload
+
+    vector_completed = subprocess.run(
+        [sys.executable, str(vector_script), "--incremental-research"],
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=max(
+            300,
+            int(os.environ.get("AI_OS_RESEARCH_HUB_VECTOR_TIMEOUT_SECONDS", "1800")),
+        ),
+    )
+    vector_payload: dict[str, Any] = {}
+    if vector_completed.stdout.strip():
+        try:
+            vector_payload = json.loads(vector_completed.stdout)
+        except json.JSONDecodeError:
+            vector_payload = {"raw_stdout": vector_completed.stdout.strip()[:4000]}
+    vector_payload["status"] = "success" if vector_completed.returncode == 0 else "failed"
+    if vector_completed.returncode != 0:
+        vector_payload["error"] = (
+            vector_completed.stderr
+            or vector_completed.stdout
+            or "incremental research vector refresh failed"
+        ).strip()[:4000]
+        payload["status"] = "failed"
+        payload["error"] = vector_payload["error"]
+    payload["vector_index"] = vector_payload
     return payload
 
 
