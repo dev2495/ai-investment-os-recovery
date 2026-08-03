@@ -119,10 +119,7 @@ SET status='active',
     updated_at=now()
 WHERE endpoint_key='ollama_ministral3_3b_q4_imac';
 
-UPDATE agent.agent_model_assignments
-SET fallback_route='ministral3_3b_local_assistant',
-    updated_at=now()
-WHERE agent_name='Charlie Munger';
+SELECT agent.activate_final_local_model_fleet();
 SQL
 
-echo "Ministral 3 passed conversation_v1 and is active as Charlie's private local fallback."
+echo "Model endpoint passed its evaluation gate; canonical Charlie fleet assignment was reconciled."

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from _ai_os_runtime.api import ai_os_api_server
 
 
 class ModelRouterContractTest(unittest.TestCase):
@@ -21,6 +24,7 @@ class ModelRouterContractTest(unittest.TestCase):
                 "177_final_hybrid_model_fleet_v1.sql",
                 "178_hybrid_model_router_v2.sql",
                 "179_model_fallback_precedence_v1.sql",
+                "182_model_route_reconciliation_v1.sql",
             )
         )
 
@@ -100,6 +104,55 @@ class ModelRouterContractTest(unittest.TestCase):
         self.assertIn("WHEN qwen2_ready THEN 'imac_qwen35_2b_private'", self.migration)
         self.assertIn("'fallback_precedence'", self.migration)
 
+
+    def test_final_migration_reconciles_route_enablement_and_activates_fleet(self) -> None:
+        self.assertIn("SET enabled=nanbeige_ready", self.migration)
+        self.assertIn("SET enabled=qwen2_ready", self.migration)
+        self.assertIn("SET enabled=bonsai_ready", self.migration)
+        self.assertIn("SELECT agent.activate_final_local_model_fleet();", self.migration)
+
+    def test_local_openai_resolution_fails_closed_without_exact_endpoint(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=RuntimeError("db unavailable")),
+            mock.patch.object(ai_os_api_server, "http_json") as http_json,
+        ):
+            endpoint = ai_os_api_server.local_openai_endpoint("approved/model")
+            available = ai_os_api_server.local_openai_model_available("approved/model")
+
+        self.assertFalse(endpoint["resolved"])
+        self.assertEqual(endpoint["base_url"], "")
+        self.assertEqual(endpoint["request_model"], "")
+        self.assertFalse(available)
+        http_json.assert_not_called()
+
+    def test_local_openai_requires_exact_runtime_model_alias(self) -> None:
+        endpoint = {
+            "resolved": True,
+            "base_url": "http://127.0.0.1:11436/v1",
+            "request_model": "expected-alias",
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "local_openai_endpoint", return_value=endpoint),
+            mock.patch.object(ai_os_api_server, "http_json", return_value={"data": [{"id": "different-alias"}]}),
+        ):
+            self.assertFalse(ai_os_api_server.local_openai_model_available("approved/model"))
+
+    def test_missing_route_is_deterministic_and_disabled(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[]):
+            route = ai_os_api_server.get_model_route("missing")
+        self.assertEqual(route["default_provider"], "local_tools")
+        self.assertEqual(route["default_model"], "deterministic_router_v1")
+        self.assertFalse(route["enabled"])
+        self.assertIsNone(route["escalation_provider"])
+
+    def test_setup_scripts_cannot_overwrite_charlie_assignment(self) -> None:
+        scripts = sorted((self.runtime_root / "scripts").glob("setup_imac_*assistant.sh"))
+        self.assertGreaterEqual(len(scripts), 6)
+        for script in scripts:
+            source = script.read_text(encoding="utf-8")
+            with self.subTest(script=script.name):
+                self.assertNotIn("UPDATE agent.agent_model_assignments", source)
+                self.assertIn("SELECT agent.activate_final_local_model_fleet();", source)
 
 if __name__ == "__main__":
     unittest.main()

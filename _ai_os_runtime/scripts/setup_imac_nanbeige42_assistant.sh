@@ -210,9 +210,7 @@ SET status='active', health_status='healthy', last_checked_at=now(), last_error=
     updated_at=now()
 WHERE endpoint_key='nanbeige42_3b_q4_local_openai_imac';
 
-UPDATE agent.agent_model_assignments
-SET fallback_route='nanbeige42_local_assistant', updated_at=now()
-WHERE agent_name='Charlie Munger';
+SELECT agent.activate_final_local_model_fleet();
 SQL
 
-echo "Nanbeige4.2 passed conversation_v1 and is active as Charlie's private local fallback."
+echo "Model endpoint passed its evaluation gate; canonical Charlie fleet assignment was reconciled."

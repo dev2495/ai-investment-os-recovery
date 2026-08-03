@@ -67,9 +67,7 @@ SET status='active', health_status='healthy', last_checked_at=now(),
     last_error=NULL, updated_at=now()
 WHERE endpoint_key='ollama_phi4_mini_3_8b_imac';
 
-UPDATE agent.agent_model_assignments
-SET fallback_route='imac_basic_assistant_phi', updated_at=now()
-WHERE agent_name='Charlie Munger';
+SELECT agent.activate_final_local_model_fleet();
 SQL
 
-echo "Phi-4 Mini is evaluated, approved, and active as Charlie's private fallback."
+echo "Model endpoint passed its evaluation gate; canonical Charlie fleet assignment was reconciled."

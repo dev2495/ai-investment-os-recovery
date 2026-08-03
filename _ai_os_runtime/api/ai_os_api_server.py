@@ -1259,10 +1259,11 @@ def mlx_model_available(model_name: str) -> bool:
 def local_openai_endpoint(model_name: str) -> dict:
     """Resolve a private OpenAI-compatible runtime without sharing one global URL."""
     fallback = {
-        "base_url": LOCAL_OPENAI_BASE_URL,
-        "request_model": LOCAL_OPENAI_REQUEST_MODEL,
+        "base_url": "",
+        "request_model": "",
         "max_output_tokens": LOCAL_OPENAI_MAX_TOKENS,
         "config": {},
+        "resolved": False,
     }
     try:
         rows = run_psql_json(
@@ -1292,20 +1293,31 @@ def local_openai_endpoint(model_name: str) -> dict:
     return {
         **fallback,
         **row,
-        "base_url": str(row.get("base_url") or LOCAL_OPENAI_BASE_URL).rstrip("/"),
-        "request_model": str(row.get("request_model") or LOCAL_OPENAI_REQUEST_MODEL),
+        "base_url": str(row.get("base_url") or "").rstrip("/"),
+        "request_model": str(row.get("request_model") or model_name),
         "max_output_tokens": max(32, min(max_output_tokens, 1200)),
         "config": row.get("config") if isinstance(row.get("config"), dict) else {},
+        "resolved": True,
     }
 
 
 def local_openai_model_available(model_name: str) -> bool:
     endpoint = local_openai_endpoint(model_name)
-    try:
-        with urllib.request.urlopen(f"{endpoint['base_url']}/models", timeout=3.0) as response:
-            return int(response.status) == 200
-    except (OSError, urllib.error.URLError, TimeoutError):
+    base_url = str(endpoint.get("base_url") or "").rstrip("/")
+    request_model = str(endpoint.get("request_model") or "").strip()
+    if not endpoint.get("resolved") or not base_url or not request_model:
         return False
+    try:
+        payload = http_json("GET", f"{base_url}/models", timeout=3.0)
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return False
+    models = payload.get("data") if isinstance(payload, dict) else None
+    available_ids = {
+        str(item.get("id") or "").strip()
+        for item in models or []
+        if isinstance(item, dict)
+    }
+    return request_model in available_ids
 
 
 def local_model_governance(model_name: str) -> dict:
@@ -13861,13 +13873,13 @@ def get_model_route(route_name: str) -> dict:
     return {
         "route_name": route_name,
         "task_class": "chat",
-        "default_provider": "ollama",
-        "default_model": "llama3.2:3b",
-        "escalation_provider": "codex_or_cloud",
-        "escalation_model": "frontier_on_approval",
-        "max_cost_tier": "hybrid",
-        "notes": "Fallback model route from API defaults.",
-        "enabled": True,
+        "default_provider": "local_tools",
+        "default_model": "deterministic_router_v1",
+        "escalation_provider": None,
+        "escalation_model": None,
+        "max_cost_tier": "local",
+        "notes": "Route missing or disabled; deterministic fail-closed response only.",
+        "enabled": False,
     }
 
 
