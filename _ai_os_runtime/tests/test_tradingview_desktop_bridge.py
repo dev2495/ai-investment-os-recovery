@@ -211,6 +211,10 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertIn('"tradingview_desktop": probe_tradingview_desktop()', api_source)
         self.assertIn("managed TradingView browser/CDP surface is retired", api_source)
 
+        stop_source = (runtime_root / "scripts" / "stop_ai_office_live.sh").read_text(encoding="utf-8")
+        self.assertNotIn("tradingview-browser", stop_source)
+        self.assertNotIn("tradingview_browser.pid", stop_source)
+
     def test_desktop_plan_opens_every_chart_in_the_native_app(self) -> None:
         payload = {
             "actor": "Devarsh",
@@ -429,6 +433,22 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertTrue(payload["parameters"]["filing_cross_check_required"])
         self.assertIn("RETURN_ON_INVESTED_CAPITAL", payload["parameters"]["fields"])
 
+
+    def test_final_migration_retires_managed_browser_in_favour_of_native_desktop(self) -> None:
+        runtime_root = pathlib.Path(__file__).resolve().parents[1]
+        migration = (
+            runtime_root
+            / "postgres"
+            / "init"
+            / "181_tradingview_native_desktop_only_v1.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("native_desktop", migration)
+        self.assertIn("user_managed", migration)
+        self.assertIn("managed_browser_allowed", migration)
+        self.assertIn("authoritative_market_data", migration)
+        self.assertIn("broker_order_allowed", migration)
+        self.assertIn("status = ", migration)
 
 if __name__ == "__main__":
     unittest.main()
