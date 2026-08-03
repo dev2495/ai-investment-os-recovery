@@ -27,20 +27,20 @@ USER_AGENT = os.environ.get(
 ARTIFACT_ROOT = artifact_root("filings")
 
 SPECIAL_EVENT_KEYWORDS = [
-    ("reverse_merger", ["reverse merger"]),
-    ("demerger", ["demerger", "de-merger", "resulting company"]),
+    ("reverse_merger", ["reverse merger", "reverse takeover"]),
+    ("demerger", ["demerger", "de-merger", "resulting company pursuant to the scheme"]),
     ("merger", ["merger", "amalgamation", "merged with"]),
     ("scheme_arrangement", ["scheme of arrangement", "arrangement with creditors", "share exchange ratio"]),
-    ("buyback", ["buyback", "buy-back", "tender offer"]),
-    ("open_offer", ["open offer", "public announcement", "letter of offer"]),
+    ("buyback", ["buyback", "buy-back", "tender offer for equity shares"]),
+    ("open_offer", ["open offer", "public announcement under sebi takeover", "letter of offer"]),
     ("delisting", ["delisting", "de-listing", "exit offer"]),
-    ("rights_issue", ["rights issue", "rights entitlement", "rights equity shares"]),
-    ("preferential_allotment", ["preferential", "warrant", "allotment", "qualified institutions placement", "qip"]),
+    ("rights_issue", ["rights issue", "rights entitlement"]),
+    ("preferential_allotment", ["preferential issue", "preferential allotment", "allotment of warrants", "convertible warrants", "qualified institutions placement", "qip"]),
     ("asset_sale", ["slump sale", "asset sale", "sale of undertaking", "business transfer agreement"]),
-    ("pledge_change", ["pledge", "encumbrance", "release of pledge"]),
-    ("insolvency", ["insolvency", "ibc", "nclt", "resolution plan", "corporate insolvency"]),
-    ("arbitrage_watch", ["record date", "swap ratio", "cash consideration", "court convened meeting"]),
-    ("board_action", ["board meeting", "dividend", "bonus", "split", "sub-division"]),
+    ("pledge_change", ["pledge of shares", "release of pledge", "invocation of pledge", "encumbrance on shares"]),
+    ("insolvency", ["corporate insolvency", "insolvency resolution process", "admitted under ibc", "nclt admits", "resolution plan approved"]),
+    ("arbitrage_watch", ["swap ratio", "cash consideration", "court convened meeting"]),
+    ("board_action", ["board meeting", "record date", "dividend", "bonus issue", "stock split", "sub-division of shares"]),
 ]
 
 

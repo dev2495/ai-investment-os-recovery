@@ -30,19 +30,19 @@ BSE_API_URL = "https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w"
 INDIA_TZ = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 SPECIAL_EVENT_KEYWORDS = [
-    ("reverse_merger", ["reverse merger"]),
-    ("demerger", ["demerger", "de-merger"]),
-    ("merger", ["merger", "amalgamation"]),
-    ("scheme_arrangement", ["scheme of arrangement", "arrangement"]),
-    ("buyback", ["buyback", "buy-back"]),
-    ("open_offer", ["open offer"]),
-    ("delisting", ["delisting", "de-listing"]),
+    ("reverse_merger", ["reverse merger", "reverse takeover"]),
+    ("demerger", ["demerger", "de-merger", "resulting company pursuant to the scheme"]),
+    ("merger", ["merger", "amalgamation", "merged with"]),
+    ("scheme_arrangement", ["scheme of arrangement", "arrangement with creditors", "share exchange ratio"]),
+    ("buyback", ["buyback", "buy-back", "tender offer for equity shares"]),
+    ("open_offer", ["open offer", "public announcement under sebi takeover", "letter of offer"]),
+    ("delisting", ["delisting", "de-listing", "exit offer"]),
     ("rights_issue", ["rights issue", "rights entitlement"]),
-    ("preferential_allotment", ["preferential", "warrant", "allotment"]),
-    ("asset_sale", ["slump sale", "asset sale", "sale of undertaking"]),
-    ("pledge_change", ["pledge", "encumbrance"]),
-    ("insolvency", ["insolvency", "ibc", "nclt", "resolution plan"]),
-    ("board_action", ["board meeting", "record date", "dividend", "bonus", "split"]),
+    ("preferential_allotment", ["preferential issue", "preferential allotment", "allotment of warrants", "convertible warrants", "qualified institutions placement", "qip"]),
+    ("asset_sale", ["slump sale", "asset sale", "sale of undertaking", "business transfer agreement"]),
+    ("pledge_change", ["pledge of shares", "release of pledge", "invocation of pledge", "encumbrance on shares"]),
+    ("insolvency", ["corporate insolvency", "insolvency resolution process", "admitted under ibc", "nclt admits", "resolution plan approved"]),
+    ("board_action", ["board meeting", "record date", "dividend", "bonus issue", "stock split", "sub-division of shares"]),
 ]
 
 
