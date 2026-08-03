@@ -53,6 +53,30 @@ class StrategyBacktestContractTest(unittest.TestCase):
         self.assertEqual(result["data_start"], "2026-01-01")
         self.assertEqual(result["data_end"], "2026-01-30")
 
+    def test_psql_retries_transient_connection_timeout(self) -> None:
+        timeout = mock.Mock(returncode=2, stderr="psql: connection timeout expired", stdout="")
+        success = mock.Mock(returncode=0, stderr="", stdout="[]\n")
+        with (
+            mock.patch.dict(backtest.os.environ, {"AI_OS_PSQL_BIN": "/usr/bin/true", "AI_OS_POSTGRES_PASSWORD": "test"}),
+            mock.patch.object(backtest.subprocess, "run", side_effect=[timeout, success]) as run,
+            mock.patch.object(backtest.time, "sleep") as sleep,
+        ):
+            self.assertEqual(backtest.run_psql_json("SELECT 1"), [])
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    def test_psql_does_not_retry_sql_errors(self) -> None:
+        failure = mock.Mock(returncode=2, stderr="ERROR: column does not exist", stdout="")
+        with (
+            mock.patch.dict(backtest.os.environ, {"AI_OS_PSQL_BIN": "/usr/bin/true", "AI_OS_POSTGRES_PASSWORD": "test"}),
+            mock.patch.object(backtest.subprocess, "run", return_value=failure) as run,
+            mock.patch.object(backtest.time, "sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "column does not exist"):
+                backtest.run_psql_json("SELECT missing")
+        run.assert_called_once()
+        sleep.assert_not_called()
+
     def test_frontend_does_not_synthesize_backtest_curves(self) -> None:
         source = (
             Path(__file__).resolve().parents[1]

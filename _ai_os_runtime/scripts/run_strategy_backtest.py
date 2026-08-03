@@ -7,6 +7,7 @@ import math
 import os
 import statistics
 import subprocess
+import time
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,7 +36,8 @@ def sql_jsonb(value: object) -> str:
 def run_psql_json(sql: str) -> list[dict[str, Any]]:
     psql_bin = os.environ.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
     password = os.environ.get("AI_OS_POSTGRES_PASSWORD")
-    if Path(psql_bin).exists() and password:
+    use_host_psql = bool(Path(psql_bin).exists() and password)
+    if use_host_psql:
         command = [
             psql_bin,
             f"host={os.environ.get('AI_OS_POSTGRES_HOST') or '127.0.0.1'} "
@@ -51,6 +53,26 @@ def run_psql_json(sql: str) -> list[dict[str, Any]]:
     else:
         command = ["docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"]
         completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, timeout=35)
+    transient_markers = (
+        "timeout expired",
+        "connection refused",
+        "connection reset",
+        "server closed the connection unexpectedly",
+        "the database system is starting up",
+        "the database system is shutting down",
+    )
+    retry_delays = (0.5, 1.5)
+    for delay in retry_delays:
+        if completed.returncode == 0:
+            break
+        error_text = (completed.stderr or completed.stdout or "").strip()
+        if not any(marker in error_text.lower() for marker in transient_markers):
+            break
+        time.sleep(delay)
+        if use_host_psql:
+            completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=35)
+        else:
+            completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, timeout=35)
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout).strip())
     output = completed.stdout.strip()
