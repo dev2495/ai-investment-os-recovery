@@ -13,10 +13,10 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_KEY = "tick_ohlcv_aggregation"
 
 TIMEFRAMES = [
-    ("1d", "1 day", "date_trunc('day', t.ts)"),
-    ("1h", "1 hour", "date_bin(INTERVAL '1 hour', t.ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')"),
-    ("15m", "15 minutes", "date_bin(INTERVAL '15 minutes', t.ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')"),
-    ("5m", "5 minutes", "date_bin(INTERVAL '5 minutes', t.ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')"),
+    ("1d", "1 day", "date_trunc('day', event_ts)"),
+    ("1h", "1 hour", "date_bin(INTERVAL '1 hour', event_ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')"),
+    ("15m", "15 minutes", "date_bin(INTERVAL '15 minutes', event_ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')"),
+    ("5m", "5 minutes", "date_bin(INTERVAL '5 minutes', event_ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')"),
 ]
 
 
@@ -155,37 +155,121 @@ ON CONFLICT (source_key) DO UPDATE SET
     )
 
 
-def aggregate_timeframe(timeframe: str, interval_label: str, bucket_expression: str) -> int:
-    sql = f"""
+def build_aggregation_sql(timeframe: str, bucket_expression: str) -> str:
+    return f"""
 WITH source AS (
     SELECT id FROM core.source_systems WHERE name = 'AI OS tick OHLCV aggregation'
 ),
-bucketed AS (
+legacy_events AS (
     SELECT
-        {bucket_expression} AS bucket_ts,
         COALESCE(t.symbol_id, s.id) AS symbol_id,
-        t.ts,
-        t.price,
-        COALESCE(t.volume, 0) AS volume
+        t.ts AS event_ts,
+        t.price AS open_price,
+        t.price AS high_price,
+        t.price AS low_price,
+        t.price AS close_price,
+        COALESCE(t.volume, 0) AS bar_volume
     FROM trading.ticks t
     JOIN trading.symbols s
       ON s.symbol = t.symbol
      AND s.exchange = t.exchange
     WHERE t.price IS NOT NULL
 ),
-aggregated AS (
+legacy_bucketed AS (
+    SELECT
+        {bucket_expression} AS bucket_ts,
+        symbol_id,
+        event_ts,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        bar_volume
+    FROM legacy_events
+),
+legacy_aggregated AS (
     SELECT
         bucket_ts,
         symbol_id,
         {timeframe!r}::text AS timeframe,
-        (ARRAY_AGG(price ORDER BY ts ASC))[1] AS open,
-        MAX(price) AS high,
-        MIN(price) AS low,
-        (ARRAY_AGG(price ORDER BY ts DESC))[1] AS close,
-        SUM(volume) AS volume,
-        (SELECT id FROM source) AS source_system_id
-    FROM bucketed
+        (ARRAY_AGG(open_price ORDER BY event_ts ASC))[1] AS open,
+        MAX(high_price) AS high,
+        MIN(low_price) AS low,
+        (ARRAY_AGG(close_price ORDER BY event_ts DESC))[1] AS close,
+        SUM(bar_volume) AS volume,
+        (SELECT id FROM source) AS source_system_id,
+        1 AS source_priority
+    FROM legacy_bucketed
     GROUP BY bucket_ts, symbol_id
+),
+live_minute_base AS (
+    SELECT
+        snapshot.minute_ts AS event_ts,
+        symbol.id AS symbol_id,
+        snapshot.open_price,
+        snapshot.high_price,
+        snapshot.low_price,
+        snapshot.close_price,
+        CASE
+            WHEN lag(snapshot.volume) OVER (
+                PARTITION BY snapshot.provider, snapshot.instrument_token, snapshot.minute_ts::date
+                ORDER BY snapshot.minute_ts
+            ) IS NULL THEN COALESCE(snapshot.volume, 0)
+            ELSE greatest(
+                COALESCE(snapshot.volume, 0) - COALESCE(
+                    lag(snapshot.volume) OVER (
+                        PARTITION BY snapshot.provider, snapshot.instrument_token, snapshot.minute_ts::date
+                        ORDER BY snapshot.minute_ts
+                    ),
+                    0
+                ),
+                0
+            )
+        END AS bar_volume
+    FROM market.live_quote_minute_snapshots snapshot
+    JOIN trading.symbols symbol
+      ON upper(symbol.symbol) = upper(snapshot.symbol)
+     AND upper(symbol.exchange) = upper(snapshot.exchange)
+    WHERE snapshot.provider = 'Zerodha'
+      AND snapshot.close_price IS NOT NULL
+),
+live_bucketed AS (
+    SELECT
+        {bucket_expression} AS bucket_ts,
+        symbol_id,
+        event_ts,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        bar_volume
+    FROM live_minute_base
+),
+live_aggregated AS (
+    SELECT
+        bucket_ts,
+        symbol_id,
+        {timeframe!r}::text AS timeframe,
+        (ARRAY_AGG(open_price ORDER BY event_ts ASC))[1] AS open,
+        MAX(high_price) AS high,
+        MIN(low_price) AS low,
+        (ARRAY_AGG(close_price ORDER BY event_ts DESC))[1] AS close,
+        SUM(bar_volume) AS volume,
+        (SELECT id FROM source) AS source_system_id,
+        2 AS source_priority
+    FROM live_bucketed
+    GROUP BY bucket_ts, symbol_id
+),
+combined AS (
+    SELECT * FROM legacy_aggregated
+    UNION ALL
+    SELECT * FROM live_aggregated
+),
+aggregated AS (
+    SELECT DISTINCT ON (bucket_ts, symbol_id, timeframe)
+        bucket_ts, symbol_id, timeframe, open, high, low, close, volume, source_system_id
+    FROM combined
+    ORDER BY bucket_ts, symbol_id, timeframe, source_priority DESC
 ),
 upserted AS (
     INSERT INTO trading.ohlcv (ts, symbol_id, timeframe, open, high, low, close, volume, source_system_id)
@@ -202,7 +286,10 @@ upserted AS (
 )
 SELECT COUNT(*) FROM upserted;
 """
-    output = run_psql(sql, tuples_only=True)
+
+
+def aggregate_timeframe(timeframe: str, interval_label: str, bucket_expression: str) -> int:
+    output = run_psql(build_aggregation_sql(timeframe, bucket_expression), tuples_only=True)
     return int(output or "0")
 
 

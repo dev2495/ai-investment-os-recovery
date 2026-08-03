@@ -1,67 +1,62 @@
-# Model Router Decision - 2026-07-25
+# Model Router Decision
+
+Status: current architecture, superseding the 25 July route matrix
+Contract sources: `config/model_routes.yml`, migrations 176-179, and live PostgreSQL runtime views
 
 ## Decision
 
-The AI Investment OS owns routing, privacy, evaluation, cost caps, and audit
-records. Pioneer is not inserted as a second control plane. OpenRouter is only
-the provider gateway for explicit public/internal cloud work.
+Charlie is a natural conversational orchestrator, but language models do not own calculations, market state, portfolio state, backtests, risk limits, approvals, or execution. Those remain deterministic tool and database responsibilities.
 
-## Route Matrix
+The operator-facing routes are:
 
-| Work class | Primary route | Fallback or escalation | Guardrail |
+| UI mode | Route | Intended use | Privacy |
 |---|---|---|---|
-| Private conversation and tool intake | Evaluated MacBook Bonsai route | Pinned iMac Nanbeige route after `conversation_v1` promotion | Client data stays local; exact model digest must pass `conversation_v1` |
-| Deterministic office work | SQL/Python/tool worker | None | Calculations and writes use typed tools, not model prose |
-| Volume public/internal work | `openrouter/openai/gpt-5.6-luna` | Direct `openai/gpt-5.6-luna` when configured | Explicit selection or policy escalation, no client data, ZDR, cost preflight |
-| Long public/internal synthesis | `minimax/minimax-m3` | `z-ai/glm-5.2` | Explicit selection, no client data, cost preflight |
-| Independent public/internal review | `z-ai/glm-5.2` | None | Explicit selection; no execution authority |
+| Private | `charlie_munger_orchestration` | Natural conversation, task intake, delegation, evidence-bound summaries | Client/private context allowed locally |
+| Fast | `openrouter_luna_volume` | High-volume public/internal drafting and routine synthesis | No client data |
+| Research | `openrouter_gemini36_research` | Explicit multimodal public/internal research | No client data |
+| Deep | `openrouter_terra_research` | Explicit deep research and synthesis | No client data |
+| Review | `openrouter_sol_review` | Rare independent committee or architecture review | No client data |
 
-The office-wide cloud budget is INR 3,000/month soft, INR 4,500/month hard,
-and INR 150/day hard, with 20% reserved for genuinely difficult work. Per-agent
-caps are subordinate to these global gates. Cloud calls are blocked when the
-API key, current rate, required approval, privacy policy, or remaining budget
-is missing.
+Deterministic pipelines are not chat modes. They own filings extraction, document OCR, numerical analytics, backtests, portfolio calculations, risk, capital allocation, approval state, and broker safety.
 
-## Local Model Placement
+## Local Fleet
 
-- The M1 iMac with 8 GB RAM runs one light model at a time. Qwen3.5 4B Q4 is
-  about 3.4 GB, but a catalog fit is not a production promotion: this project
-  previously rejected its tested digest at `light_v1` score 0.50. It remains an
-  evaluation candidate until a new exact digest passes the current suite.
-- The pinned iMac Nanbeige4.2 3B Q4 runtime is the private fallback candidate.
-  It is activated only after its exact digest passes `conversation_v1`.
-- Bonsai is the evaluated MacBook private-conversation default while its pinned
-  runtime is reachable. It handles natural dialogue and delegation, but it is
-  not a research authority, calculation engine, or investment decision maker.
-- Laguna S 2.1 is a 118B/8B-active coding model. Its published weight size and
-  runtime requirements do not fit either workstation, and its task profile is
-  not the default investment-office conversation workload.
+1. MacBook primary: `mlx-community/Qwen3.5-9B-4bit`.
+   - Qualified only for `conversation_v1`, task intake, tool selection, and evidence-bound summaries.
+   - It is not a research-calculation or investment-authority model.
+2. iMac fallback 1: `nanbeige/nanbeige4.2:3b-Q4_K_M`.
+   - Preferred always-on fallback only after exact-revision `conversation_v1` promotion and endpoint health.
+   - Suitable for conversation intake, business-review drafts, and deck outlines.
+3. iMac fallback 2: `mlx-community/Qwen3.5-2B-4bit`.
+   - Secondary always-on fallback under the same promotion and health gates.
+4. MacBook rollback: `prism-ml/Bonsai-27B-Q1_0`.
+   - Used only when the qualified Qwen primary is unavailable and Bonsai remains evaluated.
+5. Embeddings: `qwen3-embedding:0.6b` through the iMac Ollama node.
 
-## External Router Decision
+Migration 179 enforces fallback precedence: Nanbeige, Qwen 2B, then Bonsai when Qwen 9B is the active primary. If no qualified private model is healthy, Charlie fails closed to the deterministic router.
 
-Pioneer is deferred. It can optimize model selection, but the OS already has
-task routes, privacy classes, provider readiness, exact-model evaluations,
-usage records, and hard cost stops. Adding Pioneer now would duplicate policy
-and add another paid dependency. Revisit only after measured OpenRouter spend
-or quality data shows the in-house router is materially underperforming.
+## Cloud Ladder
 
-## Reference Repository Decision
+- Luna is the capped routine volume route.
+- Gemini 3.6 Flash is explicit multimodal research.
+- Terra is explicit deep research.
+- Sol is explicit independent review.
+- Cloud requests must pass privacy and budget gates.
+- Client-private content cannot be sent to cloud routes.
+- Availability is determined by live database route/endpoint health, not YAML alone.
 
-The updated `virattt/ai-hedge-fund` is used as a reference contract, not as the
-production runtime. Its useful boundary is preserved in this stack: alpha
-models emit point-in-time directional views; portfolio construction sizes;
-hard risk clamps; execution remains separate; every cycle writes a ledger.
-The external project describes itself as an educational proof of concept and
-does not perform real trades, so its personas and orchestration are not a
-substitute for this system's data lineage, broker controls, or approval gates.
+## Budget
 
-## Sources
+- Monthly soft cap: INR 3,000.
+- Monthly hard cap: INR 4,500.
+- Daily hard cap: INR 150.
+- Heavy-route reserve: 20%.
+- Hard stop on breach: enabled.
+- Autonomous heavy/frontier selection: disabled.
 
-- https://ollama.com/library/qwen3.5/tags
-- https://huggingface.co/Qwen/Qwen3.5-4B
-- https://poolside.ai/blog/introducing-laguna-s-2-1
-- https://huggingface.co/poolside/Laguna-S-2.1
-- https://openrouter.ai/docs/guides/routing/provider-selection
-- https://openrouter.ai/api/v1/models
-- https://pioneer.ai/model-router
-- https://github.com/virattt/ai-hedge-fund
+## Safety
+
+- Broker writes remain disabled.
+- TradingView Desktop is a user-managed chart workspace, not authoritative market data or an execution surface.
+- Zerodha read-only data and the canonical warehouse own portfolio and market state.
+- Devarsh retains final investment, approval, and execution authority.

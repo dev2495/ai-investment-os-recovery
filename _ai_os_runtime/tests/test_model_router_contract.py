@@ -20,6 +20,7 @@ class ModelRouterContractTest(unittest.TestCase):
                 "176_hybrid_luna_model_router_v1.sql",
                 "177_final_hybrid_model_fleet_v1.sql",
                 "178_hybrid_model_router_v2.sql",
+                "179_model_fallback_precedence_v1.sql",
             )
         )
 
@@ -95,6 +96,9 @@ class ModelRouterContractTest(unittest.TestCase):
         self.assertIn("registry.eval_suite='conversation_v1'", self.migration)
         self.assertIn('"kv_cache_quantization":false', self.migration)
         self.assertIn("broker_writes_allowed',false", self.migration)
+        self.assertIn("WHEN nanbeige_ready THEN 'nanbeige42_local_assistant'", self.migration)
+        self.assertIn("WHEN qwen2_ready THEN 'imac_qwen35_2b_private'", self.migration)
+        self.assertIn("'fallback_precedence'", self.migration)
 
 
 if __name__ == "__main__":

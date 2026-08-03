@@ -26,7 +26,7 @@ class FrontendRouteContractTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(len(registered), 58)
+        self.assertEqual(len(registered), 60)
         self.assertEqual(mapped, registered)
 
     def test_shared_terminals_derive_tab_from_pathname(self) -> None:

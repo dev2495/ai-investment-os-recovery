@@ -49,6 +49,7 @@ import {
   ShieldAlert,
   Radar,
   Flame,
+  Layers,
 } from "lucide-react";
 
 export type FunctionGroup =
@@ -132,9 +133,11 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
 
   /* ---- OPTIONS DESK ---- */
   { code: "OPTS", path: "/options/desk", label: "Options Desk", icon: TrendingDown, description: "Options surface, chain, manual trade entry, the options agent", group: "options", order: 0, status: "beta" },
-  { code: "OCHAIN", path: "/options/chain", label: "Option Chain", icon: BarChart3, description: "Live option chain with Greeks, IV, open interest", group: "options", order: 1, status: "beta" },
-  { code: "OSURF", path: "/options/surface", label: "Vol Surface", icon: LineChart, description: "Implied vol surface, skew, term structure", group: "options", order: 2, status: "beta" },
-  { code: "OAGENT", path: "/options/agent", label: "Options Agent", icon: Brain, description: "Talk to the specialist options agent — strategies, risk, edge", group: "options", order: 3, status: "beta" },
+  { code: "OCHAIN", path: "/options/chain", label: "Option Chain", icon: BarChart3, description: "Live option prices, volume, open interest, and provider analytics when available", group: "options", order: 1, status: "beta" },
+  { code: "OSURF", path: "/options/surface", label: "Vol Surface", icon: LineChart, description: "Implied vol smile, skew, and term structure when IV is available", group: "options", order: 2, status: "beta" },
+  { code: "OIA", path: "/options/oi-analysis", label: "OI & Straddles", icon: Activity, description: "OI buildup, strike walls, PCR, and live straddle curves", group: "options", order: 3, status: "beta" },
+  { code: "OSTRAT", path: "/options/strategies", label: "Strategy Builder", icon: Layers, description: "Construct live-chain option combinations and inspect expiry payoff", group: "options", order: 4, status: "beta" },
+  { code: "OAGENT", path: "/options/agent", label: "Options Agent", icon: Brain, description: "Talk to the specialist options agent — strategies, risk, edge", group: "options", order: 5, status: "beta" },
 
   /* ---- SCANNERS ---- */
   { code: "SCAN", path: "/scanners/momentum", label: "Momentum Scanner", icon: TrendingUp, description: "Live momentum signals with direction + strength", group: "scanners", order: 0, status: "beta" },

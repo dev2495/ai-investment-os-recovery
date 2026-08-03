@@ -145,6 +145,8 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/options/desk": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/chain": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/surface": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
+    "/options/oi-analysis": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
+    "/options/strategies": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/agent": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     // Scanners
     "/scanners/momentum": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),

@@ -27,7 +27,7 @@ import {
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select,
 } from "../../system/primitives";
 import { BarSeriesChart, LineSeriesChart, AreaSeriesChart } from "../../system/charts";
-import { text, num, formatCurrency, formatCompact, formatPercent, formatRelative } from "../../data/liveRow";
+import { text, num, raw, formatCurrency, formatCompact, formatPercent, formatRelative } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -57,7 +57,7 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
           <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>manual trading · full OI analytics · strategy builder</span>
         </div>
         <div className="aios-destination__subtitle">
-          Real-time option chain, OI buildup analysis, implied vol smile, straddle curves, max pain,
+          Real-time option chain, OI buildup analysis, provider-qualified vol analytics, straddle curves, max pain,
           strategy builder with payoff. NSE index + equity options via Zerodha.
         </div>
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
@@ -78,13 +78,27 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
  * ============================================================ */
 interface ParsedContract {
   symbol: string; expiry: string; strike: number; type: "CE" | "PE";
-  ltp: number; oi: number; oiChange: number; iv: number; volume: number; spot: number;
+  ltp: number; oi: number; oiChange: number | null; iv: number | null; volume: number; spot: number;
+  delta: number | null; gamma: number | null; theta: number | null; vega: number | null;
+}
+
+function optionalNum(row: LiveRow, key: string): number | null {
+  const source = raw(row, key);
+  if (source === null || source === undefined || source === "") return null;
+  const parsed = typeof source === "number" ? source : Number(source);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function useChain() {
   const { data, isLoading } = useTradingQuantRisk();
   return React.useMemo(() => {
     const raw = data?.option_chain ?? [];
+    const oiChanges = new Map(
+      (data?.option_oi_change ?? []).map((row) => {
+        const key = [text(row, "underlying"), text(row, "expiry", text(row, "expiry_date")), num(row, "strike", 0), text(row, "option_type").toUpperCase()].join("|");
+        return [key, optionalNum(row, "open_interest_change")] as const;
+      }),
+    );
     const parsed: ParsedContract[] = raw.map((r) => ({
       symbol: text(r, "underlying", text(r, "symbol", "")),
       expiry: text(r, "expiry", text(r, "expiry_date", "")),
@@ -92,13 +106,17 @@ function useChain() {
       type: (text(r, "option_type", "CE").toUpperCase().startsWith("P") ? "PE" : "CE") as "CE" | "PE",
       ltp: num(r, "last_price", num(r, "ltp", 0)),
       oi: num(r, "open_interest", num(r, "oi", 0)),
-      oiChange: num(r, "open_interest_change", num(r, "oi_change", 0)),
-      iv: num(r, "implied_volatility", num(r, "iv", 0)),
+      oiChange: oiChanges.get([text(r, "underlying", text(r, "symbol", "")), text(r, "expiry", text(r, "expiry_date")), num(r, "strike", 0), text(r, "option_type", "CE").toUpperCase()].join("|")) ?? null,
+      iv: optionalNum(r, "implied_volatility") ?? optionalNum(r, "iv"),
       volume: num(r, "volume", 0),
       spot: num(r, "spot_price", 0),
+      delta: optionalNum(r, "delta"),
+      gamma: optionalNum(r, "gamma"),
+      theta: optionalNum(r, "theta"),
+      vega: optionalNum(r, "vega"),
     }));
     return { parsed, isLoading, underlyings: Array.from(new Set(parsed.map((p) => p.symbol))).sort(), expiries: Array.from(new Set(parsed.map((p) => p.expiry))).sort() };
-  }, [data?.option_chain, isLoading]);
+  }, [data?.option_chain, data?.option_oi_change, isLoading]);
 }
 
 /* ============================================================
@@ -109,6 +127,7 @@ function DeskView() {
   const { data: tradingData } = useTradingQuantRisk();
   const [showTicket, setShowTicket] = React.useState(false);
   const analytics = React.useMemo(() => computeAnalytics(parsed), [parsed]);
+  const validIv = parsed.map((contract) => contract.iv).filter((iv): iv is number => iv !== null && iv > 0);
   const optionTrades = React.useMemo(
     () => (tradingData?.trade_activity ?? []).filter((row) => {
       const instrumentType = text(row, "instrument_type", text(row, "asset_class", "")).toLowerCase();
@@ -125,7 +144,7 @@ function DeskView() {
         <MetricTile><Metric label="Underlyings" value={underlyings.length} /></MetricTile>
         <MetricTile><Metric label="Contracts" value={parsed.length} /></MetricTile>
         <MetricTile><Metric label="Total OI" value={formatCompact(parsed.reduce((a, c) => a + c.oi, 0))} /></MetricTile>
-        <MetricTile><Metric label="Avg IV" value={parsed.length ? formatPercent(parsed.reduce((a, c) => a + c.iv, 0) / parsed.length / 100, { digits: 1 }) : "—"} /></MetricTile>
+        <MetricTile><Metric label="Avg IV" value={validIv.length ? formatPercent(validIv.reduce((sum, iv) => sum + iv, 0) / validIv.length / 100, { digits: 1 }) : "Unavailable"} sub={validIv.length ? undefined : "Kite quotes do not supply IV"} /></MetricTile>
       </div>
 
       <Panel icon={Activity} title="Live Analytics per Underlying">
@@ -136,7 +155,7 @@ function DeskView() {
             columns={[
               { key: "symbol", header: "Underlying", render: (r) => <strong>{text(r, "symbol")}</strong> },
               { key: "spot", header: "Spot", align: "right", render: (r) => num(r, "spot", 0).toFixed(2) },
-              { key: "atm", header: "ATM IV", align: "right", render: (r) => formatPercent(num(r, "atm_iv", 0) / 100, { digits: 1 }) },
+              { key: "atm", header: "ATM IV", align: "right", render: (r) => optionalNum(r, "atm_iv") === null ? "—" : formatPercent(optionalNum(r, "atm_iv")! / 100, { digits: 1 }) },
               { key: "pcr", header: "PCR", align: "right", render: (r) => <span style={{ color: num(r, "pcr", 0) > 1.2 ? "var(--status-warn)" : num(r, "pcr", 0) < 0.8 ? "var(--status-info)" : "var(--text)" }}>{num(r, "pcr", 0).toFixed(2)}</span> },
               { key: "maxpain", header: "Max Pain", align: "right", render: (r) => num(r, "max_pain", 0).toFixed(0) },
               { key: "callwall", header: "Call Wall", align: "right", render: (r) => num(r, "call_wall", 0).toFixed(0) },
@@ -210,7 +229,7 @@ function computeAnalytics(chain: ParsedContract[]): LiveRow[] {
     }
     const callWall = calls.reduce((best, c) => c.oi > best.oi ? c : best, calls[0]);
     const putWall = puts.reduce((best, c) => c.oi > best.oi ? c : best, puts[0]);
-    out.push({ symbol, spot, atm_iv: atm?.iv ?? 0, pcr, max_pain: maxPain, call_wall: callWall?.strike ?? 0, put_wall: putWall?.strike ?? 0, total_call_oi: totalCallOi, total_put_oi: totalPutOi } as LiveRow);
+    out.push({ symbol, spot, atm_iv: atm?.iv ?? null, pcr, max_pain: maxPain, call_wall: callWall?.strike ?? 0, put_wall: putWall?.strike ?? 0, total_call_oi: totalCallOi, total_put_oi: totalPutOi } as LiveRow);
   }
   return out;
 }
@@ -248,8 +267,12 @@ function ChainView() {
               { key: "type", header: "Type", render: (r) => <StatusPill status={text(r, "type")} /> },
               { key: "ltp", header: "LTP", align: "right", render: (r) => formatCurrency(num(r, "ltp", 0)) },
               { key: "oi", header: "OI", align: "right", render: (r) => formatCompact(num(r, "oi", 0)) },
-              { key: "oichg", header: "OI Chg", align: "right", render: (r) => <span style={{ color: num(r, "oiChange", 0) >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{num(r, "oiChange", 0) >= 0 ? "+" : ""}{formatCompact(num(r, "oiChange", 0))}</span> },
-              { key: "iv", header: "IV", align: "right", render: (r) => formatPercent(num(r, "iv", 0) / 100, { digits: 1 }) },
+              { key: "oichg", header: "OI Chg", align: "right", render: (r) => optionalNum(r, "oiChange") === null ? "—" : <span style={{ color: optionalNum(r, "oiChange")! >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{optionalNum(r, "oiChange")! >= 0 ? "+" : ""}{formatCompact(optionalNum(r, "oiChange")!)}</span> },
+              { key: "iv", header: "IV", align: "right", render: (r) => optionalNum(r, "iv") === null ? "—" : formatPercent(optionalNum(r, "iv")! / 100, { digits: 1 }) },
+              { key: "delta", header: "Delta", align: "right", render: (r) => optionalNum(r, "delta")?.toFixed(3) ?? "—" },
+              { key: "gamma", header: "Gamma", align: "right", render: (r) => optionalNum(r, "gamma")?.toFixed(4) ?? "—" },
+              { key: "theta", header: "Theta", align: "right", render: (r) => optionalNum(r, "theta")?.toFixed(2) ?? "—" },
+              { key: "vega", header: "Vega", align: "right", render: (r) => optionalNum(r, "vega")?.toFixed(2) ?? "—" },
               { key: "vol", header: "Vol", align: "right", render: (r) => formatCompact(num(r, "volume", 0)) },
             ]}
             rows={filtered as unknown as LiveRow[]}
@@ -275,13 +298,13 @@ function SurfaceView() {
     if (!expiry && expiries.length) setExpiry(expiries[0]);
   }, [underlyings, expiries, symbol, expiry]);
 
-  const filtered = parsed.filter((c) => c.symbol === symbol && c.expiry === expiry);
+  const filtered = parsed.filter((c) => c.symbol === symbol && c.expiry === expiry && c.iv !== null && c.iv > 0);
   const spot = filtered[0]?.spot ?? 0;
   const aggregated = React.useMemo(() => {
     const map = new Map<number, { strike: number; ceIv?: number; peIv?: number }>();
     for (const c of filtered) {
       const ex = map.get(c.strike) ?? { strike: c.strike };
-      if (c.type === "CE") ex.ceIv = c.iv; else ex.peIv = c.iv;
+      if (c.type === "CE") ex.ceIv = c.iv!; else ex.peIv = c.iv!;
       map.set(c.strike, ex);
     }
     return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
@@ -329,12 +352,12 @@ function OiAnalysisView() {
     const map = new Map<number, { strike: number; CE: number; PE: number; ceChg: number; peChg: number }>();
     for (const c of filtered) {
       const ex = map.get(c.strike) ?? { strike: c.strike, CE: 0, PE: 0, ceChg: 0, peChg: 0 };
-      if (c.type === "CE") { ex.CE = c.oi; ex.ceChg = c.oiChange; } else { ex.PE = c.oi; ex.peChg = c.oiChange; }
+      if (c.type === "CE") { ex.CE = c.oi; ex.ceChg = c.oiChange ?? 0; } else { ex.PE = c.oi; ex.peChg = c.oiChange ?? 0; }
       map.set(c.strike, ex);
     }
     return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
   }, [filtered]);
-  const oiChange = React.useMemo(() => oiByStrike.map((d) => ({ strike: d.strike, CE: d.ceChg, PE: d.peChg })), [oiByStrike]);
+  const oiChange = React.useMemo(() => parsed.some((contract) => contract.oiChange !== null) ? oiByStrike.map((d) => ({ strike: d.strike, CE: d.ceChg, PE: d.peChg })) : [], [oiByStrike, parsed]);
   const straddle = React.useMemo(() => {
     const map = new Map<number, { strike: number; straddle: number }>();
     for (const c of filtered) {

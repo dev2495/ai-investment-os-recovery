@@ -576,6 +576,32 @@ def run_market_news_ingestion(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
+def run_market_calendar_refresh(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "collect_market_calendar.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [
+            sys.executable, str(script),
+            "--lookback-days", "1",
+            "--lookahead-days", os.environ.get("AI_OS_MARKET_CALENDAR_LOOKAHEAD_DAYS", "45"),
+            "--actor", "Corporate Events Analyst",
+        ],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(60, timeout_seconds),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = payload.get("status") or "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "market calendar refresh failed").strip()[:4000]
+    return payload
+
+
 def run_research_hub_refresh(timeout_seconds: int) -> dict[str, Any]:
     script = WORKLOAD_SCRIPT_DIR / "inventory_ai_research_outputs.py"
     if not script.is_file():
@@ -704,6 +730,9 @@ def main() -> int:
         help="Dedicated market-news ingestion interval in seconds.",
     )
     parser.add_argument("--market-news-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_NEWS_TIMEOUT_SECONDS", "240")))
+    parser.add_argument("--disable-market-calendar", action="store_true", help="Disable scheduled NSE results and holiday calendar refresh.")
+    parser.add_argument("--market-calendar-interval", type=int, default=int(os.environ.get("AI_OS_MARKET_CALENDAR_INTERVAL_SECONDS", "21600")))
+    parser.add_argument("--market-calendar-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_CALENDAR_TIMEOUT_SECONDS", "180")))
     parser.add_argument("--disable-research-hub-refresh", action="store_true", help="Disable scheduled AI research-output inventory refresh.")
     parser.add_argument(
         "--research-hub-refresh-interval",
@@ -738,12 +767,14 @@ def main() -> int:
     source_freshness_interval = max(60, int(args.source_freshness_interval))
     ohlcv_aggregation_enabled = not args.disable_ohlcv_aggregation and os.environ.get("AI_OS_ENABLE_OHLCV_AGGREGATION", "1") != "0"
     ohlcv_aggregation_interval = max(60, int(args.ohlcv_aggregation_interval))
-    tradingview_quote_refresh_enabled = not args.disable_tradingview_quote_refresh and os.environ.get("AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH", "1") != "0"
+    tradingview_quote_refresh_enabled = not args.disable_tradingview_quote_refresh and os.environ.get("AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH", "0") != "0"
     tradingview_quote_refresh_interval = max(300, int(args.tradingview_quote_refresh_interval))
     strategy_discovery_enabled = not args.disable_strategy_discovery_scheduler and os.environ.get("AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER", "1") != "0"
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
     market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
     market_news_interval = max(300, int(args.market_news_interval))
+    market_calendar_enabled = not args.disable_market_calendar and os.environ.get("AI_OS_ENABLE_MARKET_CALENDAR_SCHEDULER", "1") != "0"
+    market_calendar_interval = max(1800, int(args.market_calendar_interval))
     research_hub_refresh_enabled = not args.disable_research_hub_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_REFRESH", "1") != "0"
     research_hub_refresh_interval = max(300, int(args.research_hub_refresh_interval))
     workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
@@ -754,6 +785,7 @@ def main() -> int:
     last_tradingview_quote_refresh_run = 0.0
     last_strategy_discovery_run = 0.0
     last_market_news_run = 0.0
+    last_market_calendar_run = 0.0
     last_research_hub_refresh_run = 0.0
     last_workflow_scheduler_run = 0.0
     daemon_started_at = datetime.now().astimezone()
@@ -765,6 +797,7 @@ def main() -> int:
         "tradingview_quote_refresh": tradingview_quote_refresh_enabled,
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
+        "market_calendar": market_calendar_enabled,
         "research_hub_refresh": research_hub_refresh_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
         "graph_control": graph_control_enabled,
@@ -810,6 +843,12 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["market_news_ingestion"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_market_news_run = time.monotonic()
+        if market_calendar_enabled and (last_market_calendar_run == 0.0 or time.monotonic() - last_market_calendar_run >= market_calendar_interval):
+            try:
+                result["market_calendar_refresh"] = run_market_calendar_refresh(max(60, int(args.market_calendar_timeout)))
+            except Exception as exc:  # noqa: BLE001
+                result["market_calendar_refresh"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_market_calendar_run = time.monotonic()
         if research_hub_refresh_enabled and (
             last_research_hub_refresh_run == 0.0
             or time.monotonic() - last_research_hub_refresh_run >= research_hub_refresh_interval
@@ -884,6 +923,7 @@ def main() -> int:
             tradingview_quotes = result.get("tradingview_quote_refresh") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
+            market_calendar = result.get("market_calendar_refresh") or {}
             research_hub = result.get("research_hub_refresh") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
             graph_control = result.get("graph_control_plane") or {}
@@ -894,6 +934,7 @@ def main() -> int:
                 f"tradingview_quotes={tradingview_quotes.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
+                f"market_calendar={market_calendar.get('status', 'skipped')} "
                 f"research_hub={research_hub.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
                 f"graph_runs={graph_control.get('count', 0)}/{graph_control.get('active_runs_seen', 0)} "
