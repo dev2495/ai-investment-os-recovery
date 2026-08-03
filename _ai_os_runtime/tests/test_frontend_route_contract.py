@@ -59,7 +59,7 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 79)
+        self.assertEqual(len(paths), 80)
         self.assertNotIn("/api/tradingview/chart-actions", paths)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),
@@ -147,6 +147,12 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("It cannot place a broker order", terminal)
         self.assertIn("Backtests Ready for Adversarial Validation", terminal)
         self.assertIn("useRunModelValidation", terminal)
+        self.assertIn("/api/strategy/discovery/triage/resolve", actions)
+        self.assertIn("discovery_candidate_id: candidateId", terminal)
+        self.assertIn("Triage rationale is required", terminal)
+        self.assertIn("Create intake", terminal)
+        self.assertIn("num(idea, \"strategy_id\", 0) > 0", terminal)
+        self.assertNotIn("paperMut.mutate({ strategy_id: num(idea, \"strategy_id\", 0)", terminal)
         self.assertNotIn("How to validate", terminal)
 
 

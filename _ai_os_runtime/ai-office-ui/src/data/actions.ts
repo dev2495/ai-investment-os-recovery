@@ -349,6 +349,20 @@ export function useRunDiscovery() {
   );
 }
 
+export interface ResolveDiscoveryTriageInput {
+  discovery_candidate_id: number;
+  decision: "reject" | "request_more_evidence" | "route_quant_lab" | "route_special_situation" | "open_committee_review";
+  notes: string;
+  actor?: string;
+}
+
+export function useResolveDiscoveryTriage() {
+  return useInvalidating<ResolveDiscoveryTriageInput, LiveRow>(
+    "/api/strategy/discovery/triage/resolve",
+    [Q.strategyArsenal, Q.tradingQuantRisk, Q.office]
+  );
+}
+
 export interface JournalMiningInput {
   actor?: string;
   lookback_days?: number;

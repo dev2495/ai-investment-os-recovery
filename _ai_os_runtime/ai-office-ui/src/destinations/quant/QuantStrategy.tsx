@@ -21,7 +21,7 @@ import {
 import { useStrategyArsenal, useTradingQuantRisk } from "../../data/queries";
 import {
   useCreateStrategyIntake, useRunBacktest, useRunOptimization,
-  useRunDiscovery, useRunJournalMining, useRunModelValidation,
+  useRunDiscovery, useResolveDiscoveryTriage, useRunJournalMining, useRunModelValidation,
   useRunQuantAnalytics, useRunStrategyPortfolioAllocation,
   useRunStrategyRetirementReview, useRunUserOptimizer, useStartPaperMonitor,
 } from "../../data/actions";
@@ -590,6 +590,7 @@ function ValidationView() {
 function IdeasView() {
   const { data } = useTradingQuantRisk();
   const paperMut = useStartPaperMonitor();
+  const intakeMut = useCreateStrategyIntake();
   const mineMut = useRunJournalMining();
   const pushToast = useUIStore((s) => s.pushToast);
   const ideas = data?.signals ?? [];
@@ -618,7 +619,28 @@ function IdeasView() {
               <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", minHeight: 32, marginBottom: "var(--space-2)" }}>
                 {text(idea, "description", text(idea, "thesis", text(idea, "rule", "—")))}
               </div>
-              <Button size="sm" variant="ghost" icon={Activity} onClick={() => paperMut.mutate({ strategy_id: num(idea, "strategy_id", 0), actor: "Devarsh" })}>Paper trade</Button>
+              {num(idea, "strategy_id", 0) > 0 ? (
+                <Button size="sm" variant="ghost" icon={Activity} disabled={paperMut.isPending} onClick={() => paperMut.mutate(
+                  { strategy_id: num(idea, "strategy_id", 0), actor: "Devarsh" },
+                  { onSuccess: () => pushToast({ title: "Paper monitor started", tone: "ok", duration: 3500 }), onError: (error) => pushToast({ title: "Paper monitor failed", message: error.message, tone: "risk", duration: 6000 }) }
+                )}>Paper monitor</Button>
+              ) : (
+                <Button size="sm" variant="ghost" icon={FileText} disabled={intakeMut.isPending} onClick={() => {
+                  const strategyName = text(idea, "name", text(idea, "symbol", "Signal " + i));
+                  const hypothesis = text(idea, "description", text(idea, "thesis", text(idea, "rule", "")));
+                  intakeMut.mutate({
+                    strategy_name: strategyName,
+                    intake_text: "Hypothesis: " + (hypothesis || "Evidence-backed rules must be defined before testing."),
+                    strategy_family: "quant",
+                    asset_class: "equity",
+                    symbols: [text(idea, "symbol")].filter(Boolean),
+                    timeframe: text(idea, "timeframe", "daily"),
+                    source_kind: text(idea, "source", "signal"),
+                    source_ref: text(idea, "signal_id", text(idea, "id")),
+                    actor: "Devarsh",
+                  }, { onSuccess: () => pushToast({ title: "Strategy intake created", message: "Define rules and validate evidence before any paper monitor.", tone: "ok", duration: 4500 }), onError: (error) => pushToast({ title: "Intake failed", message: error.message, tone: "risk", duration: 6000 }) });
+                }}>Create intake</Button>
+              )}
             </div>
           ))}
         </div>
@@ -758,6 +780,28 @@ function DiscoveryView() {
   const pushToast = useUIStore((s) => s.pushToast);
   const runs = data?.discovery_runs ?? [];
   const triage = data?.discovery_triage ?? [];
+  const triageMut = useResolveDiscoveryTriage();
+  const [selected, setSelected] = React.useState<LiveRow | null>(null);
+  const [decision, setDecision] = React.useState<"reject" | "request_more_evidence" | "route_quant_lab" | "route_special_situation" | "open_committee_review">("request_more_evidence");
+  const [notes, setNotes] = React.useState("");
+
+  const reviewCandidate = (candidate: LiveRow) => {
+    setSelected(candidate);
+    setDecision("request_more_evidence");
+    setNotes("");
+  };
+
+  const submitTriage = () => {
+    const candidateId = num(selected, "id", 0);
+    if (!candidateId || !notes.trim()) {
+      pushToast({ title: "Triage rationale is required", tone: "warn", duration: 3000 });
+      return;
+    }
+    triageMut.mutate({ discovery_candidate_id: candidateId, decision, notes: notes.trim(), actor: "Devarsh" }, {
+      onSuccess: () => { pushToast({ title: "Discovery decision recorded", tone: "ok", duration: 4000 }); setSelected(null); },
+      onError: (error) => pushToast({ title: "Triage failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  };
 
   return (
     <>
@@ -788,16 +832,32 @@ function DiscoveryView() {
           {isLoading ? <SkeletonGrid rows={3} /> : triage.length === 0 ? <Empty icon={Target} title="Triage empty" /> : (
             <DataTable
               columns={[
-                { key: "candidate", header: "Candidate", render: (r) => <strong>{text(r, "candidate_name", text(r, "name"))}</strong> },
-                { key: "score", header: "Score", align: "right", render: (r) => num(r, "score", 0).toFixed(1) },
-                { key: "decision", header: "Decision", render: (r) => <StatusPill status={text(r, "triage_decision", text(r, "status", "pending"))} /> },
+                { key: "candidate", header: "Candidate", render: (r) => <strong>{text(r, "title", "Untitled candidate")}</strong> },
+                { key: "score", header: "Priority", align: "right", render: (r) => num(r, "priority_score", 0).toFixed(1) },
+                { key: "decision", header: "Decision", render: (r) => <StatusPill status={text(r, "triage_decision", text(r, "triage_status", "unreviewed"))} /> },
+                { key: "action", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Target} onClick={() => reviewCandidate(r)} disabled={text(r, "triage_status", "pending") === "final"}>Review</Button> },
               ]}
               rows={triage}
-              rowKey={(r, i) => String(text(r, "triage_id", text(r, "id", i)))}
+              rowKey={(r, i) => String(text(r, "id", i))}
             />
           )}
         </Panel>
       </div>
+
+      <Drawer open={selected !== null} onClose={() => setSelected(null)} title={selected ? text(selected, "title", "Discovery triage") : "Discovery triage"} subtitle="Human evidence gate before research routing" icon={Target} width={560}
+        footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => setSelected(null)}>Cancel</Button><Button variant="primary" icon={Target} onClick={submitTriage} disabled={triageMut.isPending || !notes.trim()}>Record triage</Button></div>}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Field label="Decision"><Select value={decision} onChange={(event) => setDecision(event.target.value as typeof decision)}>
+            <option value="request_more_evidence">Request more evidence</option>
+            <option value="route_quant_lab">Route to Quant Lab</option>
+            <option value="route_special_situation">Route to Special Situations</option>
+            <option value="open_committee_review">Open committee review</option>
+            <option value="reject">Reject</option>
+          </Select></Field>
+          <Field label="Rationale" required><TextArea value={notes} onChange={(event) => setNotes(event.target.value)} rows={6} placeholder="State the evidence, missing data, falsification test, and why this route is appropriate." /></Field>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>This records a research routing decision only. It cannot start live trading or place a broker order.</div>
+        </div>
+      </Drawer>
     </>
   );
 }
