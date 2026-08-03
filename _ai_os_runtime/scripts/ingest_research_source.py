@@ -77,6 +77,11 @@ def validate_public_https(url: str) -> urllib.parse.ParseResult:
     return parsed
 
 
+class RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        raise ValueError("research source redirects are not followed; submit the final public HTTPS URL")
+
+
 class ArticleParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -115,7 +120,8 @@ def fetch_public_source(url: str) -> tuple[bytes, str, str | None]:
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/pdf,text/plain;q=0.9,*/*;q=0.1"},
     )
-    with urllib.request.urlopen(request, timeout=45) as response:
+    opener = urllib.request.build_opener(RejectRedirectHandler())
+    with opener.open(request, timeout=45) as response:
         final_url = response.geturl()
         validate_public_https(final_url)
         content_type = str(response.headers.get_content_type() or "application/octet-stream").lower()
