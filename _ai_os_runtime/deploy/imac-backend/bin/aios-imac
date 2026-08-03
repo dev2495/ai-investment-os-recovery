@@ -362,6 +362,7 @@ start_backend() {
   local legacy_tradingview_plist="${HOME}/Library/LaunchAgents/com.devarsh.aios.tradingview-browser.plist"
   launchctl bootout "${LAUNCHD_DOMAIN}" "${legacy_tradingview_plist}" 2>/dev/null || true
   rm -f "${legacy_tradingview_plist}"
+  pkill -TERM -f '/Library/Application Support/AIOS/browser-profiles/tradingview-direct-cdp-v1' 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/api/ai_os_api_server.py' 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/scripts/serve_spa.py' 2>/dev/null || true

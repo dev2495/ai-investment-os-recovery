@@ -228,6 +228,7 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertIn("legacy_tradingview_plist", deploy_source)
         self.assertIn("launchctl bootout", deploy_source)
         self.assertIn('rm -f "${legacy_tradingview_plist}"', deploy_source)
+        self.assertIn("pkill -TERM -f '/Library/Application Support/AIOS/browser-profiles/tradingview-direct-cdp-v1'", deploy_source)
 
         api_source = pathlib.Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
         self.assertIn('"tradingview_desktop": probe_tradingview_desktop()', api_source)
