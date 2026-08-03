@@ -27,6 +27,13 @@ class ModelRouterContractTest(unittest.TestCase):
                 "182_model_route_reconciliation_v1.sql",
             )
         )
+        cls.route_reconciliation_migrations = "\n".join(
+            (cls.runtime_root / "postgres" / "init" / migration_name).read_text(encoding="utf-8")
+            for migration_name in (
+                "179_model_fallback_precedence_v1.sql",
+                "182_model_route_reconciliation_v1.sql",
+            )
+        )
 
     def test_operator_defaults_to_private_local_route_and_uses_luna_for_volume(self) -> None:
         self.assertIn(
@@ -110,6 +117,13 @@ class ModelRouterContractTest(unittest.TestCase):
         self.assertIn("SET enabled=qwen2_ready", self.migration)
         self.assertIn("SET enabled=bonsai_ready", self.migration)
         self.assertIn("SELECT agent.activate_final_local_model_fleet();", self.migration)
+
+    def test_route_reconciliation_matches_model_routes_schema(self) -> None:
+        pre_function = self.route_reconciliation_migrations.split("CREATE OR REPLACE FUNCTION", 1)[0]
+        self.assertNotIn("updated_at=now()", pre_function)
+        self.assertNotIn("SET enabled=nanbeige_ready, updated_at=now()", self.route_reconciliation_migrations)
+        self.assertNotIn("SET enabled=qwen2_ready, updated_at=now()", self.route_reconciliation_migrations)
+        self.assertNotIn("SET enabled=bonsai_ready, updated_at=now()", self.route_reconciliation_migrations)
 
     def test_local_openai_resolution_fails_closed_without_exact_endpoint(self) -> None:
         with (

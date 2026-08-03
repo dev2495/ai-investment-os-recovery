@@ -3,8 +3,7 @@ BEGIN;
 UPDATE agent.model_routes
 SET escalation_provider='openrouter',
     escalation_model='openai/gpt-5.6-luna',
-    notes='Private iMac fallback. Deterministic tools remain authoritative; Luna escalation is separately privacy-gated and budgeted.',
-    updated_at=now()
+    notes='Private iMac fallback. Deterministic tools remain authoritative; Luna escalation is separately privacy-gated and budgeted.'
 WHERE route_name='nanbeige42_local_assistant';
 
 CREATE OR REPLACE FUNCTION agent.activate_final_local_model_fleet()
