@@ -193,6 +193,17 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertNotIn("CDP Capture", frontend)
         self.assertNotIn("localhost:9333", frontend)
 
+    def test_native_desktop_migration_uses_constraint_safe_disabled_host(self) -> None:
+        migration = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "postgres"
+            / "init"
+            / "181_tradingview_native_desktop_only_v1.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("remote_debugging_host = 'disabled'", migration)
+        self.assertIn("'cdp_allowed', false", migration)
+        self.assertIn("status = 'retired'", migration)
+
     def test_active_runtime_does_not_start_a_managed_tradingview_browser(self) -> None:
         runtime_root = pathlib.Path(__file__).resolve().parents[1]
         active_files = [
