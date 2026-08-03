@@ -12,7 +12,7 @@ import {
   Inbox, ChevronRight, MessageSquare, Play, Send, Search, RefreshCw,
 } from "lucide-react";
 import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Field, Select, TextArea, TextInput } from "../../system/primitives";
-import { useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports } from "../../data/queries";
+import { useAction, useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports } from "../../data/queries";
 import { useCreateAgentMessage, useRunAgentWorker } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials } from "../../data/liveRow";
@@ -434,6 +434,9 @@ export function SystemView() {
  * ============================================================ */
 export function LibraryView() {
   const reports = useReports();
+  const refreshHub = useAction<{ actor: string }>("/api/research/hub/refresh", {
+    invalidate: [["reports"], ["mission-control"]],
+  });
   const openEvidence = useUIStore((s) => s.openEvidence);
   const pushToast = useUIStore((s) => s.pushToast);
   const [query, setQuery] = React.useState("");
@@ -469,8 +472,9 @@ export function LibraryView() {
 
   const refresh = async () => {
     try {
+      const result = await refreshHub.mutateAsync({ actor: "Knowledge Librarian" });
       await reports.refetch();
-      pushToast({ title: "Knowledge library refreshed", tone: "ok", duration: 2500 });
+      pushToast({ title: "Knowledge library refreshed", message: `${num(result, "records_upserted")} artifacts indexed.`, tone: "ok", duration: 2500 });
     } catch (error) {
       pushToast({ title: "Library refresh failed", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 5000 });
     }
@@ -494,7 +498,7 @@ export function LibraryView() {
       <Panel
         icon={Search}
         title="Search Knowledge"
-        actions={<Button size="sm" icon={RefreshCw} onClick={refresh} disabled={reports.isFetching}>{reports.isFetching ? "Refreshing" : "Refresh"}</Button>}
+        actions={<Button size="sm" icon={RefreshCw} onClick={refresh} disabled={refreshHub.isPending || reports.isFetching}>{refreshHub.isPending ? "Indexing" : reports.isFetching ? "Refreshing" : "Refresh"}</Button>}
       >
         <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(180px, 280px)", gap: "var(--space-3)", padding: "var(--space-3)" }}>
           <Field label="Title, company, symbol, owner, or topic">

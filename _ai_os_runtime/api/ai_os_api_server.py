@@ -9373,6 +9373,34 @@ def check_browser_profile(payload: dict) -> dict:
     return result
 
 
+def refresh_research_hub(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Knowledge Librarian").strip() or "Knowledge Librarian"
+    completed = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "inventory_ai_research_outputs.py")],
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=600,
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "research hub refresh failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("research hub refresh returned invalid JSON") from exc
+    audit_api_write(
+        "ai_os_api_refresh_research_hub",
+        "refresh_research_hub",
+        actor,
+        "core.raw_artifacts",
+        result,
+        {"actor": actor},
+    )
+    return result
+
+
 def run_filing_collector(payload: dict) -> dict:
     source = str(payload.get("source") or "all").strip().lower()
     if source not in {"nse", "bse", "all"}:
@@ -17306,6 +17334,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/browser/profiles/check":
                 self._send_json(check_browser_profile(payload), 201)
+                return
+            if self.path == "/api/research/hub/refresh":
+                self._send_json(refresh_research_hub(payload), 201)
                 return
             if self.path == "/api/research/filings/collect":
                 self._send_json(run_filing_collector(payload), 201)

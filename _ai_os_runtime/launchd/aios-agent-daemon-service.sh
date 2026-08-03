@@ -4,6 +4,7 @@ set -euo pipefail
 export PATH="/opt/homebrew/opt/postgresql@15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export AI_OS_RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-/Users/devarshthakkar/AI_OS_ACTIVE_RECOVERY_20260710/ai-investment-os/_ai_os_runtime}"
 export AI_OS_VAULT_ROOT="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memory }"
+export AI_OS_DATA_ROOT="${AI_OS_DATA_ROOT:-/Volumes/Devarsh SSD/AI OS Data}"
 export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psql}"
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/opt/homebrew/bin/docker}"
 export AI_OS_ARTIFACT_ROOT="${AI_OS_ARTIFACT_ROOT:-/Volumes/Devarsh SSD/AI OS Data/artifacts}"
@@ -48,6 +49,9 @@ export AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_TIMEOUT_SECONDS="${AI_OS_STRAT
 export AI_OS_ENABLE_MARKET_NEWS_SCHEDULER="${AI_OS_ENABLE_MARKET_NEWS_SCHEDULER:-1}"
 export AI_OS_MARKET_NEWS_INTERVAL_SECONDS="${AI_OS_MARKET_NEWS_INTERVAL_SECONDS:-900}"
 export AI_OS_MARKET_NEWS_TIMEOUT_SECONDS="${AI_OS_MARKET_NEWS_TIMEOUT_SECONDS:-240}"
+export AI_OS_ENABLE_RESEARCH_HUB_REFRESH="${AI_OS_ENABLE_RESEARCH_HUB_REFRESH:-1}"
+export AI_OS_RESEARCH_HUB_REFRESH_INTERVAL_SECONDS="${AI_OS_RESEARCH_HUB_REFRESH_INTERVAL_SECONDS:-1800}"
+export AI_OS_RESEARCH_HUB_REFRESH_TIMEOUT_SECONDS="${AI_OS_RESEARCH_HUB_REFRESH_TIMEOUT_SECONDS:-600}"
 
 cd "/Users/devarshthakkar/Library/Application Support/AIOS/service"
 exec python3 -u scripts/run_agent_message_daemon.py \
@@ -64,5 +68,7 @@ exec python3 -u scripts/run_agent_message_daemon.py \
   --strategy-discovery-scheduler-timeout "${AI_OS_STRATEGY_DISCOVERY_SCHEDULER_TIMEOUT_SECONDS}" \
   --market-news-interval "${AI_OS_MARKET_NEWS_INTERVAL_SECONDS}" \
   --market-news-timeout "${AI_OS_MARKET_NEWS_TIMEOUT_SECONDS}" \
+  --research-hub-refresh-interval "${AI_OS_RESEARCH_HUB_REFRESH_INTERVAL_SECONDS}" \
+  --research-hub-refresh-timeout "${AI_OS_RESEARCH_HUB_REFRESH_TIMEOUT_SECONDS}" \
   --message-limit 10 \
   --worker-limit 5

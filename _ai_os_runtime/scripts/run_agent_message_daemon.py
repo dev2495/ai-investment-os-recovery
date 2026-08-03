@@ -81,6 +81,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "source_freshness_scheduler",
         "strategy_discovery_scheduler",
         "market_news_ingestion",
+        "research_hub_refresh",
         "workflow_schedule_materializer",
         "graph_control_plane",
     ):
@@ -575,6 +576,32 @@ def run_market_news_ingestion(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
+def run_research_hub_refresh(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "inventory_ai_research_outputs.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=max(60, timeout_seconds),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    payload["status"] = "success" if completed.returncode == 0 else "failed"
+    if completed.returncode != 0:
+        payload["error"] = (
+            completed.stderr or completed.stdout or "research hub refresh failed"
+        ).strip()[:4000]
+    return payload
+
+
 def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
     rows = psql_json(
         f"""
@@ -635,6 +662,18 @@ def main() -> int:
         help="Dedicated market-news ingestion interval in seconds.",
     )
     parser.add_argument("--market-news-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_NEWS_TIMEOUT_SECONDS", "240")))
+    parser.add_argument("--disable-research-hub-refresh", action="store_true", help="Disable scheduled AI research-output inventory refresh.")
+    parser.add_argument(
+        "--research-hub-refresh-interval",
+        type=int,
+        default=int(os.environ.get("AI_OS_RESEARCH_HUB_REFRESH_INTERVAL_SECONDS", "1800")),
+        help="Research-output inventory refresh interval in seconds.",
+    )
+    parser.add_argument(
+        "--research-hub-refresh-timeout",
+        type=int,
+        default=int(os.environ.get("AI_OS_RESEARCH_HUB_REFRESH_TIMEOUT_SECONDS", "600")),
+    )
     parser.add_argument("--disable-workflow-scheduler", action="store_true", help="Disable governed agent workflow schedule materialization.")
     parser.add_argument(
         "--workflow-scheduler-interval",
@@ -663,6 +702,8 @@ def main() -> int:
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
     market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
     market_news_interval = max(300, int(args.market_news_interval))
+    research_hub_refresh_enabled = not args.disable_research_hub_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_REFRESH", "1") != "0"
+    research_hub_refresh_interval = max(300, int(args.research_hub_refresh_interval))
     workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
     workflow_scheduler_interval = max(30, int(args.workflow_scheduler_interval))
     graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
@@ -671,6 +712,7 @@ def main() -> int:
     last_tradingview_quote_refresh_run = 0.0
     last_strategy_discovery_run = 0.0
     last_market_news_run = 0.0
+    last_research_hub_refresh_run = 0.0
     last_workflow_scheduler_run = 0.0
     daemon_started_at = datetime.now().astimezone()
     daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
@@ -681,6 +723,7 @@ def main() -> int:
         "tradingview_quote_refresh": tradingview_quote_refresh_enabled,
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
+        "research_hub_refresh": research_hub_refresh_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
         "graph_control": graph_control_enabled,
     }
@@ -725,6 +768,20 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["market_news_ingestion"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_market_news_run = time.monotonic()
+        if research_hub_refresh_enabled and (
+            last_research_hub_refresh_run == 0.0
+            or time.monotonic() - last_research_hub_refresh_run >= research_hub_refresh_interval
+        ):
+            try:
+                result["research_hub_refresh"] = run_research_hub_refresh(
+                    max(60, int(args.research_hub_refresh_timeout))
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["research_hub_refresh"] = {
+                    "status": "failed",
+                    "error": type(exc).__name__ + ": " + str(exc),
+                }
+            last_research_hub_refresh_run = time.monotonic()
         if ohlcv_aggregation_enabled and (last_ohlcv_aggregation_run == 0.0 or time.monotonic() - last_ohlcv_aggregation_run >= ohlcv_aggregation_interval):
             try:
                 result["ohlcv_aggregation"] = run_ohlcv_aggregation(max(30, int(args.ohlcv_aggregation_timeout)))
@@ -785,6 +842,7 @@ def main() -> int:
             tradingview_quotes = result.get("tradingview_quote_refresh") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
+            research_hub = result.get("research_hub_refresh") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
             graph_control = result.get("graph_control_plane") or {}
             print(
@@ -794,6 +852,7 @@ def main() -> int:
                 f"tradingview_quotes={tradingview_quotes.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
+                f"research_hub={research_hub.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
                 f"graph_runs={graph_control.get('count', 0)}/{graph_control.get('active_runs_seen', 0)} "
                 f"graph_status={graph_control.get('status', 'skipped')} "
