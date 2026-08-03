@@ -15842,6 +15842,31 @@ def infer_graph_control_command(message: str) -> dict | None:
     return None
 
 
+def is_open_ended_work_request(message: str) -> bool:
+    """Detect explicit work requests that need durable triage, not a prose-only reply."""
+    normalized = re.sub(r"\s+", " ", message.lower()).strip()
+    if not normalized:
+        return False
+    if re.search(r"\b(?:do not|don't|dont|never)\s+(?:start|begin|research|investigate|build|prepare|monitor|track|compile|collect|test|evaluate|work|look)\b", normalized):
+        return False
+    if any(term in normalized for term in ("dashboard widget", "add widget", "remove widget")):
+        return False
+    if re.match(r"^(?:what|why|how|where|when|who|is|are|does|do|should|would)\b", normalized):
+        return False
+
+    work = (
+        r"(?:research|investigate|prepare|build|develop|monitor|track|compile|collect|"
+        r"test|evaluate|organize|work\s+on|look\s+into|deep\s+dive)"
+    )
+    prefixed = re.search(
+        rf"\b(?:please|can\s+you|could\s+you|i\s+need\s+you\s+to|"
+        rf"i\s+want\s+you\s+to|go\s+ahead\s+and|start|begin)\s+(?:to\s+)?{work}\b",
+        normalized,
+    )
+    direct = re.match(rf"^{work}\b", normalized)
+    return bool(prefixed or direct)
+
+
 def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> list[dict]:
     normalized = message.lower()
     explicit_refresh = any(term in normalized for term in ("refresh", "update", "sync", "collect", "fetch"))
@@ -16229,6 +16254,33 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             lambda: run_agent_worker({"actor": "Devarsh via Charlie", "limit": 5}),
             "processed",
         )
+
+    if not results and is_open_ended_work_request(message):
+        active_agents = {
+            str(row.get("agent_name"))
+            for row in run_psql_json("SELECT agent_name FROM agent.profiles WHERE status='active'")
+        }
+        from_agent = actor if actor in active_agents else "Charlie Munger"
+        target_agent = "Jarvis" if "Jarvis" in active_agents else "Charlie Munger"
+        invoke(
+            "queue_open_ended_work",
+            lambda: create_agent_message({
+                "from_agent": from_agent,
+                "to_agent": target_agent,
+                "subject": re.sub(r"\s+", " ", message).strip()[:120],
+                "body": message,
+                "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
+                "actor": "Devarsh via Charlie",
+                "related_skill_key": "route_user_request",
+                "metadata": {
+                    "source": "charlie_chat",
+                    "operator_requested": True,
+                    "open_ended_intake": True,
+                    "skill_key": "route_user_request",
+                },
+            }),
+            "id",
+        )
     return results
 
 
@@ -16493,6 +16545,17 @@ def chat_with_charlie(payload: dict) -> dict:
         for assignment in ((operation.get("result") or {}).get("assignments") or [])
         if assignment.get("task")
     ]
+    direct_message_jobs = [
+        {
+            "message_id": (operation.get("result") or {}).get("id"),
+            "to_agent": (operation.get("result") or {}).get("to_agent"),
+            "task_name": (operation.get("result") or {}).get("subject") or operation.get("tool"),
+            "status": (operation.get("result") or {}).get("processing_status") or operation.get("status"),
+        }
+        for operation in tool_intents
+        if operation.get("tool") in {"delegate_agent_work", "queue_open_ended_work"}
+        and (operation.get("result") or {}).get("id")
+    ]
     return {
         "chat_turn": chat_turn,
         "message": assistant_message,
@@ -16519,7 +16582,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "widget_intents": widget_intents,
         "materialization": materialization,
         "dashboard_widgets": [item.get("widget") for item in materialization.get("materialized", []) if item.get("widget")],
-        "agent_jobs": delegated_jobs + [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
+        "agent_jobs": delegated_jobs + direct_message_jobs + [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
         "tool_intents": tool_intents,
         "operations": tool_intents,
         "response_guardrail": response_guardrail,

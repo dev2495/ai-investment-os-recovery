@@ -184,6 +184,48 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertIn("structured_spec", captured["requested_outputs"])
         self.assertNotIn("live_execution", captured["requested_outputs"])
 
+    def test_open_ended_work_request_is_durably_queued(self) -> None:
+        captured = {}
+
+        def fake_message(payload: dict) -> dict:
+            captured.update(payload)
+            return {
+                "id": 44,
+                "to_agent": payload["to_agent"],
+                "subject": payload["subject"],
+                "processing_status": "pending",
+            }
+
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                return_value=[
+                    {"agent_name": "Charlie Munger"},
+                    {"agent_name": "Jarvis"},
+                ],
+            ),
+            mock.patch.object(ai_os_api_server, "create_agent_message", fake_message),
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Please investigate how promoter pledging changed across my watchlist and prepare an evidence pack"
+            )
+
+        self.assertEqual(operations[0]["tool"], "queue_open_ended_work")
+        self.assertEqual(captured["from_agent"], "Charlie Munger")
+        self.assertEqual(captured["to_agent"], "Jarvis")
+        self.assertEqual(captured["related_skill_key"], "route_user_request")
+        self.assertTrue(captured["metadata"]["open_ended_intake"])
+
+    def test_ordinary_question_does_not_create_background_work(self) -> None:
+        with mock.patch.object(ai_os_api_server, "create_agent_message") as create_message:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "How does the research department work?"
+            )
+
+        self.assertEqual(operations, [])
+        create_message.assert_not_called()
+
     def test_explicit_delegation_creates_medium_priority_message(self) -> None:
         captured = {}
         profiles = [{
