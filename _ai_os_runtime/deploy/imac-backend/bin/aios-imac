@@ -18,9 +18,7 @@ Commands:
   verify        Run backend acceptance checks
   tailscale     Configure private Tailscale Serve UI and API endpoints
   reindex       Rebuild six Qdrant collections with the approved embedding model
-  browser-enable  Install and start the governed TradingView browser worker
-  browser-disable Stop the governed TradingView browser worker
-  browser-verify  Verify and record the TradingView CDP browser heartbeat
+  desktop-status  Check the user-managed native TradingView Desktop handoff
   reports       Generate all due source-backed investment-office reports
   backup        Create a compact independent backup on iMac internal storage
   restore-verify Verify the compact backup with a disposable Timescale restore
@@ -143,7 +141,6 @@ ensure_runtime_directories() {
     "${AI_OS_DATA_ROOT}/caches/npm" \
     "${AI_OS_PLAYWRIGHT_BROWSERS_PATH}" \
     "${AI_OS_DATA_ROOT}/colima" \
-    "${AI_OS_TRADINGVIEW_BROWSER_PROFILE}" \
     "${AI_OS_RUNTIME_LOG_ROOT}" \
     "${AI_OS_RUNTIME_RUN_ROOT}" \
     "${AI_OS_DATA_ROOT}/evals/local_models"
@@ -194,13 +191,15 @@ restore_postgres() {
     -U "${AI_OS_POSTGRES_USER}" -d "${AI_OS_POSTGRES_DB}" \
     --clean --if-exists --no-owner --no-privileges < "${dump_file}"
 
-  local sql_file
-  for sql_file in "${AI_OS_REPO_ROOT}/_ai_os_runtime/postgres/init/"{143,144,145,146,147,148,149,150}_*.sql; do
-    [[ -f "${sql_file}" ]] || continue
+  local sql_file migration_number
+  while IFS= read -r sql_file; do
+    migration_number="$(basename "${sql_file}" | cut -d_ -f1)"
+    [[ "${migration_number}" =~ ^[0-9]+$ ]] || continue
+    ((10#${migration_number} >= 143)) || continue
     log "Applying post-backup migration $(basename "${sql_file}")"
     docker exec -i ai_os_postgres psql -q -U "${AI_OS_POSTGRES_USER}" \
       -d "${AI_OS_POSTGRES_DB}" -v ON_ERROR_STOP=1 < "${sql_file}"
-  done
+  done < <(find "${AI_OS_REPO_ROOT}/_ai_os_runtime/postgres/init" -maxdepth 1 -type f -name "[0-9][0-9][0-9]_*.sql" | sort)
 
   docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" \
     -d "${AI_OS_POSTGRES_DB}" -v ON_ERROR_STOP=1 \
@@ -267,42 +266,9 @@ set_env_value() {
   chmod 600 "${ENV_FILE}"
 }
 
-install_tradingview_browser() {
+tradingview_desktop_status() {
   load_env
-  if [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; then
-    log "Using the signed system Chrome for the governed TradingView browser"
-    return 0
-  fi
-
-  log "Installing Playwright Chromium into SSD cache"
-  (
-    cd "${AI_OS_REPO_ROOT}/_ai_os_runtime/ai-office-ui"
-    PLAYWRIGHT_BROWSERS_PATH="${AI_OS_PLAYWRIGHT_BROWSERS_PATH}" npx playwright install chromium
-  )
-}
-
-enable_tradingview_browser() {
-  load_env
-  install_tradingview_browser
-  set_env_value AI_OS_ENABLE_TRADINGVIEW_BROWSER 1
-  start_backend
-  wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 120
-  log "Managed TradingView browser started. Sign in once in that window, then run: $(basename "$0") browser-verify"
-}
-
-disable_tradingview_browser() {
-  load_env
-  set_env_value AI_OS_ENABLE_TRADINGVIEW_BROWSER 0
-  start_backend
-  log "Managed TradingView browser worker disabled"
-}
-
-verify_tradingview_browser() {
-  load_env
-  wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 10
-  "$(runtime_python)" "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/check_tradingview_cdp.py" \
-    --port "${AI_OS_TRADINGVIEW_CDP_PORT}" --actor "Automation Engineer"
-  log "TRADINGVIEW_BROWSER_WORKER_VERIFIED_READ_ONLY"
+  curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/tradingview/desktop-status" | jq "{installed, running, version, automation_permission, session_state, interaction_mode, authoritative_market_data, broker_execution_allowed, next_action}"
 }
 
 build_ui() {
@@ -393,6 +359,9 @@ start_backend() {
   load_env
   ensure_ssd
   render_launchagents
+  local legacy_tradingview_plist="${HOME}/Library/LaunchAgents/com.devarsh.aios.tradingview-browser.plist"
+  launchctl bootout "${LAUNCHD_DOMAIN}" "${legacy_tradingview_plist}" 2>/dev/null || true
+  rm -f "${legacy_tradingview_plist}"
   launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/api/ai_os_api_server.py' 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/scripts/serve_spa.py' 2>/dev/null || true
@@ -425,16 +394,6 @@ stop_backend() {
   launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${REPORTS_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${ZERODHA_STREAM_PLIST}" 2>/dev/null || true
-if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
-  pkill -TERM -f ".*--user-data-dir=${AI_OS_TRADINGVIEW_BROWSER_PROFILE}" 2>/dev/null || true
-  local attempt
-  for attempt in {1..30}; do
-    if ! curl --max-time 1 -fsS "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.25
-  done
-fi
   if colima status --profile ai-os >/dev/null 2>&1; then
     compose down --timeout 30 || true
     colima stop --profile ai-os || true
@@ -582,9 +541,6 @@ verify_backend() {
     || die "Supervisor LaunchAgent is not loaded"
   launchctl print "${LAUNCHD_DOMAIN}/${REPORTS_LABEL}" >/dev/null \
     || die "Scheduled reports LaunchAgent is not loaded"
-  if [[ "${AI_OS_ENABLE_TRADINGVIEW_BROWSER:-0}" == "1" ]]; then
-    wait_http "http://127.0.0.1:${AI_OS_TRADINGVIEW_CDP_PORT}/json/version" "TradingView browser" 10
-  fi
   log "IMAC_BACKEND_VERIFIED"
 }
 
@@ -596,7 +552,7 @@ status_backend() {
   /bin/df -h "${AI_OS_SSD_ROOT}" || true
   colima status --profile ai-os 2>/dev/null || true
   compose ps 2>/dev/null || true
-  curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" 2>/dev/null | jq '{ok, generated_at, db, tradingview_cdp, operator_auth}' || true
+  curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" 2>/dev/null | jq '{ok, generated_at, db, tradingview_desktop, operator_auth}' || true
   curl --max-time 3 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/tags" 2>/dev/null | jq -r '.models[]?.name' || true
   command -v tailscale >/dev/null 2>&1 && tailscale serve status || true
   [[ ! -f "${AI_OS_OFFSITE_BACKUP_ROOT}/current/manifest.txt" ]] || cat "${AI_OS_OFFSITE_BACKUP_ROOT}/current/manifest.txt"
@@ -636,9 +592,7 @@ case "${command_name}" in
   verify) verify_backend ;;
   tailscale) configure_tailscale; start_backend; verify_backend ;;
   reindex) reindex_qdrant; verify_backend ;;
-  browser-enable) enable_tradingview_browser ;;
-  browser-disable) disable_tradingview_browser ;;
-  browser-verify) verify_tradingview_browser ;;
+  desktop-status) tradingview_desktop_status ;;
   reports) run_reports ;;
   backup) backup_backend ;;
   restore-verify) verify_compact_restore ;;

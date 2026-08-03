@@ -42,14 +42,14 @@ class LiveMarketPipelineContractTests(unittest.TestCase):
         self.assertIn("high_price=greatest", source)
         self.assertIn("low_price=least", source)
 
-    def test_tradingview_web_quote_scanner_is_off_by_default(self) -> None:
+    def test_tradingview_web_quote_scanner_is_absent(self) -> None:
         daemon = (RUNTIME_ROOT / "scripts" / "run_agent_message_daemon.py").read_text(encoding="utf-8")
         service = (RUNTIME_ROOT / "launchd" / "aios-agent-daemon-service.sh").read_text(encoding="utf-8")
         env_example = (RUNTIME_ROOT / "deploy" / "imac-backend" / "imac.env.example").read_text(encoding="utf-8")
 
-        self.assertIn('os.environ.get("AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH", "0")', daemon)
-        self.assertIn('AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH:-0', service)
-        self.assertIn("AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH=0", env_example)
+        for source in (daemon, service, env_example):
+            self.assertNotIn("TRADINGVIEW_QUOTE_REFRESH", source)
+            self.assertNotIn("tradingview_quote_refresh", source)
         self.assertNotIn("AI_OS_ENABLE_TRADINGVIEW_BROWSER", env_example)
         self.assertNotIn("TRADINGVIEW_CDP_PORT", env_example)
 

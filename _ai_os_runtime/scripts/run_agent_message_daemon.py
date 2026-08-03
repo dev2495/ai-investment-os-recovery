@@ -77,7 +77,6 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
     for key in (
         "ohlcv_aggregation",
-        "tradingview_quote_refresh",
         "source_freshness_scheduler",
         "strategy_discovery_scheduler",
         "market_news_ingestion",
@@ -453,35 +452,6 @@ def run_ohlcv_aggregation(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
-def run_tradingview_quote_refresh(timeout_seconds: int, symbol_limit: int) -> dict[str, Any]:
-    quote_script = WORKLOAD_SCRIPT_DIR / "refresh_event_quotes.py"
-    if not quote_script.is_file():
-        return {"status": "failed", "error": f"required workload script is missing: {quote_script}"}
-    command = [
-        sys.executable,
-        str(quote_script),
-        "--limit",
-        str(max(1, min(200, symbol_limit))),
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=str(RUNTIME_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=max(30, timeout_seconds),
-    )
-    payload: dict[str, Any] = {}
-    if completed.stdout.strip():
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError:
-            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
-    if completed.returncode != 0:
-        payload["status"] = payload.get("status") or "failed"
-        payload["error"] = (completed.stderr or completed.stdout or "TradingView quote refresh failed").strip()[:4000]
-    return payload
-
 
 def run_strategy_discovery_scheduler(interval_seconds: int, timeout_seconds: int) -> dict[str, Any]:
     scheduler_script = WORKLOAD_SCRIPT_DIR / "run_strategy_discovery_scheduler.py"
@@ -712,15 +682,6 @@ def main() -> int:
         help="Tick-to-OHLCV aggregation interval in seconds.",
     )
     parser.add_argument("--ohlcv-aggregation-timeout", type=int, default=int(os.environ.get("AI_OS_OHLCV_AGGREGATION_TIMEOUT_SECONDS", "120")))
-    parser.add_argument("--disable-tradingview-quote-refresh", action="store_true", help="Disable scheduled TradingView portfolio quote refresh.")
-    parser.add_argument(
-        "--tradingview-quote-refresh-interval",
-        type=int,
-        default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_INTERVAL_SECONDS", "900")),
-        help="TradingView portfolio quote refresh interval in seconds.",
-    )
-    parser.add_argument("--tradingview-quote-refresh-timeout", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_TIMEOUT_SECONDS", "120")))
-    parser.add_argument("--tradingview-quote-refresh-limit", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_LIMIT", "100")))
     parser.add_argument("--disable-strategy-discovery-scheduler", action="store_true", help="Disable scheduled external-source strategy discovery.")
     parser.add_argument("--disable-market-news", action="store_true", help="Disable the dedicated market-news freshness workload.")
     parser.add_argument(
@@ -767,8 +728,6 @@ def main() -> int:
     source_freshness_interval = max(60, int(args.source_freshness_interval))
     ohlcv_aggregation_enabled = not args.disable_ohlcv_aggregation and os.environ.get("AI_OS_ENABLE_OHLCV_AGGREGATION", "1") != "0"
     ohlcv_aggregation_interval = max(60, int(args.ohlcv_aggregation_interval))
-    tradingview_quote_refresh_enabled = not args.disable_tradingview_quote_refresh and os.environ.get("AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH", "0") != "0"
-    tradingview_quote_refresh_interval = max(300, int(args.tradingview_quote_refresh_interval))
     strategy_discovery_enabled = not args.disable_strategy_discovery_scheduler and os.environ.get("AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER", "1") != "0"
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
     market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
@@ -782,7 +741,6 @@ def main() -> int:
     graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
     last_source_freshness_run = 0.0
     last_ohlcv_aggregation_run = 0.0
-    last_tradingview_quote_refresh_run = 0.0
     last_strategy_discovery_run = 0.0
     last_market_news_run = 0.0
     last_market_calendar_run = 0.0
@@ -794,7 +752,6 @@ def main() -> int:
         "mailbox_worker": True,
         "source_freshness": source_freshness_enabled,
         "ohlcv_aggregation": ohlcv_aggregation_enabled,
-        "tradingview_quote_refresh": tradingview_quote_refresh_enabled,
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
         "market_calendar": market_calendar_enabled,
@@ -869,15 +826,6 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["ohlcv_aggregation"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_ohlcv_aggregation_run = time.monotonic()
-        if tradingview_quote_refresh_enabled and (last_tradingview_quote_refresh_run == 0.0 or time.monotonic() - last_tradingview_quote_refresh_run >= tradingview_quote_refresh_interval):
-            try:
-                result["tradingview_quote_refresh"] = run_tradingview_quote_refresh(
-                    max(30, int(args.tradingview_quote_refresh_timeout)),
-                    max(1, int(args.tradingview_quote_refresh_limit)),
-                )
-            except Exception as exc:  # noqa: BLE001
-                result["tradingview_quote_refresh"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
-            last_tradingview_quote_refresh_run = time.monotonic()
         if source_freshness_enabled and (last_source_freshness_run == 0.0 or time.monotonic() - last_source_freshness_run >= source_freshness_interval):
             try:
                 result["source_freshness_scheduler"] = run_source_freshness_scheduler(
@@ -920,7 +868,6 @@ def main() -> int:
         else:
             scheduler = result.get("source_freshness_scheduler") or {}
             ohlcv_aggregation = result.get("ohlcv_aggregation") or {}
-            tradingview_quotes = result.get("tradingview_quote_refresh") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
             market_calendar = result.get("market_calendar_refresh") or {}
@@ -931,7 +878,6 @@ def main() -> int:
                 f"{result['generated_at']} messages={result['messages_processed']} "
                 f"worker_runs={result['worker']['count']} "
                 f"ohlcv={ohlcv_aggregation.get('status', 'skipped')} "
-                f"tradingview_quotes={tradingview_quotes.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
                 f"market_calendar={market_calendar.get('status', 'skipped')} "

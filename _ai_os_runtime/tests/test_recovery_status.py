@@ -85,7 +85,7 @@ class RecoveryStatusTests(unittest.TestCase):
             / "aios-imac"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("{ok, generated_at, db, tradingview_cdp, operator_auth}", script)
+        self.assertIn("{ok, generated_at, db, tradingview_desktop, operator_auth}", script)
         self.assertNotIn("{status, checked_at, model_runtime, storage}", script)
 
     def test_compact_restore_drill_is_version_aligned_and_image_pinned(self) -> None:

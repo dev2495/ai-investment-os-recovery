@@ -200,12 +200,23 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
             runtime_root / "scripts" / "run_ai_office_supervisor.command",
             runtime_root / "deploy" / "imac-backend" / "bin" / "supervisor.sh",
             runtime_root / "launchd" / "aios-agent-daemon-service.sh",
+            runtime_root / "deploy" / "imac-backend" / "bin" / "aios-imac",
+            runtime_root / "launchd" / "com.devarsh.aios.agent-daemon.plist",
         ]
         for path in active_files:
             source = path.read_text(encoding="utf-8")
             self.assertNotIn("launch_tradingview_browser", source, path.name)
-            self.assertNotIn("tradingview-browser", source, path.name)
+            if path.name != "aios-imac":
+                self.assertNotIn("tradingview-browser", source, path.name)
             self.assertNotIn("TRADINGVIEW_CDP", source, path.name)
+            self.assertNotIn("browser-enable", source, path.name)
+
+        deploy_source = (
+            runtime_root / "deploy" / "imac-backend" / "bin" / "aios-imac"
+        ).read_text(encoding="utf-8")
+        self.assertIn("legacy_tradingview_plist", deploy_source)
+        self.assertIn("launchctl bootout", deploy_source)
+        self.assertIn('rm -f "${legacy_tradingview_plist}"', deploy_source)
 
         api_source = pathlib.Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
         self.assertIn('"tradingview_desktop": probe_tradingview_desktop()', api_source)
@@ -214,6 +225,28 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         stop_source = (runtime_root / "scripts" / "stop_ai_office_live.sh").read_text(encoding="utf-8")
         self.assertNotIn("tradingview-browser", stop_source)
         self.assertNotIn("tradingview_browser.pid", stop_source)
+
+        daemon_source = (runtime_root / "scripts" / "run_agent_message_daemon.py").read_text(encoding="utf-8")
+        service_source = (runtime_root / "launchd" / "aios-agent-daemon-service.sh").read_text(encoding="utf-8")
+        env_source = (runtime_root / "deploy" / "imac-backend" / "imac.env.example").read_text(encoding="utf-8")
+        for source in (daemon_source, service_source, env_source):
+            self.assertNotIn("TRADINGVIEW_QUOTE_REFRESH", source)
+            self.assertNotIn("tradingview_quote_refresh", source)
+
+        retired_assets = [
+            runtime_root / "launchd" / "com.devarsh.aios.tradingview-browser.plist",
+            runtime_root / "launchd" / "aios-tradingview-browser-service.sh",
+            runtime_root / "scripts" / "launch_tradingview_browser.mjs",
+            runtime_root / "scripts" / "execute_tradingview_chart_action.mjs",
+            runtime_root / "scripts" / "check_tradingview_cdp.py",
+            runtime_root / "scripts" / "relaunch_tradingview_cdp.sh",
+            runtime_root / "scripts" / "smoke_tradingview_controller_contracts.py",
+        ]
+        for path in retired_assets:
+            self.assertFalse(path.exists(), path.name)
+
+        self.assertNotIn("TRADINGVIEW_CDP_PORT", api_source)
+        self.assertNotIn("_execute_legacy_tradingview_chart_action_cdp", api_source)
 
     def test_desktop_plan_opens_every_chart_in_the_native_app(self) -> None:
         payload = {
