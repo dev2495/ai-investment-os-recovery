@@ -2867,10 +2867,16 @@ def build_trading_quant_risk_snapshot() -> dict:
             LIMIT 80
         """,
         "signals": """
-            SELECT id, ts, strategy, symbol, exchange, action, price,
-                   quantity, confidence, status, payload
-            FROM trading.v_recent_signals
-            ORDER BY ts DESC
+            SELECT signal.id, signal.id AS signal_id,
+                   signal.ts, signal.ts AS generated_at,
+                   signal.strategy, signal.strategy AS strategy_name,
+                   signal.symbol, signal.exchange, signal.action,
+                   signal.action AS direction,
+                   coalesce(nullif(signal.payload->>'signal_type', ''), signal.action, 'signal') AS signal_type,
+                   signal.price, signal.quantity, signal.confidence,
+                   signal.confidence AS strength, signal.status, signal.payload
+            FROM trading.v_recent_signals signal
+            ORDER BY signal.ts DESC
             LIMIT 100
         """,
         "alerts": """

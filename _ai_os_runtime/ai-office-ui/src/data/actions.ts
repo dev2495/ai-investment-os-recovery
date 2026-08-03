@@ -390,7 +390,7 @@ export function useRunModelValidation() {
 }
 
 export interface PaperMonitorInput {
-  strategy_id: number;
+  committee_review_id: number;
   actor?: string;
 }
 

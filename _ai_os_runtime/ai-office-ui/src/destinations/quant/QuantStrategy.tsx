@@ -589,7 +589,6 @@ function ValidationView() {
  * ============================================================ */
 function IdeasView() {
   const { data } = useTradingQuantRisk();
-  const paperMut = useStartPaperMonitor();
   const intakeMut = useCreateStrategyIntake();
   const mineMut = useRunJournalMining();
   const pushToast = useUIStore((s) => s.pushToast);
@@ -619,12 +618,6 @@ function IdeasView() {
               <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", minHeight: 32, marginBottom: "var(--space-2)" }}>
                 {text(idea, "description", text(idea, "thesis", text(idea, "rule", "—")))}
               </div>
-              {num(idea, "strategy_id", 0) > 0 ? (
-                <Button size="sm" variant="ghost" icon={Activity} disabled={paperMut.isPending} onClick={() => paperMut.mutate(
-                  { strategy_id: num(idea, "strategy_id", 0), actor: "Devarsh" },
-                  { onSuccess: () => pushToast({ title: "Paper monitor started", tone: "ok", duration: 3500 }), onError: (error) => pushToast({ title: "Paper monitor failed", message: error.message, tone: "risk", duration: 6000 }) }
-                )}>Paper monitor</Button>
-              ) : (
                 <Button size="sm" variant="ghost" icon={FileText} disabled={intakeMut.isPending} onClick={() => {
                   const strategyName = text(idea, "name", text(idea, "symbol", "Signal " + i));
                   const hypothesis = text(idea, "description", text(idea, "thesis", text(idea, "rule", "")));
@@ -640,7 +633,6 @@ function IdeasView() {
                     actor: "Devarsh",
                   }, { onSuccess: () => pushToast({ title: "Strategy intake created", message: "Define rules and validate evidence before any paper monitor.", tone: "ok", duration: 4500 }), onError: (error) => pushToast({ title: "Intake failed", message: error.message, tone: "risk", duration: 6000 }) });
                 }}>Create intake</Button>
-              )}
             </div>
           ))}
         </div>
@@ -698,6 +690,7 @@ function PromotionView() {
   const arsenal = useStrategyArsenal();
   const allocationMut = useRunStrategyPortfolioAllocation();
   const retirementMut = useRunStrategyRetirementReview();
+  const paperMut = useStartPaperMonitor();
   const pushToast = useUIStore((s) => s.pushToast);
   const board = risk.data?.promotion_board ?? [];
   const allocations = arsenal.data?.strategy_portfolio_allocations ?? [];
@@ -733,10 +726,11 @@ function PromotionView() {
           <DataTable
             columns={[
               { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
-              { key: "stage", header: "Stage", render: (r) => <StatusPill status={text(r, "stage", "paper")} /> },
-              { key: "monitor_days", header: "Days Monitored", align: "right", render: (r) => num(r, "days_monitored", 0) },
-              { key: "drift", header: "Drift", align: "right", render: (r) => formatPercent(num(r, "drift_pct", 0), { alreadyPercent: true }) },
-              { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "monitoring"))} /> },
+              { key: "stage", header: "Stage", render: (r) => <StatusPill status={text(r, "promotion_stage", "research_or_retest")} /> },
+              { key: "gate", header: "Validation Gate", render: (r) => <StatusPill status={text(r, "validation_gate_status", "unknown")} /> },
+              { key: "monitor", header: "Paper Monitor", render: (r) => <StatusPill status={text(r, "paper_monitor_status", "not_started")} /> },
+              { key: "next", header: "Next Required Action", render: (r) => <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>{text(r, "next_required_action", "Review current strategy state.")}</span> },
+              { key: "action", header: "", render: (r) => text(r, "promotion_stage") === "paper_monitor_ready" && num(r, "committee_review_id", 0) > 0 ? <Button size="sm" variant="ghost" icon={Activity} disabled={paperMut.isPending} onClick={() => paperMut.mutate({ committee_review_id: num(r, "committee_review_id", 0), actor: "Devarsh" }, { onSuccess: () => pushToast({ title: "Paper monitor started", tone: "ok", duration: 3500 }), onError: (error) => pushToast({ title: "Paper monitor failed", message: error.message, tone: "risk", duration: 6000 }) })}>Start monitor</Button> : null },
             ]}
             rows={board}
             rowKey={(r, i) => String(text(r, "promotion_id", text(r, "id", i)))}

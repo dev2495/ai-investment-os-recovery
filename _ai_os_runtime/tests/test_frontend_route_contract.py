@@ -151,8 +151,9 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("discovery_candidate_id: candidateId", terminal)
         self.assertIn("Triage rationale is required", terminal)
         self.assertIn("Create intake", terminal)
-        self.assertIn("num(idea, \"strategy_id\", 0) > 0", terminal)
-        self.assertNotIn("paperMut.mutate({ strategy_id: num(idea, \"strategy_id\", 0)", terminal)
+        self.assertNotIn("paperMut.mutate({ strategy_id", terminal)
+        self.assertIn("text(r, \"promotion_stage\") === \"paper_monitor_ready\"", terminal)
+        self.assertIn("committee_review_id: num(r, \"committee_review_id\", 0)", terminal)
         self.assertNotIn("How to validate", terminal)
 
 
@@ -236,6 +237,28 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("symbol does not match holding_thesis_id", backend)
 
 
+
+    def test_signal_and_paper_monitor_contracts_use_canonical_fields(self) -> None:
+        actions = (self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts").read_text(encoding="utf-8")
+        quant = (self.runtime_root / "ai-office-ui" / "src" / "destinations" / "quant" / "QuantStrategy.tsx").read_text(encoding="utf-8")
+        backend = (self.runtime_root / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+
+        self.assertIn("committee_review_id: number", actions)
+        paper_interface = actions.split("export interface PaperMonitorInput", 1)[1].split("}", 1)[0]
+        self.assertNotIn("strategy_id", paper_interface)
+        self.assertIn("committee_review_id", quant)
+        self.assertIn("promotion_stage", quant)
+        self.assertIn("validation_gate_status", quant)
+        self.assertIn("paper_monitor_status", quant)
+        self.assertIn("next_required_action", quant)
+        self.assertNotIn("days_monitored", quant)
+        self.assertNotIn("drift_pct", quant)
+        signal_query = backend.split("\"signals\": \"\"\"", 1)[1].split("\"\"\"", 1)[0]
+        self.assertIn("AS generated_at", signal_query)
+        self.assertIn("AS strategy_name", signal_query)
+        self.assertIn("AS direction", signal_query)
+        self.assertIn("AS signal_type", signal_query)
+        self.assertIn("AS strength", signal_query)
 
 if __name__ == "__main__":
     unittest.main()
