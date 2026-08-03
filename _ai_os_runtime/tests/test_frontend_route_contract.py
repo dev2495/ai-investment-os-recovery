@@ -59,7 +59,7 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 77)
+        self.assertEqual(len(paths), 79)
         self.assertNotIn("/api/tradingview/chart-actions", paths)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),
@@ -98,6 +98,29 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("Run broker", terminal)
         self.assertIn("Run P2Cursor", terminal)
         self.assertIn("P2Cursor vs Canonical Portfolio", terminal)
+
+    def test_domain_committee_decisions_are_live_and_human_gated(self) -> None:
+        actions = (
+            self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts"
+        ).read_text(encoding="utf-8")
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "firm"
+            / "FirmAgentViews.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("\"/api/portfolio/long-term-committee/decision\"", actions)
+        self.assertIn("\"/api/strategy/committee/decision\"", actions)
+        self.assertIn("\"/api/research/special-situations/decision\"", actions)
+        self.assertIn("committee_item_key", terminal)
+        self.assertIn("committee_review_id: sourceId", terminal)
+        self.assertIn("special_memo_id: sourceId", terminal)
+        self.assertIn("Record decision", terminal)
+        self.assertIn("Decision rationale is required", terminal)
+        self.assertNotIn("text(item, \"packet_id\"", terminal)
 
     def test_quant_lifecycle_actions_are_live_and_governed(self) -> None:
         actions = (

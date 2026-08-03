@@ -169,6 +169,20 @@ export function useResolveLongTermCommittee() {
   );
 }
 
+export function useResolveStrategyCommittee() {
+  return useInvalidating<{ committee_review_id: number; decision: string; notes?: string; actor?: string }, LiveRow>(
+    "/api/strategy/committee/decision",
+    [Q.strategyArsenal, Q.tradingQuantRisk, Q.office]
+  );
+}
+
+export function useResolveSpecialSituationDecision() {
+  return useInvalidating<{ special_memo_id: number; decision: string; notes?: string; actor?: string }, LiveRow>(
+    "/api/research/special-situations/decision",
+    [Q.researchIdeas, Q.office]
+  );
+}
+
 export interface WatchlistInput {
   symbol: string;
   exchange?: string;

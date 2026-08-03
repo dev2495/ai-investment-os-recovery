@@ -11,9 +11,9 @@ import {
   Users, Building2, Gavel, ShieldCheck, Cpu, Activity, Library,
   Inbox, ChevronRight, MessageSquare, Play, Send, Search, RefreshCw,
 } from "lucide-react";
-import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Field, Select, TextArea, TextInput } from "../../system/primitives";
+import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Drawer, Field, Select, TextArea, TextInput } from "../../system/primitives";
 import { useAction, useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports } from "../../data/queries";
-import { useCreateAgentMessage, useRunAgentWorker } from "../../data/actions";
+import { useCreateAgentMessage, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useRunAgentWorker } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
@@ -251,34 +251,82 @@ export function DepartmentsView() {
 export function CommitteesView() {
   const { data, isLoading } = useOfficeSnapshot();
   const openEvidence = useUIStore((s) => s.openEvidence);
+  const pushToast = useUIStore((s) => s.pushToast);
+  const longTermDecision = useResolveLongTermCommittee();
+  const strategyDecision = useResolveStrategyCommittee();
+  const specialDecision = useResolveSpecialSituationDecision();
+  const [selected, setSelected] = React.useState<LiveRow | null>(null);
+  const [decision, setDecision] = React.useState("research_more");
+  const [notes, setNotes] = React.useState("");
   const items = data?.committee_room_items ?? [];
+  const sourceView = selected ? text(selected, "source_view") : "";
+  const sourceId = selected ? num(selected, "source_id", 0) : 0;
+  const decisionOptions = sourceView.includes("strategy")
+    ? ["reject", "retest", "research_more", "approve_paper_monitor"]
+    : sourceView.includes("long_term")
+      ? ["reject", "research_more", "monitor", "approve_watchlist", "approve_hold"]
+      : ["reject", "monitor", "research_more", "committee_review"];
+  const busy = longTermDecision.isPending || strategyDecision.isPending || specialDecision.isPending;
+
+  const review = (item: LiveRow) => {
+    const recommended = text(item, "recommended_decision", "research_more");
+    const view = text(item, "source_view");
+    const allowed = view.includes("strategy")
+      ? ["reject", "retest", "research_more", "approve_paper_monitor"]
+      : view.includes("long_term")
+        ? ["reject", "research_more", "monitor", "approve_watchlist", "approve_hold"]
+        : ["reject", "monitor", "research_more", "committee_review"];
+    setSelected(item);
+    setDecision(allowed.includes(recommended) ? recommended : "research_more");
+    setNotes("");
+  };
+
+  const submitDecision = () => {
+    if (!selected || !sourceId || !notes.trim()) {
+      pushToast({ title: "Decision rationale is required", tone: "warn", duration: 3000 });
+      return;
+    }
+    const callbacks = {
+      onSuccess: () => { pushToast({ title: "Committee decision recorded", message: text(selected, "title"), tone: "ok", duration: 4000 }); setSelected(null); },
+      onError: (error: Error) => pushToast({ title: "Committee decision failed", message: error.message, tone: "risk", duration: 5000 }),
+    };
+    if (sourceView.includes("strategy")) strategyDecision.mutate({ committee_review_id: sourceId, decision, notes, actor: "Devarsh" }, callbacks);
+    else if (sourceView.includes("long_term")) longTermDecision.mutate({ review_id: sourceId, decision, notes, actor: "Devarsh" }, callbacks);
+    else specialDecision.mutate({ special_memo_id: sourceId, decision, notes, actor: "Devarsh" }, callbacks);
+  };
 
   return (
     <div className="aios-destination">
-      <Header icon={Gavel} code="COMM" title="Committee Room" subtitle="Packets, positions, synthesis, and human decisions." />
+      <Header icon={Gavel} code="COMM" title="Committee Room" subtitle="Evidence-backed investment reviews, dissent, recommendations, and human decisions." />
       <Panel icon={Gavel} title="Committee Queue" actions={items.length > 0 ? <Badge tone="warn" dot>{items.length}</Badge> : undefined}>
         {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : items.length === 0 ? (
-          <Empty icon={Gavel} title="No open committee packets" />
+          <Empty icon={Gavel} title="No open committee reviews" />
         ) : (
-          <ScrollList>
-            {items.map((item, i) => (
-              <div
-                key={i}
-                className="aios-committee-row"
-                style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-3)", borderBottom: "1px solid var(--border-subtle)", cursor: "pointer" }}
-                onClick={() => openEvidence({ kind: "committee", key: String(text(item, "packet_id", text(item, "id", i))), title: text(item, "title", text(item, "subject", "Committee packet")) })}
-              >
-                <ChevronRight size={14} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, fontSize: "var(--text-sm)" }}>{text(item, "title", text(item, "subject", "Packet"))}</div>
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{text(item, "committee_key")} · {formatRelative(text(item, "opened_at", text(item, "created_at")))}</div>
-                </div>
-                <StatusPill status={text(item, "status", "open")} />
-              </div>
-            ))}
-          </ScrollList>
+          <DataTable
+            columns={[
+              { key: "title", header: "Review", render: (item) => <strong>{text(item, "title", "Committee review")}</strong> },
+              { key: "lane", header: "Committee", render: (item) => text(item, "committee_lane", "—") },
+              { key: "state", header: "State", render: (item) => <StatusPill status={text(item, "room_state", text(item, "review_status", "open"))} /> },
+              { key: "recommendation", header: "Recommendation", render: (item) => text(item, "recommended_decision", "—") },
+              { key: "gaps", header: "Evidence gaps", align: "right", render: (item) => num(item, "evidence_gap_count", 0) + num(item, "required_followup_count", 0) },
+              { key: "updated", header: "Updated", render: (item) => formatRelative(text(item, "latest_activity_at", text(item, "updated_at"))) },
+              { key: "actions", header: "Actions", render: (item) => <div style={{ display: "flex", gap: "var(--space-2)" }}><Button size="sm" variant="ghost" onClick={() => openEvidence({ kind: "committee", key: text(item, "committee_item_key"), title: text(item, "title", "Committee review") })}>Evidence</Button><Button size="sm" variant="primary" onClick={() => review(item)} disabled={Boolean(text(item, "final_decision"))}>Decide</Button></div> },
+            ]}
+            rows={items}
+            rowKey={(item, index) => text(item, "committee_item_key", String(index))}
+          />
         )}
       </Panel>
+
+      <Drawer open={selected !== null} onClose={() => setSelected(null)} title={selected ? text(selected, "title", "Committee decision") : "Committee decision"} icon={Gavel} width={560}
+        footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => setSelected(null)}>Cancel</Button><Button variant="primary" icon={Gavel} onClick={submitDecision} disabled={busy || !notes.trim()}>Record decision</Button></div>}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <div><StatusPill status={selected ? text(selected, "room_state", "review") : "review"} /> <span style={{ marginLeft: "var(--space-2)", color: "var(--text-muted)" }}>{selected ? text(selected, "committee_lane") : ""}</span></div>
+          <Field label="Decision"><Select value={decision} onChange={(event) => setDecision(event.target.value)}>{decisionOptions.map((option) => <option key={option} value={option}>{option.replace(/_/g, " ")}</option>)}</Select></Field>
+          <Field label="Rationale" required><TextArea value={notes} onChange={(event) => setNotes(event.target.value)} rows={6} placeholder="State the evidence, dissent considered, conditions, and why this decision is appropriate." /></Field>
+          <Button variant="ghost" onClick={() => selected && openEvidence({ kind: "committee", key: text(selected, "committee_item_key"), title: text(selected, "title", "Committee review") })}>Open full evidence</Button>
+        </div>
+      </Drawer>
     </div>
   );
 }
