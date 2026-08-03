@@ -210,6 +210,12 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertNotIn('num(r, "upside_pct", 0)', terminal)
         self.assertIn("evidence, owner_agent, updated_at", backend)
         self.assertIn("assumptions, outputs, note_path", backend)
+        self.assertIn("holding_thesis_id?: number", actions)
+        self.assertIn("symbol?: string", actions)
+        self.assertIn("Generate from holding", terminal)
+        self.assertIn("canonical long-term book exposure", terminal)
+        self.assertIn("WHERE id = {thesis_id}", backend)
+        self.assertIn("symbol does not match holding_thesis_id", backend)
 
 
 

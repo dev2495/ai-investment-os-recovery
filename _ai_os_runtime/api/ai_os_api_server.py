@@ -12112,16 +12112,41 @@ def generate_special_situation_memo(payload: dict) -> dict:
 
 def generate_long_term_thesis_memo(payload: dict) -> dict:
     actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or payload.get("id")
+    if thesis_id not in (None, ""):
+        try:
+            thesis_id = int(thesis_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("holding_thesis_id must be an integer") from exc
+        rows = run_psql_json_statement(
+            f"""
+            SELECT coalesce(json_agg(row_to_json(thesis_rows)), '[]'::json)::text
+            FROM (
+                SELECT symbol, exchange
+                FROM portfolio.holding_theses
+                WHERE id = {thesis_id}
+                LIMIT 1
+            ) thesis_rows
+            """
+        )
+        if not rows:
+            raise ValueError(f"holding_thesis_id {thesis_id} not found")
+        resolved_symbol = str(rows[0].get("symbol") or "").strip().upper()
+        resolved_exchange = str(rows[0].get("exchange") or "").strip().upper()
+        if symbol and symbol != resolved_symbol:
+            raise ValueError("symbol does not match holding_thesis_id")
+        symbol = resolved_symbol
+        exchange = exchange or resolved_exchange
     command = [
         sys.executable,
         str(RUNTIME_ROOT / "scripts" / "generate_long_term_thesis_memo.py"),
         "--actor",
         actor,
     ]
-    symbol = str(payload.get("symbol") or "").strip().upper()
     if symbol:
         command.extend(["--symbol", symbol])
-    exchange = str(payload.get("exchange") or "").strip().upper()
     if exchange:
         command.extend(["--exchange", exchange])
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)

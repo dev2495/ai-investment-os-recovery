@@ -84,9 +84,24 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
  * ============================================================ */
 function ThesesView() {
   const { data, isLoading } = useResearchIdeas();
-  const openEvidence = useUIStore((s) => s.openEvidence);
+  const pushToast = useUIStore((s) => s.pushToast);
   const theses = data?.long_term_theses ?? [];
   const [selected, setSelected] = React.useState<LiveRow | null>(null);
+  const memoMut = useGenerateThesisMemo();
+  const [showStart, setShowStart] = React.useState(false);
+  const [holdingForm, setHoldingForm] = React.useState({ symbol: "", exchange: "NSE" });
+
+  const generateFromHolding = () => {
+    const symbol = holdingForm.symbol.trim().toUpperCase();
+    if (!symbol) {
+      pushToast({ title: "Symbol is required", tone: "warn", duration: 3000 });
+      return;
+    }
+    memoMut.mutate({ symbol, exchange: holdingForm.exchange.trim().toUpperCase() || "NSE", actor: "Devarsh" }, {
+      onSuccess: () => { pushToast({ title: "Long-term thesis initialized", message: "The persisted memo, scorecards, valuation shell, review task, and inbox item were created from live long-term exposure.", tone: "ok", duration: 5000 }); setShowStart(false); setHoldingForm({ symbol: "", exchange: "NSE" }); },
+      onError: (error) => pushToast({ title: "Thesis initialization failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  };
 
   return (
     <>
@@ -97,7 +112,7 @@ function ThesesView() {
         <MetricTile tone="warn"><Metric label="Committee Queue" value={data?.committee_queue?.length ?? 0} /></MetricTile>
       </div>
 
-      <Panel icon={BookOpen} title="Long-Term Theses" actions={theses.length > 0 ? <Badge dot>{theses.length}</Badge> : undefined}>
+      <Panel icon={BookOpen} title="Long-Term Theses" actions={<div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}><Button size="sm" variant="primary" icon={BookOpen} onClick={() => setShowStart(true)}>Generate from holding</Button>{theses.length > 0 ? <Badge dot>{theses.length}</Badge> : null}</div>}>
         {isLoading ? (
           <SkeletonGrid rows={4} />
         ) : theses.length === 0 ? (
@@ -121,6 +136,14 @@ function ThesesView() {
       </Panel>
 
       <ThesisDetailDrawer thesis={selected} onClose={() => setSelected(null)} />
+      <Drawer open={showStart} onClose={() => setShowStart(false)} title="Generate thesis from live holding" subtitle="Initializes coverage from canonical long-term book exposure" icon={BookOpen} width={520}
+        footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => setShowStart(false)}>Cancel</Button><Button variant="primary" icon={BookOpen} onClick={generateFromHolding} disabled={memoMut.isPending || !holdingForm.symbol.trim()}>Generate thesis</Button></div>}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Field label="Holding symbol" required><TextInput value={holdingForm.symbol} onChange={(event) => setHoldingForm({ ...holdingForm, symbol: event.target.value.toUpperCase() })} placeholder="RELIANCE" /></Field>
+          <Field label="Exchange"><Select value={holdingForm.exchange} onChange={(event) => setHoldingForm({ ...holdingForm, exchange: event.target.value })}><option value="NSE">NSE</option><option value="BSE">BSE</option></Select></Field>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>The symbol must already have active long-term exposure in the canonical book. No position or recommendation is created.</div>
+        </div>
+      </Drawer>
     </>
   );
 }

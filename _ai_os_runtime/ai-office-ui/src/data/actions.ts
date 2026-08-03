@@ -67,7 +67,9 @@ export function useRunMonteCarlo() {
 }
 
 export interface LongTermThesisMemoInput {
-  holding_thesis_id: number;
+  holding_thesis_id?: number;
+  symbol?: string;
+  exchange?: string;
   actor?: string;
   force?: boolean;
 }
