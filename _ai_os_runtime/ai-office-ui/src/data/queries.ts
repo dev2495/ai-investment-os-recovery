@@ -115,6 +115,12 @@ export function useZerodhaAuthStatus() {
   });
 }
 
+export function useBeginZerodhaAuth() {
+  return useMutation<LiveRow, Error, void>({
+    mutationFn: () => post<LiveRow>("/api/zerodha/auth/begin", { actor: "Devarsh" }),
+  });
+}
+
 export function useExchangeZerodhaToken() {
   const queryClient = useQueryClient();
   return useMutation<LiveRow, Error, string>({

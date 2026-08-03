@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -19,6 +20,7 @@ BASE_URL = os.environ.get("AI_OS_ZERODHA_BASE_URL", "https://api.kite.trade").rs
 LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
 KEYCHAIN_SERVICE = os.environ.get("AI_OS_ZERODHA_TOKEN_SERVICE", "ai-os-zerodha-access-token")
 KEYCHAIN_EXPIRY_SERVICE = os.environ.get("AI_OS_ZERODHA_TOKEN_EXPIRY_SERVICE", "ai-os-zerodha-access-token-expiry")
+KEYCHAIN_USER_SERVICE = os.environ.get("AI_OS_ZERODHA_USER_SERVICE", "ai-os-zerodha-user-id")
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 ENDPOINTS = {
     "holdings": "/portfolio/holdings",
@@ -120,6 +122,25 @@ def store_keychain_token(token: str, expiry: datetime) -> None:
     store_keychain_secret(KEYCHAIN_EXPIRY_SERVICE, "expires_at", expiry.isoformat())
 
 
+def bound_user_id() -> str:
+    return os.environ.get("AI_OS_ZERODHA_EXPECTED_USER_ID", "").strip() or keychain_secret(KEYCHAIN_USER_SERVICE)
+
+
+def validate_profile(api_key: str, access_token: str, expected_user_id: str = "") -> dict:
+    payload = request_json("GET", "/user/profile", api_key=api_key, access_token=access_token)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    user_id = str(data.get("user_id") or "").strip() if isinstance(data, dict) else ""
+    if not user_id:
+        raise RuntimeError("Zerodha profile response did not include user_id")
+    if expected_user_id and not hmac.compare_digest(user_id, expected_user_id):
+        raise RuntimeError("Zerodha profile does not match the bound account")
+    return {
+        "profile_validated": True,
+        "user_id": user_id,
+        "account_match": not expected_user_id or hmac.compare_digest(user_id, expected_user_id),
+    }
+
+
 def request_json(method: str, path: str, *, api_key: str, access_token: str = "", form: dict[str, str] | None = None) -> object:
     headers = {"Accept": "application/json", "X-Kite-Version": "3", "User-Agent": "AI-Investment-OS/1.0 read-only connector"}
     if access_token:
@@ -142,15 +163,27 @@ def exchange_request_token(api_key: str, api_secret: str, request_token: str) ->
     access_token = str(data.get("access_token") or "") if isinstance(data, dict) else ""
     if not access_token:
         raise RuntimeError("Zerodha token response did not include access_token")
+    user_id = str(data.get("user_id") or "").strip()
+    expected_user_id = bound_user_id()
+    if not user_id:
+        raise RuntimeError("Zerodha token response did not include user_id")
+    if expected_user_id and not hmac.compare_digest(user_id, expected_user_id):
+        raise RuntimeError("Zerodha login belongs to a different account")
+    profile = validate_profile(api_key, access_token, expected_user_id or user_id)
     expiry = next_token_expiry()
+    if not expected_user_id:
+        store_keychain_secret(KEYCHAIN_USER_SERVICE, "user_id", user_id)
     store_keychain_token(access_token, expiry)
     return {
         "status": "authenticated",
-        "user_id": data.get("user_id"),
+        "user_id": user_id,
         "login_time": data.get("login_time"),
         "exchanges": data.get("exchanges") or [],
         "access_token_stored": True,
         "access_token_expires": expiry.isoformat(),
+        "profile_validated": profile["profile_validated"],
+        "account_match": profile["account_match"],
+        "account_binding_created": not bool(expected_user_id),
         "broker_write_allowed": False,
     }
 
@@ -222,6 +255,7 @@ def main() -> int:
     access_token = keychain_token()
     access_token_expiry = token_expiry()
     access_token_current = token_is_current(access_token, access_token_expiry)
+    expected_user_id = bound_user_id()
     if args.login_url:
         print(json.dumps({"status": "ready" if api_key else "needs_credentials", "login_url": LOGIN_URL.format(api_key=urllib.parse.quote(api_key)) if api_key else None, "manual_daily_login_required": True, "broker_write_allowed": False}, indent=2))
         return 0 if api_key else 2
@@ -235,17 +269,34 @@ def main() -> int:
         except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError, json.JSONDecodeError) as exc:
             print(json.dumps({"status": "failed", "error": f"{type(exc).__name__}: {exc}", "broker_write_allowed": False}, indent=2))
             return 1
+    profile_status: dict[str, object] = {"profile_validated": False, "account_match": False}
+    profile_error = None
+    if api_key and access_token_current:
+        try:
+            profile_status = validate_profile(api_key, access_token, expected_user_id)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
+            profile_error = f"{type(exc).__name__}: {exc}"[:500]
+    account_binding_configured = bool(expected_user_id)
+    account_ref_source = expected_user_id or str(profile_status.get("user_id") or "")
+    account_ref = hashlib.sha256(account_ref_source.encode("utf-8")).hexdigest()[:12] if account_ref_source else None
+    connected = bool(api_key and api_secret and access_token_current and account_binding_configured and profile_status.get("profile_validated") and profile_status.get("account_match"))
     status = {
-        "status": "configured" if api_key and api_secret and access_token_current else "needs_credentials_or_daily_login",
+        "status": "configured" if connected else "needs_credentials_or_daily_login",
         "api_key_configured": bool(api_key), "api_secret_configured": bool(api_secret),
-        "daily_access_token_available": access_token_current,
+        "daily_access_token_available": connected,
+        "token_present_and_current": access_token_current,
         "access_token_expiry_known": access_token_expiry is not None,
         "access_token_expires_at": access_token_expiry.isoformat() if access_token_expiry else None,
         "stale_access_token_present": bool(access_token) and not access_token_current,
+        "profile_validated": bool(profile_status.get("profile_validated")),
+        "account_match": bool(profile_status.get("account_match")),
+        "account_binding_configured": account_binding_configured,
+        "account_ref": account_ref,
+        "profile_validation_error": profile_error,
         "login_url": LOGIN_URL.format(api_key=urllib.parse.quote(api_key)) if api_key else None,
         "manual_daily_login_required": True, "broker_write_allowed": False,
     }
-    if args.check_config or not (api_key and api_secret and access_token_current):
+    if args.check_config or not connected:
         print(json.dumps(status, indent=2))
         return 0 if status["status"] == "configured" else 2
     result = sync_account(api_key, access_token, args.datasets)

@@ -49,12 +49,31 @@ class ZerodhaTokenExpiryTest(unittest.TestCase):
                 "store_keychain_token",
                 side_effect=lambda token, expires: stored.append((token, expires)),
             ),
+            mock.patch.object(zerodha, "bound_user_id", return_value=""),
+            mock.patch.object(zerodha, "store_keychain_secret"),
         ):
             result = zerodha.exchange_request_token("key", "secret", "request")
 
         self.assertEqual(stored, [("secret", expiry)])
         self.assertEqual(result["access_token_expires"], expiry.isoformat())
+        self.assertTrue(result["profile_validated"])
+        self.assertTrue(result["account_match"])
         self.assertFalse(result["broker_write_allowed"])
+
+
+    def test_exchange_rejects_a_different_bound_account_before_storage(self) -> None:
+        with (
+            mock.patch.object(
+                zerodha,
+                "request_json",
+                return_value={"data": {"access_token": "secret", "user_id": "WRONG"}},
+            ),
+            mock.patch.object(zerodha, "bound_user_id", return_value="AB123"),
+            mock.patch.object(zerodha, "store_keychain_token") as store_token,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "different account"):
+                zerodha.exchange_request_token("key", "secret", "request")
+        store_token.assert_not_called()
 
 
 if __name__ == "__main__":

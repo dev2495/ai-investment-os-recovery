@@ -7,6 +7,7 @@ import hmac
 import ipaddress
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -72,6 +73,7 @@ ALLOWED_ORIGINS = {
 }
 OPERATOR_TOKEN = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
 ALLOW_TOKENLESS_LOOPBACK = os.environ.get("AI_OS_ALLOW_TOKENLESS_LOOPBACK", "1").strip().lower() in {"1", "true", "yes"}
+ZERODHA_AUTH_CHALLENGE_TTL_SECONDS = max(60, min(900, int(os.environ.get("AI_OS_ZERODHA_AUTH_CHALLENGE_TTL_SECONDS", "300"))))
 DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
 PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
 
@@ -8696,6 +8698,56 @@ def upsert_watchlist_item(payload: dict) -> dict:
     return result
 
 
+def begin_zerodha_auth(payload: dict) -> dict:
+    session = zerodha_auth_status()
+    base_login_url = str(session.get("login_url") or "").strip()
+    if not base_login_url:
+        raise RuntimeError("Zerodha API key is not configured")
+    state = secrets.token_urlsafe(32)
+    challenge_hash = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    actor = str(payload.get("actor") or "Devarsh")
+    rows = run_psql_json_statement(f"""
+        WITH created AS (
+            INSERT INTO ops.zerodha_auth_challenges (challenge_hash, requested_by, expires_at, metadata)
+            VALUES ({sql_literal(challenge_hash)}, {sql_literal(actor)},
+                    now() + make_interval(secs => {ZERODHA_AUTH_CHALLENGE_TTL_SECONDS}),
+                    '{{"broker_write_allowed":false}}'::jsonb)
+            RETURNING id, expires_at
+        )
+        SELECT coalesce(json_agg(row_to_json(created)), '[]'::json)::text FROM created
+    """)
+    if not rows:
+        raise RuntimeError("Zerodha authentication challenge could not be created")
+    redirect_params = urllib.parse.quote(urllib.parse.urlencode({"state": state}), safe="")
+    return {
+        "status": "ready",
+        "login_url": f"{base_login_url}&redirect_params={redirect_params}",
+        "expires_at": rows[0].get("expires_at"),
+        "profile_validation_required": True,
+        "broker_write_allowed": False,
+    }
+
+
+def consume_zerodha_auth_challenge(state: str, callback_status: str) -> dict:
+    normalized = state.strip()
+    if not normalized:
+        raise PermissionError("Zerodha callback state is missing")
+    challenge_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    rows = run_psql_json_statement(f"""
+        WITH consumed AS (
+            UPDATE ops.zerodha_auth_challenges
+            SET consumed_at=now(), callback_status={sql_literal(callback_status)}
+            WHERE challenge_hash={sql_literal(challenge_hash)}
+              AND consumed_at IS NULL AND expires_at > now()
+            RETURNING id, requested_by, expires_at
+        )
+        SELECT coalesce(json_agg(row_to_json(consumed)), '[]'::json)::text FROM consumed
+    """)
+    if not rows:
+        raise PermissionError("Zerodha callback state is invalid, expired, or already used")
+    return rows[0]
+
+
 def _run_zerodha_adapter(arguments: list[str], timeout: int = 150) -> dict:
     completed = subprocess.run([sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_zerodha_read_only.py"),*arguments],
         cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=timeout)
@@ -8882,6 +8934,8 @@ def start_zerodha_post_login_sync() -> None:
 def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
     request_token = str((query.get("request_token") or [""])[0]).strip()
     status = str((query.get("status") or ["success"])[0]).strip().lower()
+    state = str((query.get("state") or [""])[0]).strip()
+    challenge = consume_zerodha_auth_challenge(state, status)
     if status != "success":
         raise ValueError("Zerodha login was not completed")
     if not request_token:
@@ -8893,6 +8947,9 @@ def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
         "access_token_stored": bool(result.get("access_token_stored")),
         "access_token_expires": result.get("access_token_expires"),
         "stream_restart_requested": True,
+        "profile_validated": bool(result.get("profile_validated")),
+        "account_match": bool(result.get("account_match")),
+        "challenge_id": challenge.get("id"),
         "broker_write_allowed": False,
     }
 
@@ -17370,6 +17427,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/watchlist/items/upsert":
                 self._send_json(upsert_watchlist_item(payload), 201)
+                return
+            if self.path == "/api/zerodha/auth/begin":
+                self._send_json(begin_zerodha_auth(payload), 201)
                 return
             if self.path == "/api/zerodha/auth/exchange":
                 self._send_json(exchange_zerodha_request_token(payload), 200)
