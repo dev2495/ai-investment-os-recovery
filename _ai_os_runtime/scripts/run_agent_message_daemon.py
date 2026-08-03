@@ -77,6 +77,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
     for key in (
         "ohlcv_aggregation",
+        "paper_monitor_evaluation",
         "source_freshness_scheduler",
         "strategy_discovery_scheduler",
         "market_news_ingestion",
@@ -453,6 +454,27 @@ def run_ohlcv_aggregation(timeout_seconds: int) -> dict[str, Any]:
 
 
 
+def run_paper_monitor_evaluation(timeout_seconds: int, monitor_limit: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "run_paper_monitors.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [sys.executable, str(script), "--limit", str(max(1, min(100, monitor_limit))), "--json"],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(30, timeout_seconds),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    payload["status"] = "success" if completed.returncode == 0 else "failed"
+    if completed.returncode != 0:
+        payload["error"] = (completed.stderr or completed.stdout or "paper monitor evaluation failed").strip()[:4000]
+    return payload
+
+
 def run_strategy_discovery_scheduler(interval_seconds: int, timeout_seconds: int) -> dict[str, Any]:
     scheduler_script = WORKLOAD_SCRIPT_DIR / "run_strategy_discovery_scheduler.py"
     if not scheduler_script.is_file():
@@ -682,6 +704,10 @@ def main() -> int:
         help="Tick-to-OHLCV aggregation interval in seconds.",
     )
     parser.add_argument("--ohlcv-aggregation-timeout", type=int, default=int(os.environ.get("AI_OS_OHLCV_AGGREGATION_TIMEOUT_SECONDS", "120")))
+    parser.add_argument("--disable-paper-monitor-evaluation", action="store_true", help="Disable deterministic paper-monitor evaluation.")
+    parser.add_argument("--paper-monitor-interval", type=int, default=int(os.environ.get("AI_OS_PAPER_MONITOR_INTERVAL_SECONDS", "60")))
+    parser.add_argument("--paper-monitor-timeout", type=int, default=int(os.environ.get("AI_OS_PAPER_MONITOR_TIMEOUT_SECONDS", "120")))
+    parser.add_argument("--paper-monitor-limit", type=int, default=int(os.environ.get("AI_OS_PAPER_MONITOR_LIMIT", "20")))
     parser.add_argument("--disable-strategy-discovery-scheduler", action="store_true", help="Disable scheduled external-source strategy discovery.")
     parser.add_argument("--disable-market-news", action="store_true", help="Disable the dedicated market-news freshness workload.")
     parser.add_argument(
@@ -728,6 +754,8 @@ def main() -> int:
     source_freshness_interval = max(60, int(args.source_freshness_interval))
     ohlcv_aggregation_enabled = not args.disable_ohlcv_aggregation and os.environ.get("AI_OS_ENABLE_OHLCV_AGGREGATION", "1") != "0"
     ohlcv_aggregation_interval = max(60, int(args.ohlcv_aggregation_interval))
+    paper_monitor_enabled = not args.disable_paper_monitor_evaluation and os.environ.get("AI_OS_ENABLE_PAPER_MONITOR_EVALUATION", "1") != "0"
+    paper_monitor_interval = max(30, int(args.paper_monitor_interval))
     strategy_discovery_enabled = not args.disable_strategy_discovery_scheduler and os.environ.get("AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER", "1") != "0"
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
     market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
@@ -741,6 +769,7 @@ def main() -> int:
     graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
     last_source_freshness_run = 0.0
     last_ohlcv_aggregation_run = 0.0
+    last_paper_monitor_run = 0.0
     last_strategy_discovery_run = 0.0
     last_market_news_run = 0.0
     last_market_calendar_run = 0.0
@@ -752,6 +781,7 @@ def main() -> int:
         "mailbox_worker": True,
         "source_freshness": source_freshness_enabled,
         "ohlcv_aggregation": ohlcv_aggregation_enabled,
+        "paper_monitor_evaluation": paper_monitor_enabled,
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
         "market_calendar": market_calendar_enabled,
@@ -826,6 +856,15 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["ohlcv_aggregation"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_ohlcv_aggregation_run = time.monotonic()
+        if paper_monitor_enabled and (last_paper_monitor_run == 0.0 or time.monotonic() - last_paper_monitor_run >= paper_monitor_interval):
+            try:
+                result["paper_monitor_evaluation"] = run_paper_monitor_evaluation(
+                    max(30, int(args.paper_monitor_timeout)),
+                    max(1, int(args.paper_monitor_limit)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["paper_monitor_evaluation"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_paper_monitor_run = time.monotonic()
         if source_freshness_enabled and (last_source_freshness_run == 0.0 or time.monotonic() - last_source_freshness_run >= source_freshness_interval):
             try:
                 result["source_freshness_scheduler"] = run_source_freshness_scheduler(
@@ -868,6 +907,7 @@ def main() -> int:
         else:
             scheduler = result.get("source_freshness_scheduler") or {}
             ohlcv_aggregation = result.get("ohlcv_aggregation") or {}
+            paper_monitors = result.get("paper_monitor_evaluation") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
             market_calendar = result.get("market_calendar_refresh") or {}
@@ -878,6 +918,7 @@ def main() -> int:
                 f"{result['generated_at']} messages={result['messages_processed']} "
                 f"worker_runs={result['worker']['count']} "
                 f"ohlcv={ohlcv_aggregation.get('status', 'skipped')} "
+                f"paper_monitors={paper_monitors.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
                 f"market_calendar={market_calendar.get('status', 'skipped')} "

@@ -2932,6 +2932,27 @@ def build_trading_quant_risk_snapshot() -> dict:
             ORDER BY last_trade_ts DESC NULLS LAST
             LIMIT 100
         """,
+        "paper_positions": """
+            SELECT id, paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, instance_id, symbol, exchange,
+                   timeframe, side, quantity, state, entry_ts, entry_price,
+                   exit_ts, exit_price, latest_mark_ts, latest_mark_price,
+                   unrealized_pnl, realized_pnl, fees, close_reason, metadata,
+                   created_at, updated_at
+            FROM trading.v_paper_positions
+            ORDER BY updated_at DESC
+            LIMIT 200
+        """,
+        "paper_monitor_performance": """
+            SELECT paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, monitor_status, positions_total,
+                   positions_open, positions_closed, unrealized_pnl, realized_pnl,
+                   fees, latest_mark_ts, last_heartbeat_at, heartbeat_status,
+                   live_execution_allowed
+            FROM trading.v_paper_monitor_performance
+            ORDER BY last_heartbeat_at DESC NULLS LAST
+            LIMIT 100
+        """,
         "risk_summary": """
             SELECT metric, value, interpretation
             FROM risk.v_portfolio_risk_dashboard_summary
@@ -5959,6 +5980,27 @@ def build_snapshot() -> dict:
                    realized_pnl, average_price, statuses
             FROM trading.v_paper_trade_summary
             ORDER BY last_trade_ts DESC NULLS LAST
+            LIMIT 100
+        """,
+        "paper_positions": """
+            SELECT id, paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, instance_id, symbol, exchange,
+                   timeframe, side, quantity, state, entry_ts, entry_price,
+                   exit_ts, exit_price, latest_mark_ts, latest_mark_price,
+                   unrealized_pnl, realized_pnl, fees, close_reason, metadata,
+                   created_at, updated_at
+            FROM trading.v_paper_positions
+            ORDER BY updated_at DESC
+            LIMIT 200
+        """,
+        "paper_monitor_performance": """
+            SELECT paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, monitor_status, positions_total,
+                   positions_open, positions_closed, unrealized_pnl, realized_pnl,
+                   fees, latest_mark_ts, last_heartbeat_at, heartbeat_status,
+                   live_execution_allowed
+            FROM trading.v_paper_monitor_performance
+            ORDER BY last_heartbeat_at DESC NULLS LAST
             LIMIT 100
         """,
         "research_hub": """

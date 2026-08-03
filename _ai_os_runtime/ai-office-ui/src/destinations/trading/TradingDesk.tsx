@@ -25,8 +25,8 @@ import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select, KeyValue,
 } from "../../system/primitives";
-import { AreaSeriesChart, BarSeriesChart } from "../../system/charts";
-import { text, num, formatRelative, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
+import { BarSeriesChart } from "../../system/charts";
+import { text, num, formatRelative, formatCurrency, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -489,47 +489,52 @@ function TradingViewBridgeView() {
  * ============================================================ */
 function AlphaView() {
   const { data, isLoading } = useTradingQuantRisk();
-  const summary = data?.paper_trade_summary ?? [];
-
-  // Heuristic equity curve from trade activity
-  const equityCurve = React.useMemo(() => {
-    const trades = data?.trade_activity ?? [];
-    let cum = 0;
-    return trades.slice(-60).map((t, i) => {
-      cum += num(t, "pnl", 0);
-      return { label: `T${i}`, value: cum, pnl: num(t, "pnl", 0) };
-    });
-  }, [data?.trade_activity]);
+  const performance = data?.paper_monitor_performance ?? [];
+  const positions = data?.paper_positions ?? [];
+  const realized = performance.reduce((sum, row) => sum + num(row, "realized_pnl", 0), 0);
+  const unrealized = performance.reduce((sum, row) => sum + num(row, "unrealized_pnl", 0), 0);
+  const openCount = performance.reduce((sum, row) => sum + num(row, "positions_open", 0), 0);
+  const closedCount = performance.reduce((sum, row) => sum + num(row, "positions_closed", 0), 0);
+  const attribution = performance.map((row) => ({
+    name: text(row, "strategy_name", text(row, "candidate_key", "Strategy")),
+    realized: num(row, "realized_pnl", 0),
+    unrealized: num(row, "unrealized_pnl", 0),
+  }));
 
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
-        <MetricTile>
-          <Metric label="Realized P&L" value={formatCurrency(equityCurve.length ? equityCurve[equityCurve.length - 1].value : 0)}
-            delta={equityCurve.length > 1 ? { value: formatCurrency(equityCurve[equityCurve.length - 1].value - equityCurve[0].value), direction: equityCurve[equityCurve.length - 1].value >= equityCurve[0].value ? "up" : "down" } : undefined} />
-        </MetricTile>
-        <MetricTile><Metric label="Win Rate" value={formatPercent(summary.length ? num(summary[0], "win_rate", 0) : 0, { alreadyPercent: true })} /></MetricTile>
-        <MetricTile><Metric label="Trades" value={data?.trade_activity?.length ?? 0} /></MetricTile>
-        <MetricTile><Metric label="Strategies" value={summary.length} /></MetricTile>
+        <MetricTile><Metric label="Paper Realized P&L" value={formatCurrency(realized)} /></MetricTile>
+        <MetricTile><Metric label="Paper Unrealized P&L" value={formatCurrency(unrealized)} /></MetricTile>
+        <MetricTile><Metric label="Open Positions" value={openCount} /></MetricTile>
+        <MetricTile><Metric label="Closed Positions" value={closedCount} /></MetricTile>
       </div>
 
-      <Panel icon={Target} title="Equity Curve (realized)">
-        {isLoading ? <Skeleton style={{ height: 240 }} /> : equityCurve.length === 0 ? (
-          <Empty icon={Target} title="No P&L data yet" description="Record trades to build your equity curve and track edge." />
+      <Panel icon={Target} title="Paper Strategy Attribution">
+        {isLoading ? <Skeleton style={{ height: 240 }} /> : attribution.length === 0 ? (
+          <Empty icon={Target} title="No evaluated paper positions" description="Approved paper monitors populate this view from canonical stored OHLCV." />
         ) : (
-          <AreaSeriesChart data={equityCurve} series={[{ key: "value", name: "Cumulative P&L" }]} xKey="label" height={260} yFormat={(v) => formatCompact(v)} />
+          <BarSeriesChart data={attribution} bars={[{ key: "realized", name: "Realized" }, { key: "unrealized", name: "Unrealized" }]} xKey="name" height={260} />
         )}
       </Panel>
 
-      <Panel icon={Target} title="Strategy Attribution">
-        {isLoading ? <SkeletonGrid rows={3} /> : summary.length === 0 ? (
-          <Empty icon={Target} title="No strategy attribution" />
+      <Panel icon={Activity} title="Paper Position Ledger">
+        {isLoading ? <SkeletonGrid rows={4} /> : positions.length === 0 ? (
+          <Empty icon={Activity} title="No paper positions" />
         ) : (
-          <BarSeriesChart
-            data={summary.map((s, i) => ({ name: text(s, "strategy_name", `S${i}`), value: num(s, "pnl", 0) }))}
-            bars={[{ key: "value", name: "P&L" }]}
-            xKey="name"
-            height={220}
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (row) => text(row, "strategy_name", text(row, "candidate_key")) },
+              { key: "symbol", header: "Symbol", render: (row) => <strong>{text(row, "symbol")}</strong> },
+              { key: "state", header: "State", render: (row) => <StatusPill status={text(row, "state", "open")} /> },
+              { key: "entry", header: "Entry", align: "right", render: (row) => formatCurrency(num(row, "entry_price", 0)) },
+              { key: "mark", header: "Latest Mark", align: "right", render: (row) => formatCurrency(num(row, "latest_mark_price", 0)) },
+              { key: "unrealized", header: "Unrealized", align: "right", render: (row) => formatCurrency(num(row, "unrealized_pnl", 0)) },
+              { key: "realized", header: "Realized", align: "right", render: (row) => formatCurrency(num(row, "realized_pnl", 0)) },
+              { key: "updated", header: "Updated", render: (row) => formatRelative(text(row, "latest_mark_ts", text(row, "updated_at"))) },
+            ]}
+            rows={positions}
+            rowKey={(row, index) => String(text(row, "id", index))}
           />
         )}
       </Panel>

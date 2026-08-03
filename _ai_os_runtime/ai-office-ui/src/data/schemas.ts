@@ -246,6 +246,8 @@ export const TradingQuantRiskSchema = z.object({
   tradingview_template_approvals: z.array(liveRow).default([]),
   trade_activity: z.array(liveRow).default([]),
   paper_trade_summary: z.array(liveRow).default([]),
+  paper_positions: z.array(liveRow).default([]),
+  paper_monitor_performance: z.array(liveRow).default([]),
   risk_summary: z.array(liveRow).default([]),
   risk_limits: z.array(liveRow).default([]),
   institutional_risk_run: z.array(liveRow).default([]),
