@@ -65,6 +65,17 @@ class StrategyBacktestContractTest(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(0.5)
 
+    def test_background_workload_can_bypass_host_port_forwarder(self) -> None:
+        success = mock.Mock(returncode=0, stderr="", stdout="[]\n")
+        with (
+            mock.patch.dict(backtest.os.environ, {"AI_OS_WORKLOAD_PSQL_MODE": "docker", "AI_OS_PSQL_BIN": "/usr/bin/true", "AI_OS_POSTGRES_PASSWORD": "test"}),
+            mock.patch.object(backtest.subprocess, "run", return_value=success) as run,
+        ):
+            self.assertEqual(backtest.run_psql_json("SELECT 1"), [])
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["docker", "exec", "-i"])
+        self.assertEqual(run.call_args.kwargs["input"], "SELECT 1")
+
     def test_psql_does_not_retry_sql_errors(self) -> None:
         failure = mock.Mock(returncode=2, stderr="ERROR: column does not exist", stdout="")
         with (

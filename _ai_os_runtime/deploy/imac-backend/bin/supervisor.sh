@@ -201,6 +201,7 @@ children+=("$!")
 
 if [[ "${AI_OS_ENABLE_AGENT_DAEMON:-1}" == "1" ]]; then
   log "Starting role-scoped agent message daemon"
+  AI_OS_WORKLOAD_PSQL_MODE="${AI_OS_WORKLOAD_PSQL_MODE:-docker}" \
   "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_agent_message_daemon.py" \
     >>"${LOG_ROOT}/agent-daemon.log" 2>>"${LOG_ROOT}/agent-daemon.err" &
   children+=("$!")

@@ -36,7 +36,8 @@ def sql_jsonb(value: object) -> str:
 def run_psql_json(sql: str) -> list[dict[str, Any]]:
     psql_bin = os.environ.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
     password = os.environ.get("AI_OS_POSTGRES_PASSWORD")
-    use_host_psql = bool(Path(psql_bin).exists() and password)
+    workload_psql_mode = (os.environ.get("AI_OS_WORKLOAD_PSQL_MODE") or "host").strip().lower()
+    use_host_psql = bool(workload_psql_mode != "docker" and Path(psql_bin).exists() and password)
     if use_host_psql:
         command = [
             psql_bin,
