@@ -16,7 +16,7 @@ import {
   Plus, Save,
 } from "lucide-react";
 import { usePortfolioOffice } from "../../data/queries";
-import { useStageClientOnboarding, useStageHoldingUpdate } from "../../data/actions";
+import { useRunBrokerReconciliation, useRunP2CursorReconciliation, useStageClientOnboarding, useStageHoldingUpdate } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
@@ -487,25 +487,61 @@ function NavView() {
  * ============================================================ */
 function ReconView() {
   const { data, isLoading } = usePortfolioOffice();
+  const brokerRun = useRunBrokerReconciliation();
+  const p2Run = useRunP2CursorReconciliation();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [clientCode, setClientCode] = React.useState("");
   const recon = data?.holding_reconciliation ?? [];
   const p2 = data?.p2cursor_reconciliation ?? [];
 
+  const notify = (title: string, mutation: typeof brokerRun | typeof p2Run, payload: Record<string, unknown>) => {
+    mutation.mutate(payload as never, {
+      onSuccess: (result) => pushToast({ title, message: String(num(result, "issue_count", 0)) + " issue(s) require review", tone: num(result, "issue_count", 0) ? "warn" : "ok", duration: 4000 }),
+      onError: (error) => pushToast({ title: "Reconciliation failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  };
+
   return (
     <>
-      <Panel icon={GitBranch} title="Broker Reconciliation">
+      <Panel icon={GitBranch} title="Reconciliation Controls" actions={
+        <>
+          <Button size="sm" variant="ghost" onClick={() => notify("Broker reconciliation complete", brokerRun, { actor: "Devarsh" })} disabled={brokerRun.isPending}>Run broker</Button>
+          <Button size="sm" variant="primary" onClick={() => notify("P2Cursor reconciliation complete", p2Run, { actor: "Devarsh", client_code: clientCode || undefined })} disabled={p2Run.isPending}>Run P2Cursor</Button>
+        </>
+      }>
+        <div style={{ padding: "var(--space-3)", maxWidth: 360 }}>
+          <Field label="P2Cursor client code (optional)"><TextInput value={clientCode} onChange={(event) => setClientCode(event.target.value.trim().toUpperCase())} placeholder="All mapped clients" /></Field>
+        </div>
+      </Panel>
+
+      <Panel icon={GitBranch} title="Holding Source Reconciliation">
         {isLoading ? <SkeletonGrid rows={3} /> : recon.length === 0 ? (
-          <Empty icon={GitBranch} title="No reconciliation data" description="Broker statement reconciliation runs appear here." />
+          <Empty icon={GitBranch} title="No holding reconciliation runs" description="Record holding observations and run reconciliation to compare broker and managed holdings." />
         ) : (
-          <DataTable
-            columns={[
-              { key: "client", header: "Client", render: (r) => text(r, "client_name", "—") },
-              { key: "symbol", header: "Symbol", render: (r) => text(r, "symbol") },
-              { key: "break", header: "Break", align: "right", render: (r) => <span style={{ color: num(r, "break_qty", 0) !== 0 ? "var(--status-risk)" : "var(--status-ok)" }}>{num(r, "break_qty", 0)}</span> },
-              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "matched")} /> },
-            ]}
-            rows={recon}
-            rowKey={(r, i) => String(text(r, "recon_id", text(r, "id", i)))}
-          />
+          <DataTable columns={[
+            { key: "account", header: "Account", render: (r) => text(r, "account_code", text(r, "client_name", "—")) },
+            { key: "source", header: "Source", render: (r) => text(r, "source_label", "—") },
+            { key: "matched", header: "Matched", align: "right", render: (r) => num(r, "matched_count", 0) },
+            { key: "breaks", header: "Breaks", align: "right", render: (r) => num(r, "break_count", num(r, "issue_count", 0)) },
+            { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", text(r, "reconciliation_status", "review"))} /> },
+          ]} rows={recon} rowKey={(r, i) => String(text(r, "run_key", text(r, "id", i)))} />
+        )}
+      </Panel>
+
+      <Panel icon={GitBranch} title="P2Cursor vs Canonical Portfolio">
+        {isLoading ? <SkeletonGrid rows={3} /> : p2.length === 0 ? (
+          <Empty icon={GitBranch} title="No P2Cursor reconciliation runs" description="Run P2Cursor reconciliation for all mapped clients or enter one client code above." />
+        ) : (
+          <DataTable columns={[
+            { key: "client", header: "Client", render: (r) => text(r, "client_name", text(r, "client_code", "—")) },
+            { key: "account", header: "P2 account", render: (r) => text(r, "p2_account_code", "—") },
+            { key: "matched", header: "Matched", align: "right", render: (r) => num(r, "matched_symbols", 0) },
+            { key: "p2only", header: "P2 only", align: "right", render: (r) => num(r, "p2_only_symbols", 0) },
+            { key: "canonicalonly", header: "Canonical only", align: "right", render: (r) => num(r, "comparison_only_symbols", 0) },
+            { key: "qty", header: "Qty breaks", align: "right", render: (r) => num(r, "quantity_mismatch_symbols", 0) },
+            { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "review")} /> },
+            { key: "asof", header: "Run", render: (r) => formatRelative(text(r, "created_at")) },
+          ]} rows={p2} rowKey={(r, i) => String(text(r, "run_key", text(r, "id", i)))} />
         )}
       </Panel>
     </>

@@ -371,6 +371,20 @@ export function useStartPaperMonitor() {
   );
 }
 
+export function useRunBrokerReconciliation() {
+  return useInvalidating<{ actor?: string }, LiveRow>(
+    "/api/broker-reconciliation/run",
+    [Q.portfolioOffice, Q.missionControl]
+  );
+}
+
+export function useRunP2CursorReconciliation() {
+  return useInvalidating<{ actor?: string; client_code?: string }, LiveRow>(
+    "/api/p2cursor-reconciliation/run",
+    [Q.portfolioOffice, Q.missionControl]
+  );
+}
+
 /* ============================================================
  * TRADING ACTIONS (manual + paper — NOT live execution)
  * ============================================================ */

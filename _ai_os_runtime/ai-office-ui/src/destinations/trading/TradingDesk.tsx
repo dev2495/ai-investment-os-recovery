@@ -171,12 +171,17 @@ function JournalView() {
   const { data, isLoading } = useTradingQuantRisk();
   const trades = data?.trade_activity ?? [];
   const paperSummary = data?.paper_trade_summary ?? [];
+  const [showTicket, setShowTicket] = React.useState(false);
+  const [showPaper, setShowPaper] = React.useState(false);
 
   return (
     <>
-      <Panel icon={Notebook} title="Trade Journal">
+      <Panel icon={Notebook} title="Trade Journal" actions={<>
+          <Button size="sm" variant="ghost" icon={Notebook} onClick={() => setShowPaper(true)}>Paper trade</Button>
+          <Button size="sm" variant="primary" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>
+        </>}>
         {isLoading ? <SkeletonGrid rows={4} /> : trades.length === 0 ? (
-          <Empty icon={Notebook} title="No journal entries" description="Trades recorded with thesis text appear here as journal entries for later mining." />
+          <Empty icon={Notebook} title="No journal entries" description="Trades recorded with thesis text appear here as journal entries for later mining." action={<Button size="sm" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>} />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
             {trades.slice(0, 20).map((trade, i) => {
@@ -211,6 +216,9 @@ function JournalView() {
           />
         </Panel>
       )}
+
+      <TradeTicketDrawer open={showTicket} onClose={() => setShowTicket(false)} paper={false} />
+      <TradeTicketDrawer open={showPaper} onClose={() => setShowPaper(false)} paper />
     </>
   );
 }

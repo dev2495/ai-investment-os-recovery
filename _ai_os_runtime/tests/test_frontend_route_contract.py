@@ -59,7 +59,7 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 75)
+        self.assertEqual(len(paths), 77)
         self.assertNotIn("/api/tradingview/chart-actions", paths)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),
@@ -89,6 +89,15 @@ class FrontendRouteContractTest(unittest.TestCase):
             '<Button size="sm" variant="primary" icon={Plus}>Onboard Client</Button>',
             terminal,
         )
+
+    def test_reconciliation_controls_are_live_and_visible(self) -> None:
+        actions = (self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts").read_text(encoding="utf-8")
+        terminal = (self.runtime_root / "ai-office-ui" / "src" / "destinations" / "portfolio" / "PortfolioTerminal.tsx").read_text(encoding="utf-8")
+        self.assertIn("/api/broker-reconciliation/run", actions)
+        self.assertIn("/api/p2cursor-reconciliation/run", actions)
+        self.assertIn("Run broker", terminal)
+        self.assertIn("Run P2Cursor", terminal)
+        self.assertIn("P2Cursor vs Canonical Portfolio", terminal)
 
     def test_quant_lifecycle_actions_are_live_and_governed(self) -> None:
         actions = (
