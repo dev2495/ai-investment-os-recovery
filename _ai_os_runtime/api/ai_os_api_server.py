@@ -2100,6 +2100,14 @@ def build_mission_control_snapshot() -> dict:
             WHERE event_date <= current_date + 45
             LIMIT 20
         """,
+        "market_quotes": """
+            SELECT id, source_key, provider, provider_symbol, symbol, exchange,
+                   description, currency, price, change_percent, quote_ts
+            FROM market.v_latest_price_quotes
+            WHERE lower(provider) NOT LIKE 'tradingview%'
+            ORDER BY quote_ts DESC, symbol
+            LIMIT 100
+        """,
         "market_holidays": """
             SELECT exchange, segment, holiday_date, holiday_name,
                    session_status, source_url, notes, days_away
@@ -2528,6 +2536,14 @@ def build_research_ideas_snapshot() -> dict:
                    on_watchlist, relevance_scope
             FROM market.v_upcoming_corporate_events
             WHERE event_date <= current_date + 60
+            LIMIT 100
+        """,
+        "market_quotes": """
+            SELECT id, source_key, provider, provider_symbol, symbol, exchange,
+                   description, currency, price, change_percent, quote_ts
+            FROM market.v_latest_price_quotes
+            WHERE lower(provider) NOT LIKE 'tradingview%'
+            ORDER BY quote_ts DESC, symbol
             LIMIT 100
         """,
         "market_holidays": """

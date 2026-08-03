@@ -158,6 +158,24 @@ class FrontendRouteContractTest(unittest.TestCase):
 
 
 
+    def test_macro_quotes_use_canonical_stored_prices_not_calendar_events(self) -> None:
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "macro"
+            / "MacroMarkets.tsx"
+        ).read_text(encoding="utf-8")
+        backend = (self.runtime_root / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+
+        self.assertIn("research?.market_quotes", terminal)
+        self.assertIn("Stored Live Quotes", terminal)
+        self.assertIn("change_percent", terminal)
+        self.assertNotIn("research?.market_events?.filter", terminal)
+        self.assertGreaterEqual(backend.count("FROM market.v_latest_price_quotes"), 2)
+        self.assertIn("lower(provider) NOT LIKE", backend)
+
     def test_options_surfaces_use_recorded_trades_and_live_chain_inputs(self) -> None:
         source = (
             self.runtime_root
