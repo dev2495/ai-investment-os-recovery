@@ -23,7 +23,7 @@ def probe_desktop() -> dict:
     if installed:
         try:
             process = subprocess.run(
-                ["/usr/bin/pgrep", "-f", f"{TRADINGVIEW_DESKTOP_APP}/Contents/MacOS/TradingView"],
+                ["/usr/bin/pgrep", "-x", "TradingView"],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -48,6 +48,23 @@ def probe_desktop() -> dict:
             version = version_result.stdout.strip() or None
         except (OSError, subprocess.TimeoutExpired) as exc:
             errors.append(f"version_probe:{type(exc).__name__}")
+
+    if installed and not running and sys.platform == "darwin":
+        try:
+            launch_services = subprocess.run(
+                [
+                    "/usr/bin/osascript",
+                    "-e",
+                    f'application id "{TRADINGVIEW_DESKTOP_BUNDLE_ID}" is running',
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=3,
+            )
+            running = launch_services.stdout.strip().lower() == "true"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"launch_services_probe:{type(exc).__name__}")
 
     if sys.platform == "darwin":
         try:

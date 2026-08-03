@@ -1906,7 +1906,7 @@ def build_system_health_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         "storage": {
             "vault_mounted": VAULT_ROOT.exists(),
             "ollama_models_external": Path("/Volumes/Devarsh SSD/AI OS Data/ollama/models").is_dir(),
@@ -2132,7 +2132,7 @@ def build_mission_control_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_mission_control_read_model"},
         "payload_profile": {
             "query_count": len(queries),
@@ -3121,7 +3121,7 @@ def build_trading_quant_risk_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_trading_quant_risk_read_model"},
         "payload_profile": {
             "query_count": len(queries),
@@ -6558,7 +6558,7 @@ def build_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         **data,
     }
     snapshot["data_mode"] = {
@@ -6634,7 +6634,7 @@ def tradingview_cdp_node_command(script_path: Path, script_payload: dict) -> lis
     ]
 
 
-def execute_tradingview_chart_action(payload: dict) -> dict:
+def _execute_legacy_tradingview_chart_action_cdp(payload: dict) -> dict:
     actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
     symbols = payload.get("symbols")
     if isinstance(symbols, str):
@@ -6860,6 +6860,52 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     result = rows[0] if rows else {"error": "TradingView task not found after chart action", "task_id": task_id_int}
     audit_api_write("ai_os_api_execute_tradingview_chart_action", "execute_tradingview_chart_action", actor, "ops.tradingview_tasks", result, payload)
     return result
+
+
+def execute_tradingview_chart_action(payload: dict) -> dict:
+    """Open requested charts in the user's logged-in TradingView Desktop app.
+
+    The route name is retained for MCP/API compatibility. It never starts or
+    connects to a separate browser, and it does not claim screenshot evidence.
+    """
+    symbols = payload.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [item.strip() for item in symbols.split(",") if item.strip()]
+    if not isinstance(symbols, list) or not symbols:
+        symbol = str(payload.get("symbol") or "").strip()
+        symbols = [symbol] if symbol else []
+    if not symbols:
+        raise ValueError("symbol or symbols is required")
+
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    timeframe = str(payload.get("timeframe") or "D").strip().upper()
+    panes = []
+    for symbol in symbols:
+        normalized = normalize_tradingview_symbol(str(symbol), exchange)
+        panes.append({
+            "symbol": normalized,
+            "url": tradingview_chart_url(normalized, timeframe),
+        })
+    compiled_plan = {
+        "execution_ready": True,
+        "fulfillment": "native_desktop_chart_handoff",
+        "panes": panes,
+        "target_url": panes[0]["url"],
+        "capture_requested": bool(payload.get("capture_screenshot")),
+        "capture_status": "not_performed",
+    }
+    return execute_tradingview_desktop_plan({
+        **payload,
+        "symbols": symbols,
+        "exchange": exchange,
+        "timeframe": timeframe,
+        "compiled_plan": compiled_plan,
+        "metadata": {
+            **(payload.get("metadata") or {}),
+            "execution_surface": "native_desktop",
+            "capture_status": "not_performed",
+        },
+    })
 
 
 TRADINGVIEW_TEMPLATE_PARAMETER_KEYS = {
@@ -9277,15 +9323,15 @@ def check_browser_profile(payload: dict) -> dict:
     if profile_status in {"planned", "disabled", "inactive", "retired"}:
         status = "planned" if profile_status == "planned" else "inactive"
         error_message = f"Browser profile status is {profile_status}."
-    elif port in {9222, 9333} or "tradingview" in browser_name.lower():
-        cdp = probe_tradingview_cdp(int(port or TRADINGVIEW_CDP_PORT))
-        sample_payload["cdp"] = cdp
-        if cdp.get("available"):
-            status = "available"
+    elif "tradingview" in browser_name.lower() or "tradingview" in profile_key.lower():
+        desktop = probe_tradingview_desktop()
+        sample_payload["desktop"] = desktop
+        if desktop.get("installed") and desktop.get("automation_permission"):
+            status = "desktop_ready"
             error_message = None
         else:
-            status = "cdp_unavailable"
-            error_message = str(cdp.get("next_action") or cdp.get("error") or "CDP endpoint unavailable")
+            status = "desktop_attention"
+            error_message = str(desktop.get("next_action") or "TradingView Desktop needs local attention.")
     elif profile.get("profile_path"):
         resolved_path = _resolve_browser_profile_path(str(profile.get("profile_path")))
         sample_payload["resolved_profile_path"] = str(resolved_path)
@@ -9302,7 +9348,7 @@ def check_browser_profile(payload: dict) -> dict:
     result_payload = {
         "profile_key": profile_key,
         "connector_key": connector_key or None,
-        "check_type": "cdp_or_profile",
+        "check_type": "native_desktop_or_profile",
         "status": status,
         "remote_debugging_host": profile.get("remote_debugging_host"),
         "remote_debugging_port": port,
@@ -16964,7 +17010,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                         "ok": healthy,
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                         "runtime_root": str(RUNTIME_ROOT),
-                        "tradingview_cdp": probe_tradingview_cdp(),
+                        "tradingview_desktop": probe_tradingview_desktop(),
                         "operator_auth": {
                             "bind_host": API_HOST,
                             "allowed_origins": sorted(ALLOWED_ORIGINS),
@@ -17043,8 +17089,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                     raise ValueError("evidence entity key is required")
                 self._send_json(build_entity_evidence(entity_kind, entity_key))
                 return
-            if self.path.startswith("/api/tradingview/cdp-status"):
-                self._send_json(probe_tradingview_cdp())
+            if request_path == "/api/tradingview/cdp-status":
+                self._send_json(
+                    {
+                        "error": "retired",
+                        "message": "The managed TradingView browser/CDP surface is retired. Use the logged-in TradingView Desktop app.",
+                        "desktop": probe_tradingview_desktop(),
+                    },
+                    410,
+                )
                 return
             if request_path == "/api/tradingview/desktop-status":
                 self._send_json(probe_tradingview_desktop())

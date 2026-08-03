@@ -430,21 +430,6 @@ export function useOpenTradingViewDesktop() {
   );
 }
 
-export interface TradingViewCaptureInput extends TradingViewDesktopInput {
-  symbols?: string[];
-  action?: string;
-  capture_screenshot?: boolean;
-  quality_check?: boolean;
-  wait_ms?: number;
-}
-
-export function useCaptureTradingViewChart() {
-  return useInvalidating<TradingViewCaptureInput, LiveRow>(
-    "/api/tradingview/chart-actions",
-    [Q.tradingQuantRisk]
-  );
-}
-
 export interface TradingViewTemplateInput extends TradingViewDesktopInput {
   template_key: string;
   parameters?: Record<string, unknown>;

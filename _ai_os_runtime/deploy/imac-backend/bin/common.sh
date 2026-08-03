@@ -43,7 +43,6 @@ load_env() {
   export OLLAMA_NOHISTORY=true
   export OLLAMA_NO_CLOUD=1
   export PLAYWRIGHT_BROWSERS_PATH="${AI_OS_PLAYWRIGHT_BROWSERS_PATH}"
-  export AI_OS_TRADINGVIEW_CDP_PORT
 }
 
 ensure_ssd() {

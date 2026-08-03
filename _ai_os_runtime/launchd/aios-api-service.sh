@@ -9,7 +9,6 @@ export AI_OS_VAULT_ROOT="${AI_OS_VAULT_ROOT:-/Volumes/Devarsh SSD/Obsidian memor
 export AI_OS_WORKER_SCRIPT="${AI_OS_WORKER_SCRIPT:-/Users/devarshthakkar/Library/Application Support/AIOS/service/scripts/run_agent_worker_once.py}"
 export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psql}"
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/opt/homebrew/bin/docker}"
-export AI_OS_TRADINGVIEW_CDP_PORT="${AI_OS_TRADINGVIEW_CDP_PORT:-9333}"
 export AI_OS_EMBEDDING_MODEL="${AI_OS_EMBEDDING_MODEL:-qwen3-embedding:0.6b}"
 export AI_OS_MLX_URL="${AI_OS_MLX_URL:-http://100.75.156.32:11435/v1}"
 export AI_OS_MLX_REQUEST_MODEL="${AI_OS_MLX_REQUEST_MODEL:-default_model}"

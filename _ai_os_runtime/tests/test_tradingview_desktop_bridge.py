@@ -27,6 +27,26 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertNotIn("browser", status["next_action"].lower())
         self.assertFalse(status["broker_execution_allowed"])
 
+    def test_probe_uses_stable_process_name(self) -> None:
+        app = pathlib.Path("/Applications/TradingView.app")
+        pgrep = subprocess.CompletedProcess(args=[], returncode=0, stdout="56576\n", stderr="")
+        version = subprocess.CompletedProcess(args=[], returncode=0, stdout="3.3.0\n", stderr="")
+        permission = subprocess.CompletedProcess(args=[], returncode=0, stdout="true\n", stderr="")
+        with (
+            mock.patch.object(tradingview_desktop_bridge, "TRADINGVIEW_DESKTOP_APP", app),
+            mock.patch.object(pathlib.Path, "exists", return_value=True),
+            mock.patch.object(tradingview_desktop_bridge.sys, "platform", "darwin"),
+            mock.patch.object(
+                tradingview_desktop_bridge.subprocess,
+                "run",
+                side_effect=[pgrep, version, permission],
+            ) as run,
+        ):
+            status = tradingview_desktop_bridge.probe_desktop()
+
+        self.assertTrue(status["running"])
+        self.assertEqual(run.call_args_list[0].args[0], ["/usr/bin/pgrep", "-x", "TradingView"])
+
     def test_open_link_rejects_non_tradingview_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "tradingview.com"):
             tradingview_desktop_bridge.open_link_in_desktop("https://example.com/chart")
@@ -93,15 +113,29 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertEqual(commands, ["/usr/bin/pbcopy", "/usr/bin/osascript"])
         popen.assert_not_called()
 
-    def test_cdp_command_enables_websocket_on_node_20(self) -> None:
-        command = ai_os_api_server.tradingview_cdp_node_command(
-            pathlib.Path("/tmp/execute.mjs"),
-            {"symbol": "NSE:RELIANCE", "timeframe": "D"},
-        )
+    def test_compatibility_chart_action_uses_native_desktop_only(self) -> None:
+        native_result = {
+            "status": "done",
+            "execution_surface": "native_desktop",
+            "broker_order_allowed": False,
+        }
+        with mock.patch.object(
+            ai_os_api_server,
+            "execute_tradingview_desktop_plan",
+            return_value=native_result,
+        ) as execute:
+            result = ai_os_api_server.execute_tradingview_chart_action({
+                "symbol": "RELIANCE",
+                "exchange": "NSE",
+                "timeframe": "15",
+                "capture_screenshot": True,
+            })
 
-        self.assertEqual(command[:2], ["node", "--experimental-websocket"])
-        self.assertEqual(command[2:4], ["/tmp/execute.mjs", "--payload-json"])
-        self.assertIn('"symbol": "NSE:RELIANCE"', command[4])
+        self.assertEqual(result, native_result)
+        request = execute.call_args.args[0]
+        self.assertEqual(request["metadata"]["execution_surface"], "native_desktop")
+        self.assertEqual(request["compiled_plan"]["capture_status"], "not_performed")
+        self.assertEqual(request["compiled_plan"]["panes"][0]["symbol"], "NSE:RELIANCE")
 
     def test_api_serializes_permission_gated_task_as_one_json_document(self) -> None:
         task = {"id": 91, "task_title": "Open TradingView Desktop: NSE:RELIANCE"}
@@ -158,6 +192,24 @@ class TradingViewDesktopBridgeTests(unittest.TestCase):
         self.assertNotIn("useCaptureTradingViewChart", frontend)
         self.assertNotIn("CDP Capture", frontend)
         self.assertNotIn("localhost:9333", frontend)
+
+    def test_active_runtime_does_not_start_a_managed_tradingview_browser(self) -> None:
+        runtime_root = pathlib.Path(__file__).resolve().parents[1]
+        active_files = [
+            runtime_root / "scripts" / "start_ai_office_live.sh",
+            runtime_root / "scripts" / "run_ai_office_supervisor.command",
+            runtime_root / "deploy" / "imac-backend" / "bin" / "supervisor.sh",
+            runtime_root / "launchd" / "aios-agent-daemon-service.sh",
+        ]
+        for path in active_files:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("launch_tradingview_browser", source, path.name)
+            self.assertNotIn("tradingview-browser", source, path.name)
+            self.assertNotIn("TRADINGVIEW_CDP", source, path.name)
+
+        api_source = pathlib.Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
+        self.assertIn('"tradingview_desktop": probe_tradingview_desktop()', api_source)
+        self.assertIn("managed TradingView browser/CDP surface is retired", api_source)
 
     def test_desktop_plan_opens_every_chart_in_the_native_app(self) -> None:
         payload = {

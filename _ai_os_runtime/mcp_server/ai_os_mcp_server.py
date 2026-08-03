@@ -3500,8 +3500,8 @@ def execute_tradingview_chart_action(arguments: dict) -> dict:
     result = post_api_json("/api/tradingview/chart-actions", arguments, timeout=75.0)
     audit_mcp_call(
         tool_name="ai_os_execute_tradingview_chart_action",
-        action_type="execute_tradingview_chart_action",
-        permission_level="browser_capture",
+        action_type="open_tradingview_desktop_chart",
+        permission_level="native_desktop_handoff",
         actor=str(arguments.get("actor") or arguments.get("requested_by") or "Trading Desk Agent"),
         target_table="ops.tradingview_tasks",
         target_id=result.get("id") if isinstance(result, dict) else None,
@@ -7018,7 +7018,7 @@ TOOLS = {
         "handler": update_tradingview_task,
     },
     "ai_os_execute_tradingview_chart_action": {
-        "description": "Open a TradingView chart through local CDP, capture a screenshot artifact, and update the TradingView task. This does not place trades.",
+        "description": "Open one or more charts in the user's logged-in TradingView Desktop app and update the governed task. This never starts a separate browser, does not claim screenshot capture, and cannot place trades.",
         "inputSchema": {
             "type": "object",
             "properties": {

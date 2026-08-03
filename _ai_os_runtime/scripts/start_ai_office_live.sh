@@ -12,7 +12,6 @@ LAUNCHD_API_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.a
 LAUNCHD_UI_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.ui.plist"
 LAUNCHD_AGENT_DAEMON_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.agent-daemon.plist"
 LAUNCHD_OLLAMA_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.ollama.plist"
-LAUNCHD_TRADINGVIEW_PLIST="/Users/devarshthakkar/Library/LaunchAgents/com.devarsh.aios.tradingview-browser.plist"
 LAUNCHD_DOMAIN="gui/$(id -u)"
 AIOS_SUPPORT_DIR="/Users/devarshthakkar/Library/Application Support/AIOS"
 AIOS_BIN_DIR="${AIOS_SUPPORT_DIR}/bin"
@@ -22,7 +21,6 @@ LAUNCHD_DIR="/Users/devarshthakkar/Library/LaunchAgents"
 LAUNCHD_LOG_DIR="/Users/devarshthakkar/Library/Logs/AIOS"
 OLLAMA_HOST_URL="${OLLAMA_HOST_URL:-http://127.0.0.1:11434}"
 AI_OS_START_OLLAMA_LAUNCHD="${AI_OS_START_OLLAMA_LAUNCHD:-1}"
-TRADINGVIEW_CDP_PORT="${AI_OS_TRADINGVIEW_CDP_PORT:-9333}"
 AI_OS_USE_LAUNCHD="${AI_OS_USE_LAUNCHD:-0}"
 
 if [[ "${AI_OS_SKIP_STORAGE_GUARD:-0}" != "1" && -x "${RUNTIME_ROOT}/scripts/verify_external_storage.sh" ]]; then
@@ -38,7 +36,6 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/launchd/aios-ui-service.sh" "${AIOS_BIN_DIR}/aios-ui-service.sh"
   cp -f "${RUNTIME_ROOT}/launchd/aios-agent-daemon-service.sh" "${AIOS_BIN_DIR}/aios-agent-daemon-service.sh"
   cp -f "${RUNTIME_ROOT}/launchd/aios-ollama-service.sh" "${AIOS_BIN_DIR}/aios-ollama-service.sh"
-  cp -f "${RUNTIME_ROOT}/launchd/aios-tradingview-browser-service.sh" "${AIOS_BIN_DIR}/aios-tradingview-browser-service.sh"
   cp -f "${RUNTIME_ROOT}/api/ai_os_api_server.py" "${AIOS_SERVICE_DIR}/api/ai_os_api_server.py"
   cp -f "${RUNTIME_ROOT}/api/graph_control_plane.py" "${AIOS_SERVICE_DIR}/api/graph_control_plane.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_worker_once.py"
@@ -47,7 +44,6 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/scripts/kronos_inference_worker.py" "${AIOS_SERVICE_DIR}/scripts/kronos_inference_worker.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_client_accounting.py" "${AIOS_SERVICE_DIR}/scripts/run_client_accounting.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_source_freshness.py" "${AIOS_SERVICE_DIR}/scripts/check_source_freshness.py"
-  cp -f "${RUNTIME_ROOT}/scripts/check_tradingview_cdp.py" "${AIOS_SERVICE_DIR}/scripts/check_tradingview_cdp.py"
   cp -f "${RUNTIME_ROOT}/scripts/check_model_endpoint_live.py" "${AIOS_SERVICE_DIR}/scripts/check_model_endpoint_live.py"
   cp -f "${RUNTIME_ROOT}/scripts/aggregate_ticks_to_ohlcv.py" "${AIOS_SERVICE_DIR}/scripts/aggregate_ticks_to_ohlcv.py"
   cp -f "${RUNTIME_ROOT}/scripts/ingest_algo_sqlite.py" "${AIOS_SERVICE_DIR}/scripts/ingest_algo_sqlite.py"
@@ -57,7 +53,6 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ui.plist" "${LAUNCHD_UI_PLIST}"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.agent-daemon.plist" "${LAUNCHD_AGENT_DAEMON_PLIST}"
   cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ollama.plist" "${LAUNCHD_OLLAMA_PLIST}"
-  cp -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.tradingview-browser.plist" "${LAUNCHD_TRADINGVIEW_PLIST}"
 }
 
 trim_launchd_logs() {
@@ -77,7 +72,7 @@ trim_launchd_logs() {
 }
 
 start_launchd_services() {
-  if [[ ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.api.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ui.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.agent-daemon.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ollama.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.tradingview-browser.plist" ]]; then
+  if [[ ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.api.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ui.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.agent-daemon.plist" || ! -f "${RUNTIME_ROOT}/launchd/com.devarsh.aios.ollama.plist" ]]; then
     return 1
   fi
 
@@ -86,7 +81,6 @@ start_launchd_services() {
   launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_API_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_AGENT_DAEMON_PLIST}" 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_OLLAMA_PLIST}" 2>/dev/null || true
-  launchctl bootout "${LAUNCHD_DOMAIN}" "${LAUNCHD_TRADINGVIEW_PLIST}" 2>/dev/null || true
   trim_launchd_logs
   if [[ "${AI_OS_START_OLLAMA_LAUNCHD}" == "1" ]]; then
     launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_OLLAMA_PLIST}" 2>/dev/null || true
@@ -97,9 +91,6 @@ start_launchd_services() {
   else
     echo "Skipped Ollama LaunchAgent by explicit request; use scripts/start_ollama_foreground.sh for a temporary local model server."
   fi
-  launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_TRADINGVIEW_PLIST}" 2>/dev/null || true
-  launchctl kickstart -k "${LAUNCHD_DOMAIN}/com.devarsh.aios.tradingview-browser"
-  wait_for_http "http://127.0.0.1:${TRADINGVIEW_CDP_PORT}/json/version" "TradingView managed browser" "${LAUNCHD_LOG_DIR}/tradingview_browser.launchd.err" || return 1
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_API_PLIST}" 2>/dev/null || true
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_AGENT_DAEMON_PLIST}" 2>/dev/null || true
   launchctl bootstrap "${LAUNCHD_DOMAIN}" "${LAUNCHD_UI_PLIST}" 2>/dev/null || true
@@ -113,7 +104,6 @@ start_launchd_services() {
     echo "  ${OLLAMA_HOST_URL}/api/version"
   fi
   echo "  http://${API_HOST}:${API_PORT}/api/health"
-  echo "  http://127.0.0.1:${TRADINGVIEW_CDP_PORT}/json/version"
   echo "  com.devarsh.aios.agent-daemon"
   echo "  http://127.0.0.1:${UI_PORT}/"
   return 0
@@ -160,7 +150,7 @@ start_api() {
 
   AI_OS_API_HOST="${API_HOST}" AI_OS_API_PORT="${API_PORT}" AI_OS_RUNTIME_ROOT="${RUNTIME_ROOT}" \
     AI_OS_VAULT_ROOT="/Volumes/Devarsh SSD/Obsidian memory " AI_OS_WORKER_SCRIPT="${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" \
-    AI_OS_TRADINGVIEW_CDP_PORT="${TRADINGVIEW_CDP_PORT}" AI_OS_EMBEDDING_MODEL="qwen3-embedding:0.6b" RUNTIME_ROOT="${RUNTIME_ROOT}" \
+    AI_OS_EMBEDDING_MODEL="qwen3-embedding:0.6b" RUNTIME_ROOT="${RUNTIME_ROOT}" \
     nohup bash -c 'cd "$RUNTIME_ROOT"; python3 -u api/ai_os_api_server.py; code=$?; printf "AI OS API exited with code %s\n" "$code" >&2; exit "$code"' \
     > "${LOG_DIR}/ai_os_api.log" 2>&1 < /dev/null &
   echo $! > "${RUN_DIR}/ai_os_api.pid"
@@ -181,30 +171,12 @@ start_ollama_user_session() {
   echo "Started user-session Ollama with external-SSD model storage"
 }
 
-start_tradingview_browser_user_session() {
-  local existing_pid
-  existing_pid="$(pid_for_port "${TRADINGVIEW_CDP_PORT}")"
-  if [[ -n "${existing_pid}" ]] && curl --max-time 2 -fsS "http://127.0.0.1:${TRADINGVIEW_CDP_PORT}/json/version" >/dev/null 2>&1; then
-    echo "${existing_pid}" > "${RUN_DIR}/tradingview_browser.pid"
-    echo "TradingView browser already running on CDP ${TRADINGVIEW_CDP_PORT}"
-    return
-  fi
-  AI_OS_TRADINGVIEW_BROWSER_PORT="${TRADINGVIEW_CDP_PORT}" \
-    AI_OS_TRADINGVIEW_BROWSER_PROFILE="/Volumes/Devarsh SSD/AI OS Data/browser-profiles/tradingview-cft" \
-    nohup bash "${RUNTIME_ROOT}/launchd/aios-tradingview-browser-service.sh" \
-    > "${LOG_DIR}/tradingview_browser.user-session.log" 2>&1 < /dev/null &
-  echo $! > "${RUN_DIR}/tradingview_browser.pid"
-  wait_for_http "http://127.0.0.1:${TRADINGVIEW_CDP_PORT}/json/version" "TradingView managed browser" "${LOG_DIR}/tradingview_browser.user-session.log"
-  echo "Started user-session TradingView managed browser on CDP ${TRADINGVIEW_CDP_PORT}"
-}
-
 start_agent_daemon_user_session() {
   if [[ -f "${RUN_DIR}/agent_daemon.pid" ]] && kill -0 "$(cat "${RUN_DIR}/agent_daemon.pid")" 2>/dev/null; then
     echo "Agent daemon already running"
     return
   fi
   AI_OS_RUNTIME_ROOT="${RUNTIME_ROOT}" AI_OS_VAULT_ROOT="/Volumes/Devarsh SSD/Obsidian memory " \
-    AI_OS_TRADINGVIEW_CDP_PORT="${TRADINGVIEW_CDP_PORT}" \
     nohup bash "${RUNTIME_ROOT}/launchd/aios-agent-daemon-service.sh" \
     > "${LOG_DIR}/agent_daemon.user-session.log" 2>&1 < /dev/null &
   echo $! > "${RUN_DIR}/agent_daemon.pid"
@@ -219,7 +191,7 @@ start_agent_daemon_user_session() {
 
 stop_installed_launchd_services() {
   local plist
-  for plist in "${LAUNCHD_UI_PLIST}" "${LAUNCHD_API_PLIST}" "${LAUNCHD_AGENT_DAEMON_PLIST}" "${LAUNCHD_OLLAMA_PLIST}" "${LAUNCHD_TRADINGVIEW_PLIST}"; do
+  for plist in "${LAUNCHD_UI_PLIST}" "${LAUNCHD_API_PLIST}" "${LAUNCHD_AGENT_DAEMON_PLIST}" "${LAUNCHD_OLLAMA_PLIST}"; do
     launchctl bootout "${LAUNCHD_DOMAIN}" "${plist}" 2>/dev/null || true
   done
 }
@@ -235,7 +207,6 @@ start_terminal_supervisor() {
     /usr/bin/open -gj -a Terminal "${supervisor}"
   fi
   wait_for_http "${OLLAMA_HOST_URL}/api/version" "Ollama" "${LOG_DIR}/ollama.user-session.log"
-  wait_for_http "http://127.0.0.1:${TRADINGVIEW_CDP_PORT}/json/version" "TradingView managed browser" "${LOG_DIR}/tradingview_browser.user-session.log"
   wait_for_http "http://${API_HOST}:${API_PORT}/api/health" "AI OS API" "${LOG_DIR}/ai_os_api.log"
   wait_for_http "http://127.0.0.1:${UI_PORT}/" "AI Office UI" "${LOG_DIR}/ai_office_ui.log"
   if [[ ! -f "${RUN_DIR}/agent_daemon.pid" ]] || ! kill -0 "$(cat "${RUN_DIR}/agent_daemon.pid")" 2>/dev/null; then

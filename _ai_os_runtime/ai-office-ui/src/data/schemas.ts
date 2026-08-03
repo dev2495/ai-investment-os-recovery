@@ -36,12 +36,17 @@ const payloadProfile = z.object({
   row_count: z.number().optional().default(0),
 }).passthrough();
 
-const tradingViewCdp = z.object({
-  available: z.boolean().optional().default(false),
-  port: z.number().optional().default(0),
-  browser: z.string().optional(),
-  user_agent: z.string().optional(),
-  error: z.string().optional(),
+const tradingViewDesktop = z.object({
+  installed: z.boolean().optional().default(false),
+  running: z.boolean().optional().default(false),
+  version: z.string().nullable().optional(),
+  bundle_id: z.string().optional(),
+  automation_permission: z.boolean().optional().default(false),
+  session_state: z.string().optional().default("user_managed"),
+  interaction_mode: z.string().optional().default("unavailable"),
+  authoritative_market_data: z.boolean().optional().default(false),
+  broker_execution_allowed: z.boolean().optional().default(false),
+  errors: z.array(z.string()).optional().default([]),
   next_action: z.string().optional(),
 }).passthrough();
 
@@ -52,7 +57,7 @@ const executionControlRow = liveRow;
  * ============================================================ */
 export const MissionControlSchema = z.object({
   ...snapshotMeta,
-  tradingview_cdp: tradingViewCdp.optional(),
+  tradingview_desktop: tradingViewDesktop.optional(),
   data_mode: dataMode.optional(),
   payload_profile: payloadProfile.optional(),
   metrics: z.array(liveRow).default([]),
@@ -87,7 +92,7 @@ export type MissionControl = z.infer<typeof MissionControlSchema>;
  * ============================================================ */
 export const SystemHealthSchema = z.object({
   ...snapshotMeta,
-  tradingview_cdp: tradingViewCdp.optional(),
+  tradingview_desktop: tradingViewDesktop.optional(),
   storage: z.object({
     vault_mounted: z.boolean().optional().default(false),
     ollama_models_external: z.boolean().optional().default(false),
@@ -222,7 +227,7 @@ export type ResearchIdeas = z.infer<typeof ResearchIdeasSchema>;
  * ============================================================ */
 export const TradingQuantRiskSchema = z.object({
   ...snapshotMeta,
-  tradingview_cdp: tradingViewCdp.optional(),
+  tradingview_desktop: tradingViewDesktop.optional(),
   data_mode: dataMode.optional(),
   payload_profile: payloadProfile.optional(),
   quant_lab: z.array(liveRow).default([]),
