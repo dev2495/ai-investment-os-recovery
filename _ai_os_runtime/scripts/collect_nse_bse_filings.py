@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import ssl
 import subprocess
 import sys
 import time
@@ -188,9 +189,57 @@ def classify_event(title: str, filing_type: str, body: str) -> dict[str, Any]:
     }
 
 
+def verified_https_context() -> ssl.SSLContext:
+    ca_bundle = os.environ.get("AI_OS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+    if not ca_bundle:
+        try:
+            import certifi
+
+            ca_bundle = certifi.where()
+        except ImportError:
+            ca_bundle = None
+    return ssl.create_default_context(cafile=ca_bundle)
+
+
+def curl_get(url: str, headers: dict[str, str], timeout: int = 30) -> tuple[int, bytes]:
+    command = [
+        os.environ.get("AI_OS_CURL_BIN", "curl"),
+        "--fail-with-body",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--max-time",
+        str(timeout),
+        "--retry",
+        "2",
+        "--retry-delay",
+        "1",
+        "--retry-all-errors",
+    ]
+    for name, value in headers.items():
+        command.extend(["--header", f"{name}: {value}"])
+    command.extend(["--write-out", "\n%{http_code}", url])
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+        timeout=(timeout * 3) + 5,
+    )
+    if completed.returncode != 0:
+        error = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"curl failed with exit {completed.returncode}: {error}")
+    body, separator, status_text = completed.stdout.rpartition(b"\n")
+    if not separator or not status_text.isdigit():
+        raise RuntimeError("curl response did not include a valid HTTP status")
+    return int(status_text), body
+
+
 def fetch_nse(date_from: dt.date, date_to: dt.date, limit: int) -> tuple[int, str, list[dict[str, Any]]]:
     cookie_jar = CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=verified_https_context()),
+        urllib.request.HTTPCookieProcessor(cookie_jar),
+    )
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json,text/plain,*/*",
@@ -242,12 +291,13 @@ def fetch_bse(date_from: dt.date, date_to: dt.date, limit: int) -> tuple[int, st
             if first_request:
                 target_url = page_url
                 first_request = False
-            with urllib.request.urlopen(urllib.request.Request(page_url, headers=headers), timeout=30) as response:
-                http_status = response.status
-                raw = response.read().decode("utf-8", errors="ignore")
-            payload = json.loads(raw)
+            http_status, raw = curl_get(page_url, headers)
+            payload = json.loads(raw.decode("utf-8", errors="ignore"))
             if not isinstance(payload, dict):
-                break
+                raise RuntimeError("BSE API returned a non-object payload")
+            if payload.get("Status") is False:
+                message = str(payload.get("Message") or "unspecified exchange error")
+                raise RuntimeError(f"BSE API error: {message}")
             page_rows = payload.get("Table")
             if not isinstance(page_rows, list) or not page_rows:
                 break
@@ -460,7 +510,7 @@ def upsert_filing(run_id: int, item: dict[str, Any], source_system_sql: str, raw
                 extraction_status = EXCLUDED.extraction_status,
                 extracted_text = EXCLUDED.extracted_text,
                 payload = EXCLUDED.payload,
-                collector_run_id = EXCLUDED.collector_run_id,
+                collector_run_id = coalesce(research.corporate_filings.collector_run_id, EXCLUDED.collector_run_id),
                 raw_artifact_id = EXCLUDED.raw_artifact_id
             RETURNING id
         )
@@ -572,6 +622,8 @@ def collect_source(source: str, date_from: dt.date, date_to: dt.date, limit: int
     events_upserted = 0
     inbox_items = 0
     event_counts: dict[str, int] = {}
+    unique_filing_ids: set[int] = set()
+    unique_event_keys: set[tuple[int, str]] = set()
     if not dry_run and status == "completed":
         source_system_sql = source_system_id(source)
         for item in normalized:
@@ -581,8 +633,13 @@ def collect_source(source: str, date_from: dt.date, date_to: dt.date, limit: int
             raw_artifact_id = upsert_artifact(item, source_system_sql, hash_value)
             filing_id = upsert_filing(run_id, item, source_system_sql, raw_artifact_id, event, hash_value)
             event_count, inbox_count = upsert_event_and_inbox(filing_id, item, event)
-            rows_upserted += 1
-            events_upserted += event_count
+            event_key = (filing_id, event["event_type"])
+            if filing_id not in unique_filing_ids:
+                unique_filing_ids.add(filing_id)
+                rows_upserted += 1
+            if event_count and event_key not in unique_event_keys:
+                unique_event_keys.add(event_key)
+                events_upserted += 1
             inbox_items += inbox_count
 
     sample = {

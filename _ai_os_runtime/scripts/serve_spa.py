@@ -51,6 +51,11 @@ class SpaRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", required=True)
@@ -65,7 +70,7 @@ def main() -> None:
 
     os.chdir(root)
     SpaRequestHandler.index_path = index_path
-    server = ThreadingHTTPServer((args.host, args.port), SpaRequestHandler)
+    server = ReusableThreadingHTTPServer((args.host, args.port), SpaRequestHandler)
     server.serve_forever()
 
 

@@ -11689,16 +11689,18 @@ def run_sector_acceptance(payload: dict) -> dict:
     run_key = str(payload.get("run_key") or payload.get("runKey") or f"sector-acceptance-{node_id}-{as_of_date}").strip()
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
         raise ValueError("run_key contains unsupported characters")
+    run_rows = run_psql_json(f"""
+        SELECT sector_intelligence.run_acceptance_gates(
+            {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
+        ) AS acceptance_run_id
+    """)
+    if len(run_rows) != 1 or not run_rows[0].get("acceptance_run_id"):
+        raise ValueError("sector acceptance function returned no durable run id")
+    acceptance_run_id = int(run_rows[0]["acceptance_run_id"])
     rows = run_psql_json(f"""
-        WITH accepted AS (
-            SELECT sector_intelligence.run_acceptance_gates(
-                {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
-            ) AS acceptance_run_id
-        )
         SELECT summary.*
-        FROM accepted
-        JOIN sector_intelligence.v_acceptance_gate_summary summary
-          ON summary.acceptance_run_id=accepted.acceptance_run_id
+        FROM sector_intelligence.v_acceptance_gate_summary summary
+        WHERE summary.acceptance_run_id={acceptance_run_id}
     """)
     if not rows:
         raise ValueError("sector acceptance run returned no durable result")
@@ -11844,14 +11846,17 @@ def run_option_acceptance(payload: dict) -> dict:
     run_key = str(payload.get("run_key") or payload.get("runKey") or default_key).strip()
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
         raise ValueError("run_key contains unsupported characters")
+    run_rows = run_psql_json(f"""
+        SELECT trading.run_option_acceptance_gates(
+            {sql_literal(run_key)},{sql_literal(exchange)},{sql_literal(underlying)},
+            {sql_literal(expiry)}::date,{sql_literal(parsed['window_start'].isoformat())}::timestamptz,
+            {sql_literal(parsed['window_end'].isoformat())}::timestamptz,{sql_literal(actor)}
+        ) AS acceptance_run_id
+    """)
+    if len(run_rows) != 1 or not run_rows[0].get("acceptance_run_id"):
+        raise ValueError("option acceptance function returned no durable run id")
+    acceptance_run_id = int(run_rows[0]["acceptance_run_id"])
     rows = run_psql_json(f"""
-        WITH accepted AS (
-            SELECT trading.run_option_acceptance_gates(
-                {sql_literal(run_key)},{sql_literal(exchange)},{sql_literal(underlying)},
-                {sql_literal(expiry)}::date,{sql_literal(parsed['window_start'].isoformat())}::timestamptz,
-                {sql_literal(parsed['window_end'].isoformat())}::timestamptz,{sql_literal(actor)}
-            ) AS acceptance_run_id
-        )
         SELECT summary.*,
                (SELECT jsonb_agg(jsonb_build_object(
                     'gate_key',result.gate_key,'gate_name',result.gate_name,
@@ -11860,10 +11865,9 @@ def run_option_acceptance(payload: dict) -> dict:
                     'failure_reason',result.failure_reason,'evidence',result.evidence
                 ) ORDER BY result.id)
                 FROM trading.option_acceptance_gate_results result
-                WHERE result.acceptance_run_id=accepted.acceptance_run_id) AS gates
-        FROM accepted
-        JOIN trading.v_option_acceptance_gate_summary summary
-          ON summary.id=accepted.acceptance_run_id
+                WHERE result.acceptance_run_id={acceptance_run_id}) AS gates
+        FROM trading.v_option_acceptance_gate_summary summary
+        WHERE summary.id={acceptance_run_id}
     """)
     if not rows:
         raise ValueError("option acceptance run returned no durable result")
@@ -11885,15 +11889,18 @@ def run_office_operability_acceptance(payload: dict) -> dict:
     run_key = str(payload.get("run_key") or payload.get("runKey") or default_key).strip()
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
         raise ValueError("run_key contains unsupported characters")
+    run_rows = run_psql_json(f"""
+        SELECT agent.run_office_operability_acceptance(
+            {sql_literal(run_key)},{sql_literal(actor)}
+        ) AS run_id
+    """)
+    if len(run_rows) != 1 or not run_rows[0].get("run_id"):
+        raise ValueError("office operability function returned no durable run id")
+    run_id = int(run_rows[0]["run_id"])
     rows = run_psql_json(f"""
-        WITH accepted AS (
-            SELECT agent.run_office_operability_acceptance(
-                {sql_literal(run_key)},{sql_literal(actor)}
-            ) AS run_id
-        )
         SELECT summary.*
-        FROM accepted
-        JOIN agent.v_office_operability_acceptance summary ON summary.id=accepted.run_id
+        FROM agent.v_office_operability_acceptance summary
+        WHERE summary.id={run_id}
     """)
     if not rows:
         raise ValueError("office operability acceptance returned no durable result")
@@ -18914,8 +18921,13 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": type(exc).__name__, "message": str(exc)}, 500)
 
 
+class AiOsThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def main() -> int:
-    server = ThreadingHTTPServer((API_HOST, API_PORT), AiOsApiHandler)
+    server = AiOsThreadingHTTPServer((API_HOST, API_PORT), AiOsApiHandler)
     print(f"AI OS API listening on http://{API_HOST}:{API_PORT}", flush=True)
     try:
         server.serve_forever()

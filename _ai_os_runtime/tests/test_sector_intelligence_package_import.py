@@ -30,7 +30,7 @@ def package() -> dict:
              "node_level": "industry", "parent_key": "in-industrials", "valid_from": "2020-01-01"},
         ],
         "memberships": [
-            {"symbol": "POLYCAB", "exchange": "NSE", "instrument_type": "EQ",
+            {"symbol": "POLYCAB", "exchange": "NSE", "instrument_type": "equity",
              "taxonomy_key": "in-industrials-cables", "valid_from": "2020-01-01",
              "source_reference": "sha256://membership-evidence",
              "evidence": [{"field": "industry", "value": "Cables"}]},
@@ -38,14 +38,14 @@ def package() -> dict:
         "metrics": [
             {"metric_key": "market_cap", "metric_name": "Market capitalization",
              "metric_family": "valuation", "value_numeric": 100,
-             "subject": {"symbol": "POLYCAB", "exchange": "NSE", "instrument_type": "EQ"},
+             "subject": {"symbol": "POLYCAB", "exchange": "NSE", "instrument_type": "equity"},
              "observed_at": "2026-08-04T09:00:00+05:30"},
         ],
         "indices": [
             {"index_key": "cables-equal", "index_name": "Cables Equal Weight",
              "taxonomy_key": "in-industrials-cables", "base_date": "2026-01-01",
              "weighting_method": "equal",
-             "constituents": [{"symbol": "POLYCAB", "exchange": "NSE", "instrument_type": "EQ"}]},
+             "constituents": [{"symbol": "POLYCAB", "exchange": "NSE", "instrument_type": "equity"}]},
         ],
     }
 
@@ -58,6 +58,8 @@ class SectorIntelligencePackageImportTests(unittest.TestCase):
         sql = module.build_import_sql(validated, digest, "Sector Data Steward", "run-1")
         self.assertTrue(sql.startswith("BEGIN;"))
         self.assertIn("sector_intelligence.source_import_runs", sql)
+        self.assertIn("INSERT INTO trading.symbols", sql)
+        self.assertIn("instrument_type", sql)
         self.assertIn("sector package already imported", sql)
         self.assertIn("COMMIT;", sql)
         self.assertNotIn("broker_order", sql)

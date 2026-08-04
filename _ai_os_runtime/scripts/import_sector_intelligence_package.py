@@ -217,6 +217,12 @@ def build_import_sql(validated: dict[str, Any], digest: str, actor: str, run_key
     for row in validated["memberships"]:
         sid = symbol_id_sql(row["symbol"], row["exchange"], row["instrument_type"])
         statements.append(f"""
+        INSERT INTO trading.symbols (symbol,exchange,instrument_type,name,currency,active)
+        VALUES ({sql_literal(row["symbol"])},{sql_literal(row["exchange"])},{sql_literal(row["instrument_type"])},
+                {sql_literal(row.get("company_name"))},{sql_literal(row.get("currency") or "INR")},true)
+        ON CONFLICT (symbol,exchange,instrument_type) DO UPDATE SET
+            name=coalesce(EXCLUDED.name,trading.symbols.name),currency=EXCLUDED.currency,active=true;""")
+        statements.append(f"""
         INSERT INTO sector_intelligence.instrument_membership_history
             (symbol_id,taxonomy_node_id,membership_role,valid_from,valid_to,is_primary,source_system_id,
              source_reference,evidence)
