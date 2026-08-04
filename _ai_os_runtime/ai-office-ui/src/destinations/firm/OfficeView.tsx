@@ -131,7 +131,7 @@ export function OfficeView() {
           {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} style={{ height: 180 }} />)}
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(430px, 1.2fr) minmax(360px, 0.8fr)", gap: "var(--space-3)", alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-3)", alignItems: "start" }}>
           <Panel icon={Users} title="Department Occupancy" actions={<Badge>{rooms.length}</Badge>}>
             {rooms.length === 0 ? (
               <Empty icon={Users} title="No room telemetry" description="The live-office room view returned no department rows." />

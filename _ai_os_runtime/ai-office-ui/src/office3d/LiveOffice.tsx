@@ -44,6 +44,11 @@ function agentDepartment(agent: LiveRow): string {
   return normalizeDepartment(text(agent, "department_key", text(agent, "department", text(agent, "department_name"))));
 }
 
+function agentRoomKey(agent: LiveRow): string {
+  const department = agentDepartment(agent);
+  return roomByKey(department) ? department : "lobby";
+}
+
 function liveState(agent: LiveRow): string {
   return text(
     agent,
@@ -465,7 +470,7 @@ type FlowConnection = {
 
 function buildConnections(data: ReturnType<typeof useOfficeSnapshot>["data"], agents: LiveRow[]): FlowConnection[] {
   if (!data) return [];
-  const agentRooms = new Map(agents.map((agent) => [text(agent, "agent_name"), agentDepartment(agent)]));
+  const agentRooms = new Map(agents.map((agent) => [text(agent, "agent_name"), agentRoomKey(agent)]));
   const grouped = new Map<string, FlowConnection>();
   const add = (from: string, to: string, kind: FlowConnection["kind"]) => {
     if (!from || !to || from === to || !roomByKey(from) || !roomByKey(to)) return;
@@ -588,7 +593,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     const map = new Map<string, LiveRow[]>();
     for (const room of ROOMS) map.set(room.key, []);
     for (const agent of agents) {
-      const key = agentDepartment(agent);
+      const key = agentRoomKey(agent);
       const bucket = map.get(key);
       if (bucket) bucket.push(agent);
     }
@@ -613,7 +618,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
 
   function selectAgent(agent: LiveRow) {
     setSelectedAgent(agent);
-    focusRoom(agentDepartment(agent));
+    focusRoom(agentRoomKey(agent));
   }
 
   function talkToAgent(agent: LiveRow) {
@@ -904,7 +909,7 @@ function OfficeFallback({
   onInspectTask: (agent: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
-  const selectedRoomDefinition = selectedAgent ? roomByKey(agentDepartment(selectedAgent)) : undefined;
+  const selectedRoomDefinition = selectedAgent ? roomByKey(agentRoomKey(selectedAgent)) : undefined;
   return (
     <div className="office-fallback" style={{ height }}>
       <style>{LiveOfficeCss}</style>

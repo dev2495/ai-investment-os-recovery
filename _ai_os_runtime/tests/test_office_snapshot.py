@@ -50,7 +50,19 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertIn("aios:assistant-prefill", live_office)
         self.assertIn('kind: "task"', live_office)
         self.assertIn("selectedAgent={selectedAgent}", live_office)
+        self.assertIn("function agentRoomKey", live_office)
+        self.assertIn('return roomByKey(department) ? department : "lobby"', live_office)
         self.assertIn(".office-fallback__selected", live_office_css)
+
+    def test_agent_roster_merges_live_activity_instead_of_showing_profile_idle_state(self) -> None:
+        runtime_root = Path(__file__).resolve().parents[1]
+        firm_views = (runtime_root / "ai-office-ui" / "src" / "destinations" / "firm" / "FirmAgentViews.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("data?.live_office_agent_activity", firm_views)
+        self.assertIn('text(agent, "live_state", text(agent, "latest_worker_status", "idle"))', firm_views)
+        self.assertIn("Talk or assign work", firm_views)
+        self.assertIn('num(agent, "open_task_count")', firm_views)
+        self.assertIn('num(agent, "open_inbox_count")', firm_views)
 
 
 if __name__ == "__main__":

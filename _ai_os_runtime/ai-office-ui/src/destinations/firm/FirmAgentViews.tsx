@@ -23,17 +23,30 @@ import type { LiveRow } from "../../data/liveRow";
  * ============================================================ */
 export function AgentsView() {
   const { data, isLoading } = useOfficeSnapshot();
-  const openEvidence = useUIStore((s) => s.openEvidence);
   const setAssistantScope = useUIStore((s) => s.setAssistantScope);
 
-  const agents = data?.agents ?? [];
+  const agents = React.useMemo(() => {
+    const profiles = new Map((data?.agents ?? []).map((row) => [text(row, "agent_name"), row]));
+    const rows = (data?.live_office_agent_activity ?? []).map((row) => ({
+      ...(profiles.get(text(row, "agent_name")) ?? {}),
+      ...row,
+    }));
+    const seen = new Set(rows.map((row) => text(row, "agent_name")));
+    for (const profile of data?.agents ?? []) {
+      if (!seen.has(text(profile, "agent_name"))) rows.push(profile);
+    }
+    return rows;
+  }, [data]);
+  const working = agents.filter((row) => ["active", "working", "running", "executing", "in_progress", "queued", "processing", "waiting_approval"]
+    .some((state) => text(row, "live_state", text(row, "latest_worker_status", "idle")).toLowerCase().includes(state))).length;
 
   return (
     <div className="aios-destination">
       <Header icon={Users} code="AGENTS" title="Agents & Employees" subtitle="The full live roster, with every registered department, specialist, skill, and model route." />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
         <MetricTile><Metric label="Agents" value={agents.length} /></MetricTile>
-        <MetricTile><Metric label="Departments" value={new Set(agents.map((a) => text(a, "department")).filter(Boolean)).size} /></MetricTile>
+        <MetricTile tone={working ? "ok" : "warn"}><Metric label="Working Now" value={working} /></MetricTile>
+        <MetricTile><Metric label="Departments" value={new Set(agents.map((a) => text(a, "department_key", text(a, "department"))).filter(Boolean)).size} /></MetricTile>
         <MetricTile><Metric label="Active Messages" value={data?.agent_messages?.length ?? 0} /></MetricTile>
       </div>
       <Panel icon={Users} title="Roster">
@@ -45,9 +58,10 @@ export function AgentsView() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "var(--space-3)", padding: "var(--space-3)" }}>
             {agents.map((agent, i) => {
               const name = text(agent, "agent_name", text(agent, "name", `Agent ${i}`));
-              const dept = text(agent, "department");
-              const role = text(agent, "role", text(agent, "title"));
-              const status = text(agent, "status", "idle");
+              const dept = text(agent, "department_name", text(agent, "department_key", text(agent, "department")));
+              const role = text(agent, "display_title", text(agent, "role_scope"));
+              const status = text(agent, "live_state", text(agent, "latest_worker_status", "idle"));
+              const currentWork = text(agent, "current_work_title", text(agent, "current_task_title", "No active assignment"));
               return (
                 <div
                   key={i}
@@ -64,8 +78,12 @@ export function AgentsView() {
                     <StatusPill status={status} />
                   </div>
                   {role && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{role}</div>}
+                  <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)" }}>
+                    <strong style={{ display: "block", color: "var(--text)", marginBottom: 3 }}>{currentWork}</strong>
+                    <span style={{ color: "var(--text-muted)" }}>{num(agent, "open_task_count")} tasks · {num(agent, "open_inbox_count")} inbox</span>
+                  </div>
                   <div style={{ marginTop: "var(--space-2)", display: "flex", gap: "var(--space-1)", color: "var(--accent)", fontSize: "var(--text-xs)" }}>
-                    <MessageSquare size={11} /> Talk to {name.split(" ")[0]}
+                    <MessageSquare size={11} /> Talk or assign work
                   </div>
                 </div>
               );
@@ -147,7 +165,7 @@ export function DepartmentsView() {
   return (
     <div className="aios-destination">
       <Header icon={Building2} code="DEPTS" title="Department Operations" subtitle="Live employees, assignments, inbox traffic, worker state, readiness, and model accountability." />
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(360px, 0.9fr) minmax(520px, 1.4fr)", gap: "var(--space-4)", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-4)", alignItems: "start" }}>
         <Panel icon={Send} title="Work Command" actions={<Badge tone={createMessage.isPending ? "warn" : "ok"}>{createMessage.isPending ? "Sending" : "Ready"}</Badge>}>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
             <Field label="Employee"><Select value={target} onChange={(event) => setTarget(event.target.value)}>{departmentEmployees.map((row) => <option key={text(row, "agent_name")} value={text(row, "agent_name")}>{text(row, "agent_name")} · {text(row, "display_title", text(row, "department_name", text(row, "department")))}</option>)}</Select></Field>
@@ -379,7 +397,7 @@ export function ModelsView() {
         <MetricTile tone={blockedCalls ? "warn" : "ok"}><Metric label="Blocked Calls" value={blockedCalls} /></MetricTile>
         <MetricTile><Metric label="Recent Decisions" value={calls.length} /></MetricTile>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-4)", alignItems: "start" }}>
         <Panel icon={Cpu} title="Model Routes">
           {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
             <DataTable
