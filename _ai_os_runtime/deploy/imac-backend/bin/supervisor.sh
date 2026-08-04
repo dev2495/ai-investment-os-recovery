@@ -207,7 +207,7 @@ if [[ "${AI_OS_ENABLE_AGENT_DAEMON:-1}" == "1" ]]; then
   children+=("$!")
 fi
 
-wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/health" "AI OS API" 120
+wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/liveness" "AI OS API" 120
 wait_http "http://127.0.0.1:${AI_OS_UI_PORT}/" "AI OS UI" 60
 log "AI OS iMac backend is ready"
 
@@ -254,7 +254,7 @@ while true; do
       fi
     fi
   fi
-  curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/health" >/dev/null \
+  curl --max-time 5 -fsS "http://127.0.0.1:${AI_OS_API_PORT}/api/liveness" >/dev/null \
     || die "AI OS API heartbeat failed"
   sleep 20
 done

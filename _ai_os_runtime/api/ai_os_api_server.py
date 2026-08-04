@@ -18245,7 +18245,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._authorize_request(write=False)
-            if request_path in {"/", "/api/health"}:
+            if request_path in {"/", "/api/health", "/api/liveness"}:
                 db_rows = safe_query(
                     "db",
                     "SELECT 'ok' AS status, now() AS checked_at",
@@ -18257,7 +18257,11 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                         "ok": healthy,
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                         "runtime_root": str(RUNTIME_ROOT),
-                        "tradingview_desktop": probe_tradingview_desktop(),
+                        "tradingview_desktop": (
+                            None
+                            if request_path == "/api/liveness"
+                            else probe_tradingview_desktop()
+                        ),
                         "operator_auth": {
                             "bind_host": API_HOST,
                             "allowed_origins": sorted(ALLOWED_ORIGINS),
