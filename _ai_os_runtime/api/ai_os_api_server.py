@@ -9144,6 +9144,44 @@ def _run_zerodha_market_adapter(arguments: list[str], timeout: int = 300) -> dic
     return result
 
 
+def zerodha_market_status() -> dict:
+    status = dict(_run_zerodha_market_adapter(["--check-config"], 30))
+    auth = zerodha_auth_status()
+    current_session = bool(auth.get("daily_access_token_available"))
+    status["daily_access_token_available"] = current_session
+    status["status"] = status.get("status") if current_session else "needs_credentials_or_daily_login"
+    status["auth"] = {
+        "status": auth.get("status"),
+        "profile_validated": bool(auth.get("profile_validated")),
+        "account_binding_configured": bool(auth.get("account_binding_configured")),
+        "account_match": bool(auth.get("account_match")),
+        "access_token_expiry_known": bool(auth.get("access_token_expiry_known")),
+        "access_token_expires_at": auth.get("access_token_expires_at"),
+        "stale_access_token_present": bool(auth.get("stale_access_token_present")),
+        "manual_daily_login_required": True,
+        "login_url": auth.get("login_url"),
+    }
+    status["warehouse"] = run_psql_json(
+        "SELECT (SELECT count(*) FROM market.zerodha_instruments WHERE active) active_instruments,"
+        "(SELECT max(last_seen_at) FROM market.zerodha_instruments) latest_instrument_at,"
+        "(SELECT max(quote_ts) FROM market.price_quotes WHERE provider=\'Zerodha\') latest_quote_at,"
+        "(SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider=\'Zerodha\') latest_option_at,"
+        "false broker_write_allowed"
+    )[0]
+    stream = (run_psql_json("SELECT * FROM market.v_zerodha_stream_health") or [{}])[0]
+    if not current_session:
+        stream = {
+            **stream,
+            "status": "paused_for_daily_login",
+            "health_status": "login_required",
+            "connection_state": "disconnected",
+            "live_count": 0,
+        }
+    status["stream"] = stream
+    status["broker_write_allowed"] = False
+    return status
+
+
 def sync_zerodha_market_data(payload: dict) -> dict:
     allowed_modes = {"instruments", "quotes", "options", "historical"}
     modes = [str(item) for item in (payload.get("modes") or ["quotes", "options"]) if str(item) in allowed_modes]
@@ -18417,16 +18455,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(live_price_history(query))
                 return
             if request_path == "/api/zerodha/market/status":
-                status = _run_zerodha_market_adapter(["--check-config"], 30)
-                status["warehouse"] = run_psql_json(
-                    "SELECT (SELECT count(*) FROM market.zerodha_instruments WHERE active) active_instruments,"
-                    "(SELECT max(last_seen_at) FROM market.zerodha_instruments) latest_instrument_at,"
-                    "(SELECT max(quote_ts) FROM market.price_quotes WHERE provider='Zerodha') latest_quote_at,"
-                    "(SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider='Zerodha') latest_option_at,"
-                    "false broker_write_allowed"
-                )[0]
-                status["stream"] = (run_psql_json("SELECT * FROM market.v_zerodha_stream_health") or [{}])[0]
-                self._send_json(status)
+                self._send_json(zerodha_market_status())
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)
         except PermissionError as exc:
