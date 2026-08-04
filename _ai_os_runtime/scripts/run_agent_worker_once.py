@@ -535,6 +535,125 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                   AND membership.agent_name={sql_literal(str(job.get('owner_agent') or ''))}
                 """
             )
+    if skill_key.startswith("sector_"):
+        base["sector_intelligence"] = {
+            "freshness": psql_json(
+                """
+                SELECT taxonomy_node_id,taxonomy_key,node_name,latest_metric_at,
+                       latest_market_monitor_at,latest_flow_at,
+                       latest_ownership_period_end,latest_research_review_at
+                FROM sector_intelligence.v_sector_data_freshness
+                ORDER BY node_name
+                LIMIT 40
+                """
+            ),
+            "custom_indices": psql_json(
+                """
+                SELECT index_id,index_key,index_name,status,weighting_method,
+                       rebalance_frequency,latest_rebalance_date,
+                       current_constituent_count,latest_calculated_at,latest_index_value
+                FROM sector_intelligence.v_custom_index_control
+                ORDER BY status,index_name
+                LIMIT 30
+                """
+            ),
+            "rankings": psql_json(
+                """
+                SELECT taxonomy_node_id,as_of_date,ranking_universe,ranking_type,
+                       horizon,score,rank_value,universe_size,calculation_version,
+                       input_fingerprint,calculated_at
+                FROM sector_intelligence.sector_rankings
+                ORDER BY as_of_date DESC,ranking_type,rank_value
+                LIMIT 60
+                """
+            ),
+            "source_imports": psql_json(
+                """
+                SELECT run.run_key,source.name AS source_name,run.source_artifact_ref,
+                       run.observed_at,run.status,run.taxonomy_rows,
+                       run.membership_rows,run.metric_rows,run.index_rows,
+                       run.validation_errors,run.imported_at
+                FROM sector_intelligence.source_import_runs run
+                JOIN core.source_systems source ON source.id=run.source_system_id
+                ORDER BY run.imported_at DESC
+                LIMIT 10
+                """
+            ),
+        }
+    if skill_key in {"options_data_quality_control", "options_iv_greeks_review", "options_overlay_review"}:
+        base["institutional_options"] = {
+            "readiness": psql_json(
+                """
+                SELECT provider,exchange,underlying,expiry,minute_ts,
+                       freshness_status,batch_quality_status,contract_count,
+                       policy_key,model_family,policy_expires_at,
+                       analytics_readiness,broker_write_allowed
+                FROM trading.v_option_analytics_readiness
+                ORDER BY minute_ts DESC,underlying
+                LIMIT 30
+                """
+            ),
+            "pipeline_runs": psql_json(
+                """
+                SELECT run_key,status,rows_read,rows_written,batches_created,
+                       calculations_completed,calculations_blocked,
+                       quality_summary,error_message,started_at,finished_at
+                FROM ops.institutional_pipeline_runs
+                WHERE workload_key='institutional_options_materializer'
+                ORDER BY started_at DESC
+                LIMIT 10
+                """
+            ),
+            "acceptance": psql_json(
+                """
+                SELECT run_key,exchange,underlying,expiry,status,gate_count,
+                       passed_count,failed_count,blocked_count,
+                       validated_greeks_ratio,liquid_contract_ratio,
+                       stale_contract_ratio,replay_coverage_ratio,
+                       paper_attribution_coverage_ratio,started_at,finished_at
+                FROM trading.v_option_acceptance_gate_summary
+                ORDER BY started_at DESC
+                LIMIT 10
+                """
+            ),
+        }
+    if skill_key == "company_research_note" or skill_key.startswith("long_term_"):
+        base["fundamental_factory"] = {
+            "coverage": psql_json(
+                """
+                SELECT company_key,legal_name,primary_symbol,primary_exchange,
+                       real_company_verified,annual_statement_years,segment_count,
+                       operational_kpi_count,market_share_series_count,peer_count,
+                       management_communication_count,management_claim_count,
+                       claims_with_outcomes,latest_statement_available_at,
+                       latest_evidence_retrieved_at
+                FROM research.v_company_fundamental_coverage
+                ORDER BY real_company_verified DESC,annual_statement_years DESC,legal_name
+                LIMIT 20
+                """
+            ),
+            "dossiers": psql_json(
+                """
+                SELECT dossier_key,legal_name,primary_symbol,dossier_status,
+                       version_number,version_status,research_as_of,evidence_coverage,
+                       section_count,reviewed_section_count,specialist_count,
+                       has_portfolio_fit,updated_at
+                FROM research.v_latest_investment_dossiers
+                ORDER BY updated_at DESC
+                LIMIT 20
+                """
+            ),
+            "acceptance": psql_json(
+                """
+                SELECT run_key,legal_name,primary_symbol,run_status,
+                       real_company_verified,data_as_of,gate_count,passed_gate_count,
+                       failed_gate_count,blocked_gate_count,started_at,completed_at
+                FROM research.v_real_company_acceptance_status
+                ORDER BY started_at DESC
+                LIMIT 20
+                """
+            ),
+        }
     if skill_key == "portfolio_snapshot_review" or widget_key == "portfolio_latest_positions":
         base["portfolio"] = psql_one(
             """

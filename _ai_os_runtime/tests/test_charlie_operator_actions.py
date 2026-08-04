@@ -278,6 +278,39 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(captured["to_agent"], "Head of Quant")
         self.assertEqual(captured["related_skill_key"], "head_quant_governance")
 
+    def test_sector_team_delegation_routes_to_sector_portfolio_manager(self) -> None:
+        captured = {}
+        profiles = [{
+            "agent_name": "Sector Portfolio Manager",
+            "display_title": "Head Of Sector Intelligence",
+            "department": "sector",
+            "department_name": "Sector Intelligence Office",
+        }]
+
+        def fake_message(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "created", "id": 21}
+
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=profiles),
+            mock.patch.object(ai_os_api_server, "create_agent_message", fake_message),
+        ):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Have the sector team review banking breadth and prepare a source-linked committee packet"
+            )
+
+        self.assertEqual(operations[0]["tool"], "delegate_agent_work")
+        self.assertEqual(captured["to_agent"], "Sector Portfolio Manager")
+        self.assertEqual(captured["related_skill_key"], "sector_portfolio_management")
+
+    def test_options_data_quality_agent_has_safe_fallback_skill(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=RuntimeError("view unavailable")):
+            skill = ai_os_api_server.resolve_delegation_skill({
+                "agent_name": "Options Data Quality Agent",
+            })
+
+        self.assertEqual(skill, "options_data_quality_control")
+
     def test_explicit_candidate_backtest_runs_deterministic_engine(self) -> None:
         captured = {}
 

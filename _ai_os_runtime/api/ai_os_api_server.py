@@ -16238,6 +16238,7 @@ def resolve_agent_for_instruction(message: str) -> dict | None:
             return profile
     department_aliases = {
         "research": ("research", "fundamental"),
+        "sector": ("sector", "industry"),
         "quant": ("quant", "strategy"),
         "risk": ("risk",),
         "options": ("options", "derivatives"),
@@ -16293,6 +16294,12 @@ def resolve_delegation_skill(target: dict) -> str | None:
     fallback_by_agent = {
         "Head of Quant": "head_quant_governance",
         "Research Analyst": "company_research_note",
+        "Sector Portfolio Manager": "sector_portfolio_management",
+        "Sector Fundamental Analyst": "sector_fundamental_review",
+        "Sector Market Structure Analyst": "sector_market_structure_review",
+        "Sector Flow And Ownership Analyst": "sector_flow_ownership_review",
+        "Sector Data Steward": "sector_data_quality_control",
+        "Options Data Quality Agent": "options_data_quality_control",
         "Strategy Research Agent": "generate_strategy_hypothesis",
         "News Analyst": "news_to_dashboard_alert",
         "Risk Agent": "risk_gate_review",
@@ -17036,7 +17043,7 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             flags=re.IGNORECASE,
         )
         or re.search(
-            r"\b(?:have|get|tell|send)\s+(?:the\s+)?(?:research|quant|risk|options|news|portfolio|data)\b[^.!?\n]{1,200}\b(?:review|analy[sz]e|test|build|check|prepare|investigate|do|work)\b",
+            r"\b(?:have|get|tell|send)\s+(?:the\s+)?(?:research|fundamental|sector|industry|quant|risk|options|news|portfolio|data)\b[^.!?\n]{1,200}\b(?:review|analy[sz]e|test|build|check|prepare|investigate|do|work)\b",
             message,
             flags=re.IGNORECASE,
         )
