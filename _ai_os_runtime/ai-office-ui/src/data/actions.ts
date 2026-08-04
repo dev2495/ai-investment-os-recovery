@@ -21,6 +21,7 @@ const Q = {
   portfolioOffice: ["portfolio-office"],
   researchIdeas: ["research-ideas"],
   tradingQuantRisk: ["trading-quant-risk"],
+  sectorIntelligence: ["sector-intelligence"],
   strategyArsenal: ["strategy-arsenal"],
   reports: ["reports"],
   office: ["office"],
@@ -44,6 +45,60 @@ function useInvalidating<TBody, TResult = LiveRow>(
 /* ============================================================
  * FUNDAMENTAL RESEARCH ACTIONS
  * ============================================================ */
+
+export interface InstitutionalFundamentalFactoryInput {
+  symbol: string;
+  exchange: string;
+  as_of: string;
+  dry_run: boolean;
+  actor?: string;
+  run_key?: string;
+}
+
+export function useRunInstitutionalFundamentalFactory() {
+  return useInvalidating<InstitutionalFundamentalFactoryInput, LiveRow>(
+    "/api/research/fundamental-factory/run",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
+export interface SectorIntelligenceRunInput {
+  index_id: number;
+  as_of_date: string;
+  horizon: "1D" | "1W" | "1M" | "3M" | "6M" | "1Y";
+  dry_run: boolean;
+  actor?: string;
+}
+
+export function useRunSectorIntelligence() {
+  return useInvalidating<SectorIntelligenceRunInput, LiveRow>(
+    "/api/sector-intelligence/run",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface InstitutionalOptionsAnalyticsInput {
+  underlying: string;
+  exchange: "NFO" | "BFO";
+  expiry_date: string;
+  as_of: string;
+  model: "black_scholes_merton" | "black_76";
+  filters: {
+    max_age_seconds: number;
+    max_spread_bps: number;
+    min_open_interest: number;
+    min_volume: number;
+  };
+  dry_run: boolean;
+  actor?: string;
+}
+
+export function useRunInstitutionalOptionsAnalytics() {
+  return useInvalidating<InstitutionalOptionsAnalyticsInput, LiveRow>(
+    "/api/options/institutional-analytics/run",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
 
 export interface LongTermMonteCarloInput {
   holding_thesis_id: number;

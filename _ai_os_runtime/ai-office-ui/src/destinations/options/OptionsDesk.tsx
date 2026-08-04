@@ -11,10 +11,10 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   TrendingDown, BarChart3, LineChart, Brain, Activity, Plus,
-  AlertTriangle, Layers, Flame, Play,
+  AlertTriangle, Layers, Flame, Play, RefreshCw,
 } from "lucide-react";
 import { useTradingQuantRisk } from "../../data/queries";
-import { useRecordManualTrade } from "../../data/actions";
+import { useRecordManualTrade, useRunInstitutionalOptionsAnalytics } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
@@ -56,6 +56,7 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
         </div>
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
       </div>
+      <OptionsAnalyticsControl />
 
       {tab === "desk" && <DeskView />}
       {tab === "chain" && <ChainView />}
@@ -125,6 +126,93 @@ function useChain() {
     return { parsed, isLoading, underlyings: Array.from(new Set(parsed.map((p) => p.symbol))).sort(), expiries: Array.from(new Set(parsed.map((p) => p.expiry))).sort() };
   }, [data?.institutional_option_chain, data?.option_chain, data?.option_oi_change, isLoading]);
 }
+function OptionsAnalyticsControl() {
+  const { underlyings, expiries } = useChain();
+  const mutation = useRunInstitutionalOptionsAnalytics();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [form, setForm] = React.useState({
+    underlying: "",
+    exchange: "NFO" as "NFO" | "BFO",
+    expiry_date: "",
+    as_of: optionsLocalDateTimeInputValue(),
+    model: "black_scholes_merton" as "black_scholes_merton" | "black_76",
+    max_age_seconds: 120,
+    max_spread_bps: 500,
+    min_open_interest: 1,
+    min_volume: 0,
+  });
+
+  React.useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      underlying: current.underlying || underlyings[0] || "",
+      expiry_date: current.expiry_date || expiries[0]?.slice(0, 10) || "",
+    }));
+  }, [underlyings, expiries]);
+
+  const ready = Boolean(form.underlying.trim() && form.expiry_date && form.as_of);
+
+  function run() {
+    if (!ready) return;
+    mutation.mutate({
+      underlying: form.underlying.trim().toUpperCase(),
+      exchange: form.exchange,
+      expiry_date: form.expiry_date,
+      as_of: new Date(form.as_of).toISOString(),
+      model: form.model,
+      filters: {
+        max_age_seconds: form.max_age_seconds,
+        max_spread_bps: form.max_spread_bps,
+        min_open_interest: form.min_open_interest,
+        min_volume: form.min_volume,
+      },
+      dry_run: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: "Options analytics dry run complete",
+        message: text(result, "status", text(result, "engine", "completed")),
+        tone: "ok",
+        duration: 4500,
+      }),
+      onError: (error) => pushToast({ title: "Options analytics failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  return (
+    <Panel
+      icon={RefreshCw}
+      title="Run Institutional Options Analytics"
+      actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Running" : mutation.isError ? "Failed" : mutation.isSuccess ? "Complete" : "Operator"}</Badge>}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Underlying" hint={underlyings.length ? "Live: " + underlyings.slice(0, 4).join(", ") : "Use a symbol present in the stored chain"} required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} placeholder="NIFTY" /></Field>
+        <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
+        <Field label="Expiry" required><TextInput type="date" value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })} /></Field>
+        <Field label="Valuation cutoff" required><TextInput type="datetime-local" value={form.as_of} onChange={(event) => setForm({ ...form, as_of: event.target.value })} /></Field>
+        <Field label="Pricing model" required><Select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value as typeof form.model })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76 futures options</option></Select></Field>
+        <Field label="Max quote age (sec)" required><TextInput type="number" min="1" value={form.max_age_seconds} onChange={(event) => setForm({ ...form, max_age_seconds: Number(event.target.value) })} /></Field>
+        <Field label="Max spread (bps)" required><TextInput type="number" min="0" value={form.max_spread_bps} onChange={(event) => setForm({ ...form, max_spread_bps: Number(event.target.value) })} /></Field>
+        <Field label="Minimum OI" required><TextInput type="number" min="0" value={form.min_open_interest} onChange={(event) => setForm({ ...form, min_open_interest: Number(event.target.value) })} /></Field>
+        <Field label="Minimum volume" required><TextInput type="number" min="0" value={form.min_volume} onChange={(event) => setForm({ ...form, min_volume: Number(event.target.value) })} /></Field>
+        <Button variant="primary" icon={RefreshCw} onClick={run} disabled={!ready || mutation.isPending}>{mutation.isPending ? "Running…" : "Validate chain"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Dry run is the default. The engine reads stored chain snapshots, rejects stale or illiquid contracts, and calculates paper analytics only. It never submits a broker order.
+      </div>
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+      {mutation.isSuccess ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-ok)", fontSize: "var(--text-sm)" }}>{text(mutation.data, "status", text(mutation.data, "engine", "Completed"))} · {text(mutation.data, "message", "No records or orders were written.")}</div> : null}
+    </Panel>
+  );
+}
+
+function optionsLocalDateTimeInputValue() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 16);
+}
+
+
 
 /* ============================================================
  * DESK — analytics overview per underlying

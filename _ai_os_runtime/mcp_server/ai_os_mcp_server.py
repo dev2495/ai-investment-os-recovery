@@ -4298,6 +4298,52 @@ def run_institutional_portfolio_risk(arguments: dict) -> dict:
     return tool_result(result)
 
 
+def run_institutional_fundamental_factory(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("company_id", "company_key", "symbol", "exchange", "as_of", "actor", "run_key", "dry_run")
+        if key in arguments
+    }
+    payload.update({
+        "paper_only": True,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+    })
+    return tool_result(post_api_json("/api/research/fundamental-factory/run", payload, timeout=620))
+
+
+def run_sector_intelligence_engine(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("index_id", "index_key", "as_of_date", "horizon", "actor", "run_key", "dry_run")
+        if key in arguments
+    }
+    payload.update({
+        "paper_only": True,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+        "tradingview_artifacts_only": True,
+    })
+    return tool_result(post_api_json("/api/sector-intelligence/run", payload, timeout=620))
+
+
+def run_institutional_options_engine(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in (
+            "underlying", "exchange", "expiry_date", "as_of", "model", "max_age_seconds",
+            "max_spread_bps", "min_open_interest", "min_volume", "actor", "run_key",
+        )
+        if key in arguments
+    }
+    payload.update({
+        "paper_only": True,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+    })
+    return tool_result(post_api_json("/api/options/institutional-analytics/run", payload, timeout=620))
+
+
 def institutional_portfolio_risk(arguments: dict) -> dict:
     limit = limit_arg(arguments, default=80)
     return tool_result(
@@ -5772,6 +5818,74 @@ def run_scheduled_reports(arguments: dict) -> dict:
 
 
 TOOLS = {
+    "ai_os_run_institutional_fundamental_factory": {
+        "description": "Run the evidence-first institutional fundamental research factory for one real company at a point-in-time cutoff. Produces a versioned research dossier and acceptance evidence only; it is paper-only and cannot execute trades or authorize capital actions.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "company_id": {"type": "integer", "minimum": 1},
+                "company_key": {"type": "string", "minLength": 1, "maxLength": 120},
+                "symbol": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "exchange": {"type": "string", "enum": ["NSE", "BSE"]},
+                "as_of": {"type": "string", "format": "date-time"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Fundamental Research Director"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "dry_run": {"type": "boolean", "default": True},
+            },
+            "required": ["as_of"],
+            "oneOf": [
+                {"required": ["company_id"]},
+                {"required": ["company_key"]},
+                {"required": ["symbol"]},
+            ],
+        },
+        "handler": run_institutional_fundamental_factory,
+    },
+    "ai_os_run_sector_intelligence_engine": {
+        "description": "Run evidence-first, point-in-time sector and custom-index calculations from governed warehouse inputs. Generates research, index history, rankings, and TradingView chart artifacts only; it is paper-only and has no broker execution or capital authority.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "index_id": {"type": "integer", "minimum": 1},
+                "index_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,120}$"},
+                "as_of_date": {"type": "string", "format": "date"},
+                "horizon": {"type": "string", "enum": ["1D", "1W", "1M", "3M", "6M", "1Y", "cycle"]},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "dry_run": {"type": "boolean", "default": True},
+            },
+            "required": ["as_of_date"],
+            "oneOf": [
+                {"required": ["index_id"]},
+                {"required": ["index_key"]},
+            ],
+        },
+        "handler": run_sector_intelligence_engine,
+    },
+    "ai_os_run_institutional_options_engine": {
+        "description": "Run evidence-first institutional options analytics for one underlying and expiry using validated quotes, liquidity filters, IV, Greeks, structures, and replay controls. Analysis is paper-only with no execution; this tool cannot place, modify, or authorize any order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "underlying": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "exchange": {"type": "string", "enum": ["NFO", "BFO", "NSE", "BSE"]},
+                "expiry_date": {"type": "string", "format": "date"},
+                "as_of": {"type": "string", "format": "date-time"},
+                "model": {"type": "string", "enum": ["black_scholes_merton", "black_76"], "default": "black_scholes_merton"},
+                "max_age_seconds": {"type": "integer", "minimum": 1, "maximum": 900, "default": 120},
+                "max_spread_bps": {"type": "number", "minimum": 1, "maximum": 5000, "default": 500},
+                "min_open_interest": {"type": "number", "minimum": 0, "maximum": 1000000000, "default": 1},
+                "min_volume": {"type": "number", "minimum": 0, "maximum": 1000000000, "default": 0},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Options Specialist"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+            },
+            "required": ["underlying", "exchange", "expiry_date", "as_of"],
+        },
+        "handler": run_institutional_options_engine,
+    },
     "ai_os_report_scheduler_status": {
         "description": "Read report cadence, due state, latest launchd proof, scheduler invocation history, failures, and generated-run linkage.",
         "inputSchema": {

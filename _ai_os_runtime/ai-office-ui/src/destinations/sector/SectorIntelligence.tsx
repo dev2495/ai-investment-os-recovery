@@ -2,11 +2,13 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Activity, BarChart3, Database, Gavel, Layers, LineChart,
-  ShieldCheck, Workflow,
+  ShieldCheck, Workflow, RefreshCw,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
+import { useRunSectorIntelligence } from "../../data/actions";
+import { useUIStore } from "../../store";
 import {
-  Badge, DataTable, Empty, Metric, MetricTile, Panel, Skeleton, StatusPill, Tabs,
+  Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextInput,
 } from "../../system/primitives";
 import { formatCompact, formatRelative, num, text } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
@@ -43,6 +45,8 @@ export default function SectorIntelligence() {
         </div>
         <Tabs tabs={TABS} active={tab} onChange={(key) => navigate(`/sector/${key}`)} />
       </div>
+      <SectorRunControl indices={data?.custom_indices ?? []} />
+
 
       {query.isLoading ? <Loading /> : null}
       {query.isError ? (
@@ -55,6 +59,71 @@ export default function SectorIntelligence() {
       {!query.isLoading && !query.isError && tab === "flows" ? <Flows data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "committee" ? <Committee data={data} /> : null}
     </div>
+  );
+}
+
+function SectorRunControl({ indices }: { indices: LiveRow[] }) {
+  const mutation = useRunSectorIntelligence();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [form, setForm] = React.useState({
+    index_id: "",
+    as_of_date: new Date().toISOString().slice(0, 10),
+    horizon: "1M" as "1D" | "1W" | "1M" | "3M" | "6M" | "1Y",
+    mode: "dry_run",
+  });
+
+  React.useEffect(() => {
+    if (!form.index_id && indices.length > 0) {
+      setForm((current) => ({ ...current, index_id: text(indices[0], "index_id") }));
+    }
+  }, [form.index_id, indices]);
+
+  const ready = Boolean(Number(form.index_id) > 0 && form.as_of_date);
+
+  function run() {
+    if (!ready) return;
+    mutation.mutate({
+      index_id: Number(form.index_id),
+      as_of_date: form.as_of_date,
+      horizon: form.horizon,
+      dry_run: form.mode === "dry_run",
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: form.mode === "dry_run" ? "Sector calculation validated" : "Sector index records refreshed",
+        message: text(result, "status", "completed"),
+        tone: "ok",
+        duration: 4500,
+      }),
+      onError: (error) => pushToast({ title: "Sector engine failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  return (
+    <Panel
+      icon={RefreshCw}
+      title="Run Sector Intelligence Engine"
+      actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Running" : mutation.isError ? "Failed" : mutation.isSuccess ? "Complete" : "Operator"}</Badge>}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Custom index" required>
+          <Select value={form.index_id} onChange={(event) => setForm({ ...form, index_id: event.target.value })}>
+            <option value="">Select validated definition…</option>
+            {indices.map((row, index) => <option key={text(row, "index_id", String(index))} value={text(row, "index_id")}>{text(row, "index_name", text(row, "index_key"))}</option>)}
+          </Select>
+        </Field>
+        <Field label="As-of date" required><TextInput type="date" value={form.as_of_date} onChange={(event) => setForm({ ...form, as_of_date: event.target.value })} /></Field>
+        <Field label="Strength horizon" required><Select value={form.horizon} onChange={(event) => setForm({ ...form, horizon: event.target.value as typeof form.horizon })}><option value="1D">1 day</option><option value="1W">1 week</option><option value="1M">1 month</option><option value="3M">3 months</option><option value="6M">6 months</option><option value="1Y">1 year</option></Select></Field>
+        <Field label="Run mode" required><Select value={form.mode} onChange={(event) => setForm({ ...form, mode: event.target.value })}><option value="dry_run">Dry run — calculate only</option><option value="persist">Persist validated analytics</option></Select></Field>
+        <Button variant="primary" icon={RefreshCw} onClick={run} disabled={!ready || mutation.isPending}>{mutation.isPending ? "Running…" : form.mode === "dry_run" ? "Validate index" : "Run index"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Uses effective-dated memberships and source-backed prices. Outputs are warehouse calculations and TradingView chart handoffs only; no broker execution is available.
+      </div>
+      {indices.length === 0 ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Create and validate a custom-index definition before running the engine.</div> : null}
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+      {mutation.isSuccess ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-ok)", fontSize: "var(--text-sm)" }}>{text(mutation.data, "status", "Completed")} · {text(mutation.data, "input_fingerprint", text(mutation.data, "message", form.mode === "dry_run" ? "No records were written." : "Validated analytics were persisted."))}</div> : null}
+    </Panel>
   );
 }
 

@@ -11320,6 +11320,341 @@ def check_strategy_data_quality(payload: dict) -> dict:
     return result
 
 
+def _parse_engine_json(completed: subprocess.CompletedProcess[str], label: str) -> dict:
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or f"{label} failed").strip()
+        try:
+            error_payload = json.loads(message)
+            message = str(error_payload.get("message") or error_payload.get("error") or message)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} returned invalid JSON") from exc
+    if not isinstance(result, dict):
+        raise ValueError(f"{label} returned a non-object JSON response")
+    return result
+
+
+def _run_institutional_json_engine(script_name: str, payload: dict, *, timeout: int, label: str, dry_run: bool) -> dict:
+    command = [sys.executable, str(RUNTIME_ROOT / "scripts" / script_name), "--input", "-"]
+    if dry_run:
+        command.append("--dry-run")
+    engine_payload = dict(payload)
+    engine_payload["dry_run"] = dry_run
+    completed = subprocess.run(
+        command,
+        cwd=RUNTIME_ROOT,
+        input=json.dumps(engine_payload, default=str),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=timeout,
+    )
+    return _parse_engine_json(completed, label)
+
+
+def run_institutional_fundamental_factory(payload: dict) -> dict:
+    selectors = [
+        ("--company-id", payload.get("company_id") or payload.get("companyId")),
+        ("--company-key", payload.get("company_key") or payload.get("companyKey")),
+        ("--symbol", payload.get("symbol")),
+    ]
+    supplied = [(flag, value) for flag, value in selectors if value not in (None, "")]
+    if len(supplied) != 1:
+        raise ValueError("exactly one of company_id, company_key, or symbol is required")
+    as_of = str(payload.get("as_of") or payload.get("asOf") or "").strip()
+    try:
+        parsed_as_of = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("as_of must be an ISO-8601 timestamp with an explicit timezone") from exc
+    if parsed_as_of.tzinfo is None:
+        raise ValueError("as_of must include an explicit timezone")
+    actor = str(payload.get("actor") or "Fundamental Research Factory").strip()
+    dry_run = payload.get("dry_run", payload.get("dryRun", True)) is not False
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_institutional_fundamental_factory.py"),
+        supplied[0][0],
+        str(supplied[0][1]),
+        "--as-of",
+        as_of,
+        "--actor",
+        actor,
+    ]
+    if payload.get("exchange"):
+        command.extend(["--exchange", str(payload["exchange"]).upper()])
+    if payload.get("run_key") or payload.get("runKey"):
+        command.extend(["--run-key", str(payload.get("run_key") or payload.get("runKey"))])
+    if dry_run:
+        command.append("--dry-run")
+    completed = subprocess.run(
+        command,
+        cwd=RUNTIME_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    result = _parse_engine_json(completed, "institutional fundamental factory")
+    audit_api_write(
+        "ai_os_api_run_institutional_fundamental_factory",
+        "run_institutional_fundamental_factory",
+        actor,
+        "research.investment_dossier_versions",
+        result.get("database") or result,
+        {**payload, "dry_run": dry_run},
+    )
+    return result
+
+
+def _sector_engine_payload(payload: dict) -> dict:
+    selectors = [
+        ("id", payload.get("index_id") or payload.get("indexId")),
+        ("index_key", payload.get("index_key") or payload.get("indexKey")),
+    ]
+    supplied = [(column, value) for column, value in selectors if value not in (None, "")]
+    if len(supplied) != 1:
+        raise ValueError("exactly one of index_id or index_key is required")
+    as_of = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    selector_column, selector_value = supplied[0]
+    selector_sql = sql_numeric(selector_value, required=True, field_name="index_id") if selector_column == "id" else sql_literal(selector_value)
+    index_rows = run_psql_json(f"""
+        SELECT id AS index_id, index_key, index_name, weighting_method, base_value,
+               base_date AS effective_date, methodology_version,
+               nullif(weighting_rules->>'weight_cap','')::numeric AS weight_cap
+        FROM sector_intelligence.custom_index_definitions
+        WHERE {selector_column}={selector_sql}
+          AND status IN ('validated','active')
+        LIMIT 1
+    """)
+    if not index_rows:
+        raise ValueError("validated custom-index definition not found")
+    index = index_rows[0]
+    index_id = int(index["index_id"])
+    memberships = run_psql_json(f"""
+        SELECT constituent.symbol_id, symbol.symbol, constituent.valid_from,
+               constituent.valid_to, membership.source_reference,
+               coalesce(membership.evidence, '[]'::jsonb) AS evidence,
+               coalesce(membership.created_at, constituent.created_at) AS observed_at,
+               market_cap.value_numeric AS market_cap,
+               free_float.value_numeric AS free_float_factor,
+               quality.value_numeric AS quality_score,
+               momentum.value_numeric AS momentum_score,
+               custom_score.value_numeric AS custom_score
+        FROM sector_intelligence.custom_index_constituents constituent
+        JOIN trading.symbols symbol ON symbol.id=constituent.symbol_id
+        LEFT JOIN sector_intelligence.instrument_membership_history membership
+          ON membership.id=constituent.source_membership_id
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='market_cap'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) market_cap ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='free_float_factor'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) free_float ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='quality_score'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) quality ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='momentum_score'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) momentum ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='custom_score'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) custom_score ON true
+        WHERE constituent.index_id={index_id}
+          AND constituent.valid_from <= {sql_literal(as_of)}::date
+          AND (constituent.valid_to IS NULL OR constituent.valid_to >= {sql_literal(as_of)}::date)
+        ORDER BY constituent.symbol_id
+    """)
+    if not memberships:
+        raise ValueError("custom index has no active point-in-time constituents")
+    symbol_ids = ",".join(str(int(row["symbol_id"])) for row in memberships)
+    prices = run_psql_json(f"""
+        SELECT bar.symbol_id, bar.ts, bar.close,
+               jsonb_build_object('source_system_id', bar.source_system_id, 'timeframe', bar.timeframe) AS evidence
+        FROM trading.ohlcv bar
+        WHERE bar.symbol_id IN ({symbol_ids})
+          AND bar.timeframe='1d'
+          AND bar.ts::date BETWEEN {sql_literal(index["effective_date"])}::date AND {sql_literal(as_of)}::date
+          AND bar.close > 0
+          AND bar.source_system_id IS NOT NULL
+        ORDER BY bar.ts, bar.symbol_id
+    """)
+    return {
+        **payload,
+        "as_of_date": as_of,
+        "index": index,
+        "memberships": memberships,
+        "prices": prices,
+    }
+
+
+def run_sector_intelligence_engine(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    dry_run = payload.get("dry_run", payload.get("dryRun", True)) is not False
+    engine_payload = _sector_engine_payload(payload)
+    result = _run_institutional_json_engine(
+        "run_sector_intelligence_engine.py",
+        engine_payload,
+        timeout=300,
+        label="sector intelligence engine",
+        dry_run=dry_run,
+    )
+    audit_api_write(
+        "ai_os_api_run_sector_intelligence_engine",
+        "run_sector_intelligence_engine",
+        actor,
+        "sector_intelligence.custom_index_rebalances",
+        result.get("database") or result,
+        {**payload, "dry_run": dry_run},
+    )
+    return result
+
+
+def _options_engine_payload(payload: dict) -> dict:
+    underlying = str(payload.get("underlying") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "NFO").strip().upper()
+    expiry = str(payload.get("expiry_date") or payload.get("expiryDate") or "").strip()
+    as_of = str(payload.get("as_of") or payload.get("asOf") or "").strip()
+    model = str(payload.get("model") or "black_scholes_merton").strip()
+    if not underlying or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry):
+        raise ValueError("underlying and expiry_date are required")
+    try:
+        parsed_as_of = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("as_of must be an ISO-8601 timestamp with an explicit timezone") from exc
+    if parsed_as_of.tzinfo is None:
+        raise ValueError("as_of must include an explicit timezone")
+    batches = run_psql_json(f"""
+        SELECT batch.id, batch.batch_key, batch.spot_price, batch.source_timestamp,
+               batch.received_at
+        FROM trading.option_chain_snapshot_batches batch
+        WHERE batch.exchange={sql_literal(exchange)}
+          AND upper(batch.underlying)={sql_literal(underlying)}
+          AND batch.expiry={sql_literal(expiry)}::date
+          AND batch.source_timestamp <= {sql_literal(as_of)}::timestamptz
+          AND batch.received_at <= {sql_literal(as_of)}::timestamptz
+          AND batch.quality_status IN ('passed','warning')
+        ORDER BY batch.source_timestamp DESC, batch.received_at DESC
+        LIMIT 1
+    """)
+    if not batches:
+        raise ValueError("no quality-qualified option-chain batch exists at the requested cutoff")
+    batch = batches[0]
+    valuations = run_psql_json(f"""
+        SELECT model_family AS model, valuation_timestamp, spot_price, futures_price,
+               forward_price, risk_free_rate, dividend_yield, time_to_expiry_years,
+               expiry_timestamp, input_quality_status, quality_flags
+        FROM trading.option_valuation_inputs
+        WHERE batch_id={int(batch["id"])}
+          AND model_family={sql_literal(model)}
+          AND valuation_timestamp <= {sql_literal(as_of)}::timestamptz
+          AND input_quality_status IN ('passed','warning')
+        ORDER BY valuation_timestamp DESC
+        LIMIT 1
+    """)
+    if not valuations:
+        raise ValueError("no validated point-in-time option valuation input exists for this batch and model")
+    contracts = run_psql_json(f"""
+        SELECT trading_symbol, strike, option_type, contract_multiplier,
+               quote_source_timestamp, received_at, last_price, bid_price, ask_price,
+               volume, open_interest, previous_open_interest
+        FROM trading.option_chain_contract_snapshots
+        WHERE batch_id={int(batch["id"])}
+        ORDER BY strike, option_type
+    """)
+    if not contracts:
+        raise ValueError("the selected option-chain batch contains no contracts")
+    filters = dict(payload.get("filters") or {})
+    for key in ("max_age_seconds", "max_spread_bps", "min_open_interest", "min_volume"):
+        if key in payload and key not in filters:
+            filters[key] = payload[key]
+    return {
+        "operation": "analyze_chain",
+        "underlying": underlying,
+        "exchange": exchange,
+        "expiry_date": expiry,
+        "as_of": as_of,
+        "valuation": valuations[0],
+        "contracts": contracts,
+        "filters": filters,
+        "source_batch": batch,
+        "paper_only": True,
+    }
+
+
+def run_institutional_options_engine(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Options Analyst").strip()
+    operation = str(payload.get("operation") or "analyze_chain").strip().lower()
+    if operation in {"execute", "place_order", "broker_order", "live_trade"}:
+        raise ValueError("institutional options analytics is paper-only and cannot execute orders")
+    if operation != "analyze_chain":
+        raise ValueError("the API exposes only governed stored-chain analysis")
+    engine_payload = _options_engine_payload(payload)
+    result = _run_institutional_json_engine(
+        "run_institutional_options_engine.py",
+        engine_payload,
+        timeout=180,
+        label="institutional options engine",
+        dry_run=True,
+    )
+    if result.get("broker_write_allowed") is not False or result.get("capital_action_allowed") is not False:
+        raise ValueError("institutional options engine violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_institutional_options_engine",
+        "run_institutional_options_engine",
+        actor,
+        "trading.option_acceptance_gate_runs",
+        result,
+        {**payload, "operation": operation, "dry_run": True, "paper_only": True},
+    )
+    return result
+
+
 def run_strategy_backtest(payload: dict) -> dict:
     try:
         candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
@@ -17588,6 +17923,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/hub/refresh":
                 self._send_json(refresh_research_hub(payload), 201)
+                return
+            if self.path == "/api/research/fundamental-factory/run":
+                self._send_json(run_institutional_fundamental_factory(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/run":
+                self._send_json(run_sector_intelligence_engine(payload), 201)
+                return
+            if self.path == "/api/options/institutional-analytics/run":
+                self._send_json(run_institutional_options_engine(payload), 201)
                 return
             if self.path == "/api/research/filings/collect":
                 self._send_json(run_filing_collector(payload), 201)

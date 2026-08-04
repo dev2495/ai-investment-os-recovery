@@ -17,13 +17,14 @@ import {
   BookOpen, Microscope, Calculator, ClipboardCheck, Lightbulb,
   FlaskConical, TrendingUp, AlertTriangle, ChevronRight, Sparkles,
   Users, Gavel, Wallet, BarChart3, Search, TrendingDown, ShieldCheck, Briefcase,
-  Send, GitBranch, Target, FileText, Save,
+  Send, GitBranch, Target, FileText, Save, RefreshCw,
 } from "lucide-react";
 import { useResearchIdeas, usePortfolioOffice } from "../../data/queries";
 import {
   useRunMonteCarlo, useGenerateThesisMemo, useGenerateResearchPacket,
   useUpdateChecklist, useUpdateValuation, useDispatchSpecialists,
   useOpenLongTermCommittee, useUpsertWatchlist,
+  useRunInstitutionalFundamentalFactory,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -72,6 +73,8 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
       </div>
 
+      <FundamentalFactoryControl />
+
       {tab === "theses" && <ThesesView />}
       {tab === "scorecards" && <ScorecardsView />}
       {tab === "valuation" && <ValuationView />}
@@ -81,6 +84,62 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
     </div>
   );
 }
+function FundamentalFactoryControl() {
+  const mutation = useRunInstitutionalFundamentalFactory();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [form, setForm] = React.useState({
+    symbol: "",
+    exchange: "NSE",
+    as_of: localDateTimeInputValue(),
+    mode: "dry_run",
+  });
+  const ready = Boolean(form.symbol.trim() && form.exchange && form.as_of);
+
+  function run() {
+    if (!ready) return;
+    mutation.mutate({
+      symbol: form.symbol.trim().toUpperCase(),
+      exchange: form.exchange,
+      as_of: new Date(form.as_of).toISOString(),
+      dry_run: form.mode === "dry_run",
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: form.mode === "dry_run" ? "Fundamental factory dry run complete" : "Fundamental factory records refreshed",
+        message: text(result, "status", "completed"),
+        tone: "ok",
+        duration: 4500,
+      }),
+      onError: (error) => pushToast({ title: "Fundamental factory failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  return (
+    <Panel
+      icon={RefreshCw}
+      title="Run Institutional Fundamental Factory"
+      actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Running" : mutation.isError ? "Failed" : mutation.isSuccess ? "Complete" : "Operator"}</Badge>}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Company symbol" required><TextInput value={form.symbol} onChange={(event) => setForm({ ...form, symbol: event.target.value.toUpperCase() })} placeholder="RELIANCE" /></Field>
+        <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value })}><option value="NSE">NSE</option><option value="BSE">BSE</option></Select></Field>
+        <Field label="Research cutoff" required><TextInput type="datetime-local" value={form.as_of} onChange={(event) => setForm({ ...form, as_of: event.target.value })} /></Field>
+        <Field label="Run mode" required><Select value={form.mode} onChange={(event) => setForm({ ...form, mode: event.target.value })}><option value="dry_run">Dry run — validate only</option><option value="persist">Persist validated research</option></Select></Field>
+        <Button variant="primary" icon={RefreshCw} onClick={run} disabled={!ready || mutation.isPending}>{mutation.isPending ? "Running…" : form.mode === "dry_run" ? "Validate factory" : "Run factory"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Dry run is the default. This assembles evidence, dossiers, specialist gates and committee readiness; it cannot place or propose a broker order.
+      </div>
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+      {mutation.isSuccess ? (
+        <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-ok)", fontSize: "var(--text-sm)" }}>
+          {text(mutation.data, "status", "Completed")} · {text(mutation.data, "run_key", text(mutation.data, "message", form.mode === "dry_run" ? "No records were written." : "Validated research records were refreshed."))}
+        </div>
+      ) : null}
+    </Panel>
+  );
+}
+
 
 /* ============================================================
  * THESES VIEW — the master list + detail drawer
@@ -816,6 +875,13 @@ function listToLines(items: unknown[], preferredKey: string): string {
 function linesToEvidence(input: string): Array<{ source: string }> {
   return input.split("\n").map((source) => source.trim()).filter(Boolean).map((source) => ({ source }));
 }
+
+function localDateTimeInputValue() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 16);
+}
+
 
 function ScoreBar({ score, max }: { score: number; max: number }) {
   const pct = max > 0 ? Math.min(100, (score / max) * 100) : 0;
