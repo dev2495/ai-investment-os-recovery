@@ -2523,6 +2523,19 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY real_company_verified DESC, latest_evidence_retrieved_at DESC NULLS LAST
             LIMIT 100
         """,
+        "fundamental_intake": """
+            SELECT company_id, company_key, legal_name, primary_symbol,
+                   primary_exchange, identity_verified, linked_position_count,
+                   linked_account_count, gross_market_value, latest_position_at,
+                   filing_evidence_count, latest_evidence_at,
+                   annual_statement_years, segment_count, operational_kpi_count,
+                   market_share_series_count, peer_count,
+                   management_communication_count, next_required_action,
+                   capital_action_allowed, broker_write_allowed
+            FROM research.v_company_intake_status
+            ORDER BY gross_market_value DESC, primary_symbol
+            LIMIT 150
+        """,
         "investment_dossiers": """
             SELECT dossier_id, dossier_key, company_id, company_key, legal_name,
                    primary_symbol, primary_exchange, holding_thesis_id, dossier_status,
@@ -11419,6 +11432,34 @@ def _run_institutional_json_engine(script_name: str, payload: dict, *, timeout: 
     return _parse_engine_json(completed, label)
 
 
+def sync_fundamental_company_intake(payload: dict) -> dict:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    if symbol and not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("symbol contains unsupported characters")
+    actor = str(payload.get("actor") or "Fundamental Research Factory").strip()
+    rows = run_psql_json(
+        "SELECT research.sync_real_company_intake("
+        f"{sql_literal(actor)},{sql_literal(symbol) if symbol else NULL}"
+        ") AS result"
+    )
+    if not rows or not rows[0].get("result"):
+        raise ValueError("fundamental company intake returned no durable result")
+    result = rows[0]["result"]
+    if isinstance(result, str):
+        result = json.loads(result)
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("fundamental intake violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_sync_fundamental_company_intake",
+        "sync_fundamental_company_intake",
+        actor,
+        "research.company_intake_runs",
+        result,
+        {"symbol": symbol or None, "capital_action_allowed": False},
+    )
+    return result
+
+
 def run_institutional_fundamental_factory(payload: dict) -> dict:
     selectors = [
         ("--company-id", payload.get("company_id") or payload.get("companyId")),
@@ -18566,6 +18607,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/hub/refresh":
                 self._send_json(refresh_research_hub(payload), 201)
+                return
+            if self.path == "/api/research/fundamental-intake/sync":
+                self._send_json(sync_fundamental_company_intake(payload), 201)
                 return
             if self.path == "/api/research/fundamental-factory/run":
                 self._send_json(run_institutional_fundamental_factory(payload), 201)

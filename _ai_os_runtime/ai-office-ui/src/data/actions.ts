@@ -53,6 +53,18 @@ export function useRunOfficeOperabilityAcceptance() {
  * FUNDAMENTAL RESEARCH ACTIONS
  * ============================================================ */
 
+export interface FundamentalCompanyIntakeInput {
+  symbol?: string;
+  actor?: string;
+}
+
+export function useSyncFundamentalCompanyIntake() {
+  return useInvalidating<FundamentalCompanyIntakeInput, LiveRow>(
+    "/api/research/fundamental-intake/sync",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office]
+  );
+}
+
 export interface InstitutionalFundamentalFactoryInput {
   symbol: string;
   exchange: string;

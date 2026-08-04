@@ -25,6 +25,7 @@ import {
   useUpdateChecklist, useUpdateValuation, useDispatchSpecialists,
   useOpenLongTermCommittee, useUpsertWatchlist,
   useRunInstitutionalFundamentalFactory,
+  useSyncFundamentalCompanyIntake,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -86,6 +87,9 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
 }
 function FundamentalFactoryControl() {
   const mutation = useRunInstitutionalFundamentalFactory();
+  const intakeMutation = useSyncFundamentalCompanyIntake();
+  const { data } = useResearchIdeas();
+  const intake = data?.fundamental_intake ?? [];
   const pushToast = useUIStore((state) => state.pushToast);
   const [form, setForm] = React.useState({
     symbol: "",
@@ -118,6 +122,21 @@ function FundamentalFactoryControl() {
     });
   }
 
+  function syncIntake() {
+    intakeMutation.mutate({
+      symbol: form.symbol.trim().toUpperCase() || undefined,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: "Real-company intake synchronized",
+        message: `${num(result, "holding_candidates")} holdings mapped; ${num(result, "filing_evidence_upserted")} new official filings linked. Missing financial history remains blocked.`,
+        tone: "ok",
+        duration: 6500,
+      }),
+      onError: (error) => pushToast({ title: "Company intake failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
   return (
     <Panel
       icon={RefreshCw}
@@ -129,11 +148,28 @@ function FundamentalFactoryControl() {
         <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value })}><option value="NSE">NSE</option><option value="BSE">BSE</option></Select></Field>
         <Field label="Research cutoff" required><TextInput type="datetime-local" value={form.as_of} onChange={(event) => setForm({ ...form, as_of: event.target.value })} /></Field>
         <Field label="Run mode" required><Select value={form.mode} onChange={(event) => setForm({ ...form, mode: event.target.value })}><option value="dry_run">Dry run — validate only</option><option value="persist">Persist validated research</option></Select></Field>
+        <Button variant="ghost" icon={RefreshCw} onClick={syncIntake} disabled={intakeMutation.isPending}>{intakeMutation.isPending ? "Synchronizing…" : form.symbol.trim() ? "Sync company evidence" : "Sync holdings & filings"}</Button>
         <Button variant="primary" icon={RefreshCw} onClick={run} disabled={!ready || mutation.isPending}>{mutation.isPending ? "Running…" : form.mode === "dry_run" ? "Validate factory" : "Run factory"}</Button>
       </div>
       <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
         Dry run is the default. This assembles evidence, dossiers, specialist gates and committee readiness; it cannot place or propose a broker order.
       </div>
+      {intake.length > 0 ? (
+        <div style={{ marginTop: "var(--space-4)" }}>
+          <DataTable
+            rows={intake.slice(0, 8)}
+            rowKey={(row, index) => text(row, "company_key", String(index))}
+            columns={[
+              { key: "company", header: "Portfolio company", render: (row) => <strong>{text(row, "legal_name")}</strong> },
+              { key: "symbol", header: "Symbol", render: (row) => `${text(row, "primary_exchange")}:${text(row, "primary_symbol")}` },
+              { key: "exposure", header: "Gross exposure", align: "right", render: (row) => formatCurrency(num(row, "gross_market_value")) },
+              { key: "identity", header: "Identity", render: (row) => <StatusPill status={bool(row, "identity_verified") ? "verified" : "evidence required"} /> },
+              { key: "filings", header: "Official filings", align: "right", render: (row) => num(row, "filing_evidence_count") },
+              { key: "next", header: "Next required evidence", render: (row) => text(row, "next_required_action").replace(/_/g, " ") },
+            ]}
+          />
+        </div>
+      ) : null}
       {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
       {mutation.isSuccess ? (() => {
         const acceptance = text(mutation.data, "acceptance_status", text(mutation.data, "status", "completed"));

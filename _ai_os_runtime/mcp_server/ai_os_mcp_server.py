@@ -4298,6 +4298,19 @@ def run_institutional_portfolio_risk(arguments: dict) -> dict:
     return tool_result(result)
 
 
+def sync_fundamental_company_intake(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("symbol", "actor")
+        if key in arguments
+    }
+    payload.update({
+        "capital_action_allowed": False,
+        "broker_write_allowed": False,
+    })
+    return tool_result(post_api_json("/api/research/fundamental-intake/sync", payload, timeout=180))
+
+
 def run_institutional_fundamental_factory(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
@@ -5894,6 +5907,18 @@ def run_scheduled_reports(arguments: dict) -> dict:
 
 
 TOOLS = {
+    "ai_os_sync_fundamental_company_intake": {
+        "description": "Synchronize real NSE/BSE portfolio holdings into the institutional company master and link official exchange filings as evidence. It never fabricates financial facts, scores, recommendations, capital actions, or broker orders.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "symbol": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Fundamental Research Factory"},
+            },
+        },
+        "handler": sync_fundamental_company_intake,
+    },
     "ai_os_run_institutional_fundamental_factory": {
         "description": "Run the evidence-first institutional fundamental research factory for one real company at a point-in-time cutoff. Produces a versioned research dossier and acceptance evidence only; it is paper-only and cannot execute trades or authorize capital actions.",
         "inputSchema": {
