@@ -42,6 +42,13 @@ function useInvalidating<TBody, TResult = LiveRow>(
   });
 }
 
+export function useRunOfficeOperabilityAcceptance() {
+  return useInvalidating<{ run_key?: string; actor?: string }, LiveRow>(
+    "/api/office/operability/acceptance/run",
+    [Q.office]
+  );
+}
+
 /* ============================================================
  * FUNDAMENTAL RESEARCH ACTIONS
  * ============================================================ */

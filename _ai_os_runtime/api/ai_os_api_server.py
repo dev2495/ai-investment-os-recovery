@@ -397,15 +397,36 @@ def build_office_snapshot() -> dict:
     issues: list[dict] = []
     queries = {
         "agents": """
-            SELECT agent_name, department, department_name, display_title, role_scope,
-                   persona, operating_style, mental_models, default_model_route,
-                   default_tools, permission_level, output_targets, guardrails,
-                   escalation_rules, daily_cadence, cost_policy, human_interface,
-                   skill_count, primary_skills, latest_worker_finished_at,
-                   latest_worker_status
-            FROM agent.v_active_agents
-            ORDER BY CASE agent_name WHEN 'Charlie Munger' THEN 1 WHEN 'Jarvis' THEN 2 ELSE 3 END,
-                     department, agent_name
+            SELECT employee.agent_name,employee.department,employee.department_name,
+                   employee.display_title,employee.role_scope,employee.persona,
+                   employee.operating_style,employee.mental_models,
+                   employee.default_model_route,employee.default_tools,
+                   employee.permission_level,employee.output_targets,employee.guardrails,
+                   employee.escalation_rules,employee.daily_cadence,employee.cost_policy,
+                   employee.human_interface,employee.reports_to_agent,employee.role_rank,
+                   employee.hierarchy_level,employee.character_name,employee.avatar_role,
+                   employee.voice_style,employee.office_location,employee.color_token,
+                   employee.icon_hint,employee.mailbox_address,employee.primary_route,
+                   employee.assigned_provider,employee.assigned_model,employee.model_status,
+                   employee.fallback_route,employee.escalation_route,
+                   employee.active_skill_count,employee.skills,employee.enabled_tool_count,
+                   employee.tools,employee.open_task_count,employee.blocked_task_count,
+                   employee.open_tasks,employee.open_inbox_count,employee.open_inbox_items,
+                   employee.unread_received_count,employee.recent_messages,
+                   employee.worker_run_count,employee.completed_worker_run_count,
+                   employee.output_artifact_count,employee.recent_outputs,
+                   employee.pending_approval_count,employee.approvals,
+                   employee.live_state,employee.current_work_title,
+                   employee.current_work_detail,employee.latest_activity_at,
+                   readiness.operating_readiness_score,readiness.reliability_score,
+                   readiness.reliability_confidence,readiness.readiness_status,
+                   readiness.operating_mode,readiness.model_reasoning_ready,
+                   readiness.tools_ready,readiness.requested_tool_count,
+                   readiness.resolved_tool_count,readiness.missing_tool_count,
+                   readiness.missing_tools
+            FROM agent.v_employee_profiles_v1 employee
+            LEFT JOIN agent.v_agent_operating_readiness readiness USING(agent_name)
+            ORDER BY employee.role_rank,employee.agent_name
         """,
         "live_office_rooms": """
             SELECT room_key, room_name, room_rank, agent_count,
@@ -436,6 +457,14 @@ def build_office_snapshot() -> dict:
                    live_state, latest_activity_at
             FROM agent.v_live_office_agent_activity
             ORDER BY role_rank, agent_name
+        """,
+        "office_operability_acceptance": """
+            SELECT id,run_key,status,active_agent_count,active_department_count,
+                   gate_count,passed_count,blocked_count,gates,started_by,
+                   started_at,finished_at,broker_write_allowed
+            FROM agent.v_office_operability_acceptance
+            ORDER BY started_at DESC,id DESC
+            LIMIT 10
         """,
         "agent_messages": """
             SELECT id, thread_key, from_agent, from_title, to_agent, to_title,
@@ -11809,6 +11838,35 @@ def run_option_acceptance(payload: dict) -> dict:
     return result
 
 
+def run_office_operability_acceptance(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    default_key = f"office-operability-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    run_key = str(payload.get("run_key") or payload.get("runKey") or default_key).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
+        raise ValueError("run_key contains unsupported characters")
+    rows = run_psql_json(f"""
+        WITH accepted AS (
+            SELECT agent.run_office_operability_acceptance(
+                {sql_literal(run_key)},{sql_literal(actor)}
+            ) AS run_id
+        )
+        SELECT summary.*
+        FROM accepted
+        JOIN agent.v_office_operability_acceptance summary ON summary.id=accepted.run_id
+    """)
+    if not rows:
+        raise ValueError("office operability acceptance returned no durable result")
+    result = rows[0]
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("office operability acceptance violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_office_operability_acceptance","run_office_operability_acceptance",
+        actor,"agent.office_operability_runs",result,
+        {"run_key":run_key,"capital_action_allowed":False,"broker_write_allowed":False},
+    )
+    return result
+
+
 def upsert_option_valuation_policy(payload: dict) -> dict:
     required = ("policy_key", "provider", "exchange", "underlying", "risk_free_rate",
                 "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
@@ -17011,6 +17069,18 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             }),
         )
 
+    office_acceptance_command = re.search(
+        r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:ai\s+)?office\s+operability(?:\s+acceptance)?\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if office_acceptance_command:
+        invoke(
+            "run_office_operability_acceptance",
+            lambda: run_office_operability_acceptance({"actor": f"Devarsh via {actor}"}),
+            "status",
+        )
+
     fundamental_factory_command = re.search(
         r"\b(?:run|validate|refresh)\s+(?:the\s+)?(?:institutional\s+)?fundamental\s+(?:research\s+)?factory\b",
         message,
@@ -18510,6 +18580,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/options/institutional-analytics/acceptance/run":
                 self._send_json(run_option_acceptance(payload), 201)
+                return
+            if self.path == "/api/office/operability/acceptance/run":
+                self._send_json(run_office_operability_acceptance(payload), 201)
                 return
             if self.path == "/api/options/institutional-analytics/materialize":
                 self._send_json(materialize_institutional_options(payload), 201)

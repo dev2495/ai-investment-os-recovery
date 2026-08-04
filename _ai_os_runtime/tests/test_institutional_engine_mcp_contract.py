@@ -132,6 +132,21 @@ def test_option_acceptance_tool_is_paper_only_and_bounded() -> None:
     assert post.call_args.kwargs["timeout"] == 180
 
 
+def test_office_operability_tool_is_bounded_and_non_executing() -> None:
+    tool = SERVER.TOOLS["ai_os_run_office_operability_acceptance"]
+    assert tool["inputSchema"]["additionalProperties"] is False
+    with patch.object(SERVER, "post_api_json", return_value={"status": "blocked"}) as post:
+        result = tool["handler"]({"run_key": "office-check-1", "order": {"side": "BUY"}})
+
+    assert decoded_tool_result(result) == {"status": "blocked"}
+    assert post.call_args.args[0] == "/api/office/operability/acceptance/run"
+    payload = post.call_args.args[1]
+    assert "order" not in payload
+    assert payload["live_execution_allowed"] is False
+    assert payload["capital_action_allowed"] is False
+    assert payload["broker_write_allowed"] is False
+
+
 def test_institutional_data_operations_are_registered_and_route_to_scoped_apis() -> None:
     cases = {
         "ai_os_materialize_institutional_options": (

@@ -29,6 +29,12 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         graph_query = captured["graph_node_runs"]
         self.assertIn("output_summary AS worker_summary", graph_query)
         self.assertNotIn("worker_status,worker_summary", graph_query)
+        agent_query = captured["agents"]
+        self.assertIn("agent.v_employee_profiles_v1", agent_query)
+        self.assertIn("agent.v_agent_operating_readiness", agent_query)
+        self.assertIn("output_artifact_count", agent_query)
+        self.assertIn("assigned_model", agent_query)
+        self.assertIn("missing_tools", agent_query)
 
     def test_live_office_state_labels_match_runtime_semantics(self) -> None:
         runtime_root = Path(__file__).resolve().parents[1]

@@ -7,9 +7,11 @@ import {
   Inbox,
   MessageSquare,
   ShieldAlert,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { useOfficeSnapshot } from "../../data/queries";
+import { useRunOfficeOperabilityAcceptance } from "../../data/actions";
 import {
   Badge,
   Button,
@@ -23,7 +25,7 @@ import {
   StatusPill,
   TextInput,
 } from "../../system/primitives";
-import { formatRelative, initials, num, text } from "../../data/liveRow";
+import { formatRelative, initials, num, text, value } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 import { useUIStore } from "../../store";
 
@@ -54,6 +56,8 @@ export function OfficeView() {
   const setAssistantScope = useUIStore((state) => state.setAssistantScope);
   const focusRoom = useUIStore((state) => state.focusRoom);
   const openEvidence = useUIStore((state) => state.openEvidence);
+  const pushToast = useUIStore((state) => state.pushToast);
+  const operability = useRunOfficeOperabilityAcceptance();
   const [department, setDepartment] = React.useState("all");
   const [search, setSearch] = React.useState("");
 
@@ -88,6 +92,20 @@ export function OfficeView() {
   const graphRuns = data?.graph_runs ?? [];
   const graphAttention = data?.graph_attention ?? [];
   const messages = data?.agent_messages ?? [];
+  const latestAcceptance = data?.office_operability_acceptance?.[0];
+  const acceptanceGates = value<LiveRow[]>(latestAcceptance, "gates", []);
+
+  function runOperabilityAcceptance() {
+    operability.mutate({ actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({
+        title: text(result, "status") === "passed" ? "AI Office operability passed" : "AI Office operability blocked",
+        message: `${num(result, "passed_count")} of ${num(result, "gate_count")} gates passed`,
+        tone: text(result, "status") === "passed" ? "ok" : "warn",
+        duration: 6500,
+      }),
+      onError: (failure) => pushToast({ title: "Operability check failed", message: failure.message, tone: "risk", duration: 6500 }),
+    });
+  }
 
   return (
     <div className="aios-destination">
@@ -112,6 +130,31 @@ export function OfficeView() {
         <MetricTile tone={graphRuns.length ? "ok" : "default"}><Metric label="Graph Runs" value={graphRuns.length} /></MetricTile>
         <MetricTile tone={graphAttention.length ? "warn" : "ok"}><Metric label="Graph Attention" value={graphAttention.length} /></MetricTile>
       </div>
+
+      <Panel icon={ShieldCheck} title="AI Office Operability" actions={<Button icon={ShieldCheck} onClick={runOperabilityAcceptance} disabled={operability.isPending}>{operability.isPending ? "Checking…" : "Run acceptance"}</Button>}>
+        {!latestAcceptance ? (
+          <Empty icon={ShieldCheck} title="No operability acceptance run" description="Run the evidence gate to test every active employee, department, model route, tool, worker output, and handoff." />
+        ) : (
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            <div style={{ display: "flex", gap: "var(--space-3)", alignItems: "center", flexWrap: "wrap" }}>
+              <StatusPill status={text(latestAcceptance, "status")} />
+              <strong>{num(latestAcceptance, "passed_count")} / {num(latestAcceptance, "gate_count")} gates</strong>
+              <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{num(latestAcceptance, "active_agent_count")} employees · {num(latestAcceptance, "active_department_count")} departments · {formatRelative(text(latestAcceptance, "finished_at"))}</span>
+            </div>
+            <DataTable
+              dense
+              columns={[
+                { key: "gate", header: "Gate", render: (row) => <strong>{text(row, "gate_name", text(row, "gate_key"))}</strong> },
+                { key: "observed", header: "Observed / required", align: "right", render: (row) => `${num(row, "observed_value")} / ${num(row, "required_value")}` },
+                { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status")} /> },
+                { key: "gap", header: "Gap", render: (row) => text(row, "failure_reason", "—") },
+              ]}
+              rows={acceptanceGates}
+              rowKey={(row, index) => text(row, "gate_key", `gate-${index}`)}
+            />
+          </div>
+        )}
+      </Panel>
 
       <Panel icon={Boxes} title="The Firm · Live Floor View" bodyFlush>
         <React.Suspense

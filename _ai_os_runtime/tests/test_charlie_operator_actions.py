@@ -374,6 +374,18 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(operations[0]["status"], "needs_input")
         run.assert_not_called()
 
+    def test_office_operability_command_runs_durable_acceptance(self) -> None:
+        with mock.patch.object(
+            ai_os_api_server,
+            "run_office_operability_acceptance",
+            return_value={"status": "blocked", "gate_count": 11, "passed_count": 8},
+        ) as run:
+            operations = ai_os_api_server.execute_charlie_safe_tools("Run AI office operability acceptance")
+
+        self.assertEqual(operations[0]["tool"], "run_office_operability_acceptance")
+        self.assertEqual(operations[0]["status"], "blocked")
+        run.assert_called_once()
+
     def test_option_acceptance_command_never_guesses_missing_window(self) -> None:
         with mock.patch.object(ai_os_api_server, "run_option_acceptance") as run:
             operations = ai_os_api_server.execute_charlie_safe_tools(

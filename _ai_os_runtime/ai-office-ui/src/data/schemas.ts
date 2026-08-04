@@ -458,6 +458,7 @@ export const OfficeSnapshotSchema = z.object({
   issues: z.array(liveRow).default([]),
   live_office_agent_activity: z.array(liveRow).default([]),
   live_office_rooms: z.array(liveRow).default([]),
+  office_operability_acceptance: z.array(liveRow).default([]),
   priority_tasks: z.array(liveRow).default([]),
   risk_events: z.array(liveRow).default([]),
   source_freshness: z.array(liveRow).default([]),

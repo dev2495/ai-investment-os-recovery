@@ -4372,6 +4372,19 @@ def run_option_acceptance(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/options/institutional-analytics/acceptance/run", payload, timeout=180))
 
 
+def run_office_operability_acceptance(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("run_key", "actor")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Jarvis")
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/office/operability/acceptance/run", payload, timeout=180))
+
+
 def materialize_institutional_options(arguments: dict) -> dict:
     payload = {
         "limit": arguments.get("limit") or 20,
@@ -5986,6 +5999,18 @@ TOOLS = {
             "required": ["exchange", "underlying", "expiry_date", "window_start", "window_end"],
         },
         "handler": run_option_acceptance,
+    },
+    "ai_os_run_office_operability_acceptance": {
+        "description": "Evaluate every active AI Office employee and department for real structure, tools, model route, bounded worker proof, evidence output, and durable handoffs. This read-and-audit tool cannot authorize capital or broker execution.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Jarvis"},
+            },
+        },
+        "handler": run_office_operability_acceptance,
     },
     "ai_os_materialize_institutional_options": {
         "description": "Materialize source-backed Zerodha option snapshots into immutable point-in-time institutional batches and calculate analytics only when a validated valuation policy exists. Paper-only; no order path.",
