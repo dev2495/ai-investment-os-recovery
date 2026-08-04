@@ -89,6 +89,23 @@ def test_sector_tool_is_tradingview_artifact_only() -> None:
     assert post.call_args.args[1]["tradingview_artifacts_only"] is True
 
 
+def test_sector_acceptance_tool_is_paper_only_and_bounded() -> None:
+    arguments = {"taxonomy_node_id": 12, "as_of_date": "2026-08-04"}
+    tool = SERVER.TOOLS["ai_os_run_sector_acceptance"]
+    assert tool["inputSchema"]["additionalProperties"] is False
+    assert "paper-only" in tool["description"].lower()
+    with patch.object(SERVER, "post_api_json", return_value={"status": "blocked"}) as post:
+        result = tool["handler"](arguments)
+
+    assert decoded_tool_result(result) == {"status": "blocked"}
+    assert post.call_args.args[0] == "/api/sector-intelligence/acceptance/run"
+    payload = post.call_args.args[1]
+    assert payload["paper_only"] is True
+    assert payload["live_execution_allowed"] is False
+    assert payload["capital_action_allowed"] is False
+    assert payload["broker_write_allowed"] is False
+
+
 def test_institutional_data_operations_are_registered_and_route_to_scoped_apis() -> None:
     cases = {
         "ai_os_materialize_institutional_options": (

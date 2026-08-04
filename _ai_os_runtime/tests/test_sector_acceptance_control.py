@@ -63,3 +63,14 @@ def test_acceptance_is_exposed_to_workers_api_and_frontend() -> None:
     assert "acceptance_runs" in schema
     assert "Real-Sector Acceptance" in page
     assert "Acceptance has not been executed" in page
+    assert "def run_sector_acceptance" in api
+    assert '"/api/sector-intelligence/acceptance/run"' in api
+    assert "useRunSectorAcceptance" in page
+
+
+def test_acceptance_is_exposed_as_a_bounded_mcp_tool() -> None:
+    mcp = (ROOT / "mcp_server" / "ai_os_mcp_server.py").read_text(encoding="utf-8")
+    assert "def run_sector_acceptance" in mcp
+    assert '"ai_os_run_sector_acceptance"' in mcp
+    assert '"capital_action_allowed"] = False' in mcp
+    assert '"broker_write_allowed"] = False' in mcp

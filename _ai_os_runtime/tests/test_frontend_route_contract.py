@@ -59,7 +59,7 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 87)
+        self.assertEqual(len(paths), 88)
         self.assertTrue({
             "/api/sector-intelligence/import",
             "/api/options/institutional-analytics/materialize",

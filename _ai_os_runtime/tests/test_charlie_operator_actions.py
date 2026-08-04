@@ -303,6 +303,30 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(captured["to_agent"], "Sector Portfolio Manager")
         self.assertEqual(captured["related_skill_key"], "sector_portfolio_management")
 
+    def test_sector_acceptance_command_runs_canonical_gate_action(self) -> None:
+        captured = {}
+
+        def fake_run(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "blocked", "gate_count": 10, "passed_count": 6, "broker_write_allowed": False}
+
+        with mock.patch.object(ai_os_api_server, "run_sector_acceptance", fake_run):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Run sector acceptance for taxonomy node 12 as of 2026-08-04"
+            )
+
+        self.assertEqual(operations[0]["tool"], "run_sector_acceptance")
+        self.assertEqual(captured["taxonomy_node_id"], 12)
+        self.assertEqual(captured["as_of_date"], "2026-08-04")
+        self.assertEqual(captured["actor"], "Devarsh via Charlie Munger")
+
+    def test_sector_acceptance_command_requires_bounded_subject_and_date(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_sector_acceptance") as run:
+            operations = ai_os_api_server.execute_charlie_safe_tools("Check sector acceptance")
+
+        self.assertEqual(operations[0]["status"], "needs_input")
+        run.assert_not_called()
+
     def test_options_data_quality_agent_has_safe_fallback_skill(self) -> None:
         with mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=RuntimeError("view unavailable")):
             skill = ai_os_api_server.resolve_delegation_skill({

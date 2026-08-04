@@ -90,6 +90,20 @@ export function useImportSectorIntelligencePackage() {
   );
 }
 
+export interface SectorAcceptanceInput {
+  taxonomy_node_id: number;
+  as_of_date: string;
+  run_key?: string;
+  actor?: string;
+}
+
+export function useRunSectorAcceptance() {
+  return useInvalidating<SectorAcceptanceInput, LiveRow>(
+    "/api/sector-intelligence/acceptance/run",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
 export interface InstitutionalOptionsAnalyticsInput {
   underlying: string;
   exchange: "NFO" | "BFO";

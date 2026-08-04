@@ -126,6 +126,41 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
         self.assertEqual(submitted["memberships"][0]["symbol"], "HDFCBANK")
         audit.assert_called_once()
 
+    def test_sector_acceptance_runs_one_canonical_database_gate_function(self) -> None:
+        response = {
+            "acceptance_run_id": 9,
+            "run_key": "sector-acceptance-12-2026-08-04",
+            "status": "blocked",
+            "gate_count": 10,
+            "passed_count": 6,
+            "blocked_count": 4,
+            "broker_write_allowed": False,
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[response]) as database,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.run_sector_acceptance({
+                "taxonomy_node_id": 12,
+                "as_of_date": "2026-08-04",
+                "actor": "Devarsh",
+            })
+
+        self.assertEqual(result, response)
+        query = database.call_args.args[0]
+        self.assertIn("sector_intelligence.run_acceptance_gates", query)
+        self.assertIn("sector_intelligence.v_acceptance_gate_summary", query)
+        audit.assert_called_once()
+
+    def test_sector_acceptance_rejects_unbounded_or_invalid_input(self) -> None:
+        for payload in (
+            {"as_of_date": "2026-08-04"},
+            {"taxonomy_node_id": 0, "as_of_date": "2026-08-04"},
+            {"taxonomy_node_id": 1, "as_of_date": "04-08-2026"},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                ai_os_api_server.run_sector_acceptance(payload)
+
     def test_options_engine_hydrates_stored_batch_and_is_always_paper_only(self) -> None:
         response = {
             "status": "preview",

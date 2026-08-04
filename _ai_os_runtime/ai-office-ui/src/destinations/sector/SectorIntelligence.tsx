@@ -5,7 +5,7 @@ import {
   ShieldCheck, Workflow, RefreshCw, Upload, FileCheck2,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useImportSectorIntelligencePackage, useRunSectorIntelligence } from "../../data/actions";
+import { useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
@@ -46,6 +46,7 @@ export default function SectorIntelligence() {
         <Tabs tabs={TABS} active={tab} onChange={(key) => navigate(`/sector/${key}`)} />
       </div>
       <SectorRunControl indices={data?.custom_indices ?? []} />
+      {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorSourceImportControl /> : null}
 
 
@@ -60,6 +61,54 @@ export default function SectorIntelligence() {
       {!query.isLoading && !query.isError && tab === "flows" ? <Flows data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "committee" ? <Committee data={data} /> : null}
     </div>
+  );
+}
+
+function SectorAcceptanceControl({ hierarchy }: { hierarchy: LiveRow[] }) {
+  const mutation = useRunSectorAcceptance();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const nodes = React.useMemo(() => {
+    const unique = new Map<string, { id: number; label: string }>();
+    for (const row of hierarchy) {
+      for (const [idKey, nameKey] of [["sector_id", "sector_name"], ["industry_id", "industry_name"], ["sub_industry_id", "sub_industry_name"]] as const) {
+        const id = num(row, idKey);
+        const label = text(row, nameKey);
+        if (id > 0 && label) unique.set(String(id), { id, label });
+      }
+    }
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [hierarchy]);
+  const [nodeId, setNodeId] = React.useState("");
+  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+
+  React.useEffect(() => {
+    if (!nodeId && nodes.length) setNodeId(String(nodes[0].id));
+  }, [nodeId, nodes]);
+
+  function run() {
+    const taxonomyNodeId = Number(nodeId);
+    if (!taxonomyNodeId || !asOf) return;
+    mutation.mutate({ taxonomy_node_id: taxonomyNodeId, as_of_date: asOf, actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({
+        title: `Sector acceptance ${text(result, "status", "completed")}`,
+        message: `${num(result, "passed_count")} of ${num(result, "gate_count")} gates passed`,
+        tone: text(result, "status") === "passed" ? "ok" : "warn",
+        duration: 6000,
+      }),
+      onError: (error) => pushToast({ title: "Sector acceptance failed", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  return (
+    <Panel icon={ShieldCheck} title="Run Real-Sector Acceptance" actions={<Badge tone={mutation.isError ? "risk" : mutation.isPending ? "warn" : "accent"}>{mutation.isPending ? "Checking" : "10 gates"}</Badge>}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 2fr) minmax(160px, 1fr) auto", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Sector or industry" required><Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}><option value="">Select source-backed taxonomy…</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</Select></Field>
+        <Field label="As-of date" required><TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></Field>
+        <Button variant="primary" icon={ShieldCheck} onClick={run} disabled={!nodeId || !asOf || mutation.isPending}>{mutation.isPending ? "Evaluating…" : "Run acceptance"}</Button>
+      </div>
+      {nodes.length === 0 ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Import a source-backed taxonomy before acceptance can run.</div> : null}
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+    </Panel>
   );
 }
 

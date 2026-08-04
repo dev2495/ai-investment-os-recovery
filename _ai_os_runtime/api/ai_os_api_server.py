@@ -11589,6 +11589,60 @@ def run_sector_intelligence_engine(payload: dict) -> dict:
     return result
 
 
+def run_sector_acceptance(payload: dict) -> dict:
+    taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    if taxonomy_node_id is None and not taxonomy_key:
+        raise ValueError("taxonomy_node_id or taxonomy_key is required")
+    if taxonomy_node_id is not None:
+        try:
+            node_id = int(taxonomy_node_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("taxonomy_node_id must be a positive integer") from exc
+        if node_id <= 0:
+            raise ValueError("taxonomy_node_id must be a positive integer")
+    else:
+        rows = run_psql_json(
+            "SELECT id FROM sector_intelligence.taxonomy_nodes "
+            f"WHERE taxonomy_key={sql_literal(taxonomy_key)} "
+            f"AND valid_from<={sql_literal(as_of_date)}::date "
+            f"AND (valid_to IS NULL OR valid_to>={sql_literal(as_of_date)}::date) "
+            "ORDER BY id LIMIT 2"
+        )
+        if len(rows) != 1:
+            raise ValueError("taxonomy_key must resolve to exactly one active sector node")
+        node_id = int(rows[0]["id"])
+    run_key = str(payload.get("run_key") or payload.get("runKey") or f"sector-acceptance-{node_id}-{as_of_date}").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
+        raise ValueError("run_key contains unsupported characters")
+    rows = run_psql_json(f"""
+        WITH accepted AS (
+            SELECT sector_intelligence.run_acceptance_gates(
+                {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
+            ) AS acceptance_run_id
+        )
+        SELECT summary.*
+        FROM accepted
+        JOIN sector_intelligence.v_acceptance_gate_summary summary
+          ON summary.acceptance_run_id=accepted.acceptance_run_id
+    """)
+    if not rows:
+        raise ValueError("sector acceptance run returned no durable result")
+    result = rows[0]
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("sector acceptance violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_sector_acceptance","run_sector_acceptance",actor,
+        "sector_intelligence.acceptance_runs",result,
+        {"taxonomy_node_id": node_id,"as_of_date": as_of_date,"run_key": run_key},
+    )
+    return result
+
+
 def _options_engine_payload(payload: dict) -> dict:
     underlying = str(payload.get("underlying") or "").strip().upper()
     exchange = str(payload.get("exchange") or "NFO").strip().upper()
@@ -16891,6 +16945,40 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             }),
         )
 
+    sector_acceptance_command = re.search(
+        r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:real[- ]sector\s+|sector\s+)?acceptance\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if sector_acceptance_command:
+        date_match = re.search(r"\b(?:as\s+of\s+)?(\d{4}-\d{2}-\d{2})\b", message)
+        node_id_match = re.search(r"\b(?:taxonomy\s+)?node(?:\s+id)?\s+(\d+)\b", message, flags=re.IGNORECASE)
+        key_match = re.search(
+            r"\b(?:sector|industry|taxonomy\s+key)\s+([A-Za-z0-9._:-]{1,160})\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if not date_match or (not node_id_match and not key_match):
+            results.append({
+                "tool": "run_sector_acceptance",
+                "status": "needs_input",
+                "detail": "Name a taxonomy node id or sector taxonomy key and an as-of date in YYYY-MM-DD format.",
+            })
+        else:
+            acceptance_payload = {
+                "as_of_date": date_match.group(1),
+                "actor": f"Devarsh via {actor}",
+            }
+            if node_id_match:
+                acceptance_payload["taxonomy_node_id"] = int(node_id_match.group(1))
+            else:
+                acceptance_payload["taxonomy_key"] = key_match.group(1)
+            invoke(
+                "run_sector_acceptance",
+                lambda: run_sector_acceptance(acceptance_payload),
+                "status",
+            )
+
     watchlist_match = re.search(
         r"\badd\s+([A-Za-z0-9&.-]{2,20})\s+(?:to|on)\s+(?:my\s+)?watchlist\b",
         message,
@@ -18274,6 +18362,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/sector-intelligence/import":
                 self._send_json(import_sector_intelligence_package(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/acceptance/run":
+                self._send_json(run_sector_acceptance(payload), 201)
                 return
             if self.path == "/api/options/institutional-analytics/run":
                 self._send_json(run_institutional_options_engine(payload), 201)

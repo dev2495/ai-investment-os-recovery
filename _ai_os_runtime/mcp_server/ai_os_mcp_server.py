@@ -4327,6 +4327,20 @@ def run_sector_intelligence_engine(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/sector-intelligence/run", payload, timeout=620))
 
 
+def run_sector_acceptance(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_node_id", "taxonomy_key", "as_of_date", "run_key", "actor")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Portfolio Manager")
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["broker_write_allowed"] = False
+    payload["capital_action_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/acceptance/run", payload, timeout=180))
+
+
 def run_institutional_options_engine(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
@@ -5898,6 +5912,26 @@ TOOLS = {
             ],
         },
         "handler": run_sector_intelligence_engine,
+    },
+    "ai_os_run_sector_acceptance": {
+        "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_node_id": {"type": "integer", "minimum": 1},
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+            },
+            "required": ["as_of_date"],
+            "oneOf": [
+                {"required": ["taxonomy_node_id"]},
+                {"required": ["taxonomy_key"]},
+            ],
+        },
+        "handler": run_sector_acceptance,
     },
     "ai_os_run_institutional_options_engine": {
         "description": "Run evidence-first institutional options analytics for one underlying and expiry using validated quotes, liquidity filters, IV, Greeks, structures, and replay controls. Analysis is paper-only with no execution; this tool cannot place, modify, or authorize any order.",
