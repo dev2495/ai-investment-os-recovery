@@ -82,6 +82,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "strategy_discovery_scheduler",
         "market_news_ingestion",
         "research_hub_refresh",
+        "institutional_options_materializer",
         "workflow_schedule_materializer",
         "graph_control_plane",
     ):
@@ -677,6 +678,32 @@ def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
     return {"status": "success", **payload}
 
 
+def run_institutional_options_materializer(limit: int, interval_seconds: int, timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "materialize_institutional_options.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [
+            sys.executable, str(script), "--limit", str(max(1, min(100, int(limit)))),
+            "--interval-seconds", str(max(60, int(interval_seconds))),
+        ],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(60, int(timeout_seconds)),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = "failed"
+        payload["error"] = (
+            completed.stderr or completed.stdout or "institutional options materializer failed"
+        ).strip()[:4000]
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI OS agent mailbox daemon.")
     parser.add_argument("--once", action="store_true", help="Run one pass and exit.")
@@ -732,6 +759,10 @@ def main() -> int:
         type=int,
         default=int(os.environ.get("AI_OS_RESEARCH_HUB_REFRESH_TIMEOUT_SECONDS", "600")),
     )
+    parser.add_argument("--disable-institutional-options", action="store_true", help="Disable institutional option-chain materialization and analytics.")
+    parser.add_argument("--institutional-options-interval", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_INTERVAL_SECONDS", "300")))
+    parser.add_argument("--institutional-options-timeout", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_TIMEOUT_SECONDS", "240")))
+    parser.add_argument("--institutional-options-limit", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_BATCH_LIMIT", "20")))
     parser.add_argument("--disable-workflow-scheduler", action="store_true", help="Disable governed agent workflow schedule materialization.")
     parser.add_argument(
         "--workflow-scheduler-interval",
@@ -764,6 +795,8 @@ def main() -> int:
     market_calendar_interval = max(1800, int(args.market_calendar_interval))
     research_hub_refresh_enabled = not args.disable_research_hub_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_REFRESH", "1") != "0"
     research_hub_refresh_interval = max(300, int(args.research_hub_refresh_interval))
+    institutional_options_enabled = not args.disable_institutional_options and os.environ.get("AI_OS_ENABLE_INSTITUTIONAL_OPTIONS", "1") != "0"
+    institutional_options_interval = max(60, int(args.institutional_options_interval))
     workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
     workflow_scheduler_interval = max(30, int(args.workflow_scheduler_interval))
     graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
@@ -774,6 +807,7 @@ def main() -> int:
     last_market_news_run = 0.0
     last_market_calendar_run = 0.0
     last_research_hub_refresh_run = 0.0
+    last_institutional_options_run = 0.0
     last_workflow_scheduler_run = 0.0
     daemon_started_at = datetime.now().astimezone()
     daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
@@ -786,6 +820,7 @@ def main() -> int:
         "market_news": market_news_enabled,
         "market_calendar": market_calendar_enabled,
         "research_hub_refresh": research_hub_refresh_enabled,
+        "institutional_options": institutional_options_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
         "graph_control": graph_control_enabled,
     }
@@ -850,6 +885,20 @@ def main() -> int:
                     "error": type(exc).__name__ + ": " + str(exc),
                 }
             last_research_hub_refresh_run = time.monotonic()
+        if institutional_options_enabled and (
+            last_institutional_options_run == 0.0
+            or time.monotonic() - last_institutional_options_run >= institutional_options_interval
+        ):
+            try:
+                result["institutional_options_materializer"] = run_institutional_options_materializer(
+                    max(1, int(args.institutional_options_limit)), institutional_options_interval,
+                    max(60, int(args.institutional_options_timeout)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["institutional_options_materializer"] = {
+                    "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
+                }
+            last_institutional_options_run = time.monotonic()
         if ohlcv_aggregation_enabled and (last_ohlcv_aggregation_run == 0.0 or time.monotonic() - last_ohlcv_aggregation_run >= ohlcv_aggregation_interval):
             try:
                 result["ohlcv_aggregation"] = run_ohlcv_aggregation(max(30, int(args.ohlcv_aggregation_timeout)))
@@ -912,6 +961,7 @@ def main() -> int:
             market_news = result.get("market_news_ingestion") or {}
             market_calendar = result.get("market_calendar_refresh") or {}
             research_hub = result.get("research_hub_refresh") or {}
+            institutional_options = result.get("institutional_options_materializer") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
             graph_control = result.get("graph_control_plane") or {}
             print(
@@ -923,6 +973,7 @@ def main() -> int:
                 f"market_news={market_news.get('status', 'skipped')} "
                 f"market_calendar={market_calendar.get('status', 'skipped')} "
                 f"research_hub={research_hub.get('status', 'skipped')} "
+                f"institutional_options={institutional_options.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
                 f"graph_runs={graph_control.get('count', 0)}/{graph_control.get('active_runs_seen', 0)} "
                 f"graph_status={graph_control.get('status', 'skipped')} "

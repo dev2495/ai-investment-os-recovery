@@ -11655,6 +11655,110 @@ def run_institutional_options_engine(payload: dict) -> dict:
     return result
 
 
+def upsert_option_valuation_policy(payload: dict) -> dict:
+    required = ("policy_key", "provider", "exchange", "underlying", "risk_free_rate",
+                "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
+                "dividend_source_timestamp", "source_artifact_ref", "effective_from", "expires_at")
+    missing = [
+        field for field in required
+        if payload.get(field) is None or (isinstance(payload.get(field), str) and not payload[field].strip())
+    ]
+    if missing:
+        raise ValueError("missing required option valuation policy fields: " + ", ".join(missing))
+    policy_key = str(payload["policy_key"]).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", policy_key):
+        raise ValueError("policy_key contains unsupported characters")
+    model = str(payload.get("model_family") or "black_scholes_merton").strip()
+    if model not in {"black_scholes_merton", "black_76"}:
+        raise ValueError("model_family must be black_scholes_merton or black_76")
+    risk_free_rate = float(payload.get("risk_free_rate"))
+    dividend_yield = float(payload.get("dividend_yield"))
+    if not -0.20 <= risk_free_rate <= 1.0 or not -0.20 <= dividend_yield <= 1.0:
+        raise ValueError("rates must be decimal values between -0.20 and 1.00")
+    timestamps: dict[str, datetime] = {}
+    for field in ("rate_source_timestamp", "dividend_source_timestamp", "effective_from", "expires_at"):
+        raw = str(payload.get(field) or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} must be ISO-8601") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"{field} must include an explicit timezone")
+        timestamps[field] = parsed
+    if timestamps["effective_from"] >= timestamps["expires_at"]:
+        raise ValueError("effective_from must be before expires_at")
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    result = run_psql_json(f"""
+        INSERT INTO trading.option_valuation_policies
+            (policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
+             day_count_convention,expiry_local_time,expiry_timezone,rate_source,rate_source_timestamp,
+             dividend_source,dividend_source_timestamp,source_artifact_ref,effective_from,expires_at,
+             validation_status,validated_by,validated_at,assumptions,active,broker_write_allowed)
+        VALUES ({sql_literal(policy_key)},{sql_literal(str(payload['provider']).strip())},
+                {sql_literal(str(payload['exchange']).strip().upper())},
+                {sql_literal(str(payload['underlying']).strip().upper())},{sql_literal(model)},
+                {sql_numeric(risk_free_rate, required=True, field_name='risk_free_rate')},
+                {sql_numeric(dividend_yield, required=True, field_name='dividend_yield')},
+                {sql_literal(str(payload.get('day_count_convention') or 'ACT/365F'))},
+                {sql_literal(str(payload.get('expiry_local_time') or '15:30:00'))}::time,
+                {sql_literal(str(payload.get('expiry_timezone') or 'Asia/Kolkata'))},
+                {sql_literal(payload['rate_source'])},{sql_literal(timestamps['rate_source_timestamp'].isoformat())}::timestamptz,
+                {sql_literal(payload['dividend_source'])},{sql_literal(timestamps['dividend_source_timestamp'].isoformat())}::timestamptz,
+                {sql_literal(payload['source_artifact_ref'])},{sql_literal(timestamps['effective_from'].isoformat())}::timestamptz,
+                {sql_literal(timestamps['expires_at'].isoformat())}::timestamptz,'validated',
+                {sql_literal(actor)},now(),{sql_jsonb(payload.get('assumptions') or {})},true,false)
+        ON CONFLICT (policy_key) DO UPDATE SET
+            risk_free_rate=EXCLUDED.risk_free_rate,dividend_yield=EXCLUDED.dividend_yield,
+            rate_source=EXCLUDED.rate_source,rate_source_timestamp=EXCLUDED.rate_source_timestamp,
+            dividend_source=EXCLUDED.dividend_source,dividend_source_timestamp=EXCLUDED.dividend_source_timestamp,
+            source_artifact_ref=EXCLUDED.source_artifact_ref,effective_from=EXCLUDED.effective_from,
+            expires_at=EXCLUDED.expires_at,validation_status='validated',validated_by=EXCLUDED.validated_by,
+            validated_at=now(),assumptions=EXCLUDED.assumptions,active=true,updated_at=now()
+        RETURNING id,policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
+                  effective_from,expires_at,validation_status,source_artifact_ref,false AS broker_write_allowed
+    """)
+    if not result:
+        raise ValueError("option valuation policy upsert returned no row")
+    audit_api_write("ai_os_api_upsert_option_valuation_policy", "upsert_option_valuation_policy",
+                    actor, "trading.option_valuation_policies", result[0], payload)
+    return result[0]
+
+
+def materialize_institutional_options(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    limit = max(1, min(100, int(payload.get("limit") or 20)))
+    interval = max(60, min(3600, int(payload.get("interval_seconds") or 300)))
+    completed = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "materialize_institutional_options.py"),
+         "--limit", str(limit), "--interval-seconds", str(interval)],
+        cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=300,
+    )
+    result = _parse_engine_json(completed, "institutional options materializer")
+    audit_api_write("ai_os_api_materialize_institutional_options", "materialize_institutional_options",
+                    actor, "ops.institutional_pipeline_runs", result, payload)
+    return result
+
+
+def import_sector_intelligence_package(payload: dict) -> dict:
+    package = payload.get("package")
+    if not isinstance(package, dict):
+        raise ValueError("package must be a sector-intelligence JSON object")
+    actor = str(payload.get("actor") or "Sector Data Steward").strip()
+    command = [sys.executable, str(RUNTIME_ROOT / "scripts" / "import_sector_intelligence_package.py"),
+               "--input", "-", "--actor", actor]
+    if payload.get("persist") is True:
+        command.append("--persist")
+    completed = subprocess.run(
+        command, cwd=RUNTIME_ROOT, input=json.dumps(package, default=str), text=True,
+        capture_output=True, check=False, timeout=300,
+    )
+    result = _parse_engine_json(completed, "sector intelligence package importer")
+    audit_api_write("ai_os_api_import_sector_intelligence_package", "import_sector_intelligence_package",
+                    actor, "sector_intelligence.source_import_runs", result,
+                    {"persist": payload.get("persist") is True, "package_hash": result.get("package_hash")})
+    return result
+
+
 def run_strategy_backtest(payload: dict) -> dict:
     try:
         candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
@@ -17930,8 +18034,17 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path == "/api/sector-intelligence/run":
                 self._send_json(run_sector_intelligence_engine(payload), 201)
                 return
+            if self.path == "/api/sector-intelligence/import":
+                self._send_json(import_sector_intelligence_package(payload), 201)
+                return
             if self.path == "/api/options/institutional-analytics/run":
                 self._send_json(run_institutional_options_engine(payload), 201)
+                return
+            if self.path == "/api/options/institutional-analytics/materialize":
+                self._send_json(materialize_institutional_options(payload), 201)
+                return
+            if self.path == "/api/options/valuation-policy/upsert":
+                self._send_json(upsert_option_valuation_policy(payload), 201)
                 return
             if self.path == "/api/research/filings/collect":
                 self._send_json(run_filing_collector(payload), 201)

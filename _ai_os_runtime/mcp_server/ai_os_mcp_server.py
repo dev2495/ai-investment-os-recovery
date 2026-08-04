@@ -4344,6 +4344,41 @@ def run_institutional_options_engine(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/options/institutional-analytics/run", payload, timeout=620))
 
 
+def materialize_institutional_options(arguments: dict) -> dict:
+    payload = {
+        "limit": arguments.get("limit") or 20,
+        "interval_seconds": arguments.get("interval_seconds") or 300,
+        "actor": arguments.get("actor") or "Options Data Quality Agent",
+    }
+    return tool_result(post_api_json("/api/options/institutional-analytics/materialize", payload, timeout=320))
+
+
+def upsert_option_valuation_policy(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in (
+            "policy_key", "provider", "exchange", "underlying", "model_family", "risk_free_rate",
+            "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
+            "dividend_source_timestamp", "source_artifact_ref", "effective_from", "expires_at",
+            "day_count_convention", "expiry_local_time", "expiry_timezone", "assumptions", "actor",
+        )
+        if key in arguments
+    }
+    payload.setdefault("actor", "Options Data Quality Agent")
+    payload["broker_write_allowed"] = False
+    payload["capital_action_allowed"] = False
+    return tool_result(post_api_json("/api/options/valuation-policy/upsert", payload, timeout=120))
+
+
+def import_sector_intelligence_package(arguments: dict) -> dict:
+    payload = {
+        "package": arguments.get("package"),
+        "persist": arguments.get("persist") is True,
+        "actor": arguments.get("actor") or "Sector Data Steward",
+    }
+    return tool_result(post_api_json("/api/sector-intelligence/import", payload, timeout=320))
+
+
 def institutional_portfolio_risk(arguments: dict) -> dict:
     limit = limit_arg(arguments, default=80)
     return tool_result(
@@ -5885,6 +5920,65 @@ TOOLS = {
             "required": ["underlying", "exchange", "expiry_date", "as_of"],
         },
         "handler": run_institutional_options_engine,
+    },
+    "ai_os_materialize_institutional_options": {
+        "description": "Materialize source-backed Zerodha option snapshots into immutable point-in-time institutional batches and calculate analytics only when a validated valuation policy exists. Paper-only; no order path.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                "interval_seconds": {"type": "integer", "minimum": 60, "maximum": 3600, "default": 300},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        "handler": materialize_institutional_options,
+    },
+    "ai_os_upsert_option_valuation_policy": {
+        "description": "Record a human-validated, source-evidenced and expiring rate/dividend policy for deterministic option analytics. This enables calculations only and never capital action.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "policy_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "provider": {"type": "string", "minLength": 1},
+                "exchange": {"type": "string", "enum": ["NFO", "BFO", "NSE", "BSE"]},
+                "underlying": {"type": "string", "minLength": 1},
+                "model_family": {"type": "string", "enum": ["black_scholes_merton", "black_76"]},
+                "risk_free_rate": {"type": "number", "minimum": -0.2, "maximum": 1},
+                "dividend_yield": {"type": "number", "minimum": -0.2, "maximum": 1},
+                "rate_source": {"type": "string", "minLength": 1},
+                "rate_source_timestamp": {"type": "string", "format": "date-time"},
+                "dividend_source": {"type": "string", "minLength": 1},
+                "dividend_source_timestamp": {"type": "string", "format": "date-time"},
+                "source_artifact_ref": {"type": "string", "minLength": 1},
+                "effective_from": {"type": "string", "format": "date-time"},
+                "expires_at": {"type": "string", "format": "date-time"},
+                "day_count_convention": {"type": "string", "default": "ACT/365F"},
+                "expiry_local_time": {"type": "string", "default": "15:30:00"},
+                "expiry_timezone": {"type": "string", "default": "Asia/Kolkata"},
+                "assumptions": {"type": "object"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+            "required": ["policy_key", "provider", "exchange", "underlying", "risk_free_rate",
+                         "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
+                         "dividend_source_timestamp", "source_artifact_ref", "effective_from", "expires_at"],
+        },
+        "handler": upsert_option_valuation_policy,
+    },
+    "ai_os_import_sector_intelligence_package": {
+        "description": "Validate or atomically import an evidence-backed licensed export or primary-source sector package containing taxonomy, memberships, metrics and custom indices.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "package": {"type": "object"},
+                "persist": {"type": "boolean", "default": False},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+            "required": ["package"],
+        },
+        "handler": import_sector_intelligence_package,
     },
     "ai_os_report_scheduler_status": {
         "description": "Read report cadence, due state, latest launchd proof, scheduler invocation history, failures, and generated-run linkage.",

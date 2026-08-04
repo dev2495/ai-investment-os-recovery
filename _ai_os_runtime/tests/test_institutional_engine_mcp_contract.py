@@ -87,3 +87,28 @@ def test_sector_tool_is_tradingview_artifact_only() -> None:
         SERVER.run_sector_intelligence_engine(arguments)
 
     assert post.call_args.args[1]["tradingview_artifacts_only"] is True
+
+
+def test_institutional_data_operations_are_registered_and_route_to_scoped_apis() -> None:
+    cases = {
+        "ai_os_materialize_institutional_options": (
+            "/api/options/institutional-analytics/materialize", {"limit": 2}
+        ),
+        "ai_os_upsert_option_valuation_policy": (
+            "/api/options/valuation-policy/upsert",
+            {"policy_key": "p", "provider": "Zerodha", "exchange": "NFO", "underlying": "NIFTY"},
+        ),
+        "ai_os_import_sector_intelligence_package": (
+            "/api/sector-intelligence/import", {"package": {"source": {}}, "persist": False}
+        ),
+    }
+    for name, (path, arguments) in cases.items():
+        tool = SERVER.TOOLS[name]
+        assert tool["inputSchema"]["additionalProperties"] is False
+        with patch.object(SERVER, "post_api_json", return_value={"status": "accepted"}) as post:
+            result = tool["handler"](arguments)
+        assert decoded_tool_result(result) == {"status": "accepted"}
+        assert post.call_args.args[0] == path
+        payload = post.call_args.args[1]
+        assert payload.get("broker_write_allowed") is not True
+        assert payload.get("capital_action_allowed") is not True

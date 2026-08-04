@@ -175,12 +175,59 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             })
         audit.assert_not_called()
 
+    def test_valuation_policy_requires_explicit_sourced_inputs(self) -> None:
+        base = {
+            "policy_key": "nifty-rate-20260804",
+            "provider": "Zerodha",
+            "exchange": "NFO",
+            "underlying": "NIFTY",
+            "risk_free_rate": 0.06,
+            "dividend_yield": 0.012,
+            "rate_source": "RBI source",
+            "rate_source_timestamp": "2026-08-04T09:00:00+05:30",
+            "dividend_source": "Index factsheet",
+            "dividend_source_timestamp": "2026-08-04T09:00:00+05:30",
+            "source_artifact_ref": "sha256://valuation-policy",
+            "effective_from": "2026-08-04T09:00:00+05:30",
+            "expires_at": "2026-08-05T09:00:00+05:30",
+        }
+        with self.assertRaises(ValueError):
+            ai_os_api_server.upsert_option_valuation_policy({**base, "source_artifact_ref": ""})
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[{"id": 1, "broker_write_allowed": False}]),
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.upsert_option_valuation_policy(base)
+        self.assertFalse(result["broker_write_allowed"])
+        audit.assert_called_once()
+
+    def test_materializer_and_sector_import_are_operator_actions(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed({"status": "completed"})) as run,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            ai_os_api_server.materialize_institutional_options({"limit": 5})
+        self.assertIn("materialize_institutional_options.py", run.call_args.args[0][1])
+        audit.assert_called_once()
+
+        with (
+            mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed({"status": "validated"})) as run,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            ai_os_api_server.import_sector_intelligence_package({"package": {"source": {}}, "persist": False})
+        self.assertEqual(run.call_args.kwargs["input"], json.dumps({"source": {}}, default=str))
+        self.assertNotIn("--persist", run.call_args.args[0])
+        audit.assert_called_once()
+
     def test_routes_are_exposed(self) -> None:
         source = ai_os_api_server.Path(ai_os_api_server.__file__).read_text(encoding="utf-8")
         for route in (
             "/api/research/fundamental-factory/run",
             "/api/sector-intelligence/run",
+            "/api/sector-intelligence/import",
             "/api/options/institutional-analytics/run",
+            "/api/options/institutional-analytics/materialize",
+            "/api/options/valuation-policy/upsert",
         ):
             self.assertIn(route, source)
 
