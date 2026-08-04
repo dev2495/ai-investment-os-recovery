@@ -64,6 +64,17 @@ def complete_context(*, verified: bool = True) -> dict:
             "real_company_verification_evidence_id": 1 if verified else None,
         },
         "latest_dossier": {"holding_thesis_id": 41, "source_cutoff_at": "2026-07-05T00:00:00+00:00"},
+        "committee": {
+            "committee_review_id": 81,
+            "committee_decision_id": 82,
+            "recorded_decision": "hold",
+            "recorded_decision_status": "final",
+            "decision_notes": "Hold after independent review.",
+            "decided_by": "Devarsh",
+            "decision_created_at": "2026-08-03T11:00:00+00:00",
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+        },
         "evidence": evidence,
         "opinions": opinions,
         "coverage": {
@@ -76,6 +87,8 @@ def complete_context(*, verified: bool = True) -> dict:
             "management_communication_count": 7,
             "management_claim_count": 8,
             "claims_with_outcomes": 4,
+            "completed_valuation_types": ["dcf", "reverse_dcf", "peer_comparison"],
+            "completed_monte_carlo_count": 1,
         },
     }
 
@@ -106,8 +119,10 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertEqual([row["section_key"] for row in plan["sections"]], [row[0] for row in factory.SECTION_SPECS])
         self.assertEqual(plan["acceptance_status"], "passed")
         self.assertEqual(len(plan["opinion_ids"]), 12)
+        self.assertEqual(len(plan["acceptance_gates"]), 20)
         self.assertTrue(all(row["primary_evidence_id"] in range(1, 8) for row in plan["sections"]))
         self.assertIn("Stored conclusion for valuation.", next(row for row in plan["sections"] if row["section_key"] == "valuation")["content_markdown"])
+        self.assertIn("Decision record: `82`", next(row for row in plan["sections"] if row["section_key"] == "specialist_opinions_committee_decision")["content_markdown"])
         self.assertNotIn("buy", plan["executive_conclusion"].lower())
 
     def test_missing_fact_coverage_fails_explicit_gates_without_fabricating_values(self) -> None:
@@ -123,6 +138,48 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertEqual(gates["statement_history"]["observed_value"], {"value": 4})
         self.assertEqual(gates["market_share"]["gate_status"], "failed")
         self.assertIn("statement_history", plan["decision_summary"]["failed_gates"])
+
+    def test_missing_committee_valuation_or_challenge_blocks_acceptance(self) -> None:
+        context = complete_context()
+        context["committee"] = {}
+        context["coverage"]["completed_valuation_types"] = ["dcf"]
+        context["coverage"]["completed_monte_carlo_count"] = 0
+        challenge = next(row for row in context["opinions"] if row["specialist_key"] == "risk")
+        challenge["disconfirming_evidence"] = ""
+
+        plan = factory.build_plan(context, self.request())
+        gates = {row["gate_key"]: row for row in plan["acceptance_gates"]}
+
+        self.assertEqual(plan["acceptance_status"], "failed")
+        self.assertEqual(gates["committee_decision"]["gate_status"], "failed")
+        self.assertEqual(gates["valuation_suite"]["gate_status"], "failed")
+        self.assertEqual(gates["independent_challenge"]["gate_status"], "failed")
+        committee_section = next(row for row in plan["sections"] if row["section_key"] == "specialist_opinions_committee_decision")
+        self.assertEqual(committee_section["section_status"], "draft")
+        self.assertIn("No final human committee decision", committee_section["content_markdown"])
+
+    def test_management_claims_require_observed_outcomes(self) -> None:
+        context = complete_context()
+        context["coverage"]["claims_with_outcomes"] = 0
+
+        plan = factory.build_plan(context, self.request())
+        gate = next(row for row in plan["acceptance_gates"] if row["gate_key"] == "management_accountability")
+
+        self.assertEqual(gate["gate_status"], "failed")
+
+    def test_context_query_is_point_in_time_for_valuation_and_committee(self) -> None:
+        gateway = factory.PsqlGateway()
+        captured: list[str] = []
+        gateway._run_json = lambda sql: captured.append(sql) or {}  # type: ignore[method-assign]
+
+        gateway.load_context({"symbol": "RELIANCE", "exchange": "NSE"}, AS_OF)
+        sql = captured[0]
+
+        self.assertIn("latest_committee AS", sql)
+        self.assertIn("portfolio.long_term_committee_decisions", sql)
+        self.assertIn("completed_valuation_types", sql)
+        self.assertIn("portfolio.long_term_monte_carlo_runs", sql)
+        self.assertIn("created_at<=", sql)
 
     def test_dry_run_reads_but_never_persists(self) -> None:
         gateway = FakeGateway(complete_context())
@@ -203,6 +260,7 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertIn("INSERT INTO research.investment_dossier_refresh_triggers", sql)
         self.assertIn("research.open_real_company_acceptance_run", sql)
         self.assertIn("INSERT INTO research.fundamental_acceptance_gates", sql)
+        self.assertIn("DELETE FROM research.fundamental_acceptance_gates", sql)
         self.assertIn("SELECT context.dossier_version_id, incoming.*", sql)
         self.assertIn("SELECT context.dossier_id, incoming.*", sql)
         self.assertIn("SELECT context.acceptance_run_id, incoming.*", sql)

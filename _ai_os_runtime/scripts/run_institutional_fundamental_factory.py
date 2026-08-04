@@ -171,6 +171,31 @@ class PsqlGateway:
                 WHERE opinion.opinion_as_of <= {cutoff}::timestamptz
                   AND opinion.opinion_status NOT IN ('rejected', 'stale')
             ) opinion WHERE opinion.rank = 1
+        ), latest_committee AS (
+            SELECT review.id AS committee_review_id, review.review_status,
+                   review.recommended_decision, review.decision_status,
+                   review.memo_status, review.committee_members,
+                   review.evidence_summary, review.source_gaps,
+                   review.required_followups, review.final_decision,
+                   review.decision_notes, review.decided_by, review.decided_at,
+                   decision.id AS committee_decision_id,
+                   decision.decision AS recorded_decision,
+                   decision.decision_status AS recorded_decision_status,
+                   decision.evidence AS decision_evidence,
+                   decision.created_at AS decision_created_at,
+                   review.live_execution_allowed,
+                   review.capital_action_allowed
+            FROM portfolio.long_term_committee_reviews review
+            JOIN latest_dossier ON latest_dossier.holding_thesis_id=review.holding_thesis_id
+            LEFT JOIN LATERAL (
+                SELECT item.* FROM portfolio.long_term_committee_decisions item
+                WHERE item.committee_review_id=review.id
+                  AND item.created_at<={cutoff}::timestamptz
+                ORDER BY item.created_at DESC,item.id DESC LIMIT 1
+            ) decision ON true
+            WHERE review.created_at<={cutoff}::timestamptz
+            ORDER BY coalesce(decision.created_at,review.decided_at,review.created_at) DESC,review.id DESC
+            LIMIT 1
         ), point_in_time_facts AS (
             SELECT fact.*, row_number() OVER (
                 PARTITION BY fact.fact_definition_id, fact.fiscal_year, fact.fiscal_period,
@@ -191,6 +216,7 @@ class PsqlGateway:
                 FROM target
             ) row),
             'latest_dossier', (SELECT row_to_json(latest_dossier) FROM latest_dossier),
+            'committee', (SELECT row_to_json(latest_committee) FROM latest_committee),
             'evidence', coalesce((SELECT json_agg(row_to_json(row) ORDER BY row.retrieved_at, row.id) FROM (
                 SELECT id, source_type, source_name, source_url, source_title, published_at,
                        retrieved_at, source_as_of_date, verification_status, source_locator
@@ -211,7 +237,12 @@ class PsqlGateway:
                 'peer_count', (SELECT count(DISTINCT membership.peer_company_id) FROM research.peer_sets peer_set JOIN target ON target.id = peer_set.subject_company_id JOIN eligible_evidence set_evidence ON set_evidence.id = peer_set.evidence_id JOIN research.peer_set_memberships membership ON membership.peer_set_id = peer_set.id JOIN eligible_evidence member_evidence ON member_evidence.id = membership.evidence_id WHERE peer_set.valid_from <= {cutoff}::date AND (peer_set.valid_to IS NULL OR peer_set.valid_to >= {cutoff}::date) AND membership.valid_from <= {cutoff}::date AND (membership.valid_to IS NULL OR membership.valid_to >= {cutoff}::date)),
                 'management_communication_count', (SELECT count(*) FROM research.management_communications communication JOIN target ON target.id = communication.company_id JOIN eligible_evidence evidence ON evidence.id = communication.evidence_id WHERE communication.communication_date <= {cutoff}::date AND communication.transcript_status NOT IN ('rejected', 'superseded')),
                 'management_claim_count', (SELECT count(*) FROM research.management_claims claim JOIN target ON target.id = claim.company_id JOIN eligible_evidence evidence ON evidence.id = claim.evidence_id WHERE claim.claim_date <= {cutoff}::date),
-                'claims_with_outcomes', (SELECT count(DISTINCT outcome.claim_id) FROM research.management_claim_outcomes outcome JOIN research.management_claims claim ON claim.id = outcome.claim_id JOIN target ON target.id = claim.company_id JOIN eligible_evidence evidence ON evidence.id = outcome.evidence_id WHERE outcome.outcome_date <= {cutoff}::date)
+                'claims_with_outcomes', (SELECT count(DISTINCT outcome.claim_id) FROM research.management_claim_outcomes outcome JOIN research.management_claims claim ON claim.id = outcome.claim_id JOIN target ON target.id = claim.company_id JOIN eligible_evidence evidence ON evidence.id = outcome.evidence_id WHERE outcome.outcome_date <= {cutoff}::date),
+                'completed_valuation_types', coalesce((SELECT json_agg(DISTINCT lower(replace(replace(model.model_type,'-','_'),' ','_')) ORDER BY lower(replace(replace(model.model_type,'-','_'),' ','_')))
+                    FROM portfolio.holding_valuation_models model JOIN latest_dossier ON latest_dossier.holding_thesis_id=model.holding_thesis_id
+                    WHERE model.status IN ('complete','reviewed') AND model.updated_at<={cutoff}::timestamptz), '[]'::json),
+                'completed_monte_carlo_count', (SELECT count(*) FROM portfolio.long_term_monte_carlo_runs run JOIN latest_dossier ON latest_dossier.holding_thesis_id=run.holding_thesis_id
+                    WHERE run.run_status='complete' AND run.created_at<={cutoff}::timestamptz)
             )
         )::text;
         """
@@ -364,6 +395,10 @@ class PsqlGateway:
             context.dossier_version_id, {sql_literal(plan['as_of'])}::timestamptz, {sql_literal(plan['actor'])}
         );
 
+        DELETE FROM research.fundamental_acceptance_gates gate
+        USING institutional_factory_context context
+        WHERE gate.acceptance_run_id = context.acceptance_run_id;
+
         INSERT INTO research.fundamental_acceptance_gates (
             acceptance_run_id, gate_key, gate_name, gate_status, observed_value,
             required_value, failure_reason, evidence_id, evaluated_by
@@ -418,6 +453,7 @@ def _section_markdown(
     evidence: list[dict[str, Any]],
     opinions: list[dict[str, Any]],
     topical: bool,
+    committee: dict[str, Any] | None = None,
 ) -> str:
     lines = [f"# {title}", "", f"- Research cutoff: `{as_of}`", "- Source mode: stored point-in-time evidence only", ""]
     lines.append("## Stored Specialist Opinions")
@@ -445,6 +481,22 @@ def _section_markdown(
         )
     if not topical:
         lines.extend(["", "## Evidence Gap", "", f"No section-specific evidence mapping was available for `{section_key}` at the cutoff."])
+    if section_key == "specialist_opinions_committee_decision":
+        lines.extend(["", "## Durable Committee Record", ""])
+        if committee and committee.get("committee_decision_id"):
+            lines.extend([
+                f"- Review: `{committee.get('committee_review_id')}`",
+                f"- Decision record: `{committee.get('committee_decision_id')}`",
+                f"- Final decision: `{committee.get('recorded_decision') or committee.get('final_decision')}`",
+                f"- Decided by: `{committee.get('decided_by')}`",
+                f"- Decided at: `{committee.get('decision_created_at') or committee.get('decided_at')}`",
+                f"- Capital action allowed: `{bool(committee.get('capital_action_allowed'))}`",
+                f"- Live execution allowed: `{bool(committee.get('live_execution_allowed'))}`",
+                "",
+                str(committee.get("decision_notes") or "No additional committee note stored."),
+            ])
+        else:
+            lines.append("No final human committee decision exists at the research cutoff.")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -465,10 +517,33 @@ def evaluate_acceptance(
     opinions: list[dict[str, Any]],
     sections: list[dict[str, Any]],
     coverage: dict[str, Any],
+    latest_dossier: dict[str, Any],
+    committee: dict[str, Any],
     as_of: datetime,
 ) -> list[dict[str, Any]]:
     specialists = {str(row.get("specialist_key")) for row in opinions}
+    specialist_rows = {str(row.get("specialist_key")): row for row in opinions}
     human_verified = sum(1 for row in evidence if row.get("verification_status") == "human_verified")
+    valuation_types = {str(value).lower().replace("-", "_").replace(" ", "_") for value in coverage.get("completed_valuation_types") or []}
+    valuation_families = {
+        "dcf": bool(valuation_types & {"dcf", "discounted_cash_flow"}),
+        "reverse_dcf": bool(valuation_types & {"reverse_dcf", "reverse_discounted_cash_flow"}),
+        "multiples": bool(valuation_types & {"multiples", "relative_valuation", "peer_comparison", "comparable_companies"}),
+        "monte_carlo": int(coverage.get("completed_monte_carlo_count") or 0) > 0,
+    }
+    challenge_keys = ("bear_case", "risk", "forensic_accounting")
+    challenge_rows = [specialist_rows.get(key) for key in challenge_keys]
+    independent_challenge = all(
+        row and str(row.get("disconfirming_evidence") or "").strip()
+        for row in challenge_rows
+    ) and len({str(row.get("agent_name")) for row in challenge_rows if row}) == len(challenge_keys)
+    committee_complete = bool(
+        committee.get("committee_decision_id")
+        and committee.get("recorded_decision_status") == "final"
+        and committee.get("recorded_decision")
+        and committee.get("capital_action_allowed") is False
+        and committee.get("live_execution_allowed") is False
+    )
     point_in_time = all(
         (parse_timestamp(row.get("retrieved_at")) or as_of) <= as_of
         and (parse_timestamp(row.get("published_at")) or parse_timestamp(row.get("retrieved_at")) or as_of) <= as_of
@@ -479,14 +554,20 @@ def evaluate_acceptance(
         _gate("point_in_time_inputs", "All inputs respect the research cutoff", point_in_time, {"as_of": as_of.isoformat()}, {"future_inputs": 0}, "At least one evidence item or opinion is newer than the cutoff."),
         _gate("fifteen_sections", "All fifteen dossier sections assembled", len(sections) == 15, len(sections), 15, "The dossier does not contain all required sections."),
         _gate("section_evidence", "Every section has stored evidence", all(row.get("evidence_ids") for row in sections), sum(1 for row in sections if row.get("evidence_ids")), 15, "At least one section has no eligible stored evidence."),
+        _gate("section_readiness", "All dossier sections are evidence complete", all(row.get("section_status") == "evidence_complete" for row in sections), sum(1 for row in sections if row.get("section_status") == "evidence_complete"), 15, "At least one dossier section remains a draft or lacks section-specific evidence."),
         _gate("statement_history", "Ten-year annual statement history", int(coverage.get("annual_statement_years") or 0) >= 10, int(coverage.get("annual_statement_years") or 0), 10, "Fewer than ten annual statement years are available at the cutoff."),
         _gate("segment_history", "Segment history is populated", int(coverage.get("segment_count") or 0) > 0 and int(coverage.get("segment_fact_years") or 0) >= 3, {"segments": int(coverage.get("segment_count") or 0), "years": int(coverage.get("segment_fact_years") or 0)}, {"segments_min": 1, "years_min": 3}, "Segment definitions or history are incomplete."),
         _gate("operational_kpis", "Operational KPI history is populated", int(coverage.get("operational_kpi_count") or 0) > 0, int(coverage.get("operational_kpi_count") or 0), 1, "No operational KPI series is available."),
         _gate("market_share", "Market-share history is populated", int(coverage.get("market_share_series_count") or 0) > 0, int(coverage.get("market_share_series_count") or 0), 1, "No market-share series is available."),
         _gate("peer_set", "Point-in-time peer set is populated", int(coverage.get("peer_count") or 0) >= 2, int(coverage.get("peer_count") or 0), 2, "Fewer than two eligible peers are available."),
         _gate("management_intelligence", "Management communications and claims are tracked", int(coverage.get("management_communication_count") or 0) > 0 and int(coverage.get("management_claim_count") or 0) > 0, {"communications": int(coverage.get("management_communication_count") or 0), "claims": int(coverage.get("management_claim_count") or 0), "claims_with_outcomes": int(coverage.get("claims_with_outcomes") or 0)}, {"communications_min": 1, "claims_min": 1}, "Management communication or claim history is absent."),
+        _gate("management_accountability", "Management claims have observed outcomes", int(coverage.get("claims_with_outcomes") or 0) > 0, int(coverage.get("claims_with_outcomes") or 0), 1, "No management claim has a point-in-time observed outcome."),
         _gate("specialist_coverage", "All required specialists submitted evidence-backed opinions", REQUIRED_SPECIALISTS <= specialists, {"present": sorted(specialists), "missing": sorted(REQUIRED_SPECIALISTS - specialists)}, {"required": sorted(REQUIRED_SPECIALISTS)}, "One or more required specialist opinions are missing."),
+        _gate("independent_challenge", "Bear, risk, and forensic specialists preserve disconfirming evidence", independent_challenge, {"specialists": list(challenge_keys), "independent_agents": len({str(row.get('agent_name')) for row in challenge_rows if row})}, {"documented_challenges": 3, "independent_agents": 3}, "Independent bear, risk, or forensic challenge is incomplete."),
         _gate("portfolio_fit", "Portfolio-fit opinion is present", "portfolio_fit" in specialists, {"present": "portfolio_fit" in specialists}, {"present": True}, "The mandatory portfolio-fit opinion is missing."),
+        _gate("holding_thesis", "Dossier is linked to a durable holding thesis", latest_dossier.get("holding_thesis_id") is not None, {"holding_thesis_id": latest_dossier.get("holding_thesis_id")}, {"linked": True}, "No durable holding thesis is linked to the company dossier."),
+        _gate("valuation_suite", "DCF, reverse DCF, multiples, and Monte Carlo are complete", all(valuation_families.values()), valuation_families, {key: True for key in valuation_families}, "One or more required valuation families are incomplete."),
+        _gate("committee_decision", "Final human committee decision is durably recorded", committee_complete, {"committee_review_id": committee.get("committee_review_id"), "committee_decision_id": committee.get("committee_decision_id"), "decision": committee.get("recorded_decision"), "decision_status": committee.get("recorded_decision_status")}, {"final_human_decision": True, "capital_action_allowed": False, "live_execution_allowed": False}, "No final research-only human committee decision exists at the cutoff."),
         _gate("evidence_quality", "Human-verified evidence is present", human_verified > 0, human_verified, 1, "No human-verified evidence is available at the cutoff."),
         _gate("execution_lock", "Research cannot take capital or broker action", True, {"capital_action_allowed": False, "broker_execution_allowed": False}, {"capital_action_allowed": False, "broker_execution_allowed": False}, "Execution lock was not enforced."),
     ]
@@ -529,22 +610,26 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     opinions = list(context.get("opinions") or [])
     coverage = dict(context.get("coverage") or {})
     latest_dossier = context.get("latest_dossier") or {}
+    committee = context.get("committee") or {}
     if not evidence:
         raise ValueError("No eligible stored evidence exists at the requested point in time.")
     sections: list[dict[str, Any]] = []
     for order, (key, title, specialist_keys, source_types) in enumerate(SECTION_SPECS, start=1):
         selected, section_opinions, topical = _evidence_for_section(evidence, opinions, specialist_keys, source_types)
+        section_complete = bool(topical and section_opinions)
+        if key == "specialist_opinions_committee_decision":
+            section_complete = section_complete and bool(committee.get("committee_decision_id"))
         sections.append({
             "section_key": key,
             "section_order": order,
             "section_title": title,
-            "section_status": "evidence_complete" if topical and section_opinions else "draft",
-            "content_markdown": _section_markdown(title, key, request.as_of.isoformat(), selected, section_opinions, topical),
+            "section_status": "evidence_complete" if section_complete else "draft",
+            "content_markdown": _section_markdown(title, key, request.as_of.isoformat(), selected, section_opinions, topical, committee),
             "primary_evidence_id": int(selected[0]["id"]),
             "evidence_ids": [int(row["id"]) for row in selected],
             "evidence_as_of": request.as_of.isoformat(),
         })
-    gates = evaluate_acceptance(company, evidence, opinions, sections, coverage, request.as_of)
+    gates = evaluate_acceptance(company, evidence, opinions, sections, coverage, latest_dossier, committee, request.as_of)
     failed = [gate["gate_key"] for gate in gates if gate["gate_status"] != "passed"]
     specialists = sorted({str(row.get("specialist_key")) for row in opinions})
     thesis_id = latest_dossier.get("holding_thesis_id")

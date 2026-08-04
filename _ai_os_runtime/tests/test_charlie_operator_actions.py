@@ -346,6 +346,34 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(captured["expiry_date"], "2026-08-27")
         self.assertEqual(captured["window_start"], "2026-08-04T09:20:00+05:30")
 
+    def test_fundamental_factory_command_can_validate_or_explicitly_persist(self) -> None:
+        captured = []
+
+        def fake_run(payload: dict) -> dict:
+            captured.append(payload)
+            return {"status": "completed", "acceptance_status": "failed"}
+
+        with mock.patch.object(ai_os_api_server, "run_institutional_fundamental_factory", fake_run):
+            validate = ai_os_api_server.execute_charlie_safe_tools(
+                "Run fundamental research factory RELIANCE NSE as of 2026-08-04T12:00:00+05:30"
+            )
+            persist = ai_os_api_server.execute_charlie_safe_tools(
+                "Refresh institutional fundamental factory RELIANCE NSE 2026-08-04T12:00:00+05:30 and persist"
+            )
+
+        self.assertEqual(validate[0]["tool"], "run_institutional_fundamental_factory")
+        self.assertTrue(captured[0]["dry_run"])
+        self.assertFalse(captured[1]["dry_run"])
+        self.assertEqual(captured[1]["symbol"], "RELIANCE")
+        self.assertEqual(persist[0]["status"], "completed")
+
+    def test_fundamental_factory_command_never_guesses_company_or_cutoff(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_institutional_fundamental_factory") as run:
+            operations = ai_os_api_server.execute_charlie_safe_tools("Run fundamental factory")
+
+        self.assertEqual(operations[0]["status"], "needs_input")
+        run.assert_not_called()
+
     def test_option_acceptance_command_never_guesses_missing_window(self) -> None:
         with mock.patch.object(ai_os_api_server, "run_option_acceptance") as run:
             operations = ai_os_api_server.execute_charlie_safe_tools(

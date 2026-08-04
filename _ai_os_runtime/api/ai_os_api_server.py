@@ -17011,6 +17011,42 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             }),
         )
 
+    fundamental_factory_command = re.search(
+        r"\b(?:run|validate|refresh)\s+(?:the\s+)?(?:institutional\s+)?fundamental\s+(?:research\s+)?factory\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if fundamental_factory_command:
+        timestamp_match = re.search(
+            r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})\b",
+            message,
+        )
+        exchange_match = re.search(r"\b(NSE|BSE)\b", message, flags=re.IGNORECASE)
+        ignored = {"RUN", "VALIDATE", "REFRESH", "THE", "INSTITUTIONAL", "FUNDAMENTAL", "RESEARCH", "FACTORY", "NSE", "BSE", "PERSIST", "WRITE", "DRY"}
+        symbols = [
+            symbol.upper() for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol.upper() not in ignored
+        ]
+        if not timestamp_match or not exchange_match or not symbols:
+            results.append({
+                "tool": "run_institutional_fundamental_factory",
+                "status": "needs_input",
+                "detail": "Provide company symbol, NSE or BSE, and a timezone-aware ISO research cutoff. Add 'persist' only when the validated dossier should be written.",
+            })
+        else:
+            persist = bool(re.search(r"\b(?:persist|write)\b", message, flags=re.IGNORECASE))
+            invoke(
+                "run_institutional_fundamental_factory",
+                lambda: run_institutional_fundamental_factory({
+                    "symbol": symbols[0],
+                    "exchange": exchange_match.group(1).upper(),
+                    "as_of": timestamp_match.group(0),
+                    "dry_run": not persist,
+                    "actor": f"Devarsh via {actor}",
+                }),
+                "acceptance_status",
+            )
+
     sector_acceptance_command = re.search(
         r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:real[- ]sector\s+|sector\s+)?acceptance\b",
         message,

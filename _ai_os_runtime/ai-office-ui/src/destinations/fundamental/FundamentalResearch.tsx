@@ -4,7 +4,7 @@
  * Routes:  /fundamental/theses | /scorecards | /valuation | /coverage | /ideas
  *
  * The deep long-term investment research workspace. Built around the
- * holding thesis as the atomic unit, with 11 specialist scorecards,
+ * holding thesis as the atomic unit, with 12 specialist scorecards,
  * valuation suite (DCF / multiples / reverse DCF / Monte Carlo),
  * coverage queue, and a fundamental idea generator.
  *
@@ -67,7 +67,7 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
           </span>
         </div>
         <div className="aios-destination__subtitle">
-          Long-term investment theses, 11 specialist scorecards, valuation suite, and idea generation.
+          Long-term investment theses, 12 specialist scorecards, valuation suite, and idea generation.
           Separated from quant — this is about business quality, not signal noise.
         </div>
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
@@ -104,12 +104,16 @@ function FundamentalFactoryControl() {
       dry_run: form.mode === "dry_run",
       actor: "Devarsh",
     }, {
-      onSuccess: (result) => pushToast({
-        title: form.mode === "dry_run" ? "Fundamental factory dry run complete" : "Fundamental factory records refreshed",
-        message: text(result, "status", "completed"),
-        tone: "ok",
-        duration: 4500,
-      }),
+      onSuccess: (result) => {
+        const acceptance = text(result, "acceptance_status", text(result, "status", "completed"));
+        const failed = value<string[]>(result, "failed_gates", []);
+        pushToast({
+          title: acceptance === "passed" ? "Fundamental acceptance passed" : "Fundamental acceptance remains blocked",
+          message: failed.length ? `${failed.length} gates need evidence: ${failed.slice(0, 4).join(", ")}` : acceptance,
+          tone: acceptance === "passed" ? "ok" : "warn",
+          duration: 6500,
+        });
+      },
       onError: (error) => pushToast({ title: "Fundamental factory failed", message: error.message, tone: "risk", duration: 6500 }),
     });
   }
@@ -131,11 +135,16 @@ function FundamentalFactoryControl() {
         Dry run is the default. This assembles evidence, dossiers, specialist gates and committee readiness; it cannot place or propose a broker order.
       </div>
       {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
-      {mutation.isSuccess ? (
-        <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-ok)", fontSize: "var(--text-sm)" }}>
-          {text(mutation.data, "status", "Completed")} · {text(mutation.data, "run_key", text(mutation.data, "message", form.mode === "dry_run" ? "No records were written." : "Validated research records were refreshed."))}
-        </div>
-      ) : null}
+      {mutation.isSuccess ? (() => {
+        const acceptance = text(mutation.data, "acceptance_status", text(mutation.data, "status", "completed"));
+        const failed = value<string[]>(mutation.data, "failed_gates", []);
+        return (
+          <div role="status" style={{ marginTop: "var(--space-3)", color: acceptance === "passed" ? "var(--status-ok)" : "var(--status-warn)", fontSize: "var(--text-sm)" }}>
+            <strong>{acceptance === "passed" ? "Institutional acceptance passed." : "Institutional acceptance not passed."}</strong>{" "}
+            {failed.length ? `Missing gates: ${failed.join(", ")}.` : text(mutation.data, "run_key", form.mode === "dry_run" ? "No records were written." : "Validated research records were refreshed.")}
+          </div>
+        );
+      })() : null}
     </Panel>
   );
 }
@@ -330,7 +339,7 @@ function MonteCarloInline({ thesisId }: { thesisId: number }) {
 }
 
 /* ============================================================
- * SCORECARDS VIEW — the 11 specialist modules
+ * SCORECARDS VIEW — the 12 specialist modules
  * ============================================================ */
 const SPECIALIST_MODULES = [
   { key: "business_model", label: "Business Model", icon: Target },
