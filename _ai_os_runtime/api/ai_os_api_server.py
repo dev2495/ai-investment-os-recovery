@@ -2888,6 +2888,14 @@ def build_sector_intelligence_snapshot() -> dict:
             ORDER BY imported_at DESC
             LIMIT 50
         """,
+        "acceptance_runs": """
+            SELECT acceptance_run_id,run_key,taxonomy_key,node_name,as_of_date,status,
+                   gate_version,gate_count,passed_count,failed_count,blocked_count,
+                   gates,started_by,started_at,finished_at,broker_write_allowed
+            FROM sector_intelligence.v_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 50
+        """,
         "execution_control": """
             SELECT global_execution_locked, broker_execution_policy,
                    paper_trading_allowed, limited_live_allowed,
@@ -15317,6 +15325,14 @@ def build_chat_context(
             ORDER BY run.imported_at DESC
             LIMIT 6
         """,
+        "sector_acceptance": """
+            SELECT acceptance_run_id,run_key,taxonomy_key,node_name,as_of_date,status,
+                   gate_count,passed_count,failed_count,blocked_count,gates,
+                   started_at,finished_at,broker_write_allowed
+            FROM sector_intelligence.v_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 6
+        """,
         "fundamental_coverage": """
             SELECT company_key, legal_name, primary_symbol, primary_exchange,
                    real_company_verified, annual_statement_years,
@@ -15571,6 +15587,7 @@ def deterministic_chat_reply(
     sector_freshness = context.get("sector_data_freshness") or []
     sector_indices = context.get("sector_custom_indices") or []
     sector_import_runs = context.get("sector_import_runs") or []
+    sector_acceptance = context.get("sector_acceptance") or []
     fundamental_coverage = context.get("fundamental_coverage") or []
     investment_dossiers = context.get("investment_dossiers") or []
     fundamental_acceptance = context.get("fundamental_acceptance") or []
@@ -15857,6 +15874,16 @@ def deterministic_chat_reply(
                     f"Latest source package {latest_import.get('run_key')} is {latest_import.get('status')} "
                     f"from {latest_import.get('source_name')} at {latest_import.get('imported_at')}."
                 )
+            if sector_acceptance:
+                latest_acceptance = sector_acceptance[0]
+                focused.append(
+                    f"Latest sector acceptance {latest_acceptance.get('run_key')} is "
+                    f"{latest_acceptance.get('status')}: {latest_acceptance.get('passed_count') or 0}/"
+                    f"{latest_acceptance.get('gate_count') or 0} gates passed and "
+                    f"{latest_acceptance.get('blocked_count') or 0} blocked."
+                )
+            else:
+                focused.append("No real-sector acceptance run has been executed; sector readiness is unproven.")
         else:
             focused.append("Sector taxonomy and custom-index controls exist, but no populated sector intelligence row is stored yet.")
     if any(term in normalized for term in ("option", "straddle", "chain", "iv", "open interest", "greeks", "gamma", "vanna", "charm")):

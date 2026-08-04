@@ -301,6 +301,7 @@ export const SectorIntelligenceSchema = z.object({
   flows: z.array(liveRow).default([]),
   chart_artifacts: z.array(liveRow).default([]),
   source_import_runs: z.array(liveRow).default([]),
+  acceptance_runs: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 

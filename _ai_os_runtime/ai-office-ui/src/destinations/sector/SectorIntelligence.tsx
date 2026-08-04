@@ -215,6 +215,7 @@ function Overview({ data }: { data: ReturnType<typeof useSectorIntelligence>["da
   const freshness = data?.freshness ?? [];
   const rankings = data?.rankings ?? [];
   const imports = data?.source_import_runs ?? [];
+  const acceptance = data?.acceptance_runs ?? [];
   const sectors = new Set(hierarchy.map((row) => text(row, "sector_key")).filter(Boolean)).size;
   const industries = new Set(hierarchy.map((row) => text(row, "industry_key")).filter(Boolean)).size;
   const stale = freshness.filter((row) =>
@@ -267,6 +268,20 @@ function Overview({ data }: { data: ReturnType<typeof useSectorIntelligence>["da
             { key: "metrics", header: "Metrics", align: "right", render: (row) => num(row, "metric_rows") },
             { key: "indices", header: "Indices", align: "right", render: (row) => num(row, "index_rows") },
             { key: "when", header: "Imported", render: (row) => formatRelative(text(row, "imported_at")) },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={ShieldCheck} title="Real-Sector Acceptance" actions={<Badge tone={acceptance[0] && text(acceptance[0], "status") === "passed" ? "ok" : "warn"}>{acceptance.length ? text(acceptance[0], "status", "blocked") : "Not run"}</Badge>}>
+        {acceptance.length === 0 ? (
+          <Empty icon={ShieldCheck} title="Acceptance has not been executed" description="A real sector must pass constituents, two weighting methods, index reconciliation, fundamentals, breadth, flows, dossier, committee dissent, portfolio fit and native TradingView handoff gates." />
+        ) : (
+          <DataTable rows={acceptance} rowKey={(row, index) => text(row, "run_key", String(index))} columns={[
+            { key: "sector", header: "Sector", render: (row) => <strong>{text(row, "node_name")}</strong> },
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status")} /> },
+            { key: "passed", header: "Passed", align: "right", render: (row) => `${num(row, "passed_count")} / ${num(row, "gate_count")}` },
+            { key: "blocked", header: "Blocked", align: "right", render: (row) => num(row, "blocked_count") },
+            { key: "asof", header: "As of", render: (row) => text(row, "as_of_date") },
+            { key: "finished", header: "Checked", render: (row) => formatRelative(text(row, "finished_at")) },
           ]} />
         )}
       </Panel>

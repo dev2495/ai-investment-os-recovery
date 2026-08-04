@@ -579,6 +579,16 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                 LIMIT 10
                 """
             ),
+            "acceptance": psql_json(
+                """
+                SELECT acceptance_run_id,run_key,taxonomy_key,node_name,as_of_date,
+                       status,gate_count,passed_count,failed_count,blocked_count,
+                       gates,started_at,finished_at,broker_write_allowed
+                FROM sector_intelligence.v_acceptance_gate_summary
+                ORDER BY started_at DESC
+                LIMIT 10
+                """
+            ),
         }
     if skill_key in {"options_data_quality_control", "options_iv_greeks_review", "options_overlay_review"}:
         base["institutional_options"] = {
