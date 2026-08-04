@@ -1819,6 +1819,8 @@ TradingView Desktop remains a user-managed chart workspace. The deterministic en
 
 Acceptance requires one real Indian sector with effective-dated constituents, two point-in-time weighting methods, reconciled index history, financial/valuation breadth, relative strength, flows, source lineage, a sector dossier, committee discussion, portfolio fit, and generated native Desktop handoff artifacts.
 
+Verified milestone on 2026-08-04: the warehouse imported 11 official current Nifty sector baskets from Nifty Indices, retaining 151 source rows as 24 taxonomy nodes and 302 effective-dated index/industry memberships as of 2026-07-31. The Nifty IT acceptance run passed current constituent evidence and blocked the other nine institutional gates; this is intentionally not a completed sector office. Evidence: [[2026-08-04-sector-taxonomy-and-bse-filing-intake-v1]].
+
 ### 45.3 Institutional Options Analytics And Monitoring Desk
 
 Every displayed analytical value must be a validated deterministic calculation or an identified provider field. Missing IV or Greeks remain unavailable and are never rendered as zero.

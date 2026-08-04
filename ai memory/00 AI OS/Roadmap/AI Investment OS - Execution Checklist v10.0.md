@@ -622,7 +622,7 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 
 ## 22. Sector Intelligence, Custom Indices, And Flow Engine
 
-- [ ] Build effective-dated Indian taxonomy and memberships with provenance.
+- [~] Build effective-dated Indian taxonomy and memberships with provenance. Current official Nifty milestone: 11 sector baskets, 151 source rows, 24 taxonomy nodes, and 302 effective-dated memberships as of 2026-07-31; historical membership and broader industry coverage remain open. Evidence: [[2026-08-04-sector-taxonomy-and-bse-filing-intake-v1]].
 - [ ] Build aggregates, valuation bands, revisions, market share, KPIs, capacity, value-chain, and macro/raw-material histories.
 - [ ] Build reproducible classifications and equal-weight, market-cap/free-float, quality, momentum, and custom index engines.
 - [ ] Build breadth, relative strength, delivery, futures OI, options flow, volatility, ownership, shareholding, bulk/block, and insider monitors.
