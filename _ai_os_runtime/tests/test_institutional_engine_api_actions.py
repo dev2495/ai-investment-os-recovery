@@ -210,6 +210,48 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             })
         audit.assert_not_called()
 
+    def test_option_acceptance_runs_one_canonical_database_gate_function(self) -> None:
+        response = {
+            "id": 21,
+            "run_key": "options-acceptance-NFO-NIFTY-2026-08-27-20260804T042000Z",
+            "status": "blocked",
+            "gate_count": 11,
+            "passed_count": 7,
+            "blocked_count": 4,
+            "broker_write_allowed": False,
+            "gates": [],
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[response]) as database,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.run_option_acceptance({
+                "exchange": "NFO",
+                "underlying": "NIFTY",
+                "expiry_date": "2026-08-27",
+                "window_start": "2026-08-04T09:20:00+05:30",
+                "window_end": "2026-08-04T09:50:00+05:30",
+                "actor": "Devarsh",
+            })
+
+        self.assertEqual(result, response)
+        query = database.call_args.args[0]
+        self.assertIn("trading.run_option_acceptance_gates", query)
+        self.assertIn("trading.v_option_acceptance_gate_summary", query)
+        audit.assert_called_once()
+
+    def test_option_acceptance_rejects_unbounded_or_unsafe_input(self) -> None:
+        invalid = (
+            {"exchange": "NSE", "underlying": "NIFTY", "expiry_date": "2026-08-27", "window_start": "2026-08-04T09:20:00+05:30", "window_end": "2026-08-04T09:50:00+05:30"},
+            {"exchange": "NFO", "underlying": "", "expiry_date": "2026-08-27", "window_start": "2026-08-04T09:20:00+05:30", "window_end": "2026-08-04T09:50:00+05:30"},
+            {"exchange": "NFO", "underlying": "NIFTY", "expiry_date": "27-08-2026", "window_start": "2026-08-04T09:20:00+05:30", "window_end": "2026-08-04T09:50:00+05:30"},
+            {"exchange": "NFO", "underlying": "NIFTY", "expiry_date": "2026-08-27", "window_start": "2026-08-04T09:20:00", "window_end": "2026-08-04T09:50:00+05:30"},
+            {"exchange": "NFO", "underlying": "NIFTY", "expiry_date": "2026-08-27", "window_start": "2026-08-04T09:50:00+05:30", "window_end": "2026-08-04T09:20:00+05:30"},
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                ai_os_api_server.run_option_acceptance(payload)
+
     def test_valuation_policy_requires_explicit_sourced_inputs(self) -> None:
         base = {
             "policy_key": "nifty-rate-20260804",
@@ -261,6 +303,7 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             "/api/sector-intelligence/run",
             "/api/sector-intelligence/import",
             "/api/options/institutional-analytics/run",
+            "/api/options/institutional-analytics/acceptance/run",
             "/api/options/institutional-analytics/materialize",
             "/api/options/valuation-policy/upsert",
         ):

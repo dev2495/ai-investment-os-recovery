@@ -127,6 +127,23 @@ export function useRunInstitutionalOptionsAnalytics() {
   );
 }
 
+export interface OptionAcceptanceInput {
+  exchange: "NFO" | "BFO";
+  underlying: string;
+  expiry_date: string;
+  window_start: string;
+  window_end: string;
+  run_key?: string;
+  actor?: string;
+}
+
+export function useRunOptionAcceptance() {
+  return useInvalidating<OptionAcceptanceInput, LiveRow>(
+    "/api/options/institutional-analytics/acceptance/run",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
+
 export interface InstitutionalOptionsMaterializeInput {
   limit: number;
   interval_seconds: number;

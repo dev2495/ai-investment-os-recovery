@@ -11743,6 +11743,72 @@ def run_institutional_options_engine(payload: dict) -> dict:
     return result
 
 
+def run_option_acceptance(payload: dict) -> dict:
+    exchange = str(payload.get("exchange") or "NFO").strip().upper()
+    underlying = str(payload.get("underlying") or "").strip().upper()
+    expiry = str(payload.get("expiry") or payload.get("expiry_date") or payload.get("expiryDate") or "").strip()
+    window_start = str(payload.get("window_start") or payload.get("windowStart") or "").strip()
+    window_end = str(payload.get("window_end") or payload.get("windowEnd") or "").strip()
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    if exchange not in {"NFO", "BFO"}:
+        raise ValueError("exchange must be NFO or BFO")
+    if not underlying or not re.fullmatch(r"[A-Z0-9._&-]{1,40}", underlying):
+        raise ValueError("underlying is required")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry):
+        raise ValueError("expiry_date is required in YYYY-MM-DD format")
+    parsed: dict[str, datetime] = {}
+    for name, raw in (("window_start", window_start), ("window_end", window_end)):
+        try:
+            value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+        if value.tzinfo is None:
+            raise ValueError(f"{name} must include an explicit timezone")
+        parsed[name] = value
+    if parsed["window_start"] >= parsed["window_end"]:
+        raise ValueError("window_start must be before window_end")
+    default_key = (
+        f"options-acceptance-{exchange}-{underlying}-{expiry}-"
+        + parsed["window_end"].astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    )
+    run_key = str(payload.get("run_key") or payload.get("runKey") or default_key).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
+        raise ValueError("run_key contains unsupported characters")
+    rows = run_psql_json(f"""
+        WITH accepted AS (
+            SELECT trading.run_option_acceptance_gates(
+                {sql_literal(run_key)},{sql_literal(exchange)},{sql_literal(underlying)},
+                {sql_literal(expiry)}::date,{sql_literal(parsed['window_start'].isoformat())}::timestamptz,
+                {sql_literal(parsed['window_end'].isoformat())}::timestamptz,{sql_literal(actor)}
+            ) AS acceptance_run_id
+        )
+        SELECT summary.*,
+               (SELECT jsonb_agg(jsonb_build_object(
+                    'gate_key',result.gate_key,'gate_name',result.gate_name,
+                    'status',result.status,'observed_value',result.observed_value,
+                    'threshold_value',result.threshold_value,'comparator',result.comparator,
+                    'failure_reason',result.failure_reason,'evidence',result.evidence
+                ) ORDER BY result.id)
+                FROM trading.option_acceptance_gate_results result
+                WHERE result.acceptance_run_id=accepted.acceptance_run_id) AS gates
+        FROM accepted
+        JOIN trading.v_option_acceptance_gate_summary summary
+          ON summary.id=accepted.acceptance_run_id
+    """)
+    if not rows:
+        raise ValueError("option acceptance run returned no durable result")
+    result = rows[0]
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("option acceptance violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_option_acceptance","run_option_acceptance",actor,
+        "trading.option_acceptance_gate_runs",result,
+        {"exchange":exchange,"underlying":underlying,"expiry":expiry,
+         "window_start":parsed["window_start"].isoformat(),"window_end":parsed["window_end"].isoformat()},
+    )
+    return result
+
+
 def upsert_option_valuation_policy(payload: dict) -> dict:
     required = ("policy_key", "provider", "exchange", "underlying", "risk_free_rate",
                 "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
@@ -16979,6 +17045,43 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
                 "status",
             )
 
+    option_acceptance_command = re.search(
+        r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:institutional\s+)?options?\s+acceptance\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if option_acceptance_command:
+        exchange_match = re.search(r"\b(NFO|BFO|NSE|BSE)\b", message, flags=re.IGNORECASE)
+        expiry_match = re.search(r"\bexpiry\s+(\d{4}-\d{2}-\d{2})\b", message, flags=re.IGNORECASE)
+        timestamps = re.findall(
+            r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})\b",
+            message,
+        )
+        ignored = {"NFO", "BFO", "NSE", "BSE", "OPTIONS", "OPTION", "ACCEPTANCE"}
+        symbols = [
+            symbol.upper() for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol.upper() not in ignored
+        ]
+        if not exchange_match or not expiry_match or len(timestamps) < 2 or not symbols:
+            results.append({
+                "tool": "run_option_acceptance",
+                "status": "needs_input",
+                "detail": "Provide exchange, underlying, expiry YYYY-MM-DD, and two timezone-aware ISO timestamps for window start and end.",
+            })
+        else:
+            invoke(
+                "run_option_acceptance",
+                lambda: run_option_acceptance({
+                    "exchange": exchange_match.group(1).upper(),
+                    "underlying": symbols[0],
+                    "expiry_date": expiry_match.group(1),
+                    "window_start": timestamps[0],
+                    "window_end": timestamps[1],
+                    "actor": f"Devarsh via {actor}",
+                }),
+                "status",
+            )
+
     watchlist_match = re.search(
         r"\badd\s+([A-Za-z0-9&.-]{2,20})\s+(?:to|on)\s+(?:my\s+)?watchlist\b",
         message,
@@ -18368,6 +18471,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/options/institutional-analytics/run":
                 self._send_json(run_institutional_options_engine(payload), 201)
+                return
+            if self.path == "/api/options/institutional-analytics/acceptance/run":
+                self._send_json(run_option_acceptance(payload), 201)
                 return
             if self.path == "/api/options/institutional-analytics/materialize":
                 self._send_json(materialize_institutional_options(payload), 201)

@@ -16,7 +16,7 @@ import {
 import { useTradingQuantRisk } from "../../data/queries";
 import {
   useMaterializeInstitutionalOptions, useRecordManualTrade,
-  useRunInstitutionalOptionsAnalytics, useUpsertOptionValuationPolicy,
+  useRunInstitutionalOptionsAnalytics, useRunOptionAcceptance, useUpsertOptionValuationPolicy,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -60,6 +60,7 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
       </div>
       {tab === "desk" ? <OptionsDataOperationsControl /> : null}
+      {tab === "desk" ? <OptionsAcceptanceControl /> : null}
       <OptionsAnalyticsControl />
 
       {tab === "desk" && <DeskView />}
@@ -69,6 +70,70 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
       {tab === "strategies" && <StrategiesView />}
       {tab === "agent" && <AgentView />}
     </div>
+  );
+}
+
+function OptionsAcceptanceControl() {
+  const { underlyings, expiries } = useChain();
+  const mutation = useRunOptionAcceptance();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const defaultEnd = React.useMemo(() => optionsLocalDateTimeInputValue(), []);
+  const defaultStart = React.useMemo(() => {
+    const value = new Date();
+    value.setMinutes(value.getMinutes() - 30 - value.getTimezoneOffset());
+    return value.toISOString().slice(0, 16);
+  }, []);
+  const [form, setForm] = React.useState({
+    exchange: "NFO" as "NFO" | "BFO",
+    underlying: "",
+    expiry_date: "",
+    window_start: defaultStart,
+    window_end: defaultEnd,
+  });
+
+  React.useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      underlying: current.underlying || underlyings[0] || "",
+      expiry_date: current.expiry_date || expiries[0]?.slice(0, 10) || "",
+    }));
+  }, [underlyings, expiries]);
+
+  const ready = Boolean(form.underlying && form.expiry_date && form.window_start && form.window_end && new Date(form.window_start) < new Date(form.window_end));
+  function run() {
+    if (!ready) return;
+    mutation.mutate({
+      exchange: form.exchange,
+      underlying: form.underlying.trim().toUpperCase(),
+      expiry_date: form.expiry_date,
+      window_start: new Date(form.window_start).toISOString(),
+      window_end: new Date(form.window_end).toISOString(),
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: `Options acceptance ${text(result, "status", "complete")}`,
+        message: `${num(result, "passed_count")} of ${num(result, "gate_count")} gates passed`,
+        tone: text(result, "status") === "passed" ? "ok" : "warn",
+        duration: 6500,
+      }),
+      onError: (error) => pushToast({ title: "Options acceptance failed", message: error.message, tone: "risk", duration: 7500 }),
+    });
+  }
+
+  return (
+    <Panel icon={ShieldCheck} title="Run Live-Window Acceptance" actions={<Badge tone={mutation.isError ? "risk" : mutation.isPending ? "warn" : "accent"}>{mutation.isPending ? "Checking" : "11 gates"}</Badge>}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} placeholder="NIFTY" /></Field>
+        <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
+        <Field label="Expiry" required><TextInput type="date" value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })} /></Field>
+        <Field label="Window start" required><TextInput type="datetime-local" value={form.window_start} onChange={(event) => setForm({ ...form, window_start: event.target.value })} /></Field>
+        <Field label="Window end" required><TextInput type="datetime-local" value={form.window_end} onChange={(event) => setForm({ ...form, window_end: event.target.value })} /></Field>
+        <Button variant="primary" icon={ShieldCheck} onClick={run} disabled={!ready || mutation.isPending}>{mutation.isPending ? "Evaluating…" : "Run acceptance"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Evaluates only immutable stored batches inside the selected window. Missing analytics remain blocked; broker writes remain zero.</div>
+      {!underlyings.length ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Materialize real Zerodha option snapshots before running acceptance.</div> : null}
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+    </Panel>
   );
 }
 

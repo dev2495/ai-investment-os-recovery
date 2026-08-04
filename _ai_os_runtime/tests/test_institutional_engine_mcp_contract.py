@@ -106,6 +106,32 @@ def test_sector_acceptance_tool_is_paper_only_and_bounded() -> None:
     assert payload["broker_write_allowed"] is False
 
 
+def test_option_acceptance_tool_is_paper_only_and_bounded() -> None:
+    arguments = {
+        "exchange": "NFO",
+        "underlying": "NIFTY",
+        "expiry_date": "2026-08-27",
+        "window_start": "2026-08-04T09:20:00+05:30",
+        "window_end": "2026-08-04T09:50:00+05:30",
+    }
+    tool = SERVER.TOOLS["ai_os_run_option_acceptance"]
+    assert tool["inputSchema"]["additionalProperties"] is False
+    assert tool["inputSchema"]["properties"]["exchange"]["enum"] == ["NFO", "BFO"]
+    assert "paper-only" in tool["description"].lower()
+    with patch.object(SERVER, "post_api_json", return_value={"status": "blocked"}) as post:
+        result = tool["handler"]({**arguments, "order": {"side": "BUY"}, "broker_write_allowed": True})
+
+    assert decoded_tool_result(result) == {"status": "blocked"}
+    assert post.call_args.args[0] == "/api/options/institutional-analytics/acceptance/run"
+    payload = post.call_args.args[1]
+    assert "order" not in payload
+    assert payload["paper_only"] is True
+    assert payload["live_execution_allowed"] is False
+    assert payload["capital_action_allowed"] is False
+    assert payload["broker_write_allowed"] is False
+    assert post.call_args.kwargs["timeout"] == 180
+
+
 def test_institutional_data_operations_are_registered_and_route_to_scoped_apis() -> None:
     cases = {
         "ai_os_materialize_institutional_options": (

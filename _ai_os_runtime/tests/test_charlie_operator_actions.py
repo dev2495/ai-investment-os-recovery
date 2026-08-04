@@ -327,6 +327,34 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(operations[0]["status"], "needs_input")
         run.assert_not_called()
 
+    def test_option_acceptance_command_runs_bounded_live_window_gates(self) -> None:
+        captured = {}
+
+        def fake_run(payload: dict) -> dict:
+            captured.update(payload)
+            return {"status": "blocked", "gate_count": 11, "passed_count": 7, "broker_write_allowed": False}
+
+        with mock.patch.object(ai_os_api_server, "run_option_acceptance", fake_run):
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Run options acceptance NFO NIFTY expiry 2026-08-27 "
+                "from 2026-08-04T09:20:00+05:30 to 2026-08-04T09:50:00+05:30"
+            )
+
+        self.assertEqual(operations[0]["tool"], "run_option_acceptance")
+        self.assertEqual(captured["underlying"], "NIFTY")
+        self.assertEqual(captured["exchange"], "NFO")
+        self.assertEqual(captured["expiry_date"], "2026-08-27")
+        self.assertEqual(captured["window_start"], "2026-08-04T09:20:00+05:30")
+
+    def test_option_acceptance_command_never_guesses_missing_window(self) -> None:
+        with mock.patch.object(ai_os_api_server, "run_option_acceptance") as run:
+            operations = ai_os_api_server.execute_charlie_safe_tools(
+                "Check options acceptance for NIFTY NFO"
+            )
+
+        self.assertEqual(operations[0]["status"], "needs_input")
+        run.assert_not_called()
+
     def test_options_data_quality_agent_has_safe_fallback_skill(self) -> None:
         with mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=RuntimeError("view unavailable")):
             skill = ai_os_api_server.resolve_delegation_skill({

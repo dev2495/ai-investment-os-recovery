@@ -4358,6 +4358,20 @@ def run_institutional_options_engine(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/options/institutional-analytics/run", payload, timeout=620))
 
 
+def run_option_acceptance(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("exchange", "underlying", "expiry_date", "window_start", "window_end", "run_key", "actor")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Options Data Quality Agent")
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/options/institutional-analytics/acceptance/run", payload, timeout=180))
+
+
 def materialize_institutional_options(arguments: dict) -> dict:
     payload = {
         "limit": arguments.get("limit") or 20,
@@ -5940,7 +5954,7 @@ TOOLS = {
             "additionalProperties": False,
             "properties": {
                 "underlying": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
-                "exchange": {"type": "string", "enum": ["NFO", "BFO", "NSE", "BSE"]},
+                "exchange": {"type": "string", "enum": ["NFO", "BFO"]},
                 "expiry_date": {"type": "string", "format": "date"},
                 "as_of": {"type": "string", "format": "date-time"},
                 "model": {"type": "string", "enum": ["black_scholes_merton", "black_76"], "default": "black_scholes_merton"},
@@ -5954,6 +5968,24 @@ TOOLS = {
             "required": ["underlying", "exchange", "expiry_date", "as_of"],
         },
         "handler": run_institutional_options_engine,
+    },
+    "ai_os_run_option_acceptance": {
+        "description": "Evaluate and persist institutional options acceptance for one source-backed underlying, expiry, and multi-minute window. The tool is paper-only and cannot authorize capital, execution, or a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "exchange": {"type": "string", "enum": ["NFO", "BFO"]},
+                "underlying": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "expiry_date": {"type": "string", "format": "date"},
+                "window_start": {"type": "string", "format": "date-time"},
+                "window_end": {"type": "string", "format": "date-time"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Options Data Quality Agent"},
+            },
+            "required": ["exchange", "underlying", "expiry_date", "window_start", "window_end"],
+        },
+        "handler": run_option_acceptance,
     },
     "ai_os_materialize_institutional_options": {
         "description": "Materialize source-backed Zerodha option snapshots into immutable point-in-time institutional batches and calculate analytics only when a validated valuation policy exists. Paper-only; no order path.",
