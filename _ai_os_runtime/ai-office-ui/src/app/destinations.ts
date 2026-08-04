@@ -56,6 +56,7 @@ export type FunctionGroup =
   | "home"
   | "firm"
   | "fundamental"
+  | "sector"
   | "quant"
   | "trading"
   | "options"
@@ -80,6 +81,7 @@ export const FUNCTION_GROUPS: Array<{ key: FunctionGroup; label: string; icon: L
   { key: "home", label: "Home", icon: LayoutDashboard },
   { key: "firm", label: "The Firm", icon: Building2 },
   { key: "fundamental", label: "Fundamental Research", icon: BookOpen },
+  { key: "sector", label: "Sector Intelligence", icon: Layers },
   { key: "quant", label: "Quant & Strategy", icon: BarChart3 },
   { key: "trading", label: "Trading Desk", icon: TrendingUp },
   { key: "options", label: "Options Desk", icon: TrendingDown },
@@ -107,10 +109,18 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
 
   /* ---- FUNDAMENTAL RESEARCH (Buffett school) ---- */
   { code: "LTF", path: "/fundamental/theses", label: "Long-Term Theses", icon: BookOpen, description: "Buffett-style investment theses per holding — moat, management, quality", group: "fundamental", order: 0, status: "beta" },
-  { code: "SCOR", path: "/fundamental/scorecards", label: "Specialist Scorecards", icon: Microscope, description: "11 scorecards — business model, moat, governance, forensic, valuation", group: "fundamental", order: 1, status: "beta" },
+  { code: "SCOR", path: "/fundamental/scorecards", label: "Specialist Scorecards", icon: Microscope, description: "12 scorecards — business model, moat, governance, forensic, valuation, portfolio fit", group: "fundamental", order: 1, status: "beta" },
   { code: "VAL", path: "/fundamental/valuation", label: "Valuation Suite", icon: Calculator, description: "DCF, multiples, reverse DCF, Monte Carlo per holding", group: "fundamental", order: 2, status: "beta" },
   { code: "COV", path: "/fundamental/coverage", label: "Coverage & Checklists", icon: ClipboardCheck, description: "Coverage queue, theses checklists, review schedule", group: "fundamental", order: 3, status: "beta" },
-  { code: "LTID", path: "/fundamental/ideas", label: "Fundamental Idea Generator", icon: Lightbulb, description: "Generate long-term investment ideas from theses, filings, screens", group: "fundamental", order: 4, status: "beta" },
+  { code: "DOS", path: "/fundamental/dossiers", label: "Company Dossiers", icon: FileText, description: "Versioned company dossiers, refresh triggers, management claims, and acceptance gates", group: "fundamental", order: 4, status: "beta" },
+  { code: "LTID", path: "/fundamental/ideas", label: "Fundamental Idea Generator", icon: Lightbulb, description: "Generate long-term investment ideas from theses, filings, screens", group: "fundamental", order: 5, status: "beta" },
+
+  /* ---- QUANT & STRATEGY ---- */
+  /* ---- SECTOR INTELLIGENCE ---- */
+  { code: "SECT", path: "/sector/overview", label: "Sector Overview", icon: Layers, description: "Taxonomy, coverage, freshness, leadership and committee state", group: "sector", order: 0, status: "beta" },
+  { code: "SIDX", path: "/sector/indices", label: "Custom Indices", icon: LineChart, description: "Point-in-time constituents, weights, rebalances and history", group: "sector", order: 1, status: "beta" },
+  { code: "SFLO", path: "/sector/flows", label: "Sector Flows", icon: Activity, description: "Breadth, relative strength, cash, futures, options and ownership flows", group: "sector", order: 2, status: "beta" },
+  { code: "SCMT", path: "/sector/committee", label: "Sector Committee", icon: Gavel, description: "Independent sector views, PM mandate and human decisions", group: "sector", order: 3, status: "beta" },
 
   /* ---- QUANT & STRATEGY ---- */
   { code: "QLAB", path: "/quant/lab", label: "Quant Lab", icon: BarChart3, description: "Strategy candidates, backtests, validation, promotion board", group: "quant", order: 0, status: "beta" },

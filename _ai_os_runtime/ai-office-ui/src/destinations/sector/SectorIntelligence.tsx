@@ -1,0 +1,255 @@
+import React from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  Activity, BarChart3, Database, Gavel, Layers, LineChart,
+  ShieldCheck, Workflow,
+} from "lucide-react";
+import { useSectorIntelligence } from "../../data/queries";
+import {
+  Badge, DataTable, Empty, Metric, MetricTile, Panel, Skeleton, StatusPill, Tabs,
+} from "../../system/primitives";
+import { formatCompact, formatRelative, num, text } from "../../data/liveRow";
+import type { LiveRow } from "../../data/liveRow";
+
+const TABS = [
+  { key: "overview", label: "Overview", icon: Layers },
+  { key: "indices", label: "Custom Indices", icon: LineChart },
+  { key: "flows", label: "Flows & Strength", icon: Activity },
+  { key: "committee", label: "Committee", icon: Gavel },
+];
+
+export default function SectorIntelligence() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const parts = location.pathname.split("/").filter(Boolean); const tab = parts[parts.length - 1] ?? "overview";
+  const query = useSectorIntelligence();
+  const data = query.data;
+
+  return (
+    <div className="aios-destination">
+      <div className="aios-destination__head">
+        <div className="aios-destination__title-row">
+          <div className="aios-destination__title">
+            <Layers size={26} style={{ verticalAlign: "middle", marginRight: 10, color: "var(--accent)" }} />
+            Sector Intelligence
+          </div>
+          <Badge tone="accent">SECT</Badge>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+            deterministic taxonomy, indices, breadth, flows and committee work
+          </span>
+        </div>
+        <div className="aios-destination__subtitle">
+          Postgres owns classifications, constituents, weights, calculations and history. TradingView Desktop receives chart artifacts only.
+        </div>
+        <Tabs tabs={TABS} active={tab} onChange={(key) => navigate(`/sector/${key}`)} />
+      </div>
+
+      {query.isLoading ? <Loading /> : null}
+      {query.isError ? (
+        <Panel icon={Database} title="Sector warehouse unavailable">
+          <Empty icon={Database} title="Cannot read Sector Intelligence" description={query.error.message} />
+        </Panel>
+      ) : null}
+      {!query.isLoading && !query.isError && tab === "overview" ? <Overview data={data} /> : null}
+      {!query.isLoading && !query.isError && tab === "indices" ? <Indices data={data} /> : null}
+      {!query.isLoading && !query.isError && tab === "flows" ? <Flows data={data} /> : null}
+      {!query.isLoading && !query.isError && tab === "committee" ? <Committee data={data} /> : null}
+    </div>
+  );
+}
+
+function Loading() {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--space-3)" }}>
+      {Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} height={140} />)}
+    </div>
+  );
+}
+
+function Overview({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
+  const hierarchy = data?.hierarchy ?? [];
+  const freshness = data?.freshness ?? [];
+  const rankings = data?.rankings ?? [];
+  const sectors = new Set(hierarchy.map((row) => text(row, "sector_key")).filter(Boolean)).size;
+  const industries = new Set(hierarchy.map((row) => text(row, "industry_key")).filter(Boolean)).size;
+  const stale = freshness.filter((row) =>
+    !text(row, "latest_metric_at") || !text(row, "latest_market_monitor_at")
+  ).length;
+
+  return (
+    <>
+      <MetricStrip values={[
+        ["Sectors", sectors],
+        ["Industries", industries],
+        ["Rankings", rankings.length],
+        ["Coverage gaps", stale],
+      ]} />
+      <Panel icon={Workflow} title="Indian Sector Taxonomy" actions={<Badge dot>{hierarchy.length}</Badge>}>
+        {hierarchy.length === 0 ? (
+          <Empty icon={Workflow} title="No taxonomy ingested" description="Load source-backed Indian sector classifications and effective-dated memberships. No sample constituents are generated." />
+        ) : (
+          <DataTable rows={hierarchy} rowKey={(row, index) => text(row, "sub_industry_key", text(row, "industry_key", text(row, "sector_key", String(index))))} columns={[
+            { key: "sector", header: "Sector", render: (row) => <strong>{text(row, "sector_name")}</strong> },
+            { key: "industry", header: "Industry", render: (row) => text(row, "industry_name", "—") },
+            { key: "sub", header: "Sub-industry", render: (row) => text(row, "sub_industry_name", "—") },
+            { key: "from", header: "Effective", render: (row) => text(row, "valid_from", "—") },
+            { key: "to", header: "Until", render: (row) => text(row, "valid_to", "Current") },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={Database} title="Data Freshness">
+        {freshness.length === 0 ? (
+          <Empty icon={Database} title="No sector observations" description="Financial, market, ownership and research observations have not been loaded into the deterministic warehouse." />
+        ) : (
+          <DataTable rows={freshness} rowKey={(row, index) => text(row, "taxonomy_key", String(index))} columns={[
+            { key: "node", header: "Sector / Industry", render: (row) => <strong>{text(row, "node_name")}</strong> },
+            { key: "metrics", header: "Financial metrics", render: (row) => freshnessCell(row, "latest_metric_at") },
+            { key: "market", header: "Market monitor", render: (row) => freshnessCell(row, "latest_market_monitor_at") },
+            { key: "flows", header: "Flows", render: (row) => freshnessCell(row, "latest_flow_at") },
+            { key: "research", header: "Research", render: (row) => freshnessCell(row, "latest_research_review_at") },
+          ]} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function Indices({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
+  const indices = data?.custom_indices ?? [];
+  const artifacts = data?.chart_artifacts ?? [];
+  return (
+    <>
+      <MetricStrip values={[
+        ["Defined indices", indices.length],
+        ["Active", indices.filter((row) => text(row, "status") === "active").length],
+        ["Chart artifacts", artifacts.length],
+        ["Broker authority", 0],
+      ]} />
+      <Panel icon={LineChart} title="Point-In-Time Custom Indices">
+        {indices.length === 0 ? (
+          <Empty icon={LineChart} title="No custom indices calculated" description="Create an index definition, validate effective-dated constituents, calculate weights, and reconcile history before activation." />
+        ) : (
+          <DataTable rows={indices} rowKey={(row, index) => text(row, "index_key", String(index))} columns={[
+            { key: "index", header: "Index", render: (row) => <strong>{text(row, "index_name")}</strong> },
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", "draft")} /> },
+            { key: "weighting", header: "Weighting", render: (row) => text(row, "weighting_method") },
+            { key: "members", header: "Constituents", align: "right", render: (row) => num(row, "current_constituent_count") },
+            { key: "level", header: "Latest level", align: "right", render: (row) => formatCompact(num(row, "latest_index_value")) },
+            { key: "rebalance", header: "Last rebalance", render: (row) => text(row, "latest_rebalance_date", "—") },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={BarChart3} title="TradingView Desktop Handoffs">
+        {artifacts.length === 0 ? (
+          <Empty icon={BarChart3} title="No chart artifacts generated" description="Formula, Pine and layout artifacts appear only after deterministic index inputs pass validation." />
+        ) : (
+          <DataTable rows={artifacts} rowKey={(row, index) => text(row, "artifact_key", String(index))} columns={[
+            { key: "type", header: "Artifact", render: (row) => text(row, "artifact_type") },
+            { key: "target", header: "Workspace", render: (row) => text(row, "target_workspace") },
+            { key: "asof", header: "Source as of", render: (row) => freshnessCell(row, "source_as_of") },
+            { key: "version", header: "Calculation", render: (row) => text(row, "calculation_version") },
+            { key: "generated", header: "Generated", render: (row) => freshnessCell(row, "generated_at") },
+          ]} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function Flows({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
+  const flows = data?.flows ?? [];
+  const rankings = data?.rankings ?? [];
+  const aggregates = data?.aggregates ?? [];
+  const bands = data?.valuation_bands ?? [];
+  return (
+    <>
+      <MetricStrip values={[
+        ["Flow observations", flows.length],
+        ["Strength ranks", rankings.length],
+        ["Aggregates", aggregates.length],
+        ["Valuation bands", bands.length],
+      ]} />
+      <Panel icon={Activity} title="Institutional And Ownership Flows">
+        {flows.length === 0 ? (
+          <Empty icon={Activity} title="No source-backed flows" description="FII, DII, mutual-fund, promoter, insider, bulk/block and derivative flow observations have not been ingested." />
+        ) : (
+          <DataTable rows={flows} rowKey={(row, index) => `${text(row, "observed_at")}:${index}`} columns={[
+            { key: "time", header: "Observed", render: (row) => freshnessCell(row, "observed_at") },
+            { key: "actor", header: "Actor", render: (row) => <strong>{text(row, "flow_actor")}</strong> },
+            { key: "type", header: "Flow", render: (row) => text(row, "flow_type") },
+            { key: "net", header: "Net", align: "right", render: (row) => formatCompact(num(row, "net_value"), text(row, "currency", "INR")) },
+            { key: "source", header: "Source", render: (row) => text(row, "source_reference", "Warehouse lineage") },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={BarChart3} title="Relative Strength And Classification">
+        {rankings.length === 0 ? (
+          <Empty icon={BarChart3} title="No ranks calculated" description="Ranks require point-in-time sector membership and complete price/metric inputs; missing inputs are not imputed." />
+        ) : (
+          <DataTable rows={rankings} rowKey={(row, index) => text(row, "ranking_key", String(index))} columns={[
+            { key: "type", header: "Ranking", render: (row) => text(row, "ranking_type") },
+            { key: "horizon", header: "Horizon", render: (row) => text(row, "horizon") },
+            { key: "rank", header: "Rank", align: "right", render: (row) => `${num(row, "rank_value")} / ${num(row, "universe_size")}` },
+            { key: "score", header: "Score", align: "right", render: (row) => num(row, "score").toFixed(2) },
+            { key: "asof", header: "As of", render: (row) => text(row, "as_of_date") },
+          ]} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function Committee({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
+  const committee = data?.committee ?? [];
+  const mandates = data?.portfolio_manager ?? [];
+  const execution = data?.execution_control?.[0];
+  return (
+    <>
+      <MetricStrip values={[
+        ["Open packets", committee.filter((row) => !["decided", "closed"].includes(text(row, "status"))).length],
+        ["PM mandates", mandates.length],
+        ["Human final required", committee.filter((row) => text(row, "human_final_required") === "true").length],
+        ["Broker writes", execution && text(execution, "live_broker_writes_allowed") === "true" ? 1 : 0],
+      ]} />
+      <Panel icon={ShieldCheck} title="Sector Portfolio Manager Mandates">
+        {mandates.length === 0 ? (
+          <Empty icon={ShieldCheck} title="No active sector mandate" description="Mandates require an explicit benchmark, eligible sector scope, risk limits and human approval policy." />
+        ) : (
+          <DataTable rows={mandates} rowKey={(row, index) => text(row, "mandate_key", String(index))} columns={[
+            { key: "mandate", header: "Mandate", render: (row) => <strong>{text(row, "mandate_name")}</strong> },
+            { key: "manager", header: "Manager", render: (row) => text(row, "manager_agent") },
+            { key: "benchmark", header: "Benchmark", render: (row) => text(row, "benchmark_index_key", "Not assigned") },
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status")} /> },
+            { key: "packets", header: "Open packets", align: "right", render: (row) => num(row, "open_committee_packets") },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={Gavel} title="Sector Committee">
+        {committee.length === 0 ? (
+          <Empty icon={Gavel} title="No committee packets" description="A packet opens only from a source-backed sector underwrite. Capital action remains false until Devarsh decides separately." />
+        ) : (
+          <DataTable rows={committee} rowKey={(row, index) => text(row, "packet_key", String(index))} columns={[
+            { key: "sector", header: "Sector", render: (row) => <strong>{text(row, "sector_name")}</strong> },
+            { key: "question", header: "Decision question", render: (row) => text(row, "decision_question") },
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status")} /> },
+            { key: "asof", header: "As of", render: (row) => text(row, "as_of_date") },
+            { key: "updated", header: "Updated", render: (row) => freshnessCell(row, "updated_at") },
+          ]} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function MetricStrip({ values }: { values: Array<[string, string | number]> }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+      {values.map(([label, value]) => <MetricTile key={label}><Metric label={label} value={value} /></MetricTile>)}
+    </div>
+  );
+}
+
+function freshnessCell(row: LiveRow, key: string) {
+  const value = text(row, key);
+  return value ? <span title={value}>{formatRelative(value)}</span> : <span style={{ color: "var(--text-muted)" }}>Not available</span>;
+}

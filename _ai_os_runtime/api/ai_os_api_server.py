@@ -2483,6 +2483,60 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY created_at DESC, id DESC
             LIMIT 80
         """,
+        "fundamental_coverage": """
+            SELECT company_id, company_key, legal_name, primary_symbol, primary_exchange,
+                   real_company_verified, annual_statement_years, first_statement_year,
+                   latest_statement_year, segment_count, operational_kpi_count,
+                   market_share_series_count, peer_count, management_communication_count,
+                   management_claim_count, claims_with_outcomes,
+                   latest_statement_available_at, latest_evidence_retrieved_at
+            FROM research.v_company_fundamental_coverage
+            ORDER BY real_company_verified DESC, latest_evidence_retrieved_at DESC NULLS LAST
+            LIMIT 100
+        """,
+        "investment_dossiers": """
+            SELECT dossier_id, dossier_key, company_id, company_key, legal_name,
+                   primary_symbol, primary_exchange, holding_thesis_id, dossier_status,
+                   dossier_version_id, version_number, version_status, research_as_of,
+                   source_cutoff_at, executive_conclusion, decision_summary,
+                   evidence_coverage, section_count, reviewed_section_count,
+                   specialist_count, has_portfolio_fit, updated_at
+            FROM research.v_latest_investment_dossiers
+            ORDER BY updated_at DESC NULLS LAST, dossier_id DESC
+            LIMIT 100
+        """,
+        "dossier_refresh_queue": """
+            SELECT id, dossier_id, dossier_key, company_id, company_key, legal_name,
+                   primary_symbol, trigger_type, trigger_source_table, trigger_source_id,
+                   materiality, event_at, detected_at, refresh_status, assigned_to,
+                   evidence_id, metadata
+            FROM research.v_dossier_refresh_queue
+            LIMIT 100
+        """,
+        "management_claims": """
+            SELECT company_id, company_key, legal_name, claim_id, claim_key,
+                   communication_type, communication_title, claim_date,
+                   speaker_name, speaker_role, claim_type, claim_text, metric_key,
+                   target_operator, target_value, target_unit, target_period_end,
+                   assessment_due_at, claim_status, outcome_date, outcome_status,
+                   actual_value, actual_unit, assessment, claim_evidence_id,
+                   outcome_evidence_id
+            FROM research.v_management_claim_scorecard
+            ORDER BY claim_date DESC, claim_id DESC
+            LIMIT 100
+        """,
+        "fundamental_acceptance": """
+            SELECT acceptance_run_id AS run_id, run_key, company_id, company_key,
+                   legal_name, primary_symbol, primary_exchange, holding_thesis_id,
+                   dossier_version_id, acceptance_profile, run_status,
+                   real_company_verified, verification_evidence_id, data_as_of,
+                   gate_count, passed_gate_count, failed_gate_count,
+                   blocked_gate_count, gates, started_by, started_at,
+                   completed_at, notes
+            FROM research.v_real_company_acceptance_status
+            ORDER BY started_at DESC, run_id DESC
+            LIMIT 50
+        """,
         "committee_queue": """
             SELECT id, review_key, holding_thesis_id, symbol, exchange,
                    company_name, thesis_title, thesis_status,
@@ -2731,6 +2785,119 @@ def build_research_ideas_snapshot() -> dict:
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_research_ideas_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        **data,
+    }
+
+
+def build_sector_intelligence_snapshot() -> dict:
+    """Return the bounded deterministic sector warehouse and control read model."""
+    queries = {
+        "hierarchy": """
+            SELECT sector_id, sector_key, sector_name, industry_id, industry_key,
+                   industry_name, sub_industry_id, sub_industry_key,
+                   sub_industry_name, valid_from, valid_to
+            FROM sector_intelligence.v_sector_hierarchy
+            ORDER BY sector_name, industry_name NULLS FIRST, sub_industry_name NULLS FIRST
+            LIMIT 300
+        """,
+        "custom_indices": """
+            SELECT index_id, index_key, index_name, status, weighting_method,
+                   rebalance_frequency, latest_rebalance_date,
+                   current_constituent_count, latest_calculated_at, latest_index_value
+            FROM sector_intelligence.v_custom_index_control
+            ORDER BY status, index_name
+            LIMIT 100
+        """,
+        "freshness": """
+            SELECT taxonomy_node_id, taxonomy_key, node_name, latest_metric_at,
+                   latest_market_monitor_at, latest_flow_at,
+                   latest_ownership_period_end, latest_research_review_at
+            FROM sector_intelligence.v_sector_data_freshness
+            ORDER BY node_name
+            LIMIT 200
+        """,
+        "committee": """
+            SELECT id, packet_key, taxonomy_node_id, taxonomy_key, sector_name,
+                   packet_type, as_of_date, decision_question, status,
+                   human_final_required, capital_action_allowed,
+                   committee_packet_id, updated_at
+            FROM sector_intelligence.v_sector_committee_control
+            ORDER BY updated_at DESC
+            LIMIT 100
+        """,
+        "portfolio_manager": """
+            SELECT id, mandate_key, manager_agent, mandate_name, objective, status,
+                   human_approval_required, broker_order_allowed, valid_from, valid_to,
+                   benchmark_index_id, benchmark_index_key, open_committee_packets,
+                   latest_committee_activity_at
+            FROM sector_intelligence.v_sector_portfolio_manager_control
+            ORDER BY status, mandate_name
+            LIMIT 50
+        """,
+        "rankings": """
+            SELECT id, taxonomy_node_id, as_of_date, ranking_universe, ranking_type,
+                   horizon, score, rank_value, universe_size, calculation_version,
+                   input_fingerprint, calculated_at
+            FROM sector_intelligence.sector_rankings
+            ORDER BY as_of_date DESC, ranking_type, rank_value
+            LIMIT 200
+        """,
+        "aggregates": """
+            SELECT taxonomy_node_id, metric_definition_id, as_of_date, horizon,
+                   value, constituent_count, covered_count, weighting_method,
+                   calculation_version, input_fingerprint, quality_status, calculated_at
+            FROM sector_intelligence.sector_aggregates
+            ORDER BY as_of_date DESC, calculated_at DESC
+            LIMIT 200
+        """,
+        "valuation_bands": """
+            SELECT taxonomy_node_id, metric_definition_id, as_of_date, lookback_years,
+                   current_value, percentile_rank, minimum_value, p10_value, p25_value,
+                   median_value, p75_value, p90_value, maximum_value, observation_count,
+                   calculation_version, input_fingerprint, calculated_at
+            FROM sector_intelligence.valuation_bands
+            ORDER BY as_of_date DESC, calculated_at DESC
+            LIMIT 200
+        """,
+        "flows": """
+            SELECT taxonomy_node_id, symbol_id, observed_at, flow_actor, flow_type,
+                   buy_value, sell_value, net_value, currency, source_system_id,
+                   source_reference, evidence
+            FROM sector_intelligence.flow_observations
+            ORDER BY observed_at DESC
+            LIMIT 200
+        """,
+        "chart_artifacts": """
+            SELECT id, artifact_key, taxonomy_node_id, index_id AS custom_index_id,
+                   artifact_type, target_workspace, generated_expression,
+                   pine_source, chart_layout, source_state_fingerprint,
+                   generation_version, generated_at, expires_at
+            FROM sector_intelligence.generated_chart_artifacts
+            ORDER BY generated_at DESC
+            LIMIT 100
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {
+            "seed_data_allowed": False,
+            "source": "scoped_sector_intelligence_read_model",
+            "tradingview_role": "artifact_consumer_only",
+        },
         "payload_profile": {
             "query_count": len(queries),
             "row_count": sum(len(rows) for rows in data.values()),
@@ -3120,6 +3287,121 @@ def build_trading_quant_risk_snapshot() -> dict:
             WHERE recency_rank=1
             ORDER BY underlying, expiry, strike, option_type
             LIMIT 400
+        """,
+        "institutional_option_chain": """
+            SELECT batch_key, provider, exchange, underlying, expiry, minute_ts,
+                   source_timestamp, received_at, spot_price, batch_freshness_status,
+                   batch_quality_status, contract_snapshot_id, trading_symbol,
+                   strike, option_type, last_price, bid_price, ask_price, volume,
+                   open_interest, previous_open_interest, staleness_status,
+                   liquidity_status, implied_volatility, delta, gamma, theta,
+                   vega, rho, model_name, model_version, solver_version,
+                   calculation_quality_status, greeks_validated,
+                   broker_write_allowed
+            FROM trading.v_institutional_option_chain
+            ORDER BY minute_ts DESC, underlying, expiry, strike, option_type
+            LIMIT 500
+        """,
+        "option_premium_series": """
+            SELECT series.id, batch.underlying, batch.expiry, batch.minute_ts,
+                   series.series_type, series.reference_spot AS spot_price,
+                   series.call_strike, series.put_strike, series.call_premium,
+                   series.put_premium, series.combined_premium,
+                   series.call_contract_snapshot_id, series.put_contract_snapshot_id,
+                   series.batch_id AS source_batch_id, series.selection_method,
+                   series.quality_status, series.quality_flags, series.assumptions,
+                   series.calculation_version, series.broker_write_allowed
+            FROM trading.option_premium_series series
+            JOIN trading.option_chain_snapshot_batches batch ON batch.id=series.batch_id
+            ORDER BY batch.minute_ts DESC
+            LIMIT 300
+        """,
+        "option_volatility_metrics": """
+            SELECT metric.id, batch.underlying, batch.expiry,
+                   batch.minute_ts AS as_of_ts, metric.metric_type,
+                   metric.tenor_label, metric.delta_bucket,
+                   metric.strike_moneyness, metric.metric_value AS value,
+                   metric.observation_count, metric.lookback_days,
+                   metric.valid_from, metric.calculation_version,
+                   metric.source_result_ids, metric.quality_status,
+                   metric.quality_flags, metric.assumptions,
+                   metric.broker_write_allowed
+            FROM trading.option_volatility_metrics metric
+            JOIN trading.option_chain_snapshot_batches batch ON batch.id=metric.batch_id
+            ORDER BY batch.minute_ts DESC
+            LIMIT 300
+        """,
+        "option_exposure_estimates": """
+            SELECT estimate.id, batch.underlying, batch.expiry,
+                   batch.minute_ts AS as_of_ts, estimate.exposure_scope,
+                   estimate.contract_snapshot_id, estimate.strike,
+                   estimate.metric_name AS exposure_type,
+                   estimate.metric_value AS value, estimate.unit AS value_unit,
+                   estimate.dealer_position_assumption,
+                   estimate.open_interest_sign_method AS oi_sign_assumption,
+                   estimate.contract_multiplier, estimate.shock_size,
+                   estimate.coverage_ratio, estimate.calculation_version,
+                   estimate.source_result_ids, estimate.quality_status,
+                   estimate.quality_flags, estimate.assumptions,
+                   estimate.broker_write_allowed
+            FROM trading.option_exposure_estimates estimate
+            JOIN trading.option_chain_snapshot_batches batch ON batch.id=estimate.batch_id
+            ORDER BY batch.minute_ts DESC
+            LIMIT 300
+        """,
+        "option_analytics_alerts": """
+            SELECT alert.id, alert.alert_key, batch.underlying, batch.expiry,
+                   alert.observed_at, alert.detected_at, alert.alert_type,
+                   alert.severity, alert.status, alert.title, alert.evidence,
+                   alert.threshold_definition, alert.calculation_version,
+                   alert.quality_status, alert.batch_id AS source_batch_id,
+                   alert.paper_only, alert.broker_write_allowed,
+                   alert.acknowledged_by, alert.acknowledged_at,
+                   alert.resolved_at, alert.created_at
+            FROM trading.option_analytics_alerts alert
+            LEFT JOIN trading.option_chain_snapshot_batches batch ON batch.id=alert.batch_id
+            ORDER BY alert.observed_at DESC
+            LIMIT 100
+        """,
+        "option_replays": """
+            SELECT id, session_key AS replay_key, exchange, underlying, expiry,
+                   replay_start AS window_start, replay_end AS window_end,
+                   replay_clock AS current_frame_ts, status AS replay_status,
+                   point_in_time_enforced AS lookahead_prevention,
+                   maximum_available_source_timestamp, speed_multiplier,
+                   created_by AS owner_agent, paper_only, broker_write_allowed,
+                   created_at, updated_at
+            FROM trading.option_replay_sessions
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "option_specialist_observations": """
+            SELECT observation.id, observation.observation_key,
+                   observation.specialist_agent, batch.underlying, batch.expiry,
+                   observation.as_of AS as_of_ts, observation.observation_type,
+                   observation.observation_status AS review_status,
+                   observation.headline AS summary, observation.observation,
+                   observation.confidence, observation.evidence_refs AS evidence,
+                   observation.assumptions, observation.limitations AS missing_evidence,
+                   observation.quality_status, observation.human_review_required,
+                   observation.capital_action_allowed,
+                   observation.broker_write_allowed,
+                   observation.created_at, observation.updated_at
+            FROM trading.option_specialist_observations observation
+            LEFT JOIN trading.option_chain_snapshot_batches batch ON batch.id=observation.batch_id
+            ORDER BY observation.as_of DESC
+            LIMIT 100
+        """,
+        "option_acceptance": """
+            SELECT id, run_key, exchange, underlying, expiry, window_start,
+                   window_end, status, gate_count, passed_count, failed_count,
+                   blocked_count, validated_greeks_ratio, liquid_contract_ratio,
+                   stale_contract_ratio, replay_coverage_ratio,
+                   paper_attribution_coverage_ratio, gate_version,
+                   started_at, finished_at, broker_write_allowed
+            FROM trading.v_option_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 50
         """,
         "option_trade_log": """
             SELECT id, trade_id, trade_status, trade_type, no_of_trades,
@@ -17034,6 +17316,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/portfolio-office/snapshot":
                 self._send_json(build_portfolio_office_snapshot())
+                return
+            if request_path == "/api/sector-intelligence/snapshot":
+                self._send_json(build_sector_intelligence_snapshot())
                 return
             if request_path == "/api/research-ideas/snapshot":
                 self._send_json(build_research_ideas_snapshot())

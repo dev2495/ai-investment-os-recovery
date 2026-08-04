@@ -16,6 +16,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen, Microscope, Calculator, ClipboardCheck, Lightbulb,
   FlaskConical, TrendingUp, AlertTriangle, ChevronRight, Sparkles,
+  Users, Gavel, Wallet, BarChart3, Search, TrendingDown, ShieldCheck, Briefcase,
   Send, GitBranch, Target, FileText, Save,
 } from "lucide-react";
 import { useResearchIdeas, usePortfolioOffice } from "../../data/queries";
@@ -38,6 +39,7 @@ const TABS = [
   { key: "scorecards", label: "Scorecards", icon: Microscope },
   { key: "valuation", label: "Valuation Suite", icon: Calculator },
   { key: "coverage", label: "Coverage", icon: ClipboardCheck },
+  { key: "dossiers", label: "Company Dossiers", icon: FileText },
   { key: "ideas", label: "Idea Generator", icon: Lightbulb },
 ];
 
@@ -74,6 +76,7 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
       {tab === "scorecards" && <ScorecardsView />}
       {tab === "valuation" && <ValuationView />}
       {tab === "coverage" && <CoverageView />}
+      {tab === "dossiers" && <DossiersView />}
       {tab === "ideas" && <IdeasView />}
     </div>
   );
@@ -218,7 +221,7 @@ function ThesisDetailDrawer({ thesis, onClose }: { thesis: LiveRow | null; onClo
               <Button size="sm" icon={Microscope} onClick={() => run("Specialists", dispatchMut, { holding_thesis_id: thesisId, actor: "Devarsh" }, "Specialists dispatched")} disabled={busy !== null}>Dispatch Specialists</Button>
             </div>
             <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
-              Research packet bundles quotes, positions, filings, and notes. Specialists run 11 deep-dive modules (business model, moat, management, governance, capital allocation, financial quality, forensic accounting, valuation, bear case, portfolio fit, risk review).
+              Research packet bundles quotes, positions, filings, and notes. Twelve independent specialists cover business model, moat, industry, management, governance, capital allocation, financial quality, forensics, valuation, bear case, portfolio fit, and risk.
             </div>
           </Panel>
 
@@ -281,6 +284,7 @@ const SPECIALIST_MODULES = [
   { key: "forensic_accounting", label: "Forensic Accounting", icon: Search },
   { key: "valuation_suite", label: "Valuation Suite", icon: Calculator },
   { key: "bear_case", label: "Bear Case", icon: TrendingDown },
+  { key: "portfolio_fit", label: "Portfolio Fit & Opportunity Cost", icon: Briefcase },
   { key: "risk_review", label: "Risk Review", icon: AlertTriangle },
 ];
 
@@ -301,13 +305,13 @@ function ScorecardsView() {
     }
     dispatchMut.mutate(
       { holding_thesis_id: Number(selectedThesis), actor: "Devarsh" },
-      { onSuccess: () => pushToast({ title: "All 11 specialists dispatched", tone: "ok", duration: 3000 }), onError: (e: Error) => pushToast({ title: "Dispatch failed", message: e.message, tone: "risk", duration: 5000 }) }
+      { onSuccess: () => pushToast({ title: "All 12 specialists dispatched", tone: "ok", duration: 3000 }), onError: (e: Error) => pushToast({ title: "Dispatch failed", message: e.message, tone: "risk", duration: 5000 }) }
     );
   }
 
   return (
     <>
-      <Panel icon={Microscope} title="11 Specialist Scorecards"
+      <Panel icon={Microscope} title="12 Specialist Scorecards"
         actions={
           <>
             <Select value={selectedThesis} onChange={(e) => setSelectedThesis(e.target.value)} style={{ width: 200 }}>
@@ -349,7 +353,7 @@ function ScorecardsView() {
 
       <Panel icon={ClipboardCheck} title="Specialist Outputs">
         {isLoading ? <SkeletonGrid rows={3} /> : outputs.length === 0 ? (
-          <Empty icon={Microscope} title="No specialist outputs yet" description="Pick a thesis above and dispatch the specialists to run all 11 deep-dive modules." />
+          <Empty icon={Microscope} title="No specialist outputs yet" description="Pick a thesis above and dispatch the 12 independent specialist lanes." />
         ) : (
           <DataTable
             columns={[
@@ -646,6 +650,77 @@ function CoverageView() {
 /* ============================================================
  * IDEA GENERATOR VIEW
  * ============================================================ */
+function DossiersView() {
+  const { data, isLoading } = useResearchIdeas();
+  const coverage = data?.fundamental_coverage ?? [];
+  const dossiers = data?.investment_dossiers ?? [];
+  const refresh = data?.dossier_refresh_queue ?? [];
+  const claims = data?.management_claims ?? [];
+  const acceptance = data?.fundamental_acceptance ?? [];
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Companies" value={coverage.length} /></MetricTile>
+        <MetricTile><Metric label="Dossiers" value={dossiers.length} /></MetricTile>
+        <MetricTile tone="warn"><Metric label="Refresh queue" value={refresh.length} /></MetricTile>
+        <MetricTile><Metric label="Claims tracked" value={claims.length} /></MetricTile>
+        <MetricTile tone={acceptance.some((row) => bool(row, "all_required_gates_passed")) ? "ok" : "warn"}><Metric label="Accepted companies" value={acceptance.filter((row) => bool(row, "all_required_gates_passed")).length} /></MetricTile>
+      </div>
+
+      <Panel icon={ClipboardCheck} title="Institutional Coverage">
+        {isLoading ? <SkeletonGrid rows={4} /> : coverage.length === 0 ? (
+          <Empty icon={ClipboardCheck} title="No normalized company coverage" description="A company appears only after real identity evidence and source-backed financial or operating history are registered." />
+        ) : (
+          <DataTable rows={coverage} rowKey={(row, index) => text(row, "company_key", String(index))} columns={[
+            { key: "company", header: "Company", render: (row) => <strong>{text(row, "legal_name")}</strong> },
+            { key: "symbol", header: "Symbol", render: (row) => `${text(row, "primary_exchange")}:${text(row, "primary_symbol")}` },
+            { key: "years", header: "Annual history", align: "right", render: (row) => num(row, "annual_statement_years") },
+            { key: "segments", header: "Segments / KPIs", align: "right", render: (row) => `${num(row, "segment_count")} / ${num(row, "operational_kpi_count")}` },
+            { key: "peers", header: "Peers", align: "right", render: (row) => num(row, "peer_count") },
+            { key: "claims", header: "Claims / outcomes", align: "right", render: (row) => `${num(row, "management_claim_count")} / ${num(row, "claims_with_outcomes")}` },
+            { key: "verified", header: "Identity", render: (row) => <StatusPill status={bool(row, "real_company_verified") ? "verified" : "blocked"} /> },
+          ]} />
+        )}
+      </Panel>
+
+      <Panel icon={FileText} title="Versioned Investment Dossiers">
+        {dossiers.length === 0 ? (
+          <Empty icon={FileText} title="No dossier version ready" description="A dossier needs primary evidence, normalized history, all specialist lanes, valuation, independent risk and committee work." />
+        ) : (
+          <DataTable rows={dossiers} rowKey={(row, index) => text(row, "dossier_key", String(index))} columns={[
+            { key: "company", header: "Company", render: (row) => <strong>{text(row, "legal_name")}</strong> },
+            { key: "version", header: "Version", render: (row) => `v${num(row, "version_number")}` },
+            { key: "sections", header: "Sections reviewed", align: "right", render: (row) => `${num(row, "reviewed_section_count")} / ${num(row, "section_count")}` },
+            { key: "specialists", header: "Specialists", align: "right", render: (row) => num(row, "specialist_count") },
+            { key: "fit", header: "Portfolio fit", render: (row) => <StatusPill status={bool(row, "has_portfolio_fit") ? "complete" : "missing"} /> },
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "version_status", text(row, "dossier_status"))} /> },
+            { key: "asof", header: "Research as of", render: (row) => text(row, "research_as_of", "—") },
+          ]} />
+        )}
+      </Panel>
+
+      <Panel icon={ShieldCheck} title="Real-Company Acceptance">
+        {acceptance.length === 0 ? (
+          <Empty icon={ShieldCheck} title="No acceptance run completed" description="Institutional completion remains blocked until one real company passes every required gate with retained evidence." />
+        ) : (
+          <DataTable rows={acceptance} rowKey={(row, index) => text(row, "run_key", String(index))} columns={[
+            { key: "company", header: "Company", render: (row) => <strong>{text(row, "legal_name")}</strong> },
+            { key: "status", header: "Run", render: (row) => <StatusPill status={text(row, "run_status")} /> },
+            { key: "gates", header: "Passed / total", align: "right", render: (row) => `${num(row, "passed_gate_count")} / ${num(row, "gate_count")}` },
+            { key: "failed", header: "Failed / blocked", align: "right", render: (row) => `${num(row, "failed_gate_count")} / ${num(row, "blocked_gate_count")}` },
+            { key: "decision", header: "Decision", render: (row) => text(row, "acceptance_decision", "Pending") },
+            { key: "asof", header: "Data as of", render: (row) => text(row, "data_as_of", "—") },
+          ]} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+/* ============================================================
+ * IDEA GENERATOR
+ * ============================================================ */
 function IdeasView() {
   const { data } = useResearchIdeas();
   const watchlistMut = useUpsertWatchlist();
@@ -762,6 +837,3 @@ function SkeletonGrid({ rows = 4 }: { rows?: number }) {
     </div>
   );
 }
-
-/* Lucide icons used only here, imported lazily to keep the chunk focused */
-import { ShieldCheck, Users, Gavel, Wallet, BarChart3, Search, TrendingDown } from "lucide-react";

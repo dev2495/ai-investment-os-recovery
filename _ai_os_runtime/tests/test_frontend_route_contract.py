@@ -26,7 +26,7 @@ class FrontendRouteContractTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(len(registered), 60)
+        self.assertEqual(len(registered), 65)
         self.assertEqual(mapped, registered)
 
     def test_shared_terminals_derive_tab_from_pathname(self) -> None:
@@ -59,7 +59,7 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 80)
+        self.assertEqual(len(paths), 81)
         self.assertNotIn("/api/tradingview/chart-actions", paths)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),

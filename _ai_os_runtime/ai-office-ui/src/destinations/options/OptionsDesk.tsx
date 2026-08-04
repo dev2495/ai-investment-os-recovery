@@ -1,16 +1,10 @@
 /**
- * Options Desk Terminal v2 — oipulse-class and beyond
+ * Institutional Options Desk beta.
  *
  * Routes: /options/desk | /chain | /surface | /oi-analysis | /strategies | /agent
  *
- * Matches OI Pulse's core (real-time OI chain, OI buildup, max pain, PCR,
- * straddle charts) AND beats them with features they lack:
- *   - IV smile/skew surface
- *   - OI buildup heatmap by strike
- *   - Strategy builder with payoff diagram
- *
- * Data source: trading.option_chain_snapshots (Zerodha) via the
- * trading-quant-risk snapshot's option_chain array.
+ * Calculated analytics are displayed only when their deterministic result has
+ * passed the institutional validation contract. Broker data remains read-only.
  */
 
 import React from "react";
@@ -89,17 +83,29 @@ function optionalNum(row: LiveRow, key: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function booleanValue(row: LiveRow, key: string): boolean {
+  const value = raw(row, key);
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function ivPercent(iv: number): number {
+  return iv > 3 ? iv : iv * 100;
+}
+
 function useChain() {
   const { data, isLoading } = useTradingQuantRisk();
   return React.useMemo(() => {
-    const raw = data?.option_chain ?? [];
+    const institutional = data?.institutional_option_chain ?? [];
+    const raw = institutional.length > 0 ? institutional : data?.option_chain ?? [];
     const oiChanges = new Map(
       (data?.option_oi_change ?? []).map((row) => {
         const key = [text(row, "underlying"), text(row, "expiry", text(row, "expiry_date")), num(row, "strike", 0), text(row, "option_type").toUpperCase()].join("|");
         return [key, optionalNum(row, "open_interest_change")] as const;
       }),
     );
-    const parsed: ParsedContract[] = raw.map((r) => ({
+    const parsed: ParsedContract[] = raw.map((r) => {
+      const greeksValidated = booleanValue(r, "greeks_validated");
+      return ({
       symbol: text(r, "underlying", text(r, "symbol", "")),
       expiry: text(r, "expiry", text(r, "expiry_date", "")),
       strike: num(r, "strike", 0),
@@ -107,16 +113,17 @@ function useChain() {
       ltp: num(r, "last_price", num(r, "ltp", 0)),
       oi: num(r, "open_interest", num(r, "oi", 0)),
       oiChange: oiChanges.get([text(r, "underlying", text(r, "symbol", "")), text(r, "expiry", text(r, "expiry_date")), num(r, "strike", 0), text(r, "option_type", "CE").toUpperCase()].join("|")) ?? null,
-      iv: optionalNum(r, "implied_volatility") ?? optionalNum(r, "iv"),
+      iv: greeksValidated ? optionalNum(r, "implied_volatility") : null,
       volume: num(r, "volume", 0),
-      spot: num(r, "spot_price", 0),
-      delta: optionalNum(r, "delta"),
-      gamma: optionalNum(r, "gamma"),
-      theta: optionalNum(r, "theta"),
-      vega: optionalNum(r, "vega"),
-    }));
+      spot: num(r, "spot_price", num(r, "reference_spot", 0)),
+      delta: greeksValidated ? optionalNum(r, "delta") : null,
+      gamma: greeksValidated ? optionalNum(r, "gamma") : null,
+      theta: greeksValidated ? optionalNum(r, "theta") : null,
+      vega: greeksValidated ? optionalNum(r, "vega") : null,
+    });
+    });
     return { parsed, isLoading, underlyings: Array.from(new Set(parsed.map((p) => p.symbol))).sort(), expiries: Array.from(new Set(parsed.map((p) => p.expiry))).sort() };
-  }, [data?.option_chain, data?.option_oi_change, isLoading]);
+  }, [data?.institutional_option_chain, data?.option_chain, data?.option_oi_change, isLoading]);
 }
 
 /* ============================================================
@@ -128,6 +135,10 @@ function DeskView() {
   const [showTicket, setShowTicket] = React.useState(false);
   const analytics = React.useMemo(() => computeAnalytics(parsed), [parsed]);
   const validIv = parsed.map((contract) => contract.iv).filter((iv): iv is number => iv !== null && iv > 0);
+  const acceptance = tradingData?.option_acceptance ?? [];
+  const openAnalyticsAlerts = (tradingData?.option_analytics_alerts ?? []).filter((row) => text(row, "status") === "open");
+  const specialistObservations = tradingData?.option_specialist_observations ?? [];
+  const replaySessions = tradingData?.option_replays ?? [];
   const optionTrades = React.useMemo(
     () => (tradingData?.trade_activity ?? []).filter((row) => {
       const instrumentType = text(row, "instrument_type", text(row, "asset_class", "")).toLowerCase();
@@ -144,8 +155,26 @@ function DeskView() {
         <MetricTile><Metric label="Underlyings" value={underlyings.length} /></MetricTile>
         <MetricTile><Metric label="Contracts" value={parsed.length} /></MetricTile>
         <MetricTile><Metric label="Total OI" value={formatCompact(parsed.reduce((a, c) => a + c.oi, 0))} /></MetricTile>
-        <MetricTile><Metric label="Avg IV" value={validIv.length ? formatPercent(validIv.reduce((sum, iv) => sum + iv, 0) / validIv.length / 100, { digits: 1 }) : "Unavailable"} sub={validIv.length ? undefined : "Kite quotes do not supply IV"} /></MetricTile>
+        <MetricTile><Metric label="Avg IV" value={validIv.length ? `${(validIv.reduce((sum, iv) => sum + ivPercent(iv), 0) / validIv.length).toFixed(1)}%` : "Unavailable"} sub={validIv.length ? undefined : "Kite quotes do not supply IV"} /></MetricTile>
       </div>
+
+      <Panel icon={AlertTriangle} title="Institutional Analytics Readiness">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+          <MetricTile tone={acceptance.some((row) => text(row, "status") === "passed") ? "ok" : "warn"}>
+            <Metric label="Acceptance Runs" value={acceptance.length} sub={acceptance.length ? text(acceptance[0], "status", "pending") : "not yet demonstrated"} />
+          </MetricTile>
+          <MetricTile tone={openAnalyticsAlerts.length ? "warn" : "default"}>
+            <Metric label="Open Alerts" value={openAnalyticsAlerts.length} sub="evidence-backed analytics alerts" />
+          </MetricTile>
+          <MetricTile><Metric label="Replay Sessions" value={replaySessions.length} sub="point-in-time, paper only" /></MetricTile>
+          <MetricTile><Metric label="Specialist Notes" value={specialistObservations.length} sub="human review required" /></MetricTile>
+        </div>
+        {acceptance.length === 0 && (
+          <div style={{ marginTop: "var(--space-3)", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+            IV, Greeks, exposure and replay capabilities remain unavailable until a real live-market acceptance run passes. No broker write is permitted.
+          </div>
+        )}
+      </Panel>
 
       <Panel icon={Activity} title="Live Analytics per Underlying">
         {isLoading ? <SkeletonRows n={3} /> : analytics.length === 0 ? (
@@ -155,7 +184,7 @@ function DeskView() {
             columns={[
               { key: "symbol", header: "Underlying", render: (r) => <strong>{text(r, "symbol")}</strong> },
               { key: "spot", header: "Spot", align: "right", render: (r) => num(r, "spot", 0).toFixed(2) },
-              { key: "atm", header: "ATM IV", align: "right", render: (r) => optionalNum(r, "atm_iv") === null ? "—" : formatPercent(optionalNum(r, "atm_iv")! / 100, { digits: 1 }) },
+              { key: "atm", header: "ATM IV", align: "right", render: (r) => optionalNum(r, "atm_iv") === null ? "—" : `${ivPercent(optionalNum(r, "atm_iv")!).toFixed(1)}%` },
               { key: "pcr", header: "PCR", align: "right", render: (r) => <span style={{ color: num(r, "pcr", 0) > 1.2 ? "var(--status-warn)" : num(r, "pcr", 0) < 0.8 ? "var(--status-info)" : "var(--text)" }}>{num(r, "pcr", 0).toFixed(2)}</span> },
               { key: "maxpain", header: "Max Pain", align: "right", render: (r) => num(r, "max_pain", 0).toFixed(0) },
               { key: "callwall", header: "Call Wall", align: "right", render: (r) => num(r, "call_wall", 0).toFixed(0) },
@@ -268,7 +297,7 @@ function ChainView() {
               { key: "ltp", header: "LTP", align: "right", render: (r) => formatCurrency(num(r, "ltp", 0)) },
               { key: "oi", header: "OI", align: "right", render: (r) => formatCompact(num(r, "oi", 0)) },
               { key: "oichg", header: "OI Chg", align: "right", render: (r) => optionalNum(r, "oiChange") === null ? "—" : <span style={{ color: optionalNum(r, "oiChange")! >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{optionalNum(r, "oiChange")! >= 0 ? "+" : ""}{formatCompact(optionalNum(r, "oiChange")!)}</span> },
-              { key: "iv", header: "IV", align: "right", render: (r) => optionalNum(r, "iv") === null ? "—" : formatPercent(optionalNum(r, "iv")! / 100, { digits: 1 }) },
+              { key: "iv", header: "IV", align: "right", render: (r) => optionalNum(r, "iv") === null ? "—" : `${ivPercent(optionalNum(r, "iv")!).toFixed(1)}%` },
               { key: "delta", header: "Delta", align: "right", render: (r) => optionalNum(r, "delta")?.toFixed(3) ?? "—" },
               { key: "gamma", header: "Gamma", align: "right", render: (r) => optionalNum(r, "gamma")?.toFixed(4) ?? "—" },
               { key: "theta", header: "Theta", align: "right", render: (r) => optionalNum(r, "theta")?.toFixed(2) ?? "—" },
@@ -304,7 +333,7 @@ function SurfaceView() {
     const map = new Map<number, { strike: number; ceIv?: number; peIv?: number }>();
     for (const c of filtered) {
       const ex = map.get(c.strike) ?? { strike: c.strike };
-      if (c.type === "CE") ex.ceIv = c.iv!; else ex.peIv = c.iv!;
+      if (c.type === "CE") ex.ceIv = ivPercent(c.iv!); else ex.peIv = ivPercent(c.iv!);
       map.set(c.strike, ex);
     }
     return Array.from(map.values()).sort((a, b) => a.strike - b.strike);

@@ -17,6 +17,7 @@ import {
   PortfolioOfficeSchema,
   ResearchIdeasSchema,
   TradingQuantRiskSchema,
+  SectorIntelligenceSchema,
   StrategyArsenalSchema,
   ReportsSchema,
   IntegrationGatewaySchema,
@@ -34,6 +35,7 @@ import type {
   PortfolioOffice,
   ResearchIdeas,
   TradingQuantRisk,
+  SectorIntelligence,
   StrategyArsenal,
   Reports,
   IntegrationGateway,
@@ -55,6 +57,7 @@ export const queryKeys = {
   portfolioOffice: ["portfolio-office"] as const,
   researchIdeas: ["research-ideas"] as const,
   tradingQuantRisk: ["trading-quant-risk"] as const,
+  sectorIntelligence: ["sector-intelligence"] as const,
   strategyArsenal: ["strategy-arsenal"] as const,
   reports: ["reports"] as const,
   integrationGateway: ["integration-gateway"] as const,
@@ -166,6 +169,17 @@ export function useResearchIdeas() {
     queryFn: async () => {
       const data = await get("/api/research-ideas/snapshot");
       return validateSnapshot(ResearchIdeasSchema, data, "research-ideas");
+    },
+    ...snapshotQueryOptions,
+  });
+}
+
+export function useSectorIntelligence() {
+  return useQuery<SectorIntelligence>({
+    queryKey: queryKeys.sectorIntelligence,
+    queryFn: async () => {
+      const data = await get("/api/sector-intelligence/snapshot");
+      return validateSnapshot(SectorIntelligenceSchema, data, "sector-intelligence");
     },
     ...snapshotQueryOptions,
   });

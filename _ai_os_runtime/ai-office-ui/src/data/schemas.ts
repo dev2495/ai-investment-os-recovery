@@ -219,6 +219,11 @@ export const ResearchIdeasSchema = z.object({
   idea_dossiers: z.array(liveRow).default([]),
   output_artifacts: z.array(liveRow).default([]),
   watchlist: z.array(liveRow).default([]),
+  fundamental_coverage: z.array(liveRow).default([]),
+  investment_dossiers: z.array(liveRow).default([]),
+  dossier_refresh_queue: z.array(liveRow).default([]),
+  management_claims: z.array(liveRow).default([]),
+  fundamental_acceptance: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 
@@ -262,11 +267,41 @@ export const TradingQuantRiskSchema = z.object({
   option_chain: z.array(liveRow).default([]),
   option_oi_change: z.array(liveRow).default([]),
   option_trade_log: z.array(liveRow).default([]),
+  institutional_option_chain: z.array(liveRow).default([]),
+  option_premium_series: z.array(liveRow).default([]),
+  option_volatility_metrics: z.array(liveRow).default([]),
+  option_exposure_estimates: z.array(liveRow).default([]),
+  option_analytics_alerts: z.array(liveRow).default([]),
+  option_replays: z.array(liveRow).default([]),
+  option_specialist_observations: z.array(liveRow).default([]),
+  option_acceptance: z.array(liveRow).default([]),
   broker_snapshots: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 
 export type TradingQuantRisk = z.infer<typeof TradingQuantRiskSchema>;
+
+/* ============================================================
+ * Strategy Arsenal
+ * ============================================================ */
+export const SectorIntelligenceSchema = z.object({
+  ...snapshotMeta,
+  data_mode: dataMode.optional(),
+  payload_profile: payloadProfile.optional(),
+  hierarchy: z.array(liveRow).default([]),
+  custom_indices: z.array(liveRow).default([]),
+  freshness: z.array(liveRow).default([]),
+  committee: z.array(liveRow).default([]),
+  portfolio_manager: z.array(liveRow).default([]),
+  rankings: z.array(liveRow).default([]),
+  aggregates: z.array(liveRow).default([]),
+  valuation_bands: z.array(liveRow).default([]),
+  flows: z.array(liveRow).default([]),
+  chart_artifacts: z.array(liveRow).default([]),
+  execution_control: z.array(executionControlRow).default([]),
+}).passthrough();
+
+export type SectorIntelligence = z.infer<typeof SectorIntelligenceSchema>;
 
 /* ============================================================
  * Strategy Arsenal
