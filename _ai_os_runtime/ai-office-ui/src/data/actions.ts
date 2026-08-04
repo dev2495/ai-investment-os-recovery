@@ -77,6 +77,19 @@ export function useRunSectorIntelligence() {
   );
 }
 
+export interface SectorIntelligenceImportInput {
+  package: Record<string, unknown>;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useImportSectorIntelligencePackage() {
+  return useInvalidating<SectorIntelligenceImportInput, LiveRow>(
+    "/api/sector-intelligence/import",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
 export interface InstitutionalOptionsAnalyticsInput {
   underlying: string;
   exchange: "NFO" | "BFO";
@@ -96,6 +109,44 @@ export interface InstitutionalOptionsAnalyticsInput {
 export function useRunInstitutionalOptionsAnalytics() {
   return useInvalidating<InstitutionalOptionsAnalyticsInput, LiveRow>(
     "/api/options/institutional-analytics/run",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
+
+export interface InstitutionalOptionsMaterializeInput {
+  limit: number;
+  interval_seconds: number;
+  actor?: string;
+}
+
+export function useMaterializeInstitutionalOptions() {
+  return useInvalidating<InstitutionalOptionsMaterializeInput, LiveRow>(
+    "/api/options/institutional-analytics/materialize",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
+
+export interface OptionValuationPolicyInput {
+  policy_key: string;
+  provider: string;
+  exchange: "NFO" | "BFO";
+  underlying: string;
+  model_family: "black_scholes_merton" | "black_76";
+  risk_free_rate: number;
+  dividend_yield: number;
+  rate_source: string;
+  rate_source_timestamp: string;
+  dividend_source: string;
+  dividend_source_timestamp: string;
+  source_artifact_ref: string;
+  effective_from: string;
+  expires_at: string;
+  actor?: string;
+}
+
+export function useUpsertOptionValuationPolicy() {
+  return useInvalidating<OptionValuationPolicyInput, LiveRow>(
+    "/api/options/valuation-policy/upsert",
     [Q.tradingQuantRisk, Q.office]
   );
 }

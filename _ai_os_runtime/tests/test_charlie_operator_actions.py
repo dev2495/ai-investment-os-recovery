@@ -652,6 +652,57 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertIn("run 321 by Strategy Research Agent", reply)
         self.assertIn("live execution are disabled", reply)
 
+    def test_institutional_program_status_uses_verified_read_models(self) -> None:
+        context = {
+            "option_analytics_readiness": [{
+                "underlying": "NIFTY", "expiry": "2026-08-27",
+                "analytics_readiness": "ready", "validated_greeks_count": 42,
+                "contract_count": 48, "model_family": "black_scholes_merton",
+            }],
+            "institutional_option_pipeline_runs": [{
+                "run_key": "options-1", "status": "completed", "batches_created": 1,
+                "calculations_completed": 42, "calculations_blocked": 6,
+            }],
+            "sector_data_freshness": [{
+                "node_name": "Banks", "freshness_state": "stale",
+                "latest_metric_at": "2026-08-01T10:00:00Z",
+                "latest_market_monitor_at": None, "latest_flow_at": None,
+            }],
+            "sector_custom_indices": [{"index_key": "banks_quality"}],
+            "sector_import_runs": [{
+                "run_key": "sector-1", "status": "imported",
+                "source_name": "Licensed sector export", "imported_at": "2026-08-04T10:00:00Z",
+            }],
+            "fundamental_coverage": [{
+                "primary_symbol": "RELIANCE", "annual_statement_years": 12,
+                "operational_kpi_count": 8, "peer_count": 6,
+                "real_company_verified": True,
+            }],
+            "investment_dossiers": [{
+                "primary_symbol": "RELIANCE", "dossier_status": "in_review",
+                "reviewed_section_count": 12, "section_count": 15,
+                "specialist_count": 10, "has_portfolio_fit": True,
+            }],
+            "fundamental_acceptance": [{"run_key": "reliance-acceptance"}],
+        }
+
+        options_reply = ai_os_api_server.deterministic_chat_reply(
+            "Is NIFTY options analytics ready?", context, [], [], {"default_model": "test"}, "not_requested"
+        )
+        sector_reply = ai_os_api_server.deterministic_chat_reply(
+            "What sector data is stale?", context, [], [], {"default_model": "test"}, "not_requested"
+        )
+        fundamental_reply = ai_os_api_server.deterministic_chat_reply(
+            "Which fundamental dossier is ready?", context, [], [], {"default_model": "test"}, "not_requested"
+        )
+
+        self.assertIn("42/48 validated Greeks", options_reply)
+        self.assertIn("6 blocked", options_reply)
+        self.assertIn("Banks: stale", sector_reply)
+        self.assertIn("Latest source package sector-1 is imported", sector_reply)
+        self.assertIn("12 annual statement years", fundamental_reply)
+        self.assertIn("portfolio-fit present", fundamental_reply)
+
     def test_active_graph_progression_is_bounded_and_audited(self) -> None:
         with (
             mock.patch.object(

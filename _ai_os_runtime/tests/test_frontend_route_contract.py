@@ -59,7 +59,12 @@ class FrontendRouteContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
-        self.assertEqual(len(paths), 84)
+        self.assertEqual(len(paths), 87)
+        self.assertTrue({
+            "/api/sector-intelligence/import",
+            "/api/options/institutional-analytics/materialize",
+            "/api/options/valuation-policy/upsert",
+        }.issubset(paths))
         self.assertNotIn("/api/tradingview/chart-actions", paths)
         self.assertEqual(
             sorted(path for path in paths if path not in backend),

@@ -2,13 +2,13 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Activity, BarChart3, Database, Gavel, Layers, LineChart,
-  ShieldCheck, Workflow, RefreshCw,
+  ShieldCheck, Workflow, RefreshCw, Upload, FileCheck2,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useRunSectorIntelligence } from "../../data/actions";
+import { useImportSectorIntelligencePackage, useRunSectorIntelligence } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
-  Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextInput,
+  Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
 } from "../../system/primitives";
 import { formatCompact, formatRelative, num, text } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
@@ -46,6 +46,7 @@ export default function SectorIntelligence() {
         <Tabs tabs={TABS} active={tab} onChange={(key) => navigate(`/sector/${key}`)} />
       </div>
       <SectorRunControl indices={data?.custom_indices ?? []} />
+      {tab === "overview" ? <SectorSourceImportControl /> : null}
 
 
       {query.isLoading ? <Loading /> : null}
@@ -59,6 +60,80 @@ export default function SectorIntelligence() {
       {!query.isLoading && !query.isError && tab === "flows" ? <Flows data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "committee" ? <Committee data={data} /> : null}
     </div>
+  );
+}
+
+function SectorSourceImportControl() {
+  const mutation = useImportSectorIntelligencePackage();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [packageText, setPackageText] = React.useState("");
+  const [fileName, setFileName] = React.useState("");
+  const [mode, setMode] = React.useState<"validate" | "persist">("validate");
+  const parsed = React.useMemo(() => {
+    if (!packageText.trim()) return { value: null as Record<string, unknown> | null, error: "" };
+    try {
+      const value = JSON.parse(packageText);
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return { value: null, error: "Package root must be a JSON object." };
+      }
+      return { value: value as Record<string, unknown>, error: "" };
+    } catch (error) {
+      return { value: null, error: error instanceof Error ? error.message : "Invalid JSON." };
+    }
+  }, [packageText]);
+
+  function submit() {
+    if (!parsed.value) return;
+    mutation.mutate({ package: parsed.value, persist: mode === "persist", actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({
+        title: mode === "persist" ? "Sector package imported" : "Sector package validated",
+        message: text(result, "package_hash", text(result, "status", "completed")),
+        tone: "ok",
+        duration: 5000,
+      }),
+      onError: (error) => pushToast({ title: "Sector package rejected", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  return (
+    <Panel
+      icon={Upload}
+      title="Import Sector Evidence Package"
+      actions={<Badge tone={mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Checking" : fileName || "JSON"}</Badge>}
+    >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "var(--space-3)", alignItems: "start" }}>
+        <Field label="Evidence package" hint="Taxonomy, effective memberships, metrics and custom indices are validated as one transaction." required>
+          <TextArea rows={8} value={packageText} onChange={(event) => setPackageText(event.target.value)} placeholder='{"source": {...}, "taxonomy": [...], "memberships": [...], "metrics": [...], "indices": [...]}' />
+        </Field>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <Field label="Load JSON file">
+            <input
+              className="aios-input"
+              type="file"
+              accept="application/json,.json"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                setFileName(file.name);
+                setPackageText(await file.text());
+              }}
+            />
+          </Field>
+          <Field label="Operation" required>
+            <Select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
+              <option value="validate">Validate only</option>
+              <option value="persist">Import validated package</option>
+            </Select>
+          </Field>
+          <Button variant="primary" icon={FileCheck2} onClick={submit} disabled={!parsed.value || mutation.isPending}>
+            {mutation.isPending ? "Validating…" : mode === "persist" ? "Validate and import" : "Validate package"}
+          </Button>
+        </div>
+      </div>
+      {parsed.error ? <div role="alert" style={{ color: "var(--status-risk)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>{parsed.error}</div> : null}
+      {mutation.isError ? <div role="alert" style={{ color: "var(--status-risk)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>{mutation.error.message}</div> : null}
+      {mutation.isSuccess ? <div role="status" style={{ color: "var(--status-ok)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>{text(mutation.data, "status")} · {text(mutation.data, "package_hash")}</div> : null}
+    </Panel>
   );
 }
 
@@ -139,6 +214,7 @@ function Overview({ data }: { data: ReturnType<typeof useSectorIntelligence>["da
   const hierarchy = data?.hierarchy ?? [];
   const freshness = data?.freshness ?? [];
   const rankings = data?.rankings ?? [];
+  const imports = data?.source_import_runs ?? [];
   const sectors = new Set(hierarchy.map((row) => text(row, "sector_key")).filter(Boolean)).size;
   const industries = new Set(hierarchy.map((row) => text(row, "industry_key")).filter(Boolean)).size;
   const stale = freshness.filter((row) =>
@@ -176,6 +252,21 @@ function Overview({ data }: { data: ReturnType<typeof useSectorIntelligence>["da
             { key: "market", header: "Market monitor", render: (row) => freshnessCell(row, "latest_market_monitor_at") },
             { key: "flows", header: "Flows", render: (row) => freshnessCell(row, "latest_flow_at") },
             { key: "research", header: "Research", render: (row) => freshnessCell(row, "latest_research_review_at") },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={FileCheck2} title="Source Import Ledger" actions={<Badge dot>{imports.length}</Badge>}>
+        {imports.length === 0 ? (
+          <Empty icon={FileCheck2} title="No sector package imported" description="Use the evidence-package control above. Validation never creates sample taxonomy or constituents." />
+        ) : (
+          <DataTable rows={imports} rowKey={(row, index) => text(row, "run_key", String(index))} columns={[
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status")} /> },
+            { key: "source", header: "Evidence", render: (row) => text(row, "source_artifact_ref") },
+            { key: "taxonomy", header: "Taxonomy", align: "right", render: (row) => num(row, "taxonomy_rows") },
+            { key: "members", header: "Memberships", align: "right", render: (row) => num(row, "membership_rows") },
+            { key: "metrics", header: "Metrics", align: "right", render: (row) => num(row, "metric_rows") },
+            { key: "indices", header: "Indices", align: "right", render: (row) => num(row, "index_rows") },
+            { key: "when", header: "Imported", render: (row) => formatRelative(text(row, "imported_at")) },
           ]} />
         )}
       </Panel>

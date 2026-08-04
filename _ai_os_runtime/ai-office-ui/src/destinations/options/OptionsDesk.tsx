@@ -11,10 +11,13 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   TrendingDown, BarChart3, LineChart, Brain, Activity, Plus,
-  AlertTriangle, Layers, Flame, Play, RefreshCw,
+  AlertTriangle, Layers, Flame, Play, RefreshCw, Database, ShieldCheck,
 } from "lucide-react";
 import { useTradingQuantRisk } from "../../data/queries";
-import { useRecordManualTrade, useRunInstitutionalOptionsAnalytics } from "../../data/actions";
+import {
+  useMaterializeInstitutionalOptions, useRecordManualTrade,
+  useRunInstitutionalOptionsAnalytics, useUpsertOptionValuationPolicy,
+} from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
@@ -56,6 +59,7 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
         </div>
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
       </div>
+      {tab === "desk" ? <OptionsDataOperationsControl /> : null}
       <OptionsAnalyticsControl />
 
       {tab === "desk" && <DeskView />}
@@ -210,6 +214,111 @@ function optionsLocalDateTimeInputValue() {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 16);
+}
+
+function OptionsDataOperationsControl() {
+  const { data } = useTradingQuantRisk();
+  const materialize = useMaterializeInstitutionalOptions();
+  const savePolicy = useUpsertOptionValuationPolicy();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const readiness = data?.option_analytics_readiness ?? [];
+  const pipeline = data?.institutional_option_pipeline_runs ?? [];
+  const now = React.useMemo(() => optionsLocalDateTimeInputValue(), []);
+  const tomorrow = React.useMemo(() => {
+    const value = new Date();
+    value.setDate(value.getDate() + 1);
+    value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
+    return value.toISOString().slice(0, 16);
+  }, []);
+  const [form, setForm] = React.useState({
+    policy_key: "nifty-valuation-" + new Date().toISOString().slice(0, 10).replace(/-/g, ""),
+    provider: "Zerodha",
+    exchange: "NFO" as "NFO" | "BFO",
+    underlying: "NIFTY",
+    model_family: "black_scholes_merton" as "black_scholes_merton" | "black_76",
+    risk_free_rate: 0.06,
+    dividend_yield: 0,
+    rate_source: "",
+    rate_source_timestamp: now,
+    dividend_source: "",
+    dividend_source_timestamp: now,
+    source_artifact_ref: "",
+    effective_from: now,
+    expires_at: tomorrow,
+  });
+  const policyReady = Boolean(
+    form.policy_key && form.underlying && form.rate_source && form.dividend_source
+    && form.source_artifact_ref && form.effective_from && form.expires_at
+  );
+
+  function storePolicy() {
+    if (!policyReady) return;
+    savePolicy.mutate({
+      ...form,
+      underlying: form.underlying.trim().toUpperCase(),
+      rate_source_timestamp: new Date(form.rate_source_timestamp).toISOString(),
+      dividend_source_timestamp: new Date(form.dividend_source_timestamp).toISOString(),
+      effective_from: new Date(form.effective_from).toISOString(),
+      expires_at: new Date(form.expires_at).toISOString(),
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => pushToast({ title: "Valuation policy active", message: "Source-evidenced inputs are available to the deterministic options engine.", tone: "ok", duration: 5000 }),
+      onError: (error) => pushToast({ title: "Policy rejected", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  function runMaterializer() {
+    materialize.mutate({ limit: 20, interval_seconds: 300, actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({ title: "Option warehouse refreshed", message: text(result, "status", "completed"), tone: "ok", duration: 5000 }),
+      onError: (error) => pushToast({ title: "Materializer failed", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  return (
+    <Panel
+      icon={Database}
+      title="Institutional Data Operations"
+      actions={<Button size="sm" icon={RefreshCw} onClick={runMaterializer} disabled={materialize.isPending}>{materialize.isPending ? "Refreshing…" : "Materialize snapshots"}</Button>}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
+        {readiness.length === 0 ? (
+          <Empty icon={Database} title="No institutional batches" description="Sync Zerodha option quotes, then materialize snapshots. No synthetic chain is created." />
+        ) : readiness.slice(0, 4).map((row, index) => (
+          <MetricTile key={text(row, "underlying", String(index))} tone={text(row, "analytics_readiness") === "ready" ? "ok" : "warn"}>
+            <Metric
+              label={text(row, "underlying") + " " + text(row, "expiry")}
+              value={<StatusPill status={text(row, "analytics_readiness")} />}
+              sub={String(num(row, "contract_count")) + " contracts · " + text(row, "model_family", "policy missing")}
+            />
+          </MetricTile>
+        ))}
+        <MetricTile tone={pipeline[0] && text(pipeline[0], "status") === "completed" ? "ok" : "default"}>
+          <Metric label="Latest materializer" value={pipeline.length ? text(pipeline[0], "status") : "Never run"} sub={pipeline.length ? String(num(pipeline[0], "calculations_completed")) + " analytics rows" : "awaiting source snapshots"} />
+        </MetricTile>
+      </div>
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: "var(--space-4)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)", fontWeight: 650 }}><ShieldCheck size={16} /> Source-evidenced valuation policy</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+          <Field label="Policy key" required><TextInput value={form.policy_key} onChange={(event) => setForm({ ...form, policy_key: event.target.value })} /></Field>
+          <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} /></Field>
+          <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
+          <Field label="Model" required><Select value={form.model_family} onChange={(event) => setForm({ ...form, model_family: event.target.value as typeof form.model_family })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76</option></Select></Field>
+          <Field label="Risk-free rate" hint="Decimal, e.g. 0.06" required><TextInput type="number" step="0.0001" value={form.risk_free_rate} onChange={(event) => setForm({ ...form, risk_free_rate: Number(event.target.value) })} /></Field>
+          <Field label="Dividend yield" hint="Decimal, explicit zero allowed" required><TextInput type="number" step="0.0001" value={form.dividend_yield} onChange={(event) => setForm({ ...form, dividend_yield: Number(event.target.value) })} /></Field>
+          <Field label="Rate source" required><TextInput value={form.rate_source} onChange={(event) => setForm({ ...form, rate_source: event.target.value })} placeholder="RBI / yield source" /></Field>
+          <Field label="Rate observed" required><TextInput type="datetime-local" value={form.rate_source_timestamp} onChange={(event) => setForm({ ...form, rate_source_timestamp: event.target.value })} /></Field>
+          <Field label="Dividend source" required><TextInput value={form.dividend_source} onChange={(event) => setForm({ ...form, dividend_source: event.target.value })} placeholder="Index factsheet / verified source" /></Field>
+          <Field label="Dividend observed" required><TextInput type="datetime-local" value={form.dividend_source_timestamp} onChange={(event) => setForm({ ...form, dividend_source_timestamp: event.target.value })} /></Field>
+          <Field label="Evidence reference" hint="URL, artifact ID or content hash" required><TextInput value={form.source_artifact_ref} onChange={(event) => setForm({ ...form, source_artifact_ref: event.target.value })} /></Field>
+          <Field label="Effective from" required><TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm({ ...form, effective_from: event.target.value })} /></Field>
+          <Field label="Expires at" required><TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} /></Field>
+          <Button variant="primary" icon={ShieldCheck} onClick={storePolicy} disabled={!policyReady || savePolicy.isPending}>{savePolicy.isPending ? "Saving…" : "Validate policy"}</Button>
+        </div>
+      </div>
+      {materialize.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{materialize.error.message}</div> : null}
+      {savePolicy.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{savePolicy.error.message}</div> : null}
+    </Panel>
+  );
 }
 
 

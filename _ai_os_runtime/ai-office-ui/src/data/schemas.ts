@@ -275,6 +275,8 @@ export const TradingQuantRiskSchema = z.object({
   option_replays: z.array(liveRow).default([]),
   option_specialist_observations: z.array(liveRow).default([]),
   option_acceptance: z.array(liveRow).default([]),
+  option_analytics_readiness: z.array(liveRow).default([]),
+  institutional_option_pipeline_runs: z.array(liveRow).default([]),
   broker_snapshots: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
@@ -298,6 +300,7 @@ export const SectorIntelligenceSchema = z.object({
   valuation_bands: z.array(liveRow).default([]),
   flows: z.array(liveRow).default([]),
   chart_artifacts: z.array(liveRow).default([]),
+  source_import_runs: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 

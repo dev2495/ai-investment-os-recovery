@@ -2880,6 +2880,14 @@ def build_sector_intelligence_snapshot() -> dict:
             ORDER BY generated_at DESC
             LIMIT 100
         """,
+        "source_import_runs": """
+            SELECT id,run_key,package_hash,source_artifact_ref,observed_at,status,
+                   taxonomy_rows,membership_rows,metric_rows,index_rows,
+                   validation_errors,imported_by,imported_at,broker_write_allowed
+            FROM sector_intelligence.source_import_runs
+            ORDER BY imported_at DESC
+            LIMIT 50
+        """,
         "execution_control": """
             SELECT global_execution_locked, broker_execution_policy,
                    paper_trading_allowed, limited_live_allowed,
@@ -3400,6 +3408,24 @@ def build_trading_quant_risk_snapshot() -> dict:
                    paper_attribution_coverage_ratio, gate_version,
                    started_at, finished_at, broker_write_allowed
             FROM trading.v_option_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 50
+        """,
+        "option_analytics_readiness": """
+            SELECT provider,exchange,underlying,expiry,minute_ts,freshness_status,
+                   batch_quality_status,contract_count,policy_key,model_family,
+                   policy_expires_at,analytics_readiness,broker_write_allowed
+            FROM trading.v_option_analytics_readiness
+            ORDER BY minute_ts DESC,underlying
+            LIMIT 50
+        """,
+        "institutional_option_pipeline_runs": """
+            SELECT id,run_key,status,rows_read,rows_written,batches_created,
+                   calculations_completed,calculations_blocked,quality_summary,
+                   error_message,started_at,finished_at,next_run_after,
+                   broker_write_allowed
+            FROM ops.institutional_pipeline_runs
+            WHERE workload_key='institutional_options_materializer'
             ORDER BY started_at DESC
             LIMIT 50
         """,
@@ -15221,6 +15247,104 @@ def build_chat_context(
             FROM trading.v_options_surface_summary
             LIMIT 8
         """,
+        "option_analytics_readiness": """
+            SELECT readiness.provider, readiness.exchange, readiness.underlying,
+                   readiness.expiry, readiness.minute_ts, readiness.freshness_status,
+                   readiness.batch_quality_status, readiness.contract_count,
+                   readiness.policy_key, readiness.model_family,
+                   readiness.policy_expires_at, readiness.analytics_readiness,
+                   coalesce(counts.fresh_contract_count,0) AS fresh_contract_count,
+                   coalesce(counts.liquid_contract_count,0) AS liquid_contract_count,
+                   coalesce(counts.validated_greeks_count,0) AS validated_greeks_count,
+                   coalesce(counts.stale_contract_count,0) AS stale_contract_count,
+                   readiness.broker_write_allowed
+            FROM trading.v_option_analytics_readiness readiness
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE contract.staleness_status='live') AS fresh_contract_count,
+                       count(*) FILTER (WHERE contract.liquidity_status='liquid') AS liquid_contract_count,
+                       count(*) FILTER (WHERE greeks.calculation_status='validated') AS validated_greeks_count,
+                       count(*) FILTER (WHERE contract.staleness_status='stale') AS stale_contract_count
+                FROM trading.option_chain_snapshot_batches batch
+                JOIN trading.option_chain_contract_snapshots contract ON contract.batch_id=batch.id
+                LEFT JOIN trading.option_iv_greeks_results greeks ON greeks.contract_snapshot_id=contract.id
+                WHERE batch.provider=readiness.provider AND batch.exchange=readiness.exchange
+                  AND batch.underlying=readiness.underlying AND batch.expiry=readiness.expiry
+                  AND batch.minute_ts=readiness.minute_ts
+            ) counts ON true
+            ORDER BY readiness.minute_ts DESC NULLS LAST, readiness.underlying, readiness.expiry
+            LIMIT 8
+        """,
+        "institutional_option_pipeline_runs": """
+            SELECT run_key, status, rows_read, rows_written, batches_created,
+                   calculations_completed, calculations_blocked,
+                   quality_summary, started_at, finished_at, error_message
+            FROM ops.institutional_pipeline_runs
+            WHERE workload_key='institutional_options_materializer'
+            ORDER BY started_at DESC
+            LIMIT 5
+        """,
+        "sector_data_freshness": """
+            SELECT taxonomy_node_id, taxonomy_key, node_name,
+                   latest_metric_at, latest_market_monitor_at, latest_flow_at,
+                   latest_ownership_period_end, latest_research_review_at,
+                   CASE
+                     WHEN greatest(latest_metric_at,latest_market_monitor_at,latest_flow_at) >= now()-interval '2 days' THEN 'fresh'
+                     WHEN greatest(latest_metric_at,latest_market_monitor_at,latest_flow_at) IS NULL THEN 'missing'
+                     ELSE 'stale'
+                   END AS freshness_state
+            FROM sector_intelligence.v_sector_data_freshness
+            ORDER BY CASE freshness_state WHEN 'fresh' THEN 3 WHEN 'stale' THEN 1 ELSE 2 END,
+                     latest_metric_at DESC NULLS LAST
+            LIMIT 12
+        """,
+        "sector_custom_indices": """
+            SELECT index_id, index_key, index_name, status, weighting_method,
+                   rebalance_frequency, latest_rebalance_date,
+                   current_constituent_count, latest_calculated_at,
+                   latest_index_value
+            FROM sector_intelligence.v_custom_index_control
+            ORDER BY status, index_name
+            LIMIT 12
+        """,
+        "sector_import_runs": """
+            SELECT run.run_key, source.name AS source_name, run.status,
+                   run.package_hash, run.source_artifact_ref,
+                   run.taxonomy_rows, run.membership_rows, run.metric_rows,
+                   run.index_rows, run.validation_errors,
+                   run.observed_at, run.imported_at
+            FROM sector_intelligence.source_import_runs run
+            JOIN core.source_systems source ON source.id=run.source_system_id
+            ORDER BY run.imported_at DESC
+            LIMIT 6
+        """,
+        "fundamental_coverage": """
+            SELECT company_key, legal_name, primary_symbol, primary_exchange,
+                   real_company_verified, annual_statement_years,
+                   segment_count, operational_kpi_count, market_share_series_count,
+                   peer_count, management_communication_count,
+                   management_claim_count, claims_with_outcomes,
+                   latest_statement_available_at, latest_evidence_retrieved_at
+            FROM research.v_company_fundamental_coverage
+            ORDER BY real_company_verified DESC, annual_statement_years DESC, legal_name
+            LIMIT 10
+        """,
+        "investment_dossiers": """
+            SELECT dossier_key, company_key, legal_name, primary_symbol,
+                   dossier_status, version_number, version_status, research_as_of,
+                   evidence_coverage, section_count, reviewed_section_count,
+                   specialist_count, has_portfolio_fit, updated_at
+            FROM research.v_latest_investment_dossiers
+            ORDER BY updated_at DESC
+            LIMIT 10
+        """,
+        "fundamental_acceptance": """
+            SELECT run_key, company_key, legal_name, primary_symbol, run_status,
+                   real_company_verified, data_as_of, gate_count, passed_gate_count,
+                   failed_gate_count, blocked_gate_count, started_at, completed_at
+            FROM research.v_real_company_acceptance_status
+            ORDER BY started_at DESC
+            LIMIT 8
+        """,
         "broker_snapshots": """
             SELECT provider, source_connector_key AS connector_key, dataset,
                    retrieved_at AS captured_at, row_count,
@@ -15348,6 +15472,7 @@ def is_auto_factual_retrieval_request(message: str) -> bool:
         "research", "paper", "article", "hypothesis", "backtest", "worker",
         "agent", "department", "office", "workflow", "graph run", "cycle",
         "memory", "vault", "obsidian", "stored note", "knowledge base",
+        "sector", "industry", "custom index", "fundamental", "dossier",
     )
     return (
         any(term in normalized for term in request_terms)
@@ -15365,7 +15490,12 @@ def structured_evidence_sections_for_request(message: str, context: dict) -> lis
         (("news",), ("latest_news", "news_brief")),
         (("watchlist",), ("watchlist",)),
         (("idea list", "idea pipeline", "opportunity"), ("generated_ideas",)),
-        (("option", "straddle", "chain", "open interest"), ("options_summary",)),
+        (("option", "straddle", "chain", "open interest", "greeks", "gamma", "vanna", "charm"),
+         ("options_summary", "option_analytics_readiness", "institutional_option_pipeline_runs")),
+        (("sector", "industry", "custom index", "relative strength", "breadth"),
+         ("sector_data_freshness", "sector_custom_indices", "sector_import_runs")),
+        (("fundamental", "long term", "long-term", "dossier", "moat", "management", "valuation"),
+         ("fundamental_coverage", "investment_dossiers", "fundamental_acceptance")),
         (("calendar", "holiday", "result date"), ("market_events", "market_holidays")),
         (("broker", "zerodha"), ("broker_snapshots", "zerodha_market_status")),
         (("ohlcv", "market data"), ("ohlcv",)),
@@ -15436,6 +15566,14 @@ def deterministic_chat_reply(
         if paper_title:
             research_output_counts[paper_title] = research_output_counts.get(paper_title, 0) + 1
     options = context.get("options_summary") or []
+    option_readiness = context.get("option_analytics_readiness") or []
+    option_pipeline_runs = context.get("institutional_option_pipeline_runs") or []
+    sector_freshness = context.get("sector_data_freshness") or []
+    sector_indices = context.get("sector_custom_indices") or []
+    sector_import_runs = context.get("sector_import_runs") or []
+    fundamental_coverage = context.get("fundamental_coverage") or []
+    investment_dossiers = context.get("investment_dossiers") or []
+    fundamental_acceptance = context.get("fundamental_acceptance") or []
     broker_snapshots = context.get("broker_snapshots") or []
     news_brief = context.get("news_brief") or []
     filing_intelligence = context.get("filing_intelligence") or []
@@ -15675,6 +15813,71 @@ def deterministic_chat_reply(
             f"latest option snapshot {zerodha_market_status.get('latest_option_at') or 'not available'}. "
             "Broker writes remain disabled."
         )
+    if any(term in normalized for term in ("fundamental", "long term", "long-term", "dossier", "moat", "management quality", "valuation")):
+        if fundamental_coverage:
+            focused.append(
+                f"Fundamental factory: {len(fundamental_coverage)} covered companies in this bounded view, "
+                f"{len(investment_dossiers)} current dossiers, and {len(fundamental_acceptance)} recent acceptance runs."
+            )
+            focused.extend(
+                f"- {row.get('primary_symbol') or row.get('legal_name')}: "
+                f"{row.get('annual_statement_years') or 0} annual statement years, "
+                f"{row.get('operational_kpi_count') or 0} KPIs, {row.get('peer_count') or 0} peers, "
+                f"real-company evidence {'verified' if row.get('real_company_verified') else 'not verified'}"
+                for row in fundamental_coverage[:5]
+            )
+            if investment_dossiers:
+                focused.append("Dossier readiness:")
+                focused.extend(
+                    f"- {row.get('primary_symbol') or row.get('legal_name')}: {row.get('dossier_status')}; "
+                    f"{row.get('reviewed_section_count') or 0}/{row.get('section_count') or 0} sections reviewed; "
+                    f"{row.get('specialist_count') or 0} specialists; portfolio-fit "
+                    f"{'present' if row.get('has_portfolio_fit') else 'missing'}"
+                    for row in investment_dossiers[:5]
+                )
+        else:
+            focused.append("No real-company fundamental coverage row is stored; the factory cannot claim institutional readiness.")
+    if any(term in normalized for term in ("sector", "industry", "custom index", "relative strength", "breadth")):
+        if sector_freshness or sector_indices:
+            stale_count = sum(1 for row in sector_freshness if str(row.get("freshness_state")) != "fresh")
+            focused.append(
+                f"Sector intelligence: {len(sector_freshness)} sector rows in this bounded view, "
+                f"{stale_count} not fresh, and {len(sector_indices)} custom indices."
+            )
+            focused.extend(
+                f"- {row.get('node_name')}: {row.get('freshness_state')}; "
+                f"latest metrics {row.get('latest_metric_at') or 'missing'}, "
+                f"market monitor {row.get('latest_market_monitor_at') or 'missing'}, "
+                f"flows {row.get('latest_flow_at') or 'missing'}"
+                for row in sector_freshness[:5]
+            )
+            if sector_import_runs:
+                latest_import = sector_import_runs[0]
+                focused.append(
+                    f"Latest source package {latest_import.get('run_key')} is {latest_import.get('status')} "
+                    f"from {latest_import.get('source_name')} at {latest_import.get('imported_at')}."
+                )
+        else:
+            focused.append("Sector taxonomy and custom-index controls exist, but no populated sector intelligence row is stored yet.")
+    if any(term in normalized for term in ("option", "straddle", "chain", "iv", "open interest", "greeks", "gamma", "vanna", "charm")):
+        if option_readiness:
+            focused.append("Institutional options readiness:")
+            focused.extend(
+                f"- {row.get('underlying')} {row.get('expiry')}: {row.get('analytics_readiness')}; "
+                f"{row.get('validated_greeks_count') or 0}/{row.get('contract_count') or 0} validated Greeks; "
+                f"policy {row.get('model_family') or 'missing'}"
+                for row in option_readiness[:5]
+            )
+        else:
+            focused.append("No institutional option batch is materialized; legacy quote rows cannot be presented as validated IV or Greeks.")
+        if option_pipeline_runs:
+            latest_pipeline = option_pipeline_runs[0]
+            focused.append(
+                f"Latest options materializer run {latest_pipeline.get('run_key')} is {latest_pipeline.get('status')}; "
+                f"{latest_pipeline.get('batches_created') or 0} batches created, "
+                f"{latest_pipeline.get('calculations_completed') or 0} calculations completed and "
+                f"{latest_pipeline.get('calculations_blocked') or 0} blocked."
+            )
     if focused and not broad_office_request:
         return "\n".join(focused)
 
@@ -16971,7 +17174,8 @@ def chat_with_charlie(payload: dict) -> dict:
         or any(term in normalized_message for term in (
             "portfolio", "risk", "holding", "position", "watchlist", "strategy", "research",
             "filing", "news", "calendar", "option", "market", "broker", "task", "inbox", "approval",
-            "backtest", "working", "assignment", "what are you doing"
+            "backtest", "sector", "industry", "custom index", "fundamental", "dossier",
+            "working", "assignment", "what are you doing"
         ))
     )
     bounded_verified_context = (
