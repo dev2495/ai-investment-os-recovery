@@ -2430,6 +2430,7 @@ def build_portfolio_office_snapshot() -> dict:
 
 def build_research_ideas_snapshot() -> dict:
     """Return the bounded research factory, filing, news, and idea read model."""
+    issues: list[dict] = []
     queries = {
         "research_hub": """
             SELECT root_label, artifact_family, artifact_count,
@@ -2825,7 +2826,12 @@ def build_research_ideas_snapshot() -> dict:
             LIMIT 1
         """,
     }
-    data = run_psql_json_object(queries)
+    data = run_psql_json_object(
+        queries,
+        row_limit=160,
+        batch_size=8,
+        error_collector=issues,
+    )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
@@ -2835,6 +2841,7 @@ def build_research_ideas_snapshot() -> dict:
             "query_count": len(queries),
             "row_count": sum(len(rows) for rows in data.values()),
         },
+        "issues": issues,
         **data,
     }
 
@@ -4714,6 +4721,241 @@ def sync_architecture_change(payload: dict) -> dict:
     return result
 
 
+def reconcile_blueprint_evidence(payload: dict) -> dict:
+    """Link completed task/worker artifacts to canonical requirements for human review."""
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    run_key = str(payload.get("run_key") or f"blueprint-evidence-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH candidates AS (
+            SELECT
+                requirement.requirement_key,
+                task.id AS task_id,
+                task.title AS task_title,
+                task.status AS task_status,
+                task.owner_agent,
+                coalesce(worker.output_note_path, task.output_note_path) AS evidence_note_path,
+                coalesce(nullif(worker.output_summary, ''), task.title) AS evidence_summary,
+                worker.id AS worker_run_id,
+                worker.status AS worker_status,
+                worker.finished_at
+            FROM core.v_os_blueprint_requirements requirement
+            JOIN agent.tasks task
+              ON task.objective LIKE ('%' || requirement.requirement_key || '%')
+            LEFT JOIN LATERAL (
+                SELECT run.id, run.status, run.output_summary, run.output_note_path, run.finished_at
+                FROM agent.worker_runs run
+                WHERE run.task_id = task.id
+                ORDER BY run.created_at DESC, run.id DESC
+                LIMIT 1
+            ) worker ON true
+            WHERE task.source_kind = 'agent_message'
+              AND (
+                  coalesce(worker.output_note_path, task.output_note_path) IS NOT NULL
+                  OR worker.id IS NOT NULL
+              )
+        ), upserted AS (
+            INSERT INTO core.os_blueprint_evidence_links (
+                requirement_key, evidence_type, evidence_key, evidence_note_path,
+                evidence_status, evidence_summary, source_system, source_record, metadata
+            )
+            SELECT
+                requirement_key,
+                'agent_task',
+                task_id::TEXT,
+                evidence_note_path,
+                'candidate',
+                evidence_summary,
+                'agent_worker',
+                jsonb_build_object(
+                    'table', 'agent.tasks',
+                    'task_id', task_id,
+                    'task_title', task_title,
+                    'task_status', task_status,
+                    'owner_agent', owner_agent,
+                    'worker_run_id', worker_run_id,
+                    'worker_status', worker_status,
+                    'worker_finished_at', finished_at
+                ),
+                jsonb_build_object(
+                    'reconciled_by', {sql_literal(actor)},
+                    'run_key', {sql_literal(run_key)},
+                    'broker_write_allowed', false,
+                    'self_verification_allowed', false
+                )
+            FROM candidates
+            ON CONFLICT (requirement_key, evidence_type, evidence_key) DO UPDATE SET
+                evidence_note_path = EXCLUDED.evidence_note_path,
+                evidence_summary = EXCLUDED.evidence_summary,
+                source_record = EXCLUDED.source_record,
+                evidence_status = CASE
+                    WHEN core.os_blueprint_evidence_links.evidence_status IN ('verified', 'rejected')
+                    THEN core.os_blueprint_evidence_links.evidence_status
+                    ELSE 'candidate'
+                END,
+                metadata = core.os_blueprint_evidence_links.metadata || EXCLUDED.metadata,
+                updated_at = now()
+            RETURNING id, requirement_key, evidence_type, evidence_key,
+                      evidence_note_path, evidence_status, evidence_summary,
+                      source_system, source_record, updated_at
+        ), run_record AS (
+            INSERT INTO core.os_blueprint_reconciliation_runs (
+                run_key, status, candidate_count, verified_count, rejected_count,
+                actor, broker_write_allowed, metadata, started_at, finished_at
+            )
+            SELECT
+                {sql_literal(run_key)}, 'completed',
+                count(*) FILTER (WHERE evidence_status = 'candidate')::INTEGER,
+                count(*) FILTER (WHERE evidence_status = 'verified')::INTEGER,
+                count(*) FILTER (WHERE evidence_status = 'rejected')::INTEGER,
+                {sql_literal(actor)}, false,
+                jsonb_build_object('source', 'agent.tasks_and_worker_runs', 'seed_data_allowed', false),
+                now(), now()
+            FROM upserted
+            ON CONFLICT (run_key) DO UPDATE SET
+                status = EXCLUDED.status,
+                candidate_count = EXCLUDED.candidate_count,
+                verified_count = EXCLUDED.verified_count,
+                rejected_count = EXCLUDED.rejected_count,
+                actor = EXCLUDED.actor,
+                broker_write_allowed = false,
+                metadata = EXCLUDED.metadata,
+                finished_at = now()
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(result)), '[]'::json)::text
+        FROM (
+            SELECT
+                run_record.id,
+                run_record.run_key,
+                run_record.status,
+                run_record.candidate_count,
+                run_record.verified_count,
+                run_record.rejected_count,
+                run_record.actor,
+                run_record.broker_write_allowed,
+                run_record.finished_at,
+                coalesce((SELECT json_agg(row_to_json(upserted)) FROM upserted), '[]'::json) AS evidence_links
+            FROM run_record
+        ) result
+        """
+    )
+    if not rows:
+        raise RuntimeError("blueprint evidence reconciliation did not create a run record")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_blueprint_evidence_reconcile",
+        "reconcile_blueprint_evidence",
+        actor,
+        "core.os_blueprint_evidence_links",
+        result,
+        {"run_key": run_key, "broker_write_allowed": False},
+    )
+    return result
+
+
+def review_blueprint_evidence(payload: dict) -> dict:
+    """Record an explicit human evidence decision and update delivery status."""
+    try:
+        evidence_link_id = int(payload.get("evidence_link_id") or payload.get("evidenceLinkId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evidence_link_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"verified", "rejected"}:
+        raise ValueError("decision must be verified or rejected")
+    delivery_status = str(payload.get("delivery_status") or payload.get("deliveryStatus") or "partial").strip().lower()
+    if decision == "verified" and delivery_status not in {"partial", "done"}:
+        raise ValueError("delivery_status must be partial or done for verified evidence")
+    actor = str(payload.get("actor") or payload.get("verified_by") or "Devarsh").strip() or "Devarsh"
+    rationale = str(payload.get("rationale") or "").strip()
+    if not rationale:
+        raise ValueError("rationale is required")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT *
+            FROM core.os_blueprint_evidence_links
+            WHERE id = {evidence_link_id}
+            FOR UPDATE
+        ), evidence_update AS (
+            UPDATE core.os_blueprint_evidence_links evidence
+            SET evidence_status = {sql_literal(decision)},
+                review_rationale = {sql_literal(rationale)},
+                verified_by = {sql_literal(actor)},
+                verified_at = now(),
+                metadata = evidence.metadata || jsonb_build_object(
+                    'human_reviewed', true,
+                    'delivery_status', {sql_literal(delivery_status)},
+                    'broker_write_allowed', false
+                ),
+                updated_at = now()
+            FROM selected
+            WHERE evidence.id = selected.id
+            RETURNING evidence.*
+        ), requirement_update AS (
+            UPDATE core.os_blueprint_requirements requirement
+            SET current_status = CASE
+                    WHEN {sql_literal(decision)} = 'verified' THEN {sql_literal(delivery_status)}
+                    ELSE requirement.current_status
+                END,
+                evidence_note_path = CASE
+                    WHEN {sql_literal(decision)} = 'verified'
+                    THEN coalesce((SELECT evidence_note_path FROM evidence_update), requirement.evidence_note_path)
+                    ELSE requirement.evidence_note_path
+                END,
+                next_action = CASE
+                    WHEN {sql_literal(decision)} = 'verified' AND {sql_literal(delivery_status)} = 'done' THEN NULL
+                    WHEN {sql_literal(decision)} = 'verified' THEN 'Close remaining hardening and attach final evidence.'
+                    ELSE requirement.next_action
+                END,
+                metadata = requirement.metadata || jsonb_build_object(
+                    'last_evidence_review', jsonb_build_object(
+                        'evidence_link_id', {evidence_link_id},
+                        'decision', {sql_literal(decision)},
+                        'delivery_status', {sql_literal(delivery_status)},
+                        'actor', {sql_literal(actor)},
+                        'reviewed_at', now()
+                    )
+                ),
+                updated_at = now()
+            WHERE requirement.requirement_key = (SELECT requirement_key FROM evidence_update)
+            RETURNING requirement.requirement_key, requirement.requirement_name,
+                      requirement.current_status, requirement.evidence_note_path,
+                      requirement.next_action, requirement.updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(result)), '[]'::json)::text
+        FROM (
+            SELECT
+                requirement_update.*,
+                evidence_update.id AS evidence_link_id,
+                evidence_update.evidence_type,
+                evidence_update.evidence_key,
+                evidence_update.evidence_status,
+                evidence_update.evidence_summary,
+                evidence_update.review_rationale,
+                evidence_update.verified_by,
+                evidence_update.verified_at,
+                false AS broker_write_allowed
+            FROM requirement_update
+            JOIN evidence_update ON evidence_update.requirement_key = requirement_update.requirement_key
+        ) result
+        """
+    )
+    if not rows:
+        raise ValueError("blueprint evidence link was not found")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_blueprint_evidence_review",
+        "review_blueprint_evidence",
+        actor,
+        "core.os_blueprint_evidence_links",
+        result,
+        {"evidence_link_id": evidence_link_id, "decision": decision, "delivery_status": delivery_status},
+    )
+    return result
+
+
 def build_blueprint_registry(
     *,
     status: str = "",
@@ -4777,7 +5019,9 @@ def build_blueprint_registry(
                    domain_name, section_number, domain_type, primary_workspace,
                    mapped_object_type, mapped_object_key, mapped_object_status,
                    mapped_object_found, evidence_note_path, acceptance_criteria,
-                   next_action, metadata, updated_at
+                   next_action, metadata, updated_at, candidate_evidence_count,
+                   verified_evidence_count, rejected_evidence_count,
+                   latest_evidence_at, evidence_links, delivery_review_state
             FROM core.v_os_blueprint_requirements
             {where}
             ORDER BY
@@ -18770,6 +19014,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/integrations/schema-mappings/upsert":
                 self._send_json(upsert_integration_schema_mapping(payload), 201)
+                return
+            if self.path == "/api/blueprint/evidence/reconcile":
+                self._send_json(reconcile_blueprint_evidence(payload), 201)
+                return
+            if self.path == "/api/blueprint/evidence/review":
+                self._send_json(review_blueprint_evidence(payload), 200)
                 return
             if self.path == "/api/integrations/schema-mappings/validate":
                 self._send_json(validate_integration_schema_mapping(payload), 200)

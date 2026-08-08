@@ -14,9 +14,9 @@ import {
 } from "lucide-react";
 import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Drawer, Field, Select, TextArea, TextInput } from "../../system/primitives";
 import { useAction, useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports, useBlueprintRequirements } from "../../data/queries";
-import { useCreateAgentMessage, useDelegateAgentTask, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useRunAgentWorker } from "../../data/actions";
+import { useCreateAgentMessage, useDelegateAgentTask, useReconcileBlueprintEvidence, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useReviewBlueprintEvidence, useRunAgentWorker } from "../../data/actions";
 import { useUIStore } from "../../store";
-import { text, num, formatRelative, initials } from "../../data/liveRow";
+import { text, num, formatRelative, initials, value } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 /* ============================================================
@@ -359,11 +359,61 @@ export function GovernanceView() {
   const [priority, setPriority] = React.useState("");
   const registry = useBlueprintRequirements({ status, domainKey, priority });
   const delegate = useDelegateAgentTask();
+  const reconcile = useReconcileBlueprintEvidence();
+  const reviewEvidence = useReviewBlueprintEvidence();
   const pushToast = useUIStore((s) => s.pushToast);
+  const openEvidence = useUIStore((s) => s.openEvidence);
+  const [selectedRequirement, setSelectedRequirement] = React.useState<LiveRow | null>(null);
+  const [selectedEvidenceId, setSelectedEvidenceId] = React.useState(0);
+  const [deliveryStatus, setDeliveryStatus] = React.useState<"partial" | "done">("partial");
+  const [reviewRationale, setReviewRationale] = React.useState("");
   const data = registry.data;
   const summary = new Map((data?.summary ?? []).map((row) => [text(row, "metric"), num(row, "value")]));
   const requirements = data?.requirements ?? [];
   const domains = data?.domains ?? [];
+
+  const selectedEvidence = selectedRequirement
+    ? value<LiveRow[]>(selectedRequirement, "evidence_links", [])
+    : [];
+
+  const scanEvidence = () => {
+    reconcile.mutate({ actor: "Jarvis" }, {
+      onSuccess: (result) => pushToast({
+        title: "Evidence scan complete",
+        message: `${num(result, "candidate_count", 0)} candidate links require review.`,
+        tone: num(result, "candidate_count", 0) ? "warn" : "ok",
+        duration: 3500,
+      }),
+      onError: (error) => pushToast({ title: "Evidence scan failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  };
+
+  const openEvidenceReview = (row: LiveRow) => {
+    const links = value<LiveRow[]>(row, "evidence_links", []);
+    const firstCandidate = links.find((item) => text(item, "evidence_status") === "candidate") ?? links[0];
+    setSelectedRequirement(row);
+    setSelectedEvidenceId(num(firstCandidate ?? {}, "id", 0));
+    setDeliveryStatus(text(row, "current_status") === "done" ? "done" : "partial");
+    setReviewRationale("");
+  };
+
+  const submitEvidenceReview = (decision: "verified" | "rejected") => {
+    if (!selectedEvidenceId || !reviewRationale.trim()) return;
+    reviewEvidence.mutate({
+      evidence_link_id: selectedEvidenceId,
+      decision,
+      delivery_status: deliveryStatus,
+      rationale: reviewRationale.trim(),
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => {
+        pushToast({ title: decision === "verified" ? "Evidence verified" : "Evidence rejected", message: selectedRequirement ? text(selectedRequirement, "requirement_name") : "Blueprint requirement", tone: decision === "verified" ? "ok" : "warn", duration: 3500 });
+        setSelectedRequirement(null);
+        setReviewRationale("");
+      },
+      onError: (error) => pushToast({ title: "Evidence review failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  };
 
   const assignRequirement = (row: LiveRow) => {
     const owner = text(row, "owner_agent", "Jarvis");
@@ -418,7 +468,7 @@ export function GovernanceView() {
           />
         )}
       </Panel>
-      <Panel icon={ClipboardList} title="Requirement Delivery Board" actions={<Badge tone={requirements.length ? "warn" : "ok"}>{requirements.length} shown</Badge>}>
+      <Panel icon={ClipboardList} title="Requirement Delivery Board" actions={<div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}><Badge tone={requirements.length ? "warn" : "ok"}>{requirements.length} shown</Badge><Button size="sm" icon={RefreshCw} onClick={scanEvidence} disabled={reconcile.isPending}>{reconcile.isPending ? "Scanning" : "Scan evidence"}</Button></div>}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(160px, 1fr))", gap: "var(--space-3)", padding: "var(--space-3)" }}>
           <Field label="Status"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option><option value="planned">Planned</option><option value="partial">Partial</option><option value="blocked">Blocked</option><option value="done">Verified</option></Select></Field>
           <Field label="Domain"><Select value={domainKey} onChange={(event) => setDomainKey(event.target.value)}><option value="">All domains</option>{domains.map((row) => <option key={text(row, "domain_key")} value={text(row, "domain_key")}>{text(row, "domain_name")}</option>)}</Select></Field>
@@ -432,7 +482,8 @@ export function GovernanceView() {
               { key: "owner", header: "Owner", render: (row) => text(row, "owner_agent", "Jarvis") },
               { key: "priority", header: "Priority", render: (row) => <StatusPill status={text(row, "priority", "high")} /> },
               { key: "status", header: "State", render: (row) => <StatusPill status={text(row, "current_status", "planned")} /> },
-              { key: "action", header: "Action", render: (row) => text(row, "current_status") === "done" ? <Badge tone="ok">Verified</Badge> : <Button size="sm" icon={Send} onClick={() => assignRequirement(row)} disabled={delegate.isPending}>Assign</Button> },
+              { key: "evidence", header: "Evidence", render: (row) => num(row, "verified_evidence_count") > 0 ? <Badge tone="ok">{num(row, "verified_evidence_count")} verified</Badge> : num(row, "candidate_evidence_count") > 0 ? <Badge tone="warn">{num(row, "candidate_evidence_count")} review</Badge> : <Badge>None</Badge> },
+              { key: "action", header: "Action", render: (row) => num(row, "candidate_evidence_count") > 0 ? <Button size="sm" icon={ShieldCheck} onClick={() => openEvidenceReview(row)}>Review</Button> : text(row, "current_status") === "done" && num(row, "verified_evidence_count") > 0 ? <Badge tone="ok">Verified</Badge> : <Button size="sm" icon={Send} onClick={() => assignRequirement(row)} disabled={delegate.isPending}>Assign</Button> },
             ]}
             rows={requirements}
             rowKey={(row, index) => text(row, "requirement_key", `req-${index}`)}
@@ -440,6 +491,27 @@ export function GovernanceView() {
           />
         )}
       </Panel>
+      <Drawer
+        open={selectedRequirement !== null}
+        onClose={() => setSelectedRequirement(null)}
+        title={selectedRequirement ? text(selectedRequirement, "requirement_name", "Evidence review") : "Evidence review"}
+        icon={ShieldCheck}
+        width={620}
+        footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => setSelectedRequirement(null)}>Cancel</Button><Button variant="ghost" onClick={() => submitEvidenceReview("rejected")} disabled={!reviewRationale.trim() || reviewEvidence.isPending}>Reject</Button><Button variant="primary" icon={ShieldCheck} onClick={() => submitEvidenceReview("verified")} disabled={!selectedEvidenceId || !reviewRationale.trim() || reviewEvidence.isPending}>Verify evidence</Button></div>}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>{selectedRequirement ? text(selectedRequirement, "acceptance_criteria") : ""}</div>
+          <Field label="Candidate evidence">
+            <Select value={String(selectedEvidenceId || "")} onChange={(event) => setSelectedEvidenceId(Number(event.target.value))}>
+              {selectedEvidence.map((item) => <option key={num(item, "id")} value={num(item, "id")}>{text(item, "evidence_status")} · {text(item, "evidence_type")} #{text(item, "evidence_key")}</option>)}
+            </Select>
+          </Field>
+          {selectedEvidence.filter((item) => num(item, "id") === selectedEvidenceId).map((item) => <Panel key={num(item, "id")} icon={ClipboardList} title="Evidence detail" actions={<StatusPill status={text(item, "evidence_status", "candidate")} />}><div style={{ padding: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}><div>{text(item, "evidence_summary")}</div><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(item, "evidence_note_path", "No note path recorded")}</div>{text(item, "evidence_type") === "agent_task" && <Button size="sm" variant="ghost" onClick={() => openEvidence({ kind: "task", key: text(item, "evidence_key"), title: "Blueprint task evidence" })}>Open task evidence</Button>}</div></Panel>)}
+          <Field label="Delivery state after verification"><Select value={deliveryStatus} onChange={(event) => setDeliveryStatus(event.target.value as "partial" | "done")}><option value="partial">Partial - more work remains</option><option value="done">Verified complete</option></Select></Field>
+          <Field label="Review rationale" required><TextArea rows={5} value={reviewRationale} onChange={(event) => setReviewRationale(event.target.value)} placeholder="State what the evidence proves, what was checked, and why the selected delivery state is justified." /></Field>
+          <div style={{ color: "var(--status-warn)", fontSize: "var(--text-xs)" }}>Agent output is candidate evidence only. Verification is a named human decision and never enables broker execution.</div>
+        </div>
+      </Drawer>
     </div>
   );
 }

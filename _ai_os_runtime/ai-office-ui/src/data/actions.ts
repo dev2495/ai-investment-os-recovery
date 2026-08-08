@@ -26,6 +26,7 @@ const Q = {
   reports: ["reports"],
   office: ["office"],
   graphControl: ["graph-control"],
+  blueprintRequirements: ["blueprint-requirements"],
   zerodhaAuth: ["zerodha-auth"],
   zerodhaMarket: ["zerodha-market"],
 } as const;
@@ -62,6 +63,26 @@ export function useRunOfficeOperabilityAcceptance() {
   return useInvalidating<{ run_key?: string; actor?: string }, LiveRow>(
     "/api/office/operability/acceptance/run",
     [Q.office]
+  );
+}
+
+export function useReconcileBlueprintEvidence() {
+  return useInvalidating<{ actor?: string; run_key?: string }, LiveRow>(
+    "/api/blueprint/evidence/reconcile",
+    [Q.blueprintRequirements, Q.office, Q.missionControl]
+  );
+}
+
+export function useReviewBlueprintEvidence() {
+  return useInvalidating<{
+    evidence_link_id: number;
+    decision: "verified" | "rejected";
+    delivery_status?: "partial" | "done";
+    rationale: string;
+    actor?: string;
+  }, LiveRow>(
+    "/api/blueprint/evidence/review",
+    [Q.blueprintRequirements, Q.office, Q.missionControl]
   );
 }
 
