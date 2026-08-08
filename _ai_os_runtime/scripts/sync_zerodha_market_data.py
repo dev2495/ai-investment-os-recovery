@@ -311,7 +311,7 @@ def sync_historical(
 
 
 def sync_options(api_key: str, access_token: str, underlyings: list[str], strike_pairs: int) -> dict:
-    observed_at = datetime.now(timezone.utc).isoformat()
+    collected_at = datetime.now(timezone.utc).isoformat()
     stored = 0
     summaries: list[dict] = []
     for underlying in underlyings:
@@ -340,19 +340,32 @@ def sync_options(api_key: str, access_token: str, underlyings: list[str], strike
         identifiers = [f"{row['exchange']}:{row['trading_symbol']}" for row in selected]
         quotes = quote_batches(api_key, access_token, identifiers)
         values: list[str] = []
+        missing_timestamps = 0
         for instrument in selected:
             identifier = f"{instrument['exchange']}:{instrument['trading_symbol']}"
             quote = quotes.get(identifier) or {}
+            source_timestamp = quote.get("timestamp") or spot_payload.get("timestamp")
+            try:
+                source_observed_at = datetime.fromisoformat(str(source_timestamp).replace("Z", "+00:00"))
+                if source_observed_at.tzinfo is None:
+                    source_observed_at = source_observed_at.replace(tzinfo=timezone.utc)
+                source_observed_at = source_observed_at.astimezone(timezone.utc).isoformat()
+            except (TypeError, ValueError):
+                missing_timestamps += 1
+                continue
             depth = quote.get("depth") if isinstance(quote.get("depth"), dict) else {}
             buy = depth.get("buy") if isinstance(depth, dict) else []
             sell = depth.get("sell") if isinstance(depth, dict) else []
             bid = buy[0].get("price") if buy and isinstance(buy[0], dict) else None
             ask = sell[0].get("price") if sell and isinstance(sell[0], dict) else None
-            canonical = json.dumps(quote, sort_keys=True, separators=(",", ":"), default=str)
+            canonical = json.dumps(
+                {"contract_quote": quote, "spot_quote": spot_payload, "collected_at": collected_at},
+                sort_keys=True, separators=(",", ":"), default=str,
+            )
             payload_hash = hashlib.sha256(canonical.encode()).hexdigest()
             values.append(
                 "("
-                f"{sql_literal(observed_at)}::timestamptz,'Zerodha','zerodha_live_connector',"
+                f"{sql_literal(source_observed_at)}::timestamptz,'Zerodha','zerodha_live_connector',"
                 f"{sql_literal(instrument['exchange'])},{sql_literal(normalized)},{sql_literal(instrument['expiry'])}::date,"
                 f"{instrument['strike']},{sql_literal(instrument['instrument_type'])},{sql_literal(instrument['instrument_token'])},"
                 f"{sql_literal(instrument['trading_symbol'])},{spot},{quote.get('last_price') or 'NULL'},"
@@ -377,9 +390,10 @@ def sync_options(api_key: str, access_token: str, underlyings: list[str], strike
         summaries.append({
             "underlying": normalized, "status": "completed", "spot": spot,
             "expiry": selected[0].get("expiry") if selected else None, "contracts": len(values),
+            "missing_source_timestamps": missing_timestamps,
             "iv_and_greeks": "not_provided_by_kite",
         })
-    return {"status": "completed", "observed_at": observed_at, "rows": stored, "underlyings": summaries}
+    return {"status": "completed", "collected_at": collected_at, "rows": stored, "underlyings": summaries}
 
 
 def main() -> int:

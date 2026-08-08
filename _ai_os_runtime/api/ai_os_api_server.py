@@ -13372,7 +13372,8 @@ def upsert_option_valuation_policy(payload: dict) -> dict:
         f"raw-artifact:{source['rate_artifact_id']}@{source['rate_content_hash']},"
         f"raw-artifact:{source['dividend_artifact_id']}@{source['dividend_content_hash']}"
     )
-    result = run_psql_json(f"""
+    result = run_psql_json_statement(f"""
+        WITH upserted AS (
         INSERT INTO trading.option_valuation_policies
             (policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
              day_count_convention,expiry_local_time,expiry_timezone,rate_source,rate_source_timestamp,
@@ -13405,6 +13406,8 @@ def upsert_option_valuation_policy(payload: dict) -> dict:
         RETURNING id,policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
                   effective_from,expires_at,validation_status,source_artifact_ref,
                   rate_observation_id,dividend_observation_id,operator_confirmed,false AS broker_write_allowed
+        )
+        SELECT coalesce(json_agg(row_to_json(upserted)),'[]'::json)::text FROM upserted;
     """)
     if not result:
         raise ValueError("option valuation policy upsert returned no row")

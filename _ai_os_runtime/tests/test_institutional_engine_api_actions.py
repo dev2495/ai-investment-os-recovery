@@ -336,11 +336,13 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             "valid_until": "2026-08-06T03:30:00+00:00",
         }
         with (
-            mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=[[evidence], [{"id": 1, "broker_write_allowed": False}]]),
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[evidence]),
+            mock.patch.object(ai_os_api_server, "run_psql_json_statement", return_value=[{"id": 1, "broker_write_allowed": False}]) as statement,
             mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
         ):
             result = ai_os_api_server.upsert_option_valuation_policy(base)
         self.assertFalse(result["broker_write_allowed"])
+        self.assertIn("WITH upserted AS", statement.call_args.args[0])
         audit.assert_called_once()
 
     def test_valuation_source_refresh_cannot_activate_policy(self) -> None:
