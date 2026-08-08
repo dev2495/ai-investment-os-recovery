@@ -16,6 +16,7 @@ SECTOR_ROWS = [
         "index_id": 7,
         "index_key": "india-private-banks",
         "index_name": "India Private Banks",
+        "taxonomy_node_id": 12,
         "weighting_method": "equal",
         "base_value": 1000,
         "effective_date": "2026-08-01",
@@ -128,6 +129,7 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
         submitted = json.loads(run.call_args.kwargs["input"])
         self.assertTrue(submitted["dry_run"])
         self.assertEqual(submitted["index"]["index_id"], 7)
+        self.assertEqual(submitted["index"]["taxonomy_node_id"], 12)
         self.assertEqual(submitted["memberships"][0]["symbol"], "HDFCBANK")
         audit.assert_called_once()
 

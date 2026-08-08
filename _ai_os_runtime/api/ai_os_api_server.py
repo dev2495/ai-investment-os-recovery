@@ -12257,7 +12257,7 @@ def _sector_engine_payload(payload: dict) -> dict:
     selector_column, selector_value = supplied[0]
     selector_sql = sql_numeric(selector_value, required=True, field_name="index_id") if selector_column == "id" else sql_literal(selector_value)
     index_rows = run_psql_json(f"""
-        SELECT id AS index_id, index_key, index_name, weighting_method, base_value,
+        SELECT id AS index_id, index_key, index_name, taxonomy_node_id, weighting_method, base_value,
                base_date AS effective_date, methodology_version,
                nullif(weighting_rules->>'weight_cap','')::numeric AS weight_cap
         FROM sector_intelligence.custom_index_definitions
