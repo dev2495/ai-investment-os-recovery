@@ -316,22 +316,42 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             "underlying": "NIFTY",
             "risk_free_rate": 0.06,
             "dividend_yield": 0.012,
-            "rate_source": "RBI source",
-            "rate_source_timestamp": "2026-08-04T09:00:00+05:30",
-            "dividend_source": "Index factsheet",
-            "dividend_source_timestamp": "2026-08-04T09:00:00+05:30",
-            "source_artifact_ref": "sha256://valuation-policy",
+            "rate_observation_id": 4,
+            "dividend_observation_id": 5,
             "effective_from": "2026-08-04T09:00:00+05:30",
             "expires_at": "2026-08-05T09:00:00+05:30",
+            "operator_confirmed": True,
         }
         with self.assertRaises(ValueError):
-            ai_os_api_server.upsert_option_valuation_policy({**base, "source_artifact_ref": ""})
+            ai_os_api_server.upsert_option_valuation_policy({**base, "operator_confirmed": False})
+        evidence = {
+            "rate_observation_id": 4, "risk_free_rate": 0.06,
+            "rate_source_timestamp": "2026-08-04T03:30:00+00:00",
+            "rate_source": "https://kite.trade/docs/connect/v3/market-quotes/",
+            "rate_artifact_id": 40, "rate_content_hash": "ratehash",
+            "dividend_observation_id": 5, "dividend_yield": 0.012,
+            "dividend_source_timestamp": "2026-08-04T03:30:00+00:00",
+            "dividend_source": "https://www.niftyindices.com/reports/index-dashboard",
+            "dividend_artifact_id": 50, "dividend_content_hash": "dividendhash",
+            "valid_until": "2026-08-06T03:30:00+00:00",
+        }
         with (
-            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[{"id": 1, "broker_write_allowed": False}]),
+            mock.patch.object(ai_os_api_server, "run_psql_json", side_effect=[[evidence], [{"id": 1, "broker_write_allowed": False}]]),
             mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
         ):
             result = ai_os_api_server.upsert_option_valuation_policy(base)
         self.assertFalse(result["broker_write_allowed"])
+        audit.assert_called_once()
+
+    def test_valuation_source_refresh_cannot_activate_policy(self) -> None:
+        payload = {"status": "completed", "activated_policy": False, "broker_write_allowed": False, "candidates": []}
+        with (
+            mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed(payload)) as run,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.refresh_option_valuation_sources({"sources": ["rate"], "actor": "Devarsh"})
+        self.assertFalse(result["activated_policy"])
+        self.assertIn("collect_option_valuation_sources.py", run.call_args.args[0][1])
         audit.assert_called_once()
 
     def test_materializer_and_sector_import_are_operator_actions(self) -> None:

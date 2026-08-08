@@ -13286,10 +13286,31 @@ def run_office_operability_acceptance(payload: dict) -> dict:
     return result
 
 
+def refresh_option_valuation_sources(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    sources = payload.get("sources") or ["rate", "dividends"]
+    if not isinstance(sources, list) or not sources or any(item not in {"rate", "dividends"} for item in sources):
+        raise ValueError("sources must contain rate and/or dividends")
+    managed_python = Path(os.environ.get("AI_OS_PDF_PYTHON") or (Path.home() / "AI_OS_NODE" / "runtime" / "python" / "bin" / "python3"))
+    python_executable = str(managed_python) if managed_python.is_file() else sys.executable
+    command = [python_executable, str(RUNTIME_ROOT / "scripts" / "collect_option_valuation_sources.py"),
+               "--actor", actor, "--sources", *sources]
+    completed = subprocess.run(command, cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    result = _parse_engine_json(completed, "option valuation source collector")
+    if result.get("activated_policy") is not False or result.get("broker_write_allowed") is not False:
+        raise ValueError("valuation source collector violated its no-activation contract")
+    audit_api_write("ai_os_api_refresh_option_valuation_sources", "refresh_option_valuation_sources",
+                    actor, "trading.option_valuation_source_observations", result,
+                    {"sources": sources, "activated_policy": False, "broker_write_allowed": False})
+    return result
+
+
 def upsert_option_valuation_policy(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed=true is required to activate a valuation policy")
     required = ("policy_key", "provider", "exchange", "underlying", "risk_free_rate",
-                "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
-                "dividend_source_timestamp", "source_artifact_ref", "effective_from", "expires_at")
+                "dividend_yield", "rate_observation_id", "dividend_observation_id",
+                "effective_from", "expires_at")
     missing = [
         field for field in required
         if payload.get(field) is None or (isinstance(payload.get(field), str) and not payload[field].strip())
@@ -13306,8 +13327,33 @@ def upsert_option_valuation_policy(payload: dict) -> dict:
     dividend_yield = float(payload.get("dividend_yield"))
     if not -0.20 <= risk_free_rate <= 1.0 or not -0.20 <= dividend_yield <= 1.0:
         raise ValueError("rates must be decimal values between -0.20 and 1.00")
+    rate_observation_id = int(payload.get("rate_observation_id"))
+    dividend_observation_id = int(payload.get("dividend_observation_id"))
+    underlying = str(payload["underlying"]).strip().upper()
+    evidence = run_psql_json(f"""
+        SELECT rate.id AS rate_observation_id,rate.value_decimal AS risk_free_rate,
+               rate.observed_at AS rate_source_timestamp,rate.source_url AS rate_source,
+               rate.raw_artifact_id AS rate_artifact_id,rate.content_hash AS rate_content_hash,
+               dividend.id AS dividend_observation_id,dividend.value_decimal AS dividend_yield,
+               dividend.observed_at AS dividend_source_timestamp,dividend.source_url AS dividend_source,
+               dividend.raw_artifact_id AS dividend_artifact_id,dividend.content_hash AS dividend_content_hash,
+               least(rate.valid_until,dividend.valid_until) AS valid_until
+        FROM trading.option_valuation_source_observations rate
+        JOIN trading.option_valuation_source_observations dividend ON true
+        WHERE rate.id={rate_observation_id} AND rate.metric_kind='risk_free_rate'
+          AND dividend.id={dividend_observation_id} AND dividend.metric_kind='dividend_yield'
+          AND upper(dividend.underlying)={sql_literal(underlying)}
+          AND rate.quality_status IN ('passed','warning')
+          AND dividend.quality_status IN ('passed','warning')
+          AND rate.valid_until > now() AND dividend.valid_until > now()
+    """)
+    if len(evidence) != 1:
+        raise ValueError("selected valuation observations are missing, expired, blocked, or do not match the underlying")
+    source = evidence[0]
+    if abs(float(source["risk_free_rate"]) - risk_free_rate) > 1e-9 or abs(float(source["dividend_yield"]) - dividend_yield) > 1e-9:
+        raise ValueError("submitted rates do not match the selected source observations")
     timestamps: dict[str, datetime] = {}
-    for field in ("rate_source_timestamp", "dividend_source_timestamp", "effective_from", "expires_at"):
+    for field in ("effective_from", "expires_at"):
         raw = str(payload.get(field) or "").strip()
         try:
             parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
@@ -13318,13 +13364,21 @@ def upsert_option_valuation_policy(payload: dict) -> dict:
         timestamps[field] = parsed
     if timestamps["effective_from"] >= timestamps["expires_at"]:
         raise ValueError("effective_from must be before expires_at")
+    source_valid_until = datetime.fromisoformat(str(source["valid_until"]).replace("Z", "+00:00"))
+    if timestamps["expires_at"] > source_valid_until:
+        raise ValueError("policy expiry cannot exceed its source evidence validity")
     actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    source_artifact_ref = (
+        f"raw-artifact:{source['rate_artifact_id']}@{source['rate_content_hash']},"
+        f"raw-artifact:{source['dividend_artifact_id']}@{source['dividend_content_hash']}"
+    )
     result = run_psql_json(f"""
         INSERT INTO trading.option_valuation_policies
             (policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
              day_count_convention,expiry_local_time,expiry_timezone,rate_source,rate_source_timestamp,
              dividend_source,dividend_source_timestamp,source_artifact_ref,effective_from,expires_at,
-             validation_status,validated_by,validated_at,assumptions,active,broker_write_allowed)
+             validation_status,validated_by,validated_at,assumptions,active,broker_write_allowed,
+             rate_observation_id,dividend_observation_id,operator_confirmed)
         VALUES ({sql_literal(policy_key)},{sql_literal(str(payload['provider']).strip())},
                 {sql_literal(str(payload['exchange']).strip().upper())},
                 {sql_literal(str(payload['underlying']).strip().upper())},{sql_literal(model)},
@@ -13333,20 +13387,24 @@ def upsert_option_valuation_policy(payload: dict) -> dict:
                 {sql_literal(str(payload.get('day_count_convention') or 'ACT/365F'))},
                 {sql_literal(str(payload.get('expiry_local_time') or '15:30:00'))}::time,
                 {sql_literal(str(payload.get('expiry_timezone') or 'Asia/Kolkata'))},
-                {sql_literal(payload['rate_source'])},{sql_literal(timestamps['rate_source_timestamp'].isoformat())}::timestamptz,
-                {sql_literal(payload['dividend_source'])},{sql_literal(timestamps['dividend_source_timestamp'].isoformat())}::timestamptz,
-                {sql_literal(payload['source_artifact_ref'])},{sql_literal(timestamps['effective_from'].isoformat())}::timestamptz,
+                {sql_literal(source['rate_source'])},{sql_literal(str(source['rate_source_timestamp']))}::timestamptz,
+                {sql_literal(source['dividend_source'])},{sql_literal(str(source['dividend_source_timestamp']))}::timestamptz,
+                {sql_literal(source_artifact_ref)},{sql_literal(timestamps['effective_from'].isoformat())}::timestamptz,
                 {sql_literal(timestamps['expires_at'].isoformat())}::timestamptz,'validated',
-                {sql_literal(actor)},now(),{sql_jsonb(payload.get('assumptions') or {})},true,false)
+                {sql_literal(actor)},now(),{sql_jsonb(payload.get('assumptions') or {})},true,false,
+                {rate_observation_id},{dividend_observation_id},true)
         ON CONFLICT (policy_key) DO UPDATE SET
             risk_free_rate=EXCLUDED.risk_free_rate,dividend_yield=EXCLUDED.dividend_yield,
             rate_source=EXCLUDED.rate_source,rate_source_timestamp=EXCLUDED.rate_source_timestamp,
             dividend_source=EXCLUDED.dividend_source,dividend_source_timestamp=EXCLUDED.dividend_source_timestamp,
             source_artifact_ref=EXCLUDED.source_artifact_ref,effective_from=EXCLUDED.effective_from,
             expires_at=EXCLUDED.expires_at,validation_status='validated',validated_by=EXCLUDED.validated_by,
-            validated_at=now(),assumptions=EXCLUDED.assumptions,active=true,updated_at=now()
+            validated_at=now(),assumptions=EXCLUDED.assumptions,active=true,updated_at=now(),
+            rate_observation_id=EXCLUDED.rate_observation_id,
+            dividend_observation_id=EXCLUDED.dividend_observation_id,operator_confirmed=true
         RETURNING id,policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
-                  effective_from,expires_at,validation_status,source_artifact_ref,false AS broker_write_allowed
+                  effective_from,expires_at,validation_status,source_artifact_ref,
+                  rate_observation_id,dividend_observation_id,operator_confirmed,false AS broker_write_allowed
     """)
     if not result:
         raise ValueError("option valuation policy upsert returned no row")
@@ -16892,6 +16950,17 @@ def build_chat_context(
             ORDER BY started_at DESC
             LIMIT 5
         """,
+        "option_valuation_source_candidates": """
+            SELECT underlying,rate_observation_id,risk_free_rate,rate_observed_at,
+                   rate_valid_until,rate_instrument_identifier,rate_source_url,
+                   rate_content_hash,rate_calculation_method,rate_calculation_inputs,
+                   rate_quality_status,dividend_observation_id,dividend_yield,
+                   dividend_observed_at,dividend_valid_until,dividend_source_url,
+                   dividend_content_hash,dividend_quality_status,source_artifact_ref,
+                   candidate_valid_until,operator_confirmed,broker_write_allowed
+            FROM trading.v_option_valuation_source_candidates
+            ORDER BY underlying
+        """,
         "sector_data_freshness": """
             SELECT taxonomy_node_id, taxonomy_key, node_name,
                    latest_metric_at, latest_market_monitor_at, latest_flow_at,
@@ -20108,6 +20177,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/options/institutional-analytics/materialize":
                 self._send_json(materialize_institutional_options(payload), 201)
+                return
+            if self.path == "/api/options/valuation-sources/refresh":
+                self._send_json(refresh_option_valuation_sources(payload), 201)
                 return
             if self.path == "/api/options/valuation-policy/upsert":
                 self._send_json(upsert_option_valuation_policy(payload), 201)

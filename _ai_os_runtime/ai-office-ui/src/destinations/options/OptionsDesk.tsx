@@ -16,12 +16,13 @@ import {
 import { useTradingQuantRisk } from "../../data/queries";
 import {
   useMaterializeInstitutionalOptions, useRecordManualTrade,
-  useRunInstitutionalOptionsAnalytics, useRunOptionAcceptance, useUpsertOptionValuationPolicy,
+  useRefreshOptionValuationSources, useRunInstitutionalOptionsAnalytics,
+  useRunOptionAcceptance, useUpsertOptionValuationPolicy,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
-  Button, Tabs, Drawer, Field, TextInput, TextArea, Select,
+  Button, Tabs, Drawer, Field, TextInput, TextArea, Select, Checkbox,
 } from "../../system/primitives";
 import { BarSeriesChart, LineSeriesChart, AreaSeriesChart } from "../../system/charts";
 import { text, num, raw, formatCurrency, formatCompact, formatPercent, formatRelative } from "../../data/liveRow";
@@ -281,13 +282,47 @@ function optionsLocalDateTimeInputValue() {
   return now.toISOString().slice(0, 16);
 }
 
+const SELECTABLE_CANDIDATE_STATUSES = new Set(["passed", "warning"]);
+
+function valuationCandidateRows(source: unknown): LiveRow[] {
+  if (!source || typeof source !== "object") return [];
+  const row = source as LiveRow;
+  const candidates = raw(row, "option_valuation_source_candidates") ?? raw(row, "candidates");
+  return Array.isArray(candidates)
+    ? candidates.filter((candidate): candidate is LiveRow => Boolean(candidate) && typeof candidate === "object")
+    : [];
+}
+
+function valuationCandidateUsable(candidate: LiveRow): boolean {
+  const validUntil = new Date(text(candidate, "candidate_valid_until")).getTime();
+  return num(candidate, "rate_observation_id") > 0
+    && num(candidate, "dividend_observation_id") > 0
+    && optionalNum(candidate, "risk_free_rate") !== null
+    && optionalNum(candidate, "dividend_yield") !== null
+    && SELECTABLE_CANDIDATE_STATUSES.has(text(candidate, "rate_quality_status").toLowerCase())
+    && SELECTABLE_CANDIDATE_STATUSES.has(text(candidate, "dividend_quality_status").toLowerCase())
+    && Number.isFinite(validUntil) && validUntil > Date.now()
+    && Boolean(text(candidate, "source_artifact_ref"));
+}
+
+function localDateTimeValue(value: string): string {
+  const parsed = new Date(value);
+  if (!value || Number.isNaN(parsed.getTime())) return "";
+  parsed.setMinutes(parsed.getMinutes() - parsed.getTimezoneOffset());
+  return parsed.toISOString().slice(0, 16);
+}
+
 function OptionsDataOperationsControl() {
   const { data } = useTradingQuantRisk();
   const materialize = useMaterializeInstitutionalOptions();
   const savePolicy = useUpsertOptionValuationPolicy();
+  const refreshSources = useRefreshOptionValuationSources();
   const pushToast = useUIStore((state) => state.pushToast);
   const readiness = data?.option_analytics_readiness ?? [];
   const pipeline = data?.institutional_option_pipeline_runs ?? [];
+  const snapshotCandidates = React.useMemo(() => valuationCandidateRows(data), [data]);
+  const [refreshedCandidates, setRefreshedCandidates] = React.useState<LiveRow[] | null>(null);
+  const candidates = refreshedCandidates ?? snapshotCandidates;
   const now = React.useMemo(() => optionsLocalDateTimeInputValue(), []);
   const tomorrow = React.useMemo(() => {
     const value = new Date();
@@ -301,32 +336,83 @@ function OptionsDataOperationsControl() {
     exchange: "NFO" as "NFO" | "BFO",
     underlying: "NIFTY",
     model_family: "black_scholes_merton" as "black_scholes_merton" | "black_76",
-    risk_free_rate: 0.06,
-    dividend_yield: 0,
-    rate_source: "",
-    rate_source_timestamp: now,
-    dividend_source: "",
-    dividend_source_timestamp: now,
-    source_artifact_ref: "",
+    risk_free_rate: "",
+    dividend_yield: "",
     effective_from: now,
     expires_at: tomorrow,
   });
+  const [selectedCandidate, setSelectedCandidate] = React.useState<LiveRow | null>(null);
+  const [operatorConfirmed, setOperatorConfirmed] = React.useState(false);
+  const visibleCandidates = candidates.filter((candidate) => text(candidate, "underlying").toUpperCase() === form.underlying.trim().toUpperCase());
+  const selectedRateId = selectedCandidate ? num(selectedCandidate, "rate_observation_id") : 0;
+  const selectedDividendId = selectedCandidate ? num(selectedCandidate, "dividend_observation_id") : 0;
   const policyReady = Boolean(
-    form.policy_key && form.underlying && form.rate_source && form.dividend_source
-    && form.source_artifact_ref && form.effective_from && form.expires_at
+    form.policy_key && form.underlying && form.risk_free_rate !== "" && form.dividend_yield !== ""
+    && form.effective_from && form.expires_at
+    && selectedRateId > 0 && selectedDividendId > 0 && operatorConfirmed
+    && new Date(form.effective_from) < new Date(form.expires_at)
   );
+
+  function resetCandidateSelection(patch: Partial<typeof form>) {
+    setSelectedCandidate(null);
+    setOperatorConfirmed(false);
+    setForm((current) => ({
+      ...current,
+      ...patch,
+      risk_free_rate: "",
+      dividend_yield: "",
+    }));
+  }
+
+  function selectCandidate(candidate: LiveRow) {
+    if (!valuationCandidateUsable(candidate)) return;
+    setSelectedCandidate(candidate);
+    setOperatorConfirmed(false);
+    setForm((current) => ({
+      ...current,
+      underlying: text(candidate, "underlying").toUpperCase(),
+      risk_free_rate: String(optionalNum(candidate, "risk_free_rate")),
+      dividend_yield: String(optionalNum(candidate, "dividend_yield")),
+      expires_at: localDateTimeValue(text(candidate, "candidate_valid_until")),
+    }));
+  }
+
+  function refreshOfficialInputs() {
+    refreshSources.mutate({ sources: ["rate", "dividends"], actor: "Devarsh" }, {
+      onSuccess: (result) => {
+        const refreshed = valuationCandidateRows(result);
+        setRefreshedCandidates(refreshed);
+        setSelectedCandidate(null);
+        setOperatorConfirmed(false);
+        pushToast({
+          title: "Official valuation inputs refreshed",
+          message: refreshed.length ? refreshed.length + " governed candidate pairs returned for review." : "No governed candidate pairs were returned. No values were assumed.",
+          tone: refreshed.length ? "ok" : "warn",
+          duration: 5500,
+        });
+      },
+      onError: (error) => pushToast({ title: "Official input refresh failed", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
 
   function storePolicy() {
     if (!policyReady) return;
-    savePolicy.mutate({
-      ...form,
+    const payload = {
+      policy_key: form.policy_key,
+      provider: form.provider,
+      exchange: form.exchange,
       underlying: form.underlying.trim().toUpperCase(),
-      rate_source_timestamp: new Date(form.rate_source_timestamp).toISOString(),
-      dividend_source_timestamp: new Date(form.dividend_source_timestamp).toISOString(),
+      model_family: form.model_family,
+      risk_free_rate: Number(form.risk_free_rate),
+      dividend_yield: Number(form.dividend_yield),
       effective_from: new Date(form.effective_from).toISOString(),
       expires_at: new Date(form.expires_at).toISOString(),
+      rate_observation_id: selectedRateId,
+      dividend_observation_id: selectedDividendId,
+      operator_confirmed: true as const,
       actor: "Devarsh",
-    }, {
+    };
+    savePolicy.mutate(payload, {
       onSuccess: () => pushToast({ title: "Valuation policy active", message: "Source-evidenced inputs are available to the deterministic options engine.", tone: "ok", duration: 5000 }),
       onError: (error) => pushToast({ title: "Policy rejected", message: error.message, tone: "risk", duration: 7000 }),
     });
@@ -371,27 +457,90 @@ function OptionsDataOperationsControl() {
         </MetricTile>
       </div>
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: "var(--space-4)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)", fontWeight: 650 }}><ShieldCheck size={16} /> Source-evidenced valuation policy</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-2)", marginBottom: "var(--space-3)", fontWeight: 650 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}><ShieldCheck size={16} /> Source-evidenced valuation policy</span>
+          <Button size="sm" icon={RefreshCw} onClick={refreshOfficialInputs} disabled={refreshSources.isPending}>
+            {refreshSources.isPending ? "Refreshing official inputs..." : "Refresh official inputs"}
+          </Button>
+        </div>
+        <ValuationCandidateCards candidates={visibleCandidates} selectedRateId={selectedRateId} selectedDividendId={selectedDividendId} onSelect={selectCandidate} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
           <Field label="Policy key" required><TextInput value={form.policy_key} onChange={(event) => setForm({ ...form, policy_key: event.target.value })} /></Field>
-          <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} /></Field>
-          <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
-          <Field label="Model" required><Select value={form.model_family} onChange={(event) => setForm({ ...form, model_family: event.target.value as typeof form.model_family })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76</option></Select></Field>
-          <Field label="Risk-free rate" hint="Decimal, e.g. 0.06" required><TextInput type="number" step="0.0001" value={form.risk_free_rate} onChange={(event) => setForm({ ...form, risk_free_rate: Number(event.target.value) })} /></Field>
-          <Field label="Dividend yield" hint="Decimal, explicit zero allowed" required><TextInput type="number" step="0.0001" value={form.dividend_yield} onChange={(event) => setForm({ ...form, dividend_yield: Number(event.target.value) })} /></Field>
-          <Field label="Rate source" required><TextInput value={form.rate_source} onChange={(event) => setForm({ ...form, rate_source: event.target.value })} placeholder="RBI / yield source" /></Field>
-          <Field label="Rate observed" required><TextInput type="datetime-local" value={form.rate_source_timestamp} onChange={(event) => setForm({ ...form, rate_source_timestamp: event.target.value })} /></Field>
-          <Field label="Dividend source" required><TextInput value={form.dividend_source} onChange={(event) => setForm({ ...form, dividend_source: event.target.value })} placeholder="Index factsheet / verified source" /></Field>
-          <Field label="Dividend observed" required><TextInput type="datetime-local" value={form.dividend_source_timestamp} onChange={(event) => setForm({ ...form, dividend_source_timestamp: event.target.value })} /></Field>
-          <Field label="Evidence reference" hint="URL, artifact ID or content hash" required><TextInput value={form.source_artifact_ref} onChange={(event) => setForm({ ...form, source_artifact_ref: event.target.value })} /></Field>
+          <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => resetCandidateSelection({ underlying: event.target.value.toUpperCase() })} /></Field>
+          <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => resetCandidateSelection({ exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
+          <Field label="Model" required><Select value={form.model_family} onChange={(event) => resetCandidateSelection({ model_family: event.target.value as typeof form.model_family })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76</option></Select></Field>
+          <Field label="Risk-free rate" hint="Selected governed observation" required><TextInput aria-label="Risk-free rate" type="number" step="0.0001" value={form.risk_free_rate} readOnly /></Field>
+          <Field label="Dividend yield" hint="Selected governed observation" required><TextInput aria-label="Dividend yield" type="number" step="0.0001" value={form.dividend_yield} readOnly /></Field>
           <Field label="Effective from" required><TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm({ ...form, effective_from: event.target.value })} /></Field>
-          <Field label="Expires at" required><TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} /></Field>
+          <Field label="Expires at" hint="Cannot exceed candidate validity" required><TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} /></Field>
+          <Field label="Operator approval" required>
+            <Checkbox checked={operatorConfirmed} onChange={setOperatorConfirmed} disabled={!selectedRateId || !selectedDividendId} label="I confirm these exact source observations." />
+          </Field>
           <Button variant="primary" icon={ShieldCheck} onClick={storePolicy} disabled={!policyReady || savePolicy.isPending}>{savePolicy.isPending ? "Saving…" : "Validate policy"}</Button>
         </div>
       </div>
       {materialize.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{materialize.error.message}</div> : null}
+      {refreshSources.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{refreshSources.error.message}</div> : null}
       {savePolicy.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{savePolicy.error.message}</div> : null}
     </Panel>
+  );
+}
+
+function ValuationCandidateCards({
+  candidates,
+  selectedRateId,
+  selectedDividendId,
+  onSelect,
+}: {
+  candidates: LiveRow[];
+  selectedRateId: number;
+  selectedDividendId: number;
+  onSelect: (candidate: LiveRow) => void;
+}) {
+  return (
+    <div aria-label="Governed valuation candidates" style={{ marginBottom: "var(--space-4)" }}>
+      {candidates.length === 0 ? (
+        <Empty icon={Database} title="No governed candidates" description="Refresh official inputs. No fallback value will be assumed." />
+      ) : candidates.map((candidate, index) => {
+        const rateId = num(candidate, "rate_observation_id");
+        const dividendId = num(candidate, "dividend_observation_id");
+        const rate = optionalNum(candidate, "risk_free_rate");
+        const dividend = optionalNum(candidate, "dividend_yield");
+        const usable = valuationCandidateUsable(candidate);
+        const selected = selectedRateId === rateId && selectedDividendId === dividendId;
+        return (
+          <div key={rateId + "-" + dividendId + "-" + index} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "var(--space-3)", marginTop: index ? "var(--space-3)" : 0, minWidth: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-3)", alignItems: "flex-start" }}>
+              <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                <div style={{ fontWeight: 650 }}>{text(candidate, "underlying", "Unknown underlying")}</div>
+                <div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", overflowWrap: "anywhere" }}>
+                  Valid until {text(candidate, "candidate_valid_until") || "unavailable"} | {text(candidate, "source_artifact_ref", "evidence reference unavailable")}
+                </div>
+              </div>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Risk-free rate</div>
+                <div style={{ fontWeight: 650 }}>{rate === null ? "Unavailable" : formatPercent(rate)}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Observation #{rateId || "unavailable"} | {text(candidate, "rate_instrument_identifier", "instrument unavailable")}</div>
+                <StatusPill status={text(candidate, "rate_quality_status", "unreviewed")} />
+              </div>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Dividend yield</div>
+                <div style={{ fontWeight: 650 }}>{dividend === null ? "Unavailable" : formatPercent(dividend)}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Observation #{dividendId || "unavailable"}</div>
+                <StatusPill status={text(candidate, "dividend_quality_status", "unreviewed")} />
+              </div>
+              <div style={{ minWidth: 200, flex: "1 1 240px" }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflowWrap: "anywhere" }}>Rate source: {text(candidate, "rate_source_url", "unavailable")}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflowWrap: "anywhere" }}>Dividend source: {text(candidate, "dividend_source_url", "unavailable")}</div>
+                <Button size="sm" variant={selected ? "primary" : "default"} icon={ShieldCheck} onClick={() => onSelect(candidate)} disabled={!usable} style={{ marginTop: "var(--space-2)" }}>
+                  {selected ? "Selected" : usable ? "Use candidate" : "Not selectable"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

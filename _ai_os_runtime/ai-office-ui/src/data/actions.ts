@@ -346,19 +346,24 @@ export interface OptionValuationPolicyInput {
   model_family: "black_scholes_merton" | "black_76";
   risk_free_rate: number;
   dividend_yield: number;
-  rate_source: string;
-  rate_source_timestamp: string;
-  dividend_source: string;
-  dividend_source_timestamp: string;
-  source_artifact_ref: string;
+  rate_observation_id: number;
+  dividend_observation_id: number;
   effective_from: string;
   expires_at: string;
+  operator_confirmed: true;
   actor?: string;
 }
 
 export function useUpsertOptionValuationPolicy() {
   return useInvalidating<OptionValuationPolicyInput, LiveRow>(
     "/api/options/valuation-policy/upsert",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
+
+export function useRefreshOptionValuationSources() {
+  return useInvalidating<{ sources?: Array<"rate" | "dividends">; actor?: string }, LiveRow>(
+    "/api/options/valuation-sources/refresh",
     [Q.tradingQuantRisk, Q.office]
   );
 }
