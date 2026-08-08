@@ -89,6 +89,19 @@ def create_activation_task(campaign_key: str, row: dict[str, Any]) -> dict[str, 
             RETURNING id
         ), selected_task AS (
             SELECT id FROM inserted_task UNION ALL SELECT id FROM existing LIMIT 1
+        ), requeued_task AS (
+            UPDATE agent.tasks task
+            SET status='queued',updated_at=now()
+            FROM selected_task
+            WHERE task.id=selected_task.id
+              AND task.source_kind='employee_activation'
+              AND task.source_ref={sql_literal(source_ref)}
+              AND task.status IN ('in_progress','needs_review','blocked','failed')
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent.worker_runs run
+                  WHERE run.task_id=task.id AND run.status='completed'
+              )
+            RETURNING task.id
         ), inserted_inbox AS (
             INSERT INTO agent.inbox_items (
                 task_id,title,owner_agent,status,priority,recommended_action,evidence,target_workspace

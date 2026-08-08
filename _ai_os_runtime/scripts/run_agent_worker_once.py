@@ -1698,7 +1698,7 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
         {"source": "run_agent_worker_once", "task_id": task_id, "status": "failed"},
         {"error": message},
     ]
-    return psql_one(
+    failure_payload = psql_text(
         f"""
         WITH inserted_run AS (
             INSERT INTO agent.worker_runs (
@@ -1731,10 +1731,20 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
             WHERE id={inbox_id}
             RETURNING id
         )
-        SELECT inserted_run.*,updated_task.status AS task_status
-        FROM inserted_run CROSS JOIN updated_task
+        SELECT json_build_object(
+            'id',inserted_run.id,
+            'task_id',inserted_run.task_id,
+            'agent_name',inserted_run.agent_name,
+            'skill_key',inserted_run.skill_key,
+            'status',inserted_run.status,
+            'output_summary',inserted_run.output_summary,
+            'finished_at',inserted_run.finished_at,
+            'task_status',updated_task.status
+        )::text
+        FROM inserted_run CROSS JOIN updated_task;
         """
     )
+    return json.loads(failure_payload)
 
 
 def run_once(limit: int, include_completed: bool, task_id: int | None = None) -> dict[str, Any]:
@@ -1771,14 +1781,21 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             )
             continue
         try:
-            if job.get("source_kind") == "committee_packet_position":
+            if job.get("source_kind") == "employee_activation":
+                gate_result = {
+                    "overall_status": "passed",
+                    "next_task_status": "in_progress",
+                    "gate_ids": [],
+                    "reason": "bounded deterministic employee acceptance; model judgment and provider spend are explicitly deferred",
+                }
+            elif job.get("source_kind") == "committee_packet_position":
                 gate_result = {
                     "overall_status": "passed",
                     "next_task_status": "in_progress",
                     "gate_ids": [],
                     "reason": "deterministic sealed position; no model or external provider invocation",
                 }
-            elif skill_key == "kronos_forecast_feature_generation":
+            elif skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
                 gate_result = {
                     "overall_status": "passed",
                     "next_task_status": "in_progress",
@@ -1804,7 +1821,7 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                 continue
             context = context_for(skill_key, job.get("widget_key"), job)
             context["execution_envelope"] = execution_envelope_for(profile, skill)
-            if skill_key == "kronos_forecast_feature_generation":
+            if skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
                 run_kronos_adapter(job, context)
             summary, next_actions = summary_for(job, profile, skill, context)
             note_path = write_note(job, profile, skill, context, summary, next_actions)

@@ -48,15 +48,22 @@ def test_office_operability_api_runs_canonical_function() -> None:
         "broker_write_allowed": False,
     }
     with (
-        mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[response]) as database,
+        mock.patch.object(
+            ai_os_api_server,
+            "run_psql_json",
+            side_effect=[[{"run_id": response["id"]}], [response]],
+        ) as database,
         mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
     ):
         result = ai_os_api_server.run_office_operability_acceptance({"run_key": response["run_key"], "actor": "Devarsh"})
 
     assert result == response
-    query = database.call_args.args[0]
-    assert "agent.run_office_operability_acceptance" in query
-    assert "agent.v_office_operability_acceptance" in query
+    assert database.call_count == 2
+    function_query = database.call_args_list[0].args[0]
+    readback_query = database.call_args_list[1].args[0]
+    assert "agent.run_office_operability_acceptance" in function_query
+    assert "agent.v_office_operability_acceptance" in readback_query
+    assert f"summary.id={response['id']}" in readback_query
     audit.assert_called_once()
 
 

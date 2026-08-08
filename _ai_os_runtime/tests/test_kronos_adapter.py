@@ -304,24 +304,59 @@ class KronosAdapterTest(unittest.TestCase):
             "owner_agent": "Feature Engineer",
             "suggested_skill_key": "kronos_forecast_feature_generation",
         }
-        with mock.patch.object(
-            run_agent_worker_once,
-            "psql_one",
-            side_effect=[
-                {"metadata": {"graph_run_id": 3, "graph_node_run_id": 9}},
-                {"id": 2, "task_status": "failed"},
-            ],
-        ) as query:
+        with (
+            mock.patch.object(
+                run_agent_worker_once,
+                "psql_one",
+                return_value={"metadata": {"graph_run_id": 3, "graph_node_run_id": 9}},
+            ),
+            mock.patch.object(
+                run_agent_worker_once,
+                "psql_text",
+                return_value=json.dumps({"id": 2, "task_status": "failed"}),
+            ) as query,
+        ):
             result = run_agent_worker_once.record_worker_failure(
                 job,
                 {"agent_name": "Feature Engineer"},
                 {"skill_key": "kronos_forecast_feature_generation"},
                 RuntimeError("model unavailable"),
             )
-        sql = query.call_args_list[1].args[0]
+        sql = query.call_args.args[0]
         self.assertIn("SET status='failed'", sql)
         self.assertIn("SET status='blocked'", sql)
         self.assertEqual(result["task_status"], "failed")
+
+    def test_employee_activation_does_not_invoke_kronos_without_typed_market_input(self) -> None:
+        job = {
+            "task_id": 595,
+            "source_kind": "employee_activation",
+            "owner_agent": "Feature Engineer",
+            "suggested_skill_key": "kronos_forecast_feature_generation",
+            "task_status": "queued",
+        }
+        completed = {
+            "worker_run": {"id": 19, "output_note_path": "activation.md"},
+            "task": {"id": 595, "status": "needs_review"},
+        }
+        with (
+            mock.patch.object(run_agent_worker_once, "get_queue", return_value=[job]),
+            mock.patch.object(run_agent_worker_once, "skill_for", return_value={"skill_key": "kronos_forecast_feature_generation"}),
+            mock.patch.object(run_agent_worker_once, "routed_agent_for", return_value="Feature Engineer"),
+            mock.patch.object(run_agent_worker_once, "profile_for", return_value={"agent_name": "Feature Engineer"}),
+            mock.patch.object(run_agent_worker_once, "claim_task", return_value={"id": 595}),
+            mock.patch.object(run_agent_worker_once, "evaluate_task_provider_gates") as provider_gates,
+            mock.patch.object(run_agent_worker_once, "context_for", return_value={}),
+            mock.patch.object(run_agent_worker_once, "execution_envelope_for", return_value={}),
+            mock.patch.object(run_agent_worker_once, "summary_for", return_value=("Current evidence reviewed; typed forecast input is not part of this acceptance run.", ["Await a typed market-data task."])),
+            mock.patch.object(run_agent_worker_once, "write_note", return_value=Path("activation.md")),
+            mock.patch.object(run_agent_worker_once, "complete_job", return_value=completed),
+            mock.patch.object(run_agent_worker_once, "run_kronos_adapter") as kronos,
+        ):
+            result = run_agent_worker_once.run_once(1, False, 595)
+        kronos.assert_not_called()
+        provider_gates.assert_not_called()
+        self.assertEqual(result["results"][0]["worker_run_id"], 19)
 
     def test_filing_message_runs_evidence_skill_not_generic_routing_summary(self) -> None:
         job = {
