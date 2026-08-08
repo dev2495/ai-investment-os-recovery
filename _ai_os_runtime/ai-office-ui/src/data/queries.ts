@@ -126,7 +126,7 @@ export function useBlueprintRequirements(filters: { status?: string; domainKey?:
           status: status || undefined,
           domain_key: domainKey || undefined,
           priority: priority || undefined,
-          limit: 500,
+          limit: 160,
         },
       });
       return validateSnapshot(BlueprintRegistrySchema, data, "blueprint-requirements");
