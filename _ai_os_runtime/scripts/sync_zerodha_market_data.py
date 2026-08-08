@@ -28,9 +28,12 @@ INDEX_IDENTIFIERS = {
 VALID_INTERVALS = {"minute", "3minute", "5minute", "10minute", "15minute", "30minute", "60minute", "day"}
 
 
-def canonical_instrument_type(exchange: str, broker_type: object) -> str:
+def canonical_instrument_type(exchange: str, broker_type: object, segment: object = None) -> str:
     """Map Zerodha instrument labels onto the warehouse security taxonomy."""
     value = str(broker_type or "").strip().upper()
+    segment_value = str(segment or "").strip().upper()
+    if segment_value in {"INDICES", "NSE-INDICES", "BSE-INDICES"}:
+        return "index"
     if value in {"EQ", "BE", "BZ", "SM", "ST"}:
         return "equity"
     if value in {"CE", "PE"}:
@@ -226,7 +229,7 @@ def sync_quotes(api_key: str, access_token: str) -> dict:
 
 def resolve_instrument(exchange: str, symbol: str) -> dict:
     rows = query_json(
-        "SELECT instrument_token,exchange,trading_symbol,name,instrument_type "
+        "SELECT instrument_token,exchange,trading_symbol,name,instrument_type,segment "
         "FROM market.zerodha_instruments "
         f"WHERE exchange={sql_literal(exchange.upper())} AND upper(trading_symbol)={sql_literal(symbol.upper())} "
         "ORDER BY active DESC,last_seen_at DESC LIMIT 1"
@@ -260,7 +263,9 @@ def sync_historical(
         "'GET-only instruments, quotes and historical candles; broker writes are absent.') "
         "ON CONFLICT (name) DO UPDATE SET status='active' RETURNING id"
     ), "source system")
-    instrument_type = canonical_instrument_type(exchange, instrument.get("instrument_type"))
+    instrument_type = canonical_instrument_type(
+        exchange, instrument.get("instrument_type"), instrument.get("segment")
+    )
     symbol_id = returned_id(psql(
         "INSERT INTO trading.symbols (symbol,exchange,instrument_type,name,currency,active) VALUES ("
         f"{sql_literal(symbol.upper())},{sql_literal(exchange.upper())},{sql_literal(instrument_type)},"

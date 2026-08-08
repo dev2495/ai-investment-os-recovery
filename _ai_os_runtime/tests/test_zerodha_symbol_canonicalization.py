@@ -15,6 +15,8 @@ SPEC.loader.exec_module(module)
 
 def test_broker_instrument_types_are_canonicalized() -> None:
     assert module.canonical_instrument_type("NSE", "EQ") == "equity"
+    assert module.canonical_instrument_type("NSE", "EQ", "INDICES") == "index"
+    assert module.canonical_instrument_type("NSE", "EQ", "NSE-INDICES") == "index"
     assert module.canonical_instrument_type("NFO", "CE") == "option"
     assert module.canonical_instrument_type("NFO", "PE") == "option"
     assert module.canonical_instrument_type("NFO", "FUT") == "future"
