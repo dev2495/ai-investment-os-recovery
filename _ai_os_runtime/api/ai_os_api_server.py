@@ -12357,13 +12357,76 @@ def _sector_engine_payload(payload: dict) -> dict:
           AND bar.source_system_id IS NOT NULL
         ORDER BY bar.ts, bar.symbol_id
     """)
+    benchmark_series = run_psql_json(f"""
+        SELECT bar.ts, bar.close,
+               jsonb_build_object('source_system_id',bar.source_system_id,'timeframe',bar.timeframe,
+                                  'symbol','NIFTY 50','exchange','NSE') AS evidence
+        FROM trading.ohlcv bar
+        JOIN trading.symbols symbol ON symbol.id=bar.symbol_id
+        WHERE upper(symbol.symbol)='NIFTY 50' AND upper(symbol.exchange)='NSE'
+          AND symbol.instrument_type='index' AND symbol.active=true
+          AND bar.timeframe='1d'
+          AND bar.ts::date BETWEEN {sql_literal(index["effective_date"])}::date AND {sql_literal(as_of)}::date
+          AND bar.close>0 AND bar.source_system_id IS NOT NULL
+        ORDER BY bar.ts
+    """)
     return {
         **payload,
         "as_of_date": as_of,
         "index": index,
         "memberships": memberships,
         "prices": prices,
+        "benchmark_series": benchmark_series,
     }
+
+
+def activate_sector_price_baseline(payload: dict) -> dict:
+    taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    try:
+        node_id = int(taxonomy_node_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("taxonomy_node_id must be a positive integer") from exc
+    if node_id <= 0:
+        raise ValueError("taxonomy_node_id must be a positive integer")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    rows = run_psql_json(f"""
+        SELECT sector_intelligence.activate_price_baseline(
+            {node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
+        ) AS activation
+    """)
+    if len(rows) != 1 or not isinstance(rows[0].get("activation"), dict):
+        raise ValueError("sector price baseline returned no durable activation record")
+    activation = rows[0]["activation"]
+    runs = []
+    for index in activation.get("indices") or []:
+        runs.append(run_sector_intelligence_engine({
+            "index_id": int(index["index_id"]),
+            "as_of_date": as_of_date,
+            "horizon": "1D",
+            "dry_run": False,
+            "actor": actor,
+        }))
+    acceptance = run_sector_acceptance({
+        "taxonomy_node_id": node_id,
+        "as_of_date": as_of_date,
+        "actor": actor,
+    })
+    result = {
+        **activation,
+        "engine_runs": runs,
+        "acceptance": acceptance,
+        "broker_write_allowed": False,
+        "capital_action_allowed": False,
+    }
+    audit_api_write(
+        "ai_os_api_activate_sector_price_baseline","activate_sector_price_baseline",actor,
+        "sector_intelligence.custom_index_definitions",result,
+        {"taxonomy_node_id": node_id,"as_of_date": as_of_date},
+    )
+    return result
 
 
 def run_sector_intelligence_engine(payload: dict) -> dict:
@@ -19371,6 +19434,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/sector-intelligence/run":
                 self._send_json(run_sector_intelligence_engine(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/activate-price-baseline":
+                self._send_json(activate_sector_price_baseline(payload), 201)
                 return
             if self.path == "/api/sector-intelligence/import":
                 self._send_json(import_sector_intelligence_package(payload), 201)

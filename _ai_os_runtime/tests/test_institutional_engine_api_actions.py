@@ -37,6 +37,11 @@ SECTOR_ROWS = [
         "close": 100,
         "evidence": {"source_system_id": 1},
     }],
+    [{
+        "ts": "2026-08-01T00:00:00+00:00",
+        "close": 25000,
+        "evidence": {"source_system_id": 1, "symbol": "NIFTY 50"},
+    }],
 ]
 
 OPTIONS_ROWS = [
@@ -118,7 +123,7 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             })
 
         self.assertEqual(result, response)
-        self.assertEqual(database.call_count, 3)
+        self.assertEqual(database.call_count, 4)
         self.assertEqual(run.call_args.args[0][-2:], ["-", "--dry-run"])
         submitted = json.loads(run.call_args.kwargs["input"])
         self.assertTrue(submitted["dry_run"])
@@ -155,6 +160,27 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
         queries = "\n".join(call.args[0] for call in database.call_args_list)
         self.assertIn("sector_intelligence.run_acceptance_gates", queries)
         self.assertIn("sector_intelligence.v_acceptance_gate_summary", queries)
+        audit.assert_called_once()
+
+    def test_sector_price_baseline_activates_two_indices_and_reruns_acceptance(self) -> None:
+        activation = {
+            "status": "activated", "taxonomy_node_id": 12, "node_name": "Nifty IT",
+            "indices": [{"index_id": 7}, {"index_id": 8}],
+            "broker_write_allowed": False,
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[{"activation": activation}]),
+            mock.patch.object(ai_os_api_server, "run_sector_intelligence_engine", side_effect=[{"status": "completed"}, {"status": "completed"}]) as engine_run,
+            mock.patch.object(ai_os_api_server, "run_sector_acceptance", return_value={"status": "blocked", "passed_count": 5, "gate_count": 10}) as acceptance,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.activate_sector_price_baseline({
+                "taxonomy_node_id": 12, "as_of_date": "2026-08-08", "actor": "Devarsh",
+            })
+        self.assertEqual(engine_run.call_count, 2)
+        self.assertEqual(acceptance.call_count, 1)
+        self.assertEqual(result["node_name"], "Nifty IT")
+        self.assertFalse(result["capital_action_allowed"])
         audit.assert_called_once()
 
     def test_sector_acceptance_rejects_unbounded_or_invalid_input(self) -> None:

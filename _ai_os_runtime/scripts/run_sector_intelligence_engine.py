@@ -285,6 +285,35 @@ def point_in_time_return(rows: Iterable[dict[str, Any]], as_of: date, days: int)
     return end_value / eligible[-1][1] - 1.0
 
 
+def constituent_return_inputs(
+    price_rows: Iterable[dict[str, Any]], as_of: date, horizon: str
+) -> list[dict[str, Any]]:
+    if horizon not in HORIZON_DAYS:
+        raise EvidenceError(f"constituent returns require one of {tuple(HORIZON_DAYS)}")
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for row in price_rows:
+        grouped.setdefault(int(row["symbol_id"]), []).append(row)
+    if not grouped:
+        raise EvidenceError("constituent returns require price evidence")
+    output = []
+    for symbol_id, rows in sorted(grouped.items()):
+        eligible = [row for row in rows if parse_datetime(row.get("ts")).date() <= as_of]
+        if not eligible:
+            raise EvidenceError(f"no point-in-time return evidence for symbol_id={symbol_id}")
+        observed_at = max(parse_datetime(row.get("ts")) for row in eligible)
+        output.append({
+            "symbol_id": symbol_id,
+            "return": point_in_time_return(rows, as_of, HORIZON_DAYS[horizon]),
+            "observed_at": observed_at.isoformat(),
+            "evidence": {
+                "calculation": "point_in_time_return",
+                "horizon": horizon,
+                "input_fingerprint": stable_fingerprint(rows),
+            },
+        })
+    return output
+
+
 def compute_relative_strength(
     sector_series: dict[int, list[dict[str, Any]]],
     benchmark_series: list[dict[str, Any]],
@@ -452,16 +481,39 @@ def run_engine(payload: dict[str, Any]) -> dict[str, Any]:
             float(index["base_value"]),
         )
         relative_strength = []
-        if payload.get("sector_series"):
+        sector_series = payload.get("sector_series") or {}
+        if not sector_series and payload.get("benchmark_series") and index.get("taxonomy_node_id"):
+            sector_series = {
+                str(index["taxonomy_node_id"]): [
+                    {
+                        "ts": row["ts"],
+                        "close": row["index_value"],
+                        "evidence": {
+                            "index_id": index["index_id"],
+                            "input_fingerprint": row["input_fingerprint"],
+                        },
+                    }
+                    for row in history
+                ]
+            }
+        if sector_series:
             relative_strength = compute_relative_strength(
-                {int(key): value for key, value in payload["sector_series"].items()},
+                {int(key): value for key, value in sector_series.items()},
                 payload.get("benchmark_series") or [],
                 as_of,
                 str(payload.get("horizon") or "1M"),
             )
+        breadth_inputs = list(payload.get("breadth_inputs") or [])
+        if not breadth_inputs and index.get("taxonomy_node_id"):
+            horizon = str(payload.get("horizon") or "1M")
+            breadth_inputs = [{
+                "taxonomy_node_id": int(index["taxonomy_node_id"]),
+                "horizon": horizon,
+                "returns": constituent_return_inputs(payload.get("prices") or [], as_of, horizon),
+            }]
         breadth = [
             compute_breadth(int(item["taxonomy_node_id"]), item.get("returns") or [], as_of, str(item.get("horizon") or payload.get("horizon") or "1M"))
-            for item in payload.get("breadth_inputs") or []
+            for item in breadth_inputs
         ]
         rankings = compute_rankings(
             payload.get("ranking_inputs") or [], as_of, str(payload.get("ranking_type") or "composite"), str(payload.get("horizon") or "1M")

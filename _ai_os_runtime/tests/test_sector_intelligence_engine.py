@@ -106,6 +106,9 @@ class SectorIntelligenceMathTests(unittest.TestCase):
         self.assertEqual((breadth["positive_count"], breadth["negative_count"], breadth["unchanged_count"]), (1, 1, 1))
         self.assertEqual(breadth["breadth_value"], 0.0)
 
+        auto_returns = engine.constituent_return_inputs(prices(1, 100, 110) + prices(2, 200, 180), AS_OF, "1M")
+        self.assertEqual([round(row["return"], 3) for row in auto_returns], [0.1, -0.1])
+
         rankings = engine.compute_rankings(
             [
                 {"taxonomy_node_id": 11, "score": 2.0, "observed_at": "2026-07-31T10:00:00+00:00", "evidence": ["calculation"]},
@@ -187,6 +190,12 @@ class SectorIntelligenceSafetyAndCliTests(unittest.TestCase):
         self.assertIn("IS NOT DISTINCT FROM", sql)
         self.assertIn("INSERT INTO sector_intelligence.breadth_observations", sql)
         self.assertIn("INSERT INTO sector_intelligence.sector_rankings", sql)
+
+    def test_run_engine_derives_breadth_without_manual_payload(self) -> None:
+        result = engine.run_engine(self.valid_payload())
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(result["breadth"]), 1)
+        self.assertEqual(result["breadth"][0]["eligible_count"], 2)
 
     def test_json_cli_dry_run_never_touches_database(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:

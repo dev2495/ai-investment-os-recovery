@@ -30,3 +30,9 @@ def test_script_retains_read_only_and_daily_login_guards() -> None:
     assert "--persist" in source
     assert "place_order" not in source
     assert "broker_order" not in source
+
+
+def test_sector_sync_rejects_noncanonical_symbol_writes() -> None:
+    source = SCRIPT.read_text()
+    assert "canonical symbol mismatch" in source
+    assert 'result.get("symbol_id")' in source

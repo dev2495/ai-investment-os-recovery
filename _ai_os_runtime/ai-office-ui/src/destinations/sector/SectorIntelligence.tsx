@@ -5,7 +5,7 @@ import {
   ShieldCheck, Workflow, RefreshCw, Upload, FileCheck2,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence } from "../../data/actions";
+import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
@@ -46,6 +46,7 @@ export default function SectorIntelligence() {
         <Tabs tabs={TABS} active={tab} onChange={(key) => navigate(`/sector/${key}`)} />
       </div>
       <SectorRunControl indices={data?.custom_indices ?? []} />
+      {tab === "overview" ? <SectorPriceBaselineControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorSourceImportControl /> : null}
 
@@ -61,6 +62,57 @@ export default function SectorIntelligence() {
       {!query.isLoading && !query.isError && tab === "flows" ? <Flows data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "committee" ? <Committee data={data} /> : null}
     </div>
+  );
+}
+
+function SectorPriceBaselineControl({ hierarchy }: { hierarchy: LiveRow[] }) {
+  const mutation = useActivateSectorPriceBaseline();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const nodes = React.useMemo(() => {
+    const unique = new Map<string, { id: number; label: string }>();
+    for (const row of hierarchy) {
+      const id = num(row, "sector_id");
+      const label = text(row, "sector_name");
+      if (id > 0 && label) unique.set(String(id), { id, label });
+    }
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [hierarchy]);
+  const [nodeId, setNodeId] = React.useState("");
+  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+
+  React.useEffect(() => {
+    if (!nodeId && nodes.length) setNodeId(String(nodes[0].id));
+  }, [nodeId, nodes]);
+
+  function activate() {
+    const taxonomyNodeId = Number(nodeId);
+    if (!taxonomyNodeId || !asOf) return;
+    mutation.mutate({ taxonomy_node_id: taxonomyNodeId, as_of_date: asOf, actor: "Devarsh" }, {
+      onSuccess: (result) => {
+        const acceptance = result.acceptance && typeof result.acceptance === "object" ? result.acceptance as LiveRow : {};
+        pushToast({
+          title: `${text(result, "node_name", "Sector")} analytics activated`,
+          message: `${num(result, "member_count")} constituents · ${num(acceptance, "passed_count")} of ${num(acceptance, "gate_count")} acceptance gates passed`,
+          tone: text(acceptance, "status") === "passed" ? "ok" : "warn",
+          duration: 7000,
+        });
+      },
+      onError: (error) => pushToast({ title: "Sector activation blocked", message: error.message, tone: "risk", duration: 8000 }),
+    });
+  }
+
+  return (
+    <Panel icon={LineChart} title="Activate Price Intelligence" actions={<Badge tone={mutation.isPending ? "warn" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Calculating" : "Source-backed"}</Badge>}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 2fr) minmax(160px, 1fr) auto", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Official sector basket" required><Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}><option value="">Select sector…</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</Select></Field>
+        <Field label="As-of date" required><TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></Field>
+        <Button variant="primary" icon={RefreshCw} onClick={activate} disabled={!nodeId || !asOf || mutation.isPending}>{mutation.isPending ? "Activating…" : "Build indices & breadth"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Builds equal-weight and 126-day momentum views from retained Zerodha closes, refreshes breadth and relative strength, publishes TradingView Desktop chart artifacts, then reruns acceptance. It cannot place orders.
+      </div>
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+    </Panel>
   );
 }
 

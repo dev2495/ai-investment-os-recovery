@@ -28,6 +28,20 @@ INDEX_IDENTIFIERS = {
 VALID_INTERVALS = {"minute", "3minute", "5minute", "10minute", "15minute", "30minute", "60minute", "day"}
 
 
+def canonical_instrument_type(exchange: str, broker_type: object) -> str:
+    """Map Zerodha instrument labels onto the warehouse security taxonomy."""
+    value = str(broker_type or "").strip().upper()
+    if value in {"EQ", "BE", "BZ", "SM", "ST"}:
+        return "equity"
+    if value in {"CE", "PE"}:
+        return "option"
+    if value == "FUT":
+        return "future"
+    if value in {"INDEX", "INDICES"}:
+        return "index"
+    return value.lower() or ("equity" if exchange.upper() in {"NSE", "BSE"} else "unknown")
+
+
 def as_number(value: object) -> str:
     if value in (None, ""):
         return ""
@@ -246,9 +260,10 @@ def sync_historical(
         "'GET-only instruments, quotes and historical candles; broker writes are absent.') "
         "ON CONFLICT (name) DO UPDATE SET status='active' RETURNING id"
     ), "source system")
+    instrument_type = canonical_instrument_type(exchange, instrument.get("instrument_type"))
     symbol_id = returned_id(psql(
         "INSERT INTO trading.symbols (symbol,exchange,instrument_type,name,currency,active) VALUES ("
-        f"{sql_literal(symbol.upper())},{sql_literal(exchange.upper())},{sql_literal(instrument.get('instrument_type'))},"
+        f"{sql_literal(symbol.upper())},{sql_literal(exchange.upper())},{sql_literal(instrument_type)},"
         f"{sql_literal(instrument.get('name'))},'INR',true) "
         "ON CONFLICT (symbol,exchange,instrument_type) DO UPDATE SET name=EXCLUDED.name,active=true RETURNING id"
     ), "symbol")
@@ -268,13 +283,25 @@ def sync_historical(
               "open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,"
               "volume=EXCLUDED.volume,source_system_id=EXCLUDED.source_system_id"
         )
+    committed = query_json(
+        "SELECT count(*)::integer AS rows FROM trading.ohlcv "
+        f"WHERE symbol_id={symbol_id} AND timeframe={sql_literal(canonical_timeframe)} "
+        f"AND ts::date BETWEEN {sql_literal(date_from)}::date AND {sql_literal(date_to)}::date "
+        f"AND source_system_id={source_id}"
+    )
+    committed_rows = int(committed[0]["rows"]) if committed else 0
+    if values and committed_rows == 0:
+        raise RuntimeError(f"historical candles were returned but none committed for {exchange}:{symbol}")
     return {
         "status": "completed",
         "symbol": symbol,
         "exchange": exchange,
         "interval": interval,
         "timeframe": canonical_timeframe,
-        "rows": len(values),
+        "symbol_id": symbol_id,
+        "instrument_type": instrument_type,
+        "api_rows": len(values),
+        "rows": committed_rows,
     }
 
 

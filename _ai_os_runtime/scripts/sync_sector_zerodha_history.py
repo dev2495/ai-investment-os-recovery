@@ -105,6 +105,11 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                     api_key, access_token, str(member["exchange"]), str(member["symbol"]),
                     chunk_from.isoformat(), chunk_to.isoformat(), args.interval,
                 )
+                if int(result.get("symbol_id") or 0) != int(member["symbol_id"]):
+                    raise RuntimeError(
+                        f"canonical symbol mismatch for {member['exchange']}:{member['symbol']}: "
+                        f"expected {member['symbol_id']}, wrote {result.get('symbol_id')}"
+                    )
                 item_rows += int(result.get("rows") or 0)
                 if args.pause_seconds:
                     time.sleep(args.pause_seconds)

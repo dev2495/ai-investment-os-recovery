@@ -161,6 +161,19 @@ export function useRunSectorIntelligence() {
   );
 }
 
+export interface SectorPriceBaselineInput {
+  taxonomy_node_id: number;
+  as_of_date: string;
+  actor?: string;
+}
+
+export function useActivateSectorPriceBaseline() {
+  return useInvalidating<SectorPriceBaselineInput, LiveRow>(
+    "/api/sector-intelligence/activate-price-baseline",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
 export interface SectorIntelligenceImportInput {
   package: Record<string, unknown>;
   persist: boolean;
