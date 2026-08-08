@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from datetime import datetime, time, timezone
 from typing import Any
 from uuid import uuid4
@@ -255,39 +256,71 @@ def expiry_timestamp(batch: dict[str, Any], policy: dict[str, Any]) -> datetime:
     return datetime.combine(local_date, local_time, ZoneInfo(str(policy["expiry_timezone"]))).astimezone(timezone.utc)
 
 
+def valuation_reference(batch: dict[str, Any], policy: dict[str, Any], year_fraction: float) -> dict[str, Any]:
+    spot = float(batch["spot_price"])
+    if not math.isfinite(spot) or spot <= 0:
+        raise ValueError("batch spot_price must be positive and finite")
+    model = str(policy["model_family"])
+    if model == "black_scholes_merton":
+        return {
+            "spot_price": spot,
+            "forward_price": None,
+            "reference_price": spot,
+            "reference_kind": "spot",
+            "forward_method": "spot_reference",
+        }
+    if model != "black_76":
+        raise ValueError("unsupported option valuation model")
+    rate = float(policy["risk_free_rate"])
+    dividend = float(policy["dividend_yield"])
+    forward = spot * math.exp((rate - dividend) * year_fraction)
+    return {
+        "spot_price": spot,
+        "forward_price": forward,
+        "reference_price": forward,
+        "reference_kind": "derived_forward",
+        "forward_method": "spot_rate_dividend_carry",
+    }
+
+
 def create_valuation_input(batch: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     valuation_ts = parse_timestamp(batch["source_timestamp"])
     expiry_ts = expiry_timestamp(batch, policy)
     if valuation_ts >= expiry_ts:
         raise ValueError("batch source timestamp is at or after option expiry")
     year_fraction = (expiry_ts - valuation_ts).total_seconds() / (365.0 * 86400.0)
+    reference = valuation_reference(batch, policy, year_fraction)
     input_key = f"policy:{policy['policy_key']}"
     assumptions = {
         "policy_id": policy["id"],
         "source_artifact_ref": policy["source_artifact_ref"],
         "expiry_timezone": policy["expiry_timezone"],
         "no_default_inputs": True,
+        "reference_kind": reference["reference_kind"],
+        "forward_formula": "spot * exp((risk_free_rate - dividend_yield) * time_to_expiry)" if reference["forward_price"] is not None else None,
     }
     input_hash = canonical_hash({
-        "batch_id": batch["id"], "policy_id": policy["id"], "spot": batch["spot_price"],
+        "batch_id": batch["id"], "policy_id": policy["id"], "spot": reference["spot_price"],
+        "forward": reference["forward_price"], "reference": reference["reference_price"],
         "rate": policy["risk_free_rate"], "dividend": policy["dividend_yield"],
         "valuation_ts": valuation_ts.isoformat(), "expiry_ts": expiry_ts.isoformat(),
     })
     changed = write_returning(
         """
         INSERT INTO trading.option_valuation_inputs
-            (batch_id,input_key,model_family,valuation_timestamp,spot_price,risk_free_rate,dividend_yield,
+            (batch_id,input_key,model_family,valuation_timestamp,spot_price,forward_price,risk_free_rate,dividend_yield,
              time_to_expiry_years,day_count_convention,expiry_timestamp,spot_source_timestamp,
              rate_source_timestamp,dividend_source_timestamp,forward_method,rate_source,dividend_source,
              input_quality_status,quality_flags,assumptions,input_hash,broker_write_allowed)
         VALUES
         """
         f"({batch['id']},{sql_literal(input_key)},{sql_literal(policy['model_family'])},"
-        f"{sql_literal(valuation_ts.isoformat())}::timestamptz,{batch['spot_price']},{policy['risk_free_rate']},"
+        f"{sql_literal(valuation_ts.isoformat())}::timestamptz,{reference['spot_price']},"
+        f"{reference['forward_price'] if reference['forward_price'] is not None else 'NULL'},{policy['risk_free_rate']},"
         f"{policy['dividend_yield']},{year_fraction},{sql_literal(policy['day_count_convention'])},"
         f"{sql_literal(expiry_ts.isoformat())}::timestamptz,{sql_literal(str(batch['source_timestamp']))}::timestamptz,"
         f"{sql_literal(str(policy['rate_source_timestamp']))}::timestamptz,"
-        f"{sql_literal(str(policy['dividend_source_timestamp']))}::timestamptz,'spot_carry',"
+        f"{sql_literal(str(policy['dividend_source_timestamp']))}::timestamptz,{sql_literal(reference['forward_method'])},"
         f"{sql_literal(policy['rate_source'])},{sql_literal(policy['dividend_source'])},'passed','{{}}'::text[],"
         f"{sql_jsonb(assumptions)},{sql_literal(input_hash)},false) "
         "ON CONFLICT (batch_id,input_key) DO UPDATE SET input_hash=EXCLUDED.input_hash RETURNING *"
@@ -312,6 +345,7 @@ def persist_analytics(batch: dict[str, Any], valuation: dict[str, Any], contract
         "valuation": {
             "model": valuation["model_family"], "valuation_timestamp": str(valuation["valuation_timestamp"]),
             "spot_price": float(valuation["spot_price"]),
+            "forward_price": float(valuation["forward_price"]) if valuation.get("forward_price") is not None else None,
             "risk_free_rate": float(valuation["risk_free_rate"]),
             "dividend_yield": float(valuation["dividend_yield"] or 0),
             "time_to_expiry_years": float(valuation["time_to_expiry_years"]),

@@ -47,6 +47,27 @@ class InstitutionalOptionsMaterializerTests(unittest.TestCase):
         )
         self.assertEqual(value, datetime(2026, 8, 6, 10, 0, tzinfo=timezone.utc))
 
+    def test_black_76_reference_is_a_derived_forward_not_spot(self) -> None:
+        result = module.valuation_reference(
+            {"spot_price": 25000},
+            {"model_family": "black_76", "risk_free_rate": 0.053542, "dividend_yield": 0.0129},
+            30 / 365,
+        )
+        self.assertEqual(result["reference_kind"], "derived_forward")
+        self.assertEqual(result["forward_method"], "spot_rate_dividend_carry")
+        self.assertGreater(result["forward_price"], result["spot_price"])
+        self.assertAlmostEqual(result["reference_price"], result["forward_price"])
+
+    def test_bsm_reference_remains_spot(self) -> None:
+        result = module.valuation_reference(
+            {"spot_price": 25000},
+            {"model_family": "black_scholes_merton", "risk_free_rate": 0.05, "dividend_yield": 0.01},
+            30 / 365,
+        )
+        self.assertEqual(result["reference_kind"], "spot")
+        self.assertIsNone(result["forward_price"])
+        self.assertEqual(result["reference_price"], 25000)
+
     @patch.object(module, "record_run")
     @patch.object(module, "active_policy", return_value=None)
     @patch.object(module, "create_contracts", return_value=[{"id": 1}])
@@ -78,6 +99,7 @@ class InstitutionalOptionsMaterializerTests(unittest.TestCase):
             self.assertIn(table, source)
         self.assertNotIn("broker_order", source)
         self.assertNotIn("default_rate", source)
+        self.assertIn('"forward_price": float(valuation["forward_price"])', source)
 
 
 if __name__ == "__main__":

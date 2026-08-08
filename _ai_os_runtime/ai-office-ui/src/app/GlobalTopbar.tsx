@@ -177,7 +177,7 @@ export function GlobalTopbar() {
         market={zerodhaMarket}
         reconnect={reconnectZerodha}
         reconnectPending={beginZerodha.isPending}
-        exchangeCallback={(url) => exchangeCallback.mutate(url)}
+        exchangeCallback={(url, onSuccess) => exchangeCallback.mutate(url, { onSuccess })}
         exchangePending={exchangeCallback.isPending}
         exchangeComplete={exchangeCallback.isSuccess}
         refresh={() => refreshZerodhaMarket()}
@@ -199,7 +199,7 @@ function BrokerSessionDrawer(props: {
   market?: LiveRow;
   reconnect: () => void;
   reconnectPending: boolean;
-  exchangeCallback: (url: string) => void;
+  exchangeCallback: (url: string, onSuccess: () => void) => void;
   exchangePending: boolean;
   exchangeComplete: boolean;
   refresh: () => void;
@@ -245,7 +245,7 @@ function BrokerSessionDrawer(props: {
           />
           <Button
             icon={ShieldCheck}
-            onClick={() => props.exchangeCallback(callbackUrl.trim())}
+            onClick={() => props.exchangeCallback(callbackUrl.trim(), () => setCallbackUrl(""))}
             disabled={!callbackUrl.trim() || props.exchangePending}
           >
             {props.exchangePending ? "Connecting session…" : props.exchangeComplete ? "Session connected" : "Use pasted login URL"}

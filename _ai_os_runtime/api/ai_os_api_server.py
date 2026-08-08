@@ -9429,12 +9429,35 @@ def exchange_zerodha_callback_url(payload: dict) -> dict:
     request_token = str((query.get("request_token") or [""])[0]).strip()
     if status != "success" or action != "login" or not request_token:
         raise ValueError("The pasted URL is not a successful Zerodha login callback")
-    result = exchange_zerodha_request_token({"request_token": request_token, "actor": str(payload.get("actor") or "Devarsh")})
+    actor = str(payload.get("actor") or "Devarsh")
+    try:
+        result = exchange_zerodha_request_token({"request_token": request_token, "actor": actor})
+    except RuntimeError as exc:
+        # A request token is single-use. Reconcile a repeated paste only when
+        # the stored access session still passes the bound-account check.
+        if "403" not in str(exc):
+            raise
+        session = zerodha_auth_status()
+        if not (
+            session.get("daily_access_token_available")
+            and session.get("profile_validated")
+            and session.get("account_match")
+        ):
+            raise RuntimeError("This Zerodha login URL has expired or was already used. Start a new login.") from exc
+        result = {
+            "status": "already_connected",
+            "account_match": True,
+            "profile_validated": True,
+            "access_token_stored": True,
+            "access_token_expires": session.get("access_token_expires_at"),
+            "stream_restart": restart_zerodha_stream_async(),
+            "broker_write_allowed": False,
+        }
     result["post_login_sync"] = start_zerodha_post_login_sync()
     audit_api_write(
         "ai_os_api_zerodha_callback_url_exchange",
         "exchange_zerodha_callback_url",
-        str(payload.get("actor") or "Devarsh"),
+        actor,
         "core.connector_health_checks",
         {"status": result.get("status"), "account_match": result.get("account_match")},
         {"callback_url_received": True, "broker_write_allowed": False},
