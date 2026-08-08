@@ -9774,6 +9774,53 @@ def run_filing_collector(payload: dict) -> dict:
     return result
 
 
+def run_company_ir_collector(payload: dict) -> dict:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    company_name = str(payload.get("company_name") or payload.get("companyName") or "").strip()
+    source_url = str(payload.get("url") or payload.get("investor_relations_url") or payload.get("investorRelationsUrl") or "").strip()
+    if not symbol or not company_name or not source_url:
+        raise ValueError("symbol, company_name, and investor_relations_url are required")
+    if exchange not in {"NSE", "BSE"}:
+        raise ValueError("exchange must be NSE or BSE")
+    try:
+        limit = max(1, min(int(payload.get("limit") or 15), 25))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    actor = str(payload.get("actor") or "Fundamental Data Steward").strip() or "Fundamental Data Steward"
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "collect_company_ir_reports.py"),
+        "--symbol", symbol,
+        "--exchange", exchange,
+        "--company-name", company_name,
+        "--url", source_url,
+        "--limit", str(limit),
+        "--actor", actor,
+    ]
+    if payload.get("include_subsidiaries") or payload.get("includeSubsidiaries"):
+        command.append("--include-subsidiaries")
+    if payload.get("dry_run") or payload.get("dryRun"):
+        command.append("--dry-run")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=1800)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "company IR collector failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("company IR collector returned invalid JSON") from exc
+    audit_api_write(
+        "ai_os_api_run_company_ir_collector",
+        "run_company_ir_collector",
+        actor,
+        "research.company_ir_collection_runs",
+        result,
+        {key: value for key, value in payload.items() if key not in {"authorization", "token"}},
+    )
+    return result
+
+
 def run_filing_pdf_extractor(payload: dict) -> dict:
     try:
         limit = int(payload.get("limit") or 5)
@@ -18762,6 +18809,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/filings/collect":
                 self._send_json(run_filing_collector(payload), 201)
+                return
+            if self.path == "/api/research/company-ir/collect":
+                self._send_json(run_company_ir_collector(payload), 201)
                 return
             if self.path == "/api/research/filings/extract-pdfs":
                 self._send_json(run_filing_pdf_extractor(payload), 201)

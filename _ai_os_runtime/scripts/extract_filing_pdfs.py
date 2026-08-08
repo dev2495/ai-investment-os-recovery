@@ -365,6 +365,13 @@ def finish_run(run_id: int, status: str, local_pdf_path: str | None, parser_name
 
 
 def download_pdf(filing: dict[str, Any]) -> Path:
+    existing_path = str(filing.get("local_path") or "").strip()
+    if existing_path:
+        existing = Path(existing_path).expanduser()
+        if existing.is_file():
+            with existing.open("rb") as handle:
+                if handle.read(4) == b"%PDF":
+                    return existing
     source_url = str(filing.get("attachment_url") or filing.get("source_url") or "")
     if not source_url:
         raise ValueError("filing has no PDF URL")
