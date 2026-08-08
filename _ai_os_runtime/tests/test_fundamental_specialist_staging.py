@@ -1,6 +1,24 @@
 from datetime import datetime, timezone
 
-from stage_fundamental_specialist_opinions import build_opinions
+from stage_fundamental_specialist_opinions import build_opinions, load_context
+
+
+class CapturingGateway:
+    def __init__(self) -> None:
+        self.sql = ""
+
+    def _run_json(self, sql: str) -> dict:
+        self.sql = sql
+        return {}
+
+
+def test_context_uses_canonical_active_book_position_status() -> None:
+    gateway = CapturingGateway()
+
+    load_context(gateway, "USHAMART", "NSE", datetime(2026, 8, 8, tzinfo=timezone.utc))
+
+    assert "position.status='active'" in gateway.sql
+    assert "position.status='open'" not in gateway.sql
 
 
 def test_staging_preserves_drafts_dissent_and_execution_guardrails() -> None:
