@@ -623,12 +623,12 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 ## 22. Sector Intelligence, Custom Indices, And Flow Engine
 
 - [~] Build effective-dated Indian taxonomy and memberships with provenance. Current official Nifty milestone: 11 sector baskets, 151 source rows, 24 taxonomy nodes, and 302 effective-dated memberships as of 2026-07-31; historical membership and broader industry coverage remain open. Evidence: [[2026-08-04-sector-taxonomy-and-bse-filing-intake-v1]].
-- [ ] Build aggregates, valuation bands, revisions, market share, KPIs, capacity, value-chain, and macro/raw-material histories.
-- [ ] Build reproducible classifications and equal-weight, market-cap/free-float, quality, momentum, and custom index engines.
-- [ ] Build breadth, relative strength, delivery, futures OI, options flow, volatility, ownership, shareholding, bulk/block, and insider monitors.
-- [ ] Activate Sector Portfolio Manager, research, flow, industry, data, risk, and committee workflows.
-- [ ] Generate native TradingView Desktop formula, Pine, chart-pack, and pane-layout handoffs from deterministic state.
-- [ ] Pass one real-sector point-in-time reconciliation, dossier, committee, portfolio-fit, and chart-handoff acceptance.
+- [~] Build aggregates, valuation bands, revisions, market share, KPIs, capacity, value-chain, and macro/raw-material histories. Ten years of official Nifty IT valuation history is live; operating KPI, market-share, capacity, cross-sector comparator, and validated macro/raw-material histories remain explicit gaps.
+- [~] Build reproducible classifications and equal-weight, market-cap/free-float, quality, momentum, and custom index engines. Two deterministic weighting methods, index history, breadth, and relative strength are live; historical free-float, quality, momentum, and broader operator-defined histories remain open.
+- [~] Build breadth, relative strength, delivery, futures OI, options flow, volatility, ownership, shareholding, bulk/block, and insider monitors. Official ownership and constituent bulk/block observations are live; delivery, derivatives flow, volatility, and insider depth remain open.
+- [~] Activate Sector Portfolio Manager, research, flow, industry, data, risk, and committee workflows. A six-position sealed committee packet, dissent, independent risk, portfolio-fit, and human-final-decision boundary are live; critical source gaps still block acceptance.
+- [~] Generate native TradingView Desktop formula, Pine, chart-pack, and pane-layout handoffs from deterministic state. Three governed artifacts are generated; broader layouts and historical coverage remain open.
+- [~] Pass one real-sector point-in-time reconciliation, dossier, committee, portfolio-fit, and chart-handoff acceptance. Nifty IT passes 12 of 14 v4 controls and is blocked by five critical evidence gaps plus insufficient historical membership. Capital actions and broker writes remain false.
 
 ## 23. Institutional Options Analytics And Monitoring Desk
 

@@ -123,6 +123,10 @@ DECLARE
     v_dossier_count INTEGER;
     v_committee_count INTEGER;
     v_portfolio_fit_count INTEGER;
+    v_critical_gap_count INTEGER;
+    v_membership_versions INTEGER;
+    v_membership_start DATE;
+    v_membership_end DATE;
 BEGIN
     v_v3_id := sector_intelligence.run_acceptance_gates_v3(
         p_run_key || '-v3-baseline',
@@ -238,6 +242,27 @@ BEGIN
       AND jsonb_typeof(packet.evidence_snapshot->'opportunity_cost'->'evidence')='array'
       AND jsonb_array_length(packet.evidence_snapshot->'opportunity_cost'->'evidence')>=1;
 
+    SELECT count(*)::int INTO v_critical_gap_count
+    FROM sector_intelligence.research_coverage coverage
+    CROSS JOIN LATERAL jsonb_array_elements(coverage.data_gaps) gap
+    WHERE coverage.taxonomy_node_id=p_taxonomy_node_id
+      AND coverage.version=(
+          SELECT max(latest.version)
+          FROM sector_intelligence.research_coverage latest
+          WHERE latest.taxonomy_node_id=p_taxonomy_node_id
+      )
+      AND coalesce(gap->>'status','') IN (
+          'missing_source_backed_history','not_yet_comparable',
+          'review_required','missing_validated_model'
+      );
+
+    SELECT count(DISTINCT membership.valid_from)::int,
+           min(membership.valid_from),max(membership.valid_from)
+    INTO v_membership_versions,v_membership_start,v_membership_end
+    FROM sector_intelligence.instrument_membership_history membership
+    WHERE membership.taxonomy_node_id=p_taxonomy_node_id
+      AND membership.valid_from<=p_as_of_date;
+
     INSERT INTO sector_intelligence.acceptance_gate_results (
         acceptance_run_id,gate_key,gate_name,status,observed_value,
         threshold_value,comparator,evidence,failure_reason,checked_by
@@ -306,6 +331,42 @@ BEGIN
         CASE WHEN v_portfolio_fit_count>=1 THEN NULL
              ELSE 'No committee packet contains structured portfolio-fit and opportunity-cost conclusions with evidence arrays' END,
         'Portfolio Fit Agent'
+    ),
+    (
+        v_run_id,'critical_evidence_gaps','Critical Sector Evidence Closure',
+        CASE WHEN v_critical_gap_count=0 THEN 'passed' ELSE 'blocked' END,
+        v_critical_gap_count,0,'eq',
+        jsonb_build_object(
+            'critical_gap_count',v_critical_gap_count,
+            'required_closures',jsonb_build_array(
+                'operating KPI history','market share and capacity history',
+                'cross-sector opportunity-cost comparator','portfolio mark freshness',
+                'validated macro and raw-material sensitivity'
+            ),
+            'missing_evidence_may_not_be_inferred',true
+        ),
+        CASE WHEN v_critical_gap_count=0 THEN NULL
+             ELSE format('%s critical sector evidence gaps remain open in the latest dossier',v_critical_gap_count) END,
+        'Independent Risk Agent'
+    ),
+    (
+        v_run_id,'historical_membership','Historical Constituent Membership',
+        CASE WHEN v_membership_versions>=2
+                  AND v_membership_start<=p_as_of_date-INTERVAL '1 year'
+             THEN 'passed' ELSE 'blocked' END,
+        v_membership_versions,2,'gte',
+        jsonb_build_object(
+            'effective_date_versions',v_membership_versions,
+            'earliest_valid_from',v_membership_start,
+            'latest_valid_from',v_membership_end,
+            'minimum_span_years',1,
+            'current_constituent_substitution_allowed',false
+        ),
+        CASE WHEN v_membership_versions>=2
+                  AND v_membership_start<=p_as_of_date-INTERVAL '1 year'
+             THEN NULL
+             ELSE 'Historical point-in-time constituent membership requires at least two effective versions spanning one year' END,
+        'Sector Data Steward'
     );
 
     UPDATE sector_intelligence.acceptance_runs run
@@ -326,6 +387,8 @@ BEGIN
                 'dossier_ready',v_dossier_count>=1,
                 'committee_ready',v_committee_count>=1,
                 'portfolio_fit_ready',v_portfolio_fit_count>=1,
+                'critical_gap_count',v_critical_gap_count,
+                'historical_membership_versions',v_membership_versions,
                 'broker_write_allowed',false,
                 'capital_action_allowed',false
             )

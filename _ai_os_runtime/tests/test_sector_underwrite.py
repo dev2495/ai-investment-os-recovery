@@ -105,6 +105,10 @@ class SectorUnderwriteTests(unittest.TestCase):
         self.assertIn("jsonb_array_length(packet.independent_positions)>=5", migration)
         self.assertIn("coverage.dossier_sections ?& ARRAY[", migration)
         self.assertIn("SELECT max(latest.version)", migration)
+        self.assertIn("'critical_evidence_gaps'", migration)
+        self.assertIn("'historical_membership'", migration)
+        self.assertIn("'missing_evidence_may_not_be_inferred',true", migration)
+        self.assertIn("'current_constituent_substitution_allowed',false", migration)
         self.assertIn("packet.capital_action_allowed=false", migration)
         self.assertIn('"market_share_and_capacity_history"', (
             RUNTIME_ROOT / "scripts" / "build_sector_underwrite.py"
