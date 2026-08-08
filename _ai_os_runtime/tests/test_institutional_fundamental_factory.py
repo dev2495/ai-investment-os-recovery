@@ -261,6 +261,8 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertIn("research.open_real_company_acceptance_run", sql)
         self.assertIn("INSERT INTO research.fundamental_acceptance_gates", sql)
         self.assertIn("DELETE FROM research.fundamental_acceptance_gates", sql)
+        self.assertIn("context.acceptance_run_id IS NOT NULL", sql)
+        self.assertIn("'acceptance_run_opened', context.acceptance_run_id IS NOT NULL", sql)
         self.assertIn("SELECT context.dossier_version_id, incoming.*", sql)
         self.assertIn("SELECT context.dossier_id, incoming.*", sql)
         self.assertIn("SELECT context.acceptance_run_id, incoming.*", sql)

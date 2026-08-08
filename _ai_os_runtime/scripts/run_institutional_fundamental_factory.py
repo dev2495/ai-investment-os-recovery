@@ -389,15 +389,20 @@ class PsqlGateway:
         {refresh_sql}
 
         UPDATE institutional_factory_context context
-        SET acceptance_run_id = research.open_real_company_acceptance_run(
-            {sql_literal(plan['run_key'])}, {int(plan['company_id'])},
-            {str(plan['holding_thesis_id']) if plan.get('holding_thesis_id') is not None else 'NULL'},
-            context.dossier_version_id, {sql_literal(plan['as_of'])}::timestamptz, {sql_literal(plan['actor'])}
-        );
+        SET acceptance_run_id = CASE
+            WHEN {str(bool(plan['acceptance_eligible'])).lower()}
+            THEN research.open_real_company_acceptance_run(
+                {sql_literal(plan['run_key'])}, {int(plan['company_id'])},
+                {str(plan['holding_thesis_id']) if plan.get('holding_thesis_id') is not None else 'NULL'},
+                context.dossier_version_id, {sql_literal(plan['as_of'])}::timestamptz, {sql_literal(plan['actor'])}
+            )
+            ELSE NULL
+        END;
 
         DELETE FROM research.fundamental_acceptance_gates gate
         USING institutional_factory_context context
-        WHERE gate.acceptance_run_id = context.acceptance_run_id;
+        WHERE context.acceptance_run_id IS NOT NULL
+          AND gate.acceptance_run_id = context.acceptance_run_id;
 
         INSERT INTO research.fundamental_acceptance_gates (
             acceptance_run_id, gate_key, gate_name, gate_status, observed_value,
@@ -406,16 +411,19 @@ class PsqlGateway:
           FROM (VALUES {gate_values}) AS incoming(
             gate_key, gate_name, gate_status, observed_value,
             required_value, failure_reason, evidence_id, evaluated_by
-          ) JOIN institutional_factory_context context ON true;
+          ) JOIN institutional_factory_context context ON context.acceptance_run_id IS NOT NULL;
 
         UPDATE research.fundamental_acceptance_runs run
         SET run_status = {sql_literal(plan['acceptance_status'])}, completed_at = now(),
             notes = {sql_literal(plan['acceptance_note'])}
-        FROM institutional_factory_context context WHERE run.id = context.acceptance_run_id;
+        FROM institutional_factory_context context
+        WHERE context.acceptance_run_id IS NOT NULL
+          AND run.id = context.acceptance_run_id;
 
         SELECT json_build_object(
             'dossier_id', context.dossier_id, 'dossier_version_id', context.dossier_version_id,
             'version_number', context.version_number, 'acceptance_run_id', context.acceptance_run_id,
+            'acceptance_run_opened', context.acceptance_run_id IS NOT NULL,
             'acceptance_status', {sql_literal(plan['acceptance_status'])},
             'sections_written', {len(sections)}, 'specialist_opinions_cloned',
             (SELECT count(*) FROM research.fundamental_specialist_opinions opinion
@@ -632,6 +640,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     gates = evaluate_acceptance(company, evidence, opinions, sections, coverage, latest_dossier, committee, request.as_of)
     failed = [gate["gate_key"] for gate in gates if gate["gate_status"] != "passed"]
     specialists = sorted({str(row.get("specialist_key")) for row in opinions})
+    human_verified = any(row.get("verification_status") == "human_verified" for row in evidence)
     thesis_id = latest_dossier.get("holding_thesis_id")
     company_key = company.get("company_key") or company.get("primary_symbol") or company["id"]
     latest_cutoff = parse_timestamp(latest_dossier.get("source_cutoff_at"))
@@ -648,6 +657,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
         "sections": sections,
         "opinion_ids": [int(row["id"]) for row in opinions],
         "verification_evidence_id": int(company.get("real_company_verification_evidence_id") or evidence[0]["id"]),
+        "acceptance_eligible": human_verified > 0,
         "executive_conclusion": "No capital action is authorized. Review the source-backed dossier sections, failed gates, specialist dissent, and committee record.",
         "decision_summary": {"acceptance_status": "passed" if not failed else "failed", "failed_gates": failed, "capital_action_allowed": False, "broker_execution_allowed": False},
         "evidence_coverage": {**coverage, "evidence_count": len(evidence), "specialists_present": specialists, "section_count": len(sections), "point_in_time_cutoff": request.as_of.isoformat()},
