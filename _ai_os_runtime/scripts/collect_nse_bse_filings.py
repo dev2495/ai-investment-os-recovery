@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import sys
@@ -58,9 +59,12 @@ def sql_jsonb(value: object) -> str:
 
 
 def psql_command_candidates() -> list[list[str]]:
-    return [
-        [
-            "/opt/homebrew/opt/postgresql@15/bin/psql",
+    configured = os.environ.get("AI_OS_PSQL_BIN", "").strip()
+    local_psql = configured if configured and Path(configured).is_file() else shutil.which("psql")
+    candidates: list[list[str]] = []
+    if local_psql:
+        candidates.append([
+            local_psql,
             "-h",
             "127.0.0.1",
             "-p",
@@ -74,8 +78,8 @@ def psql_command_candidates() -> list[list[str]]:
             "ai_os",
             "-d",
             "ai_os",
-        ],
-        [
+        ])
+    candidates.append([
             "docker",
             "exec",
             "-i",
@@ -90,8 +94,8 @@ def psql_command_candidates() -> list[list[str]]:
             "ai_os",
             "-d",
             "ai_os",
-        ],
-    ]
+        ])
+    return candidates
 
 
 def run_psql_text(sql: str) -> str:

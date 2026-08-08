@@ -30,3 +30,19 @@ def test_normalizer_retains_review_and_execution_guards() -> None:
     assert '"broker_write_allowed": False' in source
     assert "--persist" in source
     assert "portfolio.orders" not in source
+
+
+def test_single_segment_declaration_is_exact_and_normalized(monkeypatch) -> None:
+    class Page:
+        def extract_text(self):
+            return 'Accordingly, the Company has a single operating segment, i.e., \u201cWire &\nWire Ropes\u201d.'
+
+    class Reader:
+        pages = [Page()]
+
+    monkeypatch.setitem(sys.modules, "pypdf", type("Pypdf", (), {"PdfReader": lambda _: Reader()})())
+    result = MODULE.extract_single_segment_declaration(Path("ignored.pdf"))
+    assert result is not None
+    assert result["segment_key"] == "wire_wire_ropes"
+    assert result["segment_name"] == "Wire & Wire Ropes"
+    assert result["page_number"] == 1

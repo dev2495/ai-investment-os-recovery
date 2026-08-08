@@ -311,7 +311,7 @@ def run_psql_json(query: str) -> list[dict]:
 
 
 SNAPSHOT_SQL_BATCH_SIZE = max(
-    1, int(os.environ.get("AI_OS_SNAPSHOT_SQL_BATCH_SIZE") or 12)
+    1, int(os.environ.get("AI_OS_SNAPSHOT_SQL_BATCH_SIZE") or 2)
 )
 SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS = max(
     1000, int(os.environ.get("AI_OS_SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS") or 30000)
@@ -321,7 +321,7 @@ SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS = max(
 def run_psql_json_object(
     queries: dict[str, str],
     *,
-    row_limit: int | None = None,
+    row_limit: int | None = 500,
     batch_size: int | None = None,
     error_collector: list[dict] | None = None,
 ) -> dict[str, list[dict]]:

@@ -112,6 +112,10 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
     def request(self, *, dry_run: bool = True) -> factory.FactoryRequest:
         return factory.FactoryRequest({"symbol": "RELIANCE", "exchange": "NSE"}, AS_OF, "Test Research Factory", "factory-test-1", dry_run)
 
+    def test_parse_as_of_accepts_postgres_variable_fractional_seconds(self) -> None:
+        parsed = factory.parse_as_of("2026-08-08T06:48:26.35896+00:00")
+        self.assertEqual(parsed.microsecond, 358960)
+
     def test_builds_exact_fifteen_section_version_from_stored_inputs(self) -> None:
         plan = factory.build_plan(complete_context(), self.request())
 

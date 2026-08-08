@@ -74,6 +74,10 @@ def sql_jsonb(value: object) -> str:
 
 def parse_as_of(value: str) -> datetime:
     normalized = value.strip().replace("Z", "+00:00")
+    fraction = re.search(r"\.(\d+)([+-]\d{2}:\d{2})$", normalized)
+    if fraction:
+        digits = fraction.group(1)[:6].ljust(6, "0")
+        normalized = normalized[:fraction.start()] + "." + digits + fraction.group(2)
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
         raise ValueError("--as-of must include an explicit timezone")

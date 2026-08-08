@@ -44,9 +44,9 @@ class OfficeSnapshotContractTest(unittest.TestCase):
 
         for source in (office_view, live_office):
             self.assertIn("\"executing\"", source)
-        self.assertIn("header: \"Active\"", office_view)
-        self.assertIn("{activeCount} active", live_office)
-        self.assertNotIn("{activeCount} working", live_office)
+        self.assertIn('Metric label="Working Now" value={working}', office_view)
+        self.assertIn("{workingAgents} working", live_office)
+        self.assertNotIn("{workingAgents} active", live_office)
         self.assertIn("targetX * progress", live_office)
         self.assertIn("leftLegRef", live_office)
         self.assertIn('activity={data?.agent_messages ?? []}', live_office)
