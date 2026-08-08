@@ -2971,12 +2971,28 @@ def build_sector_intelligence_snapshot() -> dict:
             LIMIT 200
         """,
         "aggregates": """
-            SELECT taxonomy_node_id, metric_definition_id, as_of_date, horizon,
-                   value, constituent_count, covered_count, weighting_method,
-                   calculation_version, input_fingerprint, quality_status, calculated_at
-            FROM sector_intelligence.sector_aggregates
-            ORDER BY as_of_date DESC, calculated_at DESC
+            SELECT aggregate.taxonomy_node_id, node.taxonomy_key, node.node_name,
+                   aggregate.metric_definition_id, definition.metric_key,
+                   definition.metric_name, definition.unit, aggregate.as_of_date,
+                   aggregate.horizon, aggregate.value, aggregate.constituent_count,
+                   aggregate.covered_count, aggregate.weighting_method,
+                   aggregate.calculation_version, aggregate.input_fingerprint,
+                   aggregate.quality_status, aggregate.calculated_at
+            FROM sector_intelligence.sector_aggregates aggregate
+            JOIN sector_intelligence.taxonomy_nodes node
+              ON node.id=aggregate.taxonomy_node_id
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=aggregate.metric_definition_id
+            ORDER BY aggregate.as_of_date DESC, aggregate.calculated_at DESC
             LIMIT 200
+        """,
+        "fundamental_coverage": """
+            SELECT taxonomy_node_id, taxonomy_key, node_name, symbol_id, symbol,
+                   exchange, core_fact_count, core_lineage_complete,
+                   latest_fundamental_at, price_to_earnings, valuation_at
+            FROM sector_intelligence.v_fundamental_constituent_coverage
+            ORDER BY node_name, symbol
+            LIMIT 500
         """,
         "valuation_bands": """
             SELECT taxonomy_node_id, metric_definition_id, as_of_date, lookback_years,
@@ -12661,6 +12677,55 @@ def run_sector_intelligence_engine(payload: dict) -> dict:
     return result
 
 
+def sync_sector_fundamentals(payload: dict) -> dict:
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Fundamental Analyst").strip()
+    persist = payload.get("persist", True) is not False
+    if not taxonomy_key or len(taxonomy_key) > 160:
+        raise ValueError("taxonomy_key is required and must be at most 160 characters")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "sync_sector_fundamentals.py"),
+        "--taxonomy-key",
+        taxonomy_key,
+        "--as-of-date",
+        as_of_date,
+        "--actor",
+        actor,
+    ]
+    if persist:
+        command.append("--persist")
+    completed = subprocess.run(
+        command,
+        cwd=RUNTIME_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    result = _parse_engine_json(completed, "sector fundamental publisher")
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("sector fundamental publisher violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_sync_sector_fundamentals",
+        "sync_sector_fundamentals",
+        actor,
+        "sector_intelligence.metric_observations",
+        result,
+        {
+            "taxonomy_key": taxonomy_key,
+            "as_of_date": as_of_date,
+            "persist": persist,
+            "capital_action_allowed": False,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
 def run_sector_acceptance(payload: dict) -> dict:
     taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
     taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
@@ -12692,7 +12757,7 @@ def run_sector_acceptance(payload: dict) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
         raise ValueError("run_key contains unsupported characters")
     run_rows = run_psql_json(f"""
-        SELECT sector_intelligence.run_acceptance_gates(
+        SELECT sector_intelligence.run_acceptance_gates_v2(
             {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
         ) AS acceptance_run_id
     """)
@@ -19767,6 +19832,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/sector-intelligence/run":
                 self._send_json(run_sector_intelligence_engine(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/fundamentals/sync":
+                self._send_json(sync_sector_fundamentals(payload), 201)
                 return
             if self.path == "/api/sector-intelligence/activate-price-baseline":
                 self._send_json(activate_sector_price_baseline(payload), 201)

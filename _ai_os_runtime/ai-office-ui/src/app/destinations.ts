@@ -50,6 +50,7 @@ import {
   Radar,
   Flame,
   Layers,
+  Landmark,
 } from "lucide-react";
 
 export type FunctionGroup =
@@ -118,9 +119,10 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   /* ---- QUANT & STRATEGY ---- */
   /* ---- SECTOR INTELLIGENCE ---- */
   { code: "SECT", path: "/sector/overview", label: "Sector Overview", icon: Layers, description: "Taxonomy, coverage, freshness, leadership and committee state", group: "sector", order: 0, status: "beta" },
-  { code: "SIDX", path: "/sector/indices", label: "Custom Indices", icon: LineChart, description: "Point-in-time constituents, weights, rebalances and history", group: "sector", order: 1, status: "beta" },
-  { code: "SFLO", path: "/sector/flows", label: "Sector Flows", icon: Activity, description: "Breadth, relative strength, cash, futures, options and ownership flows", group: "sector", order: 2, status: "beta" },
-  { code: "SCMT", path: "/sector/committee", label: "Sector Committee", icon: Gavel, description: "Independent sector views, PM mandate and human decisions", group: "sector", order: 3, status: "beta" },
+  { code: "SFUND", path: "/sector/fundamentals", label: "Sector Fundamentals", icon: Landmark, description: "Audited company facts, lineage, valuation coverage and sector aggregates", group: "sector", order: 1, status: "beta" },
+  { code: "SIDX", path: "/sector/indices", label: "Custom Indices", icon: LineChart, description: "Point-in-time constituents, weights, rebalances and history", group: "sector", order: 2, status: "beta" },
+  { code: "SFLO", path: "/sector/flows", label: "Sector Flows", icon: Activity, description: "Breadth, relative strength, cash, futures, options and ownership flows", group: "sector", order: 3, status: "beta" },
+  { code: "SCMT", path: "/sector/committee", label: "Sector Committee", icon: Gavel, description: "Independent sector views, PM mandate and human decisions", group: "sector", order: 4, status: "beta" },
 
   /* ---- QUANT & STRATEGY ---- */
   { code: "QLAB", path: "/quant/lab", label: "Quant Lab", icon: BarChart3, description: "Strategy candidates, backtests, validation, promotion board", group: "quant", order: 0, status: "beta" },

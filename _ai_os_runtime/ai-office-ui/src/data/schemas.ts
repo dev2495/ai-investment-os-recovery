@@ -316,6 +316,7 @@ export const SectorIntelligenceSchema = z.object({
   portfolio_manager: z.array(liveRow).default([]),
   rankings: z.array(liveRow).default([]),
   aggregates: z.array(liveRow).default([]),
+  fundamental_coverage: z.array(liveRow).default([]),
   valuation_bands: z.array(liveRow).default([]),
   flows: z.array(liveRow).default([]),
   chart_artifacts: z.array(liveRow).default([]),

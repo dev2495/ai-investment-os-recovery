@@ -22,6 +22,11 @@ USER_AGENT = os.environ.get(
 )
 ARTIFACT_ROOT = artifact_root("company_ir")
 INDIA_TZ = dt.timezone(dt.timedelta(hours=5, minutes=30))
+NON_ANNUAL_REPORT_TERMS = (
+    "agm notice", "agm-notice", "newspaper", "annual return", "annual-return",
+    "secretarial compliance", "secretarial-compliance", "esg dashboard", "esg-",
+    "share based employee", "share-based-employee", "sweat equity", "brsr",
+)
 
 
 class LinkParser(HTMLParser):
@@ -79,11 +84,14 @@ def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> l
         url = urllib.parse.urljoin(page_url, href)
         parsed = urllib.parse.urlsplit(url)
         haystack = f"{label} {parsed.path}".lower()
+        document_name = f"{label} {Path(urllib.parse.unquote(parsed.path)).name}".lower()
         if parsed.scheme != "https" or not parsed.path.lower().endswith(".pdf"):
             continue
         if not include_subsidiaries and any(word in haystack for word in ("subsidiary", "subsidiaries", "subsidairy", "subsidiairies")):
             continue
-        if "annual" not in haystack or "report" not in haystack:
+        if not re.search(r"annual[\s_-]+report", document_name):
+            continue
+        if any(term in document_name for term in NON_ANNUAL_REPORT_TERMS):
             continue
         if parsed.hostname not in {page_host, f"www.{page_host}", page_host.removeprefix("www.")}:
             continue

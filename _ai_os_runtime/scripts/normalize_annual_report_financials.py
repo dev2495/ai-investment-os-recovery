@@ -11,7 +11,8 @@ from typing import Any
 from collect_nse_bse_filings import run_psql_json, run_psql_text, sql_jsonb, sql_literal
 
 
-PARSER_VERSION = "annual_report_consolidated_rows_v4"
+PARSER_REVISION = 9
+PARSER_VERSION = f"annual_report_consolidated_rows_v{PARSER_REVISION}"
 ROW_PREFIX = r"^(?:(?:[ivxlcdm]+|[a-z]|\d+)[.)]?\s+)?"
 FACTS = {
     "revenue_from_operations": {
@@ -26,7 +27,18 @@ FACTS = {
             ROW_PREFIX + r"profit for the year after tax\b",
             ROW_PREFIX + r"profit after tax(?: for the year)?\b",
             ROW_PREFIX + r"profit for the (?:year|period) \(from continuing and discontinued operations\)",
-            ROW_PREFIX + r"profit for the (?:year|period)\b",
+            ROW_PREFIX + r"(?:net )?profit for the (?:year|period)\b",
+        ),
+    },
+    "basic_eps": {
+        "canonical_name": "Basic earnings per share",
+        "statement_type": "income_statement",
+        "value_type": "per_share",
+        "default_unit": "INR/share",
+        "labels": (
+            ROW_PREFIX + r"basic earnings per (?:equity )?share\b",
+            ROW_PREFIX + r"basic \(in [`'\u20b9]? ?(?:rs\.?|inr)?\s*per (?:equity )?share\)\b",
+            ROW_PREFIX + r"basic\b",
         ),
     },
     "total_assets": {
@@ -80,7 +92,10 @@ FACTS = {
     "capital_expenditure": {
         "canonical_name": "Purchase of property, plant and equipment and intangible assets",
         "statement_type": "cash_flow",
-        "labels": (r"^purchase of property, plant and equipment\b",),
+        "labels": (
+            r"^purchase of property, plant and equipment\b",
+            r"^payment towards capital expenditure\b",
+        ),
     },
     "dividends_paid": {
         "canonical_name": "Dividends paid",
@@ -117,18 +132,45 @@ def reported_pair(line: str) -> tuple[float, float] | None:
     return values[0], values[1]
 
 
+def reported_eps_pair(line: str) -> tuple[float, float] | None:
+    values = parse_amounts(line)
+    if len(values) < 2:
+        return None
+    # EPS rows commonly begin with a note number; current/comparative values
+    # are the final two numbers on the row.
+    return values[-2], values[-1]
+
+
 def normalized_lines(text: str) -> list[str]:
     return [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
 
 
 def page_kind(text: str) -> str | None:
     normalized = re.sub(r"\s+", " ", text).lower()
-    if re.search(r"consolidated (?:statement of )?profit and loss", normalized):
+    if re.search(r"consolidated (?:statement of )?profit (?:and|&) loss", normalized):
         return "income_statement"
     if re.search(r"consolidated (?:balance sheet|statement of financial position)", normalized):
         return "balance_sheet"
     if re.search(r"consolidated (?:statement of cash flows?|cash flow statement)", normalized):
         return "cash_flow"
+    return None
+
+
+def page_unit(text: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", text).lower()
+    prefix = r"\bin\s+(?:(?:inr|rs\.?)\s*)?[^a-z0-9]{0,4}"
+    if re.search(prefix + r"(?:crores?|cr\.?)\b", normalized) or re.search(
+        r"\([^a-z0-9]{0,4}(?:crores?|cr\.?)\s*\)", normalized
+    ):
+        return "INR crore"
+    if re.search(prefix + r"(?:millions?|mn)\b", normalized) or re.search(
+        r"\([^a-z0-9]{0,4}(?:millions?|mn)\s*\)", normalized
+    ):
+        return "INR million"
+    if re.search(prefix + r"(?:lakhs?|lacs?)\b", normalized) or re.search(
+        r"\([^a-z0-9]{0,4}(?:lakhs?|lacs?)\s*\)", normalized
+    ):
+        return "INR lakh"
     return None
 
 
@@ -141,6 +183,35 @@ def line_pair(lines: list[str], index: int) -> tuple[tuple[float, float], str] |
         if pair is not None:
             return pair, candidate
     return None
+
+
+def trade_receivables_pair(lines: list[str]) -> tuple[tuple[float, float], str] | None:
+    components: dict[int, tuple[tuple[float, float], str]] = {}
+    for index, line in enumerate(lines):
+        lower = line.lower()
+        if "trade receivables" in lower:
+            pair = reported_pair(line)
+            if pair is not None:
+                components[index] = (pair, line)
+                continue
+            for detail_index in range(index + 1, min(index + 5, len(lines))):
+                detail = lines[detail_index]
+                if not re.search(r"^(?:\(\d+\)\s*)?(?:unbilled|billed)\b", detail.lower()):
+                    continue
+                detail_pair = reported_pair(re.sub(r"^\(\d+\)\s*", "", detail))
+                if detail_pair is not None:
+                    components[detail_index] = (detail_pair, detail)
+        elif re.search(r"^(?:\([ivx]+\)\s*)?unbilled receivables\b", lower):
+            pair = reported_pair(line)
+            if pair is not None:
+                components[index] = (pair, line)
+    if not components:
+        return None
+    ordered = [components[index] for index in sorted(components)]
+    return (
+        (sum(value[0][0] for value in ordered), sum(value[0][1] for value in ordered)),
+        " | ".join(value[1] for value in ordered),
+    )
 
 
 def extract_annual_report(path: Path, fiscal_year: int) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -170,6 +241,21 @@ def extract_annual_report(path: Path, fiscal_year: int) -> tuple[list[dict[str, 
         if kind is None:
             continue
         lines = normalized_lines(text)
+        reported_unit = page_unit(text)
+        if kind == "balance_sheet" and "trade_receivables" not in found:
+            receivables = trade_receivables_pair(lines)
+            if receivables is not None:
+                pair, reported_line = receivables
+                found["trade_receivables"] = {
+                    "fact_key": "trade_receivables",
+                    "fiscal_year": fiscal_year,
+                    "current_value": pair[0],
+                    "comparative_value": pair[1],
+                    "reported_line": reported_line,
+                    "page_number": page_number,
+                    "statement_type": kind,
+                    "unit": reported_unit or "source_unit_unresolved",
+                }
         balance_region: str | None = None
         balance_section: str | None = None
         for line_index, line in enumerate(lines):
@@ -192,30 +278,18 @@ def extract_annual_report(path: Path, fiscal_year: int) -> tuple[list[dict[str, 
                     continue
                 if not any(re.search(pattern, lower) for pattern in definition["labels"]):
                     continue
-                if fact_key == "trade_receivables":
-                    parts: list[tuple[float, float]] = []
-                    for detail in lines[line_index + 1:line_index + 6]:
-                        detail_lower = detail.lower()
-                        if "billed" not in detail_lower:
-                            continue
-                        cleaned_detail = re.sub(r"^\(\d+\)\s*", "", detail)
-                        pair = reported_pair(cleaned_detail)
-                        if pair is not None:
-                            parts.append(pair)
-                    if parts:
-                        current = sum(pair[0] for pair in parts)
-                        comparative = sum(pair[1] for pair in parts)
-                        found[fact_key] = {
-                            "fact_key": fact_key,
-                            "fiscal_year": fiscal_year,
-                            "current_value": current,
-                            "comparative_value": comparative,
-                            "reported_line": " | ".join(lines[line_index:line_index + 6]),
-                            "page_number": page_number,
-                            "statement_type": kind,
-                        }
-                        continue
+                if fact_key == "dividends_paid" and re.search(
+                    r"\b(?:nci|non[- ]controlling interests?)\b", lower
+                ):
+                    continue
                 matched = line_pair(lines, line_index)
+                if fact_key == "basic_eps":
+                    for width in (1, 2, 3):
+                        candidate = " ".join(lines[line_index:line_index + width])
+                        pair = reported_eps_pair(candidate)
+                        if pair is not None:
+                            matched = (pair, candidate)
+                            break
                 if matched is None:
                     continue
                 pair, reported_line = matched
@@ -228,6 +302,11 @@ def extract_annual_report(path: Path, fiscal_year: int) -> tuple[list[dict[str, 
                     "reported_line": reported_line,
                     "page_number": page_number,
                     "statement_type": kind,
+                    "unit": (
+                        str(definition.get("default_unit"))
+                        if definition.get("value_type") == "per_share"
+                        else reported_unit or "source_unit_unresolved"
+                    ),
                 }
     return list(found.values()), segment
 
@@ -276,7 +355,9 @@ def persist(
         definitions.append(
             "(" + ",".join((
                 sql_literal(fact_key), sql_literal(definition["canonical_name"]),
-                sql_literal(definition["statement_type"]), "'monetary'", "'INR lakh'", "'instant'" if definition["statement_type"] == "balance_sheet" else "'flow'",
+                sql_literal(definition["statement_type"]), sql_literal(definition.get("value_type", "monetary")),
+                sql_literal(definition.get("default_unit", "source-reported INR")),
+                "'instant'" if definition["statement_type"] == "balance_sheet" else "'flow'",
                 sql_literal(f"Machine-readable consolidated annual report row; review required before investment use."),
             )) + ")"
         )
@@ -287,6 +368,14 @@ def persist(
         + " ON CONFLICT (fact_key) DO UPDATE SET canonical_name=EXCLUDED.canonical_name,description=EXCLUDED.description;"
     )
     report_by_id = {int(row["filing_id"]): row for row in reports}
+    evidence_ids = sorted({int(row["evidence_id"]) for row in reports})
+    if evidence_ids:
+        run_psql_text(
+            "UPDATE research.company_statement_facts "
+            "SET is_current=false,restatement_status='corrected',recorded_at=now() "
+            f"WHERE company_id={company_id} AND evidence_id IN ({','.join(str(value) for value in evidence_ids)}) "
+            "AND is_current=true AND metadata->>'review_status'='machine_extracted_unreviewed';"
+        )
     count = 0
     for row in extracted:
         report = report_by_id[int(row["filing_id"])]
@@ -294,12 +383,14 @@ def persist(
         period_end = dt.date(fy, 3, 31)
         period_start = dt.date(fy - 1, 4, 1)
         available_at = str(report["retrieved_at"])
+        unit = str(row.get("unit") or "source_unit_unresolved")
         metadata = {
             "parser_version": PARSER_VERSION,
             "review_status": "machine_extracted_unreviewed",
             "source_document_sha256": report["content_hash"],
             "actor": actor,
             "broker_write_allowed": False,
+            "source_unit_resolved": unit != "source_unit_unresolved",
         }
         run_psql_text(
             f"""
@@ -311,8 +402,8 @@ def persist(
             ) SELECT
               {company_id},definition.id,{fy},'FY',{sql_literal(period_start.isoformat())}::date,
               {sql_literal(period_end.isoformat())}::date,'consolidated',{row['current_value']},
-              'INR','lakh',0,{sql_literal(row['reported_line'])},{sql_literal(period_end.isoformat())}::date,
-              {sql_literal(available_at)}::timestamptz,1,'reported',true,{int(report['evidence_id'])},
+              'INR',{sql_literal(unit)},0,{sql_literal(row['reported_line'])},{sql_literal(period_end.isoformat())}::date,
+              {sql_literal(available_at)}::timestamptz,{PARSER_REVISION},'reported',true,{int(report['evidence_id'])},
               {sql_jsonb({'filing_id': row['filing_id'], 'page_number': row['page_number'], 'reported_line': row['reported_line']})},
               {sql_jsonb(metadata)}
             FROM research.statement_fact_definitions definition
@@ -320,6 +411,7 @@ def persist(
             ON CONFLICT (company_id,fact_definition_id,fiscal_year,fiscal_period,period_end,statement_scope,restatement_version)
             DO UPDATE SET value_numeric=EXCLUDED.value_numeric,reported_value_text=EXCLUDED.reported_value_text,
               available_at=EXCLUDED.available_at,evidence_id=EXCLUDED.evidence_id,
+              restatement_status='reported',is_current=true,
               source_locator=EXCLUDED.source_locator,metadata=EXCLUDED.metadata,recorded_at=now();
             """
         )

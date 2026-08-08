@@ -4340,6 +4340,19 @@ def run_sector_intelligence_engine(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/sector-intelligence/run", payload, timeout=620))
 
 
+def sync_sector_fundamentals(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Fundamental Analyst")
+    payload.setdefault("persist", True)
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/fundamentals/sync", payload, timeout=320))
+
+
 def run_sector_acceptance(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
@@ -5964,6 +5977,21 @@ TOOLS = {
             ],
         },
         "handler": run_sector_intelligence_engine,
+    },
+    "ai_os_sync_sector_fundamentals": {
+        "description": "Publish latest available audited consolidated company facts into comparable sector metrics with official source lineage and point-in-time valuation. It never backdates evidence and cannot authorize capital or broker execution.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Fundamental Analyst"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": sync_sector_fundamentals,
     },
     "ai_os_run_sector_acceptance": {
         "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",

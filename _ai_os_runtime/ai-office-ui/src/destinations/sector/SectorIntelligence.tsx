@@ -3,18 +3,20 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   Activity, BarChart3, Database, Gavel, Layers, LineChart,
   ShieldCheck, Workflow, RefreshCw, Upload, FileCheck2,
+  Landmark,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorRemediation } from "../../data/actions";
+import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorFundamentals, useSyncSectorRemediation } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
 } from "../../system/primitives";
-import { formatCompact, formatRelative, num, text } from "../../data/liveRow";
+import { bool, formatCompact, formatRelative, num, raw, text } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
   { key: "overview", label: "Overview", icon: Layers },
+  { key: "fundamentals", label: "Fundamentals", icon: Landmark },
   { key: "indices", label: "Custom Indices", icon: LineChart },
   { key: "flows", label: "Flows & Strength", icon: Activity },
   { key: "committee", label: "Committee", icon: Gavel },
@@ -43,9 +45,10 @@ export default function SectorIntelligence() {
         <div className="aios-destination__subtitle">
           Postgres owns classifications, constituents, weights, calculations and history. TradingView Desktop receives chart artifacts only.
         </div>
-        <Tabs tabs={TABS} active={tab} onChange={(key) => navigate(`/sector/${key}`)} />
+        <Tabs tabs={TABS} active={tab} onChange={(key) => navigate("/sector/" + key)} />
       </div>
       <SectorRunControl indices={data?.custom_indices ?? []} />
+      {tab === "fundamentals" ? <SectorFundamentalSyncControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorPriceBaselineControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} acceptance={data?.acceptance_runs ?? []} /> : null}
       {tab === "overview" ? <SectorSourceImportControl /> : null}
@@ -58,6 +61,7 @@ export default function SectorIntelligence() {
         </Panel>
       ) : null}
       {!query.isLoading && !query.isError && tab === "overview" ? <Overview data={data} /> : null}
+      {!query.isLoading && !query.isError && tab === "fundamentals" ? <Fundamentals data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "indices" ? <Indices data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "flows" ? <Flows data={data} /> : null}
       {!query.isLoading && !query.isError && tab === "committee" ? <Committee data={data} /> : null}
@@ -103,7 +107,7 @@ function SectorPriceBaselineControl({ hierarchy }: { hierarchy: LiveRow[] }) {
 
   return (
     <Panel icon={LineChart} title="Activate Price Intelligence" actions={<Badge tone={mutation.isPending ? "warn" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Calculating" : "Source-backed"}</Badge>}>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 2fr) minmax(160px, 1fr) auto", gap: "var(--space-3)", alignItems: "end" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
         <Field label="Official sector basket" required><Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}><option value="">Select sector…</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</Select></Field>
         <Field label="As-of date" required><TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></Field>
         <Button variant="primary" icon={RefreshCw} onClick={activate} disabled={!nodeId || !asOf || mutation.isPending}>{mutation.isPending ? "Activating…" : "Build indices & breadth"}</Button>
@@ -410,6 +414,176 @@ function Overview({ data }: { data: ReturnType<typeof useSectorIntelligence>["da
       </Panel>
     </>
   );
+}
+
+function SectorFundamentalSyncControl({ hierarchy }: { hierarchy: LiveRow[] }) {
+  const mutation = useSyncSectorFundamentals();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const nodes = React.useMemo(() => {
+    const unique = new Map<string, string>();
+    for (const row of hierarchy) {
+      for (const [keyField, nameField] of [
+        ["sector_key", "sector_name"],
+        ["industry_key", "industry_name"],
+        ["sub_industry_key", "sub_industry_name"],
+      ] as const) {
+        const key = text(row, keyField);
+        const label = text(row, nameField);
+        if (key && label) unique.set(key, label);
+      }
+    }
+    return Array.from(unique.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [hierarchy]);
+  const [taxonomyKey, setTaxonomyKey] = React.useState("");
+  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+
+  React.useEffect(() => {
+    if (!taxonomyKey && nodes.length) setTaxonomyKey(nodes[0].key);
+  }, [nodes, taxonomyKey]);
+
+  function refresh() {
+    if (!taxonomyKey || !asOf) return;
+    mutation.mutate({
+      taxonomy_key: taxonomyKey,
+      as_of_date: asOf,
+      persist: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: "Sector fundamentals refreshed",
+        message: num(result, "core_symbol_count") + " core-covered, "
+          + num(result, "valuation_symbol_count") + " valued, "
+          + num(result, "rejected_fact_count") + " quarantined",
+        tone: num(result, "rejected_fact_count") > 0 ? "warn" : "ok",
+        duration: 7000,
+      }),
+      onError: (error) => pushToast({
+        title: "Fundamental refresh blocked",
+        message: error.message,
+        tone: "risk",
+        duration: 8000,
+      }),
+    });
+  }
+
+  return (
+    <Panel
+      icon={Landmark}
+      title="Publish Audited Sector Fundamentals"
+      actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : "accent"}>{mutation.isPending ? "Publishing" : "No broker writes"}</Badge>}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Sector or industry" required>
+          <Select value={taxonomyKey} onChange={(event) => setTaxonomyKey(event.target.value)}>
+            <option value="">Select source-backed taxonomy...</option>
+            {nodes.map((node) => <option key={node.key} value={node.key}>{node.label}</option>)}
+          </Select>
+        </Field>
+        <Field label="As-of date" required>
+          <TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} />
+        </Field>
+        <Button variant="primary" icon={RefreshCw} onClick={refresh} disabled={!taxonomyKey || !asOf || mutation.isPending}>
+          {mutation.isPending ? "Publishing..." : "Refresh fundamentals"}
+        </Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Publishes only retained official-report facts with source lineage, then calculates point-in-time valuation and sector aggregates. Unresolved units are quarantined; missing history is never backfilled.
+      </div>
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+    </Panel>
+  );
+}
+
+function Fundamentals({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
+  const allCoverage = data?.fundamental_coverage ?? [];
+  const aggregates = data?.aggregates ?? [];
+  const scopes = React.useMemo(() => {
+    const unique = new Map<string, string>();
+    for (const row of allCoverage) {
+      const key = text(row, "taxonomy_key");
+      const label = text(row, "node_name");
+      if (key && label) unique.set(key, label);
+    }
+    return Array.from(unique.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [allCoverage]);
+  const preferredScope = text(aggregates[0], "taxonomy_key", scopes[0]?.key ?? "");
+  const [scope, setScope] = React.useState("");
+  React.useEffect(() => {
+    if (!scope && preferredScope) setScope(preferredScope);
+  }, [preferredScope, scope]);
+  const coverage = scope
+    ? allCoverage.filter((row) => text(row, "taxonomy_key") === scope)
+    : allCoverage;
+  const scopedAggregates = scope
+    ? aggregates.filter((row) => text(row, "taxonomy_key") === scope)
+    : aggregates;
+  const coreCovered = coverage.filter((row) => num(row, "core_fact_count") === 3 && bool(row, "core_lineage_complete")).length;
+  const valued = coverage.filter((row) => raw(row, "price_to_earnings") !== null && raw(row, "price_to_earnings") !== undefined).length;
+  const latestAsOf = scopedAggregates.length ? text(scopedAggregates[0], "as_of_date") : "";
+  const latestAggregates = latestAsOf
+    ? scopedAggregates.filter((row) => text(row, "as_of_date") === latestAsOf)
+    : scopedAggregates;
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: "var(--space-3)", flexWrap: "wrap" }}>
+        <Field label="Coverage scope">
+          <Select value={scope} onChange={(event) => setScope(event.target.value)} style={{ minWidth: 280 }}>
+            {scopes.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+          </Select>
+        </Field>
+      </div>
+      <MetricStrip values={[
+        ["Constituents", coverage.length],
+        ["Core facts + lineage", coreCovered],
+        ["Current P/E", valued],
+        ["Broker writes", 0],
+      ]} />
+      <Panel icon={Landmark} title="Company Fundamental Coverage" actions={<Badge tone={coverage.length && coreCovered / coverage.length >= 0.7 ? "ok" : "warn"}>{coverage.length ? Math.round(100 * coreCovered / coverage.length) + "% core-covered" : "No coverage"}</Badge>}>
+        {coverage.length === 0 ? (
+          <Empty icon={Landmark} title="No company fundamentals published" description="Collect and verify official annual reports, normalize retained facts, then use the publishing control above. Missing companies remain visible." />
+        ) : (
+          <DataTable rows={coverage} rowKey={(row, index) => text(row, "taxonomy_key", String(index)) + ":" + text(row, "symbol", String(index))} columns={[
+            { key: "company", header: "Company", render: (row) => <strong>{text(row, "symbol")}</strong> },
+            { key: "exchange", header: "Exchange", render: (row) => text(row, "exchange") },
+            { key: "facts", header: "Core facts", align: "right", render: (row) => num(row, "core_fact_count") + " / 3" },
+            { key: "lineage", header: "Lineage", render: (row) => <StatusPill status={num(row, "core_fact_count") === 3 && bool(row, "core_lineage_complete") ? "verified" : "incomplete"} /> },
+            { key: "pe", header: "Current P/E", align: "right", render: (row) => raw(row, "price_to_earnings") === null || raw(row, "price_to_earnings") === undefined ? "Not available" : num(row, "price_to_earnings").toFixed(2) + "x" },
+            { key: "evidence", header: "Latest evidence", render: (row) => freshnessCell(row, "latest_fundamental_at") },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={BarChart3} title="Latest Source-Backed Sector Aggregates" actions={<Badge tone={latestAggregates.length ? "ok" : "warn"}>{latestAsOf || "No as-of date"}</Badge>}>
+        {latestAggregates.length === 0 ? (
+          <Empty icon={BarChart3} title="No calculated aggregates" description="Aggregates appear only when source-backed constituent facts are available. Historical valuation bands remain empty until genuine point-in-time history exists." />
+        ) : (
+          <DataTable rows={latestAggregates} rowKey={(row, index) => text(row, "taxonomy_key", String(index)) + ":" + text(row, "metric_key", String(index))} columns={[
+            { key: "metric", header: "Metric", render: (row) => <strong>{text(row, "metric_name", text(row, "metric_key"))}</strong> },
+            { key: "sector", header: "Sector", render: (row) => text(row, "node_name") },
+            { key: "value", header: "Value", align: "right", render: (row) => formatAggregateValue(row) },
+            { key: "coverage", header: "Coverage", align: "right", render: (row) => num(row, "covered_count") + " / " + num(row, "constituent_count") },
+            { key: "quality", header: "Quality", render: (row) => <StatusPill status={text(row, "quality_status", "calculated")} /> },
+            { key: "calculated", header: "Calculated", render: (row) => freshnessCell(row, "calculated_at") },
+          ]} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function formatAggregateValue(row: LiveRow) {
+  if (raw(row, "value") === null || raw(row, "value") === undefined) return "Not available";
+  const value = num(row, "value");
+  const unit = text(row, "unit");
+  if (unit === "percent") return value.toFixed(2) + "%";
+  if (unit === "multiple") return value.toFixed(2) + "x";
+  if (unit === "INR million") return formatCompact(value) + " INR mn";
+  if (unit === "INR/share") return "INR " + value.toFixed(2) + " / share";
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(value) + (unit ? " " + unit : "");
 }
 
 function Indices({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {

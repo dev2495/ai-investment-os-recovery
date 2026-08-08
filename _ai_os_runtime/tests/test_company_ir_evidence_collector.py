@@ -32,6 +32,18 @@ def test_company_ir_collector_excludes_subsidiaries_by_default() -> None:
     assert "--include-subsidiaries" in source
 
 
+def test_ir_discovery_requires_document_level_annual_report_label(monkeypatch) -> None:
+    html = b"""<html><body>
+      <a href='/annual-reports/2025-2026/newspaper-ad-post-dispatch.pdf'>Annual AGM newspaper ad</a>
+      <a href='/annual-reports/2025-2026/annual-return-2025-26.pdf'>Annual return 2025-26</a>
+      <a href='/annual-reports/2025-2026/company-integrated-annual-report-2025-26.pdf'>Integrated Annual Report 2025-26</a>
+    </body></html>"""
+    monkeypatch.setattr(COLLECTOR, "fetch_bytes", lambda *_args, **_kwargs: html)
+    rows = COLLECTOR.discover_reports("https://company.example/annual-reports/", False, 10)
+    assert len(rows) == 1
+    assert rows[0]["url"].endswith("company-integrated-annual-report-2025-26.pdf")
+
+
 def test_pdf_extractor_reuses_verified_local_pdf() -> None:
     source = (ROOT / "scripts" / "extract_filing_pdfs.py").read_text()
     assert 'existing_path = str(filing.get("local_path") or "").strip()' in source

@@ -134,6 +134,7 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/fundamental/dossiers": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/fundamental/ideas": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/sector/overview": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
+    "/sector/fundamentals": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
     "/sector/indices": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
     "/sector/flows": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
     "/sector/committee": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),

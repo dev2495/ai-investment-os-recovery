@@ -189,6 +189,20 @@ export function useRunSectorIntelligence() {
   );
 }
 
+export interface SectorFundamentalSyncInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useSyncSectorFundamentals() {
+  return useInvalidating<SectorFundamentalSyncInput, LiveRow>(
+    "/api/sector-intelligence/fundamentals/sync",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
 export interface SectorPriceBaselineInput {
   taxonomy_node_id: number;
   as_of_date: string;
