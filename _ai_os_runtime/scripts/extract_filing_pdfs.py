@@ -138,6 +138,17 @@ def storage_path(path: Path) -> str:
 
 
 def classify_event(title: str, filing_type: str, text: str) -> dict[str, Any]:
+    document_kind = f"{title} {filing_type}".lower()
+    if "annual report" in document_kind or "annual_report" in document_kind:
+        return {
+            "event_type": "routine_filing",
+            "urgency": "normal",
+            "opportunity_score": 20,
+            "risk_score": 25,
+            "assigned_agent": "Filings Analyst",
+            "matched_keywords": [],
+            "classifier": "keyword_pdf_text_v1",
+        }
     haystack = f"{title} {filing_type} {text[:20000]}".lower()
     if any(phrase in haystack for phrase in ["employee stock option", "stock option scheme", "esop", "exercise of stock options"]):
         return {
@@ -460,6 +471,17 @@ def upsert_event_and_inbox(filing: dict[str, Any], event: dict[str, Any]) -> tup
             "matched_keywords": event.get("matched_keywords", []),
         }
     ]
+    document_kind = f"{filing.get('title') or ''} {filing.get('filing_type') or ''}".lower()
+    if event.get("event_type") == "routine_filing" and (
+        "annual report" in document_kind or "annual_report" in document_kind
+    ):
+        evidence_match = [{"table": "research.corporate_filings", "id": filing_id}]
+        run_psql_text(
+            f"UPDATE research.filing_events SET status='superseded' "
+            f"WHERE filing_id={filing_id} AND event_type <> 'routine_filing'; "
+            f"UPDATE agent.inbox_items SET status='closed',updated_at=now() "
+            f"WHERE title LIKE 'PDF filing event:%' AND evidence @> {sql_jsonb(evidence_match)};"
+        )
     rows = run_psql_json(
         f"""
         WITH demote_routine AS (

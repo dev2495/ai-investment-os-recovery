@@ -11,21 +11,22 @@ from typing import Any
 from collect_nse_bse_filings import run_psql_json, run_psql_text, sql_jsonb, sql_literal
 
 
-PARSER_VERSION = "annual_report_consolidated_rows_v3"
+PARSER_VERSION = "annual_report_consolidated_rows_v4"
+ROW_PREFIX = r"^(?:(?:[ivxlcdm]+|[a-z]|\d+)[.)]?\s+)?"
 FACTS = {
     "revenue_from_operations": {
         "canonical_name": "Revenue from operations",
         "statement_type": "income_statement",
-        "labels": (r"^revenue from operations\b", r"^total revenue from operations\b"),
+        "labels": (ROW_PREFIX + r"revenue from operations\b", ROW_PREFIX + r"total revenue from operations\b"),
     },
     "profit_after_tax": {
         "canonical_name": "Profit after tax",
         "statement_type": "income_statement",
         "labels": (
-            r"^profit for the year after tax\b",
-            r"^profit after tax for the year\b",
-            r"^profit for the (?:year|period) \(from continuing and discontinued operations\)",
-            r"^profit for the (?:year|period)\b",
+            ROW_PREFIX + r"profit for the year after tax\b",
+            ROW_PREFIX + r"profit after tax(?: for the year)?\b",
+            ROW_PREFIX + r"profit for the (?:year|period) \(from continuing and discontinued operations\)",
+            ROW_PREFIX + r"profit for the (?:year|period)\b",
         ),
     },
     "total_assets": {
@@ -84,7 +85,7 @@ FACTS = {
     "dividends_paid": {
         "canonical_name": "Dividends paid",
         "statement_type": "cash_flow",
-        "labels": (r"^dividend paid\b", r"^dividends paid\b"),
+        "labels": (r"^(?:payment of )?dividends? paid?\b", r"^payment of dividend\b"),
     },
 }
 AMOUNT = re.compile(r"(?<![A-Za-z])\(?-?\d[\d,]*(?:\.\d+)?\)?")
@@ -126,7 +127,7 @@ def page_kind(text: str) -> str | None:
         return "income_statement"
     if re.search(r"consolidated (?:balance sheet|statement of financial position)", normalized):
         return "balance_sheet"
-    if re.search(r"consolidated (?:statement of cash flows|cash flow statement)", normalized):
+    if re.search(r"consolidated (?:statement of cash flows?|cash flow statement)", normalized):
         return "cash_flow"
     return None
 
@@ -191,6 +192,29 @@ def extract_annual_report(path: Path, fiscal_year: int) -> tuple[list[dict[str, 
                     continue
                 if not any(re.search(pattern, lower) for pattern in definition["labels"]):
                     continue
+                if fact_key == "trade_receivables":
+                    parts: list[tuple[float, float]] = []
+                    for detail in lines[line_index + 1:line_index + 6]:
+                        detail_lower = detail.lower()
+                        if "billed" not in detail_lower:
+                            continue
+                        cleaned_detail = re.sub(r"^\(\d+\)\s*", "", detail)
+                        pair = reported_pair(cleaned_detail)
+                        if pair is not None:
+                            parts.append(pair)
+                    if parts:
+                        current = sum(pair[0] for pair in parts)
+                        comparative = sum(pair[1] for pair in parts)
+                        found[fact_key] = {
+                            "fact_key": fact_key,
+                            "fiscal_year": fiscal_year,
+                            "current_value": current,
+                            "comparative_value": comparative,
+                            "reported_line": " | ".join(lines[line_index:line_index + 6]),
+                            "page_number": page_number,
+                            "statement_type": kind,
+                        }
+                        continue
                 matched = line_pair(lines, line_index)
                 if matched is None:
                     continue

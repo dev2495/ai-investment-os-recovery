@@ -75,7 +75,11 @@ OPERATOR_TOKEN = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
 ALLOW_TOKENLESS_LOOPBACK = os.environ.get("AI_OS_ALLOW_TOKENLESS_LOOPBACK", "1").strip().lower() in {"1", "true", "yes"}
 ZERODHA_AUTH_CHALLENGE_TTL_SECONDS = max(60, min(900, int(os.environ.get("AI_OS_ZERODHA_AUTH_CHALLENGE_TTL_SECONDS", "300"))))
 DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
+NODE_PDF_PYTHON = Path.home() / "AI_OS_NODE/runtime/python/bin/python3"
+PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or next(
+    (str(candidate) for candidate in (NODE_PDF_PYTHON, DEFAULT_PDF_PYTHON) if candidate.exists()),
+    sys.executable,
+)
 
 CHARLIE_TRUTH_SYSTEM_PROMPT = (
     "You are Charlie Munger, the evidence-bound orchestrator for a private AI portfolio office. "
@@ -10255,7 +10259,7 @@ def register_company_ir_source(payload: dict) -> dict:
     if not isinstance(evidence, dict):
         raise ValueError("verification_evidence must be an object")
     document_label = str(payload.get("document_label") or payload.get("documentLabel") or "").strip() or None
-    rows = run_psql_json(f"""
+    output = run_psql_text(f"""
         WITH source_row AS (
           INSERT INTO research.company_ir_sources (
             symbol,exchange,company_name,source_kind,source_url,fiscal_year_end,
@@ -10273,9 +10277,44 @@ def register_company_ir_source(payload: dict) -> dict:
             status='active',verified_at=now(),verified_by=EXCLUDED.verified_by,
             verification_evidence=EXCLUDED.verification_evidence,updated_at=now()
           RETURNING *
-        ) SELECT coalesce(json_agg(row_to_json(source_row)), '[]'::json)::text FROM source_row
+        ) SELECT coalesce(json_agg(row_to_json(source_row)), '[]'::json)::text FROM source_row;
     """)
-    result = {"status": "registered", "source": rows[0], "broker_write_allowed": False}
+    rows = json.loads(output or "[]")
+    if not rows:
+        raise RuntimeError("company IR source registration returned no row")
+    run_psql_text(f"""
+        INSERT INTO research.companies (
+          company_key,legal_name,display_name,primary_symbol,primary_exchange,
+          reporting_currency,status,real_company_verified_at,identifiers,metadata,updated_at
+        ) VALUES (
+          {sql_literal(exchange.lower() + ':' + re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-'))},
+          {sql_literal(company_name)},{sql_literal(company_name)},{sql_literal(symbol)},
+          {sql_literal(exchange)},'INR','active',now(),
+          {sql_jsonb({'exchange': exchange, 'symbol': symbol})},
+          {sql_jsonb({
+              'identity_source': 'operator_verified_official_ir',
+              'identity_verified': True,
+              'company_ir_source_id': rows[0]['id'],
+              'official_source_url': source_url,
+              'financial_coverage_inferred': False,
+              'broker_write_allowed': False,
+          })},now()
+        ) ON CONFLICT (primary_exchange,primary_symbol) DO UPDATE SET
+          display_name=coalesce(research.companies.display_name,EXCLUDED.display_name),
+          identifiers=research.companies.identifiers || EXCLUDED.identifiers,
+          real_company_verified_at=coalesce(research.companies.real_company_verified_at,now()),
+          metadata=research.companies.metadata || EXCLUDED.metadata,
+          updated_at=now();
+    """)
+    company_rows = run_psql_json(
+        "SELECT id,company_key,legal_name,primary_symbol,primary_exchange,"
+        "real_company_verified_at FROM research.companies "
+        f"WHERE primary_exchange={sql_literal(exchange)} AND primary_symbol={sql_literal(symbol)} LIMIT 1"
+    )
+    result = {
+        "status": "registered", "source": rows[0], "company": company_rows[0],
+        "capital_action_allowed": False, "broker_write_allowed": False,
+    }
     audit_api_write(
         "ai_os_api_company_ir_source_register", "register_company_ir_source", actor,
         "research.company_ir_sources", result,
@@ -10312,16 +10351,38 @@ def collect_registered_company_ir_source(payload: dict) -> dict:
         })
     else:
         request["investor_relations_url"] = source["source_url"]
-    result = run_company_ir_collector(request)
+    try:
+        result = run_company_ir_collector(request)
+    except Exception:
+        failed_runs = run_psql_json(
+            "SELECT id FROM research.company_ir_collection_runs "
+            f"WHERE exchange={sql_literal(source['exchange'])} "
+            f"AND symbol={sql_literal(source['symbol'])} "
+            f"AND investor_relations_url={sql_literal(source['source_url'])} "
+            "ORDER BY started_at DESC LIMIT 1"
+        )
+        if failed_runs:
+            run_psql_text(
+                "UPDATE research.company_ir_sources SET last_collected_at=now(),"
+                f"last_collection_run_id={int(failed_runs[0]['id'])},updated_at=now() "
+                f"WHERE id={source_id}"
+            )
+        raise
     run_id = int(result["run_id"])
     run_psql_text(
         "UPDATE research.company_ir_sources SET last_collected_at=now(),"
         f"last_collection_run_id={run_id},updated_at=now() WHERE id={source_id}"
     )
+    intake_rows = run_psql_json(
+        "SELECT research.sync_real_company_intake("
+        f"{sql_literal(str(payload.get('actor') or 'Fundamental Data Steward'))},"
+        f"{sql_literal(source['symbol'])}) AS result"
+    )
     return {
         "status": "collected",
         "source_id": source_id,
         "collection": result,
+        "fundamental_intake": intake_rows[0]["result"] if intake_rows else None,
         "broker_write_allowed": False,
     }
 

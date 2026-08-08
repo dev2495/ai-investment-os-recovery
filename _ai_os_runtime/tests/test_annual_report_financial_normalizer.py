@@ -24,6 +24,7 @@ def test_page_kind_requires_consolidated_statement_heading() -> None:
     assert MODULE.page_kind("Consolidated Balance Sheet") == "balance_sheet"
     assert MODULE.page_kind("Standalone Statement of Profit and Loss") is None
     assert MODULE.page_kind("Consolidated Statement of Cash Flows") == "cash_flow"
+    assert MODULE.page_kind("Consolidated Statement of Cash Flow") == "cash_flow"
 
 
 def test_line_pair_joins_wrapped_cash_flow_rows() -> None:
@@ -76,6 +77,43 @@ Dividend paid (9,137) (8,380)"""),
     assert by_key["operating_cash_flow"]["current_value"] == 65534.0
     assert by_key["capital_expenditure"]["current_value"] == -19806.0
     assert by_key["dividends_paid"]["current_value"] == -9137.0
+
+
+def test_extracts_numbered_income_rows_and_aggregated_receivables(monkeypatch) -> None:
+    class Page:
+        def __init__(self, text):
+            self.text = text
+
+        def extract_text(self):
+            return self.text
+
+    class Reader:
+        pages = [
+            Page("""Consolidated Statement of Profit and Loss
+I Revenue from Operations 50 568,154 529,883
+X Profit after tax (VIII-IX) 48,055 42,530"""),
+            Page("""Consolidated Balance Sheet
+ASSETS
+(ii) Trade Receivables 15
+(1) Billed 75,369 65,486
+(2) Unbilled 58,208 49,984
+EQUITY AND LIABILITIES"""),
+            Page("""Consolidated Statement of Cash Flow
+Net cash generated from operating activities (A) 61,720 57,857
+Purchase of Property, Plant and Equipment and Intangible
+Assets (6,957) (5,935)
+Payment of dividend (40,255) (38,418)"""),
+        ]
+
+    monkeypatch.setitem(sys.modules, "pypdf", SimpleNamespace(PdfReader=lambda _: Reader()))
+    facts, _ = MODULE.extract_annual_report(Path("ignored.pdf"), 2026)
+    by_key = {row["fact_key"]: row for row in facts}
+    assert by_key["revenue_from_operations"]["current_value"] == 568154.0
+    assert by_key["profit_after_tax"]["current_value"] == 48055.0
+    assert by_key["trade_receivables"]["current_value"] == 133577.0
+    assert by_key["operating_cash_flow"]["current_value"] == 61720.0
+    assert by_key["capital_expenditure"]["current_value"] == -6957.0
+    assert by_key["dividends_paid"]["current_value"] == -40255.0
 
 
 def test_normalizer_retains_review_and_execution_guards() -> None:

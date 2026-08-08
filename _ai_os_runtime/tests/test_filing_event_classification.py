@@ -54,6 +54,14 @@ class FilingEventClassificationTest(unittest.TestCase):
                 with self.subTest(classifier=classify, expected=expected):
                     self.assertEqual(classify(title, body)["event_type"], expected)
 
+    def test_annual_report_does_not_emit_incidental_special_situation(self) -> None:
+        body = "The notes discuss a historical amalgamation and the prior-year buyback."
+        for classify in (
+            lambda: collector.classify_event("Annual Report 2025-26", "annual_report", body),
+            lambda: extractor.classify_event("Annual Report 2025-26", "annual_report", body),
+        ):
+            self.assertEqual(classify()["event_type"], "routine_filing")
+
 
 if __name__ == "__main__":
     unittest.main()

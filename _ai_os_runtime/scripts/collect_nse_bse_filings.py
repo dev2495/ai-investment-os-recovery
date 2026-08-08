@@ -166,6 +166,15 @@ def content_hash(*values: object) -> str:
 
 
 def classify_event(title: str, filing_type: str, body: str) -> dict[str, Any]:
+    document_kind = f"{title} {filing_type}".lower()
+    if "annual report" in document_kind or "annual_report" in document_kind:
+        return {
+            "event_type": "routine_filing",
+            "urgency": "normal",
+            "opportunity_score": 20,
+            "risk_score": 25,
+            "assigned_agent": "Filings Analyst",
+        }
     text = f"{title} {filing_type} {body}".lower()
     if any(phrase in text for phrase in ["employee stock option", "stock option scheme", "esop", "exercise of stock options"]):
         return {

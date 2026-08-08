@@ -40,6 +40,14 @@ def test_pdf_extractor_reuses_verified_local_pdf() -> None:
     assert 'errors.append(f"{command[0]}: {type(exc).__name__}: {exc}")' in source
 
 
+def test_api_prefers_managed_node_pdf_runtime() -> None:
+    api = (ROOT / "api" / "ai_os_api_server.py").read_text()
+    requirements = (ROOT / "requirements-pdf.txt").read_text()
+    assert 'AI_OS_NODE/runtime/python/bin/python3' in api
+    assert "NODE_PDF_PYTHON" in api
+    assert "pypdf[crypto]==" in requirements
+
+
 def test_company_ir_run_ledger_has_truthful_constraints() -> None:
     migration = (ROOT / "postgres" / "init" / "197_company_ir_evidence_collector_v1.sql").read_text()
     assert "research.company_ir_collection_runs" in migration
@@ -94,6 +102,17 @@ def test_governed_ir_source_registry_requires_https_and_operator_verification() 
     assert "operator confirmation is required to register a primary source" in api
     assert 'self.path == "/api/research/company-ir/sources"' in api
     assert 'self.path == "/api/research/company-ir/sources/collect"' in api
+    registration = api[api.index("def register_company_ir_source"):api.index("def collect_registered_company_ir_source")]
+    assert "output = run_psql_text" in registration
+    assert "rows = json.loads(output" in registration
+    assert "run_psql_json(f\"\"\"" not in registration
+    collection = api[api.index("def collect_registered_company_ir_source"):api.index("def run_filing_pdf_extractor")]
+    assert "except Exception:" in collection
+    assert "last_collection_run_id" in collection
+    assert "investor_relations_url" in collection
+    assert "operator_verified_official_ir" in registration
+    assert "INSERT INTO research.companies" in registration
+    assert "sync_real_company_intake" in collection
 
 
 def test_fundamental_coverage_exposes_source_registration_and_collection() -> None:
