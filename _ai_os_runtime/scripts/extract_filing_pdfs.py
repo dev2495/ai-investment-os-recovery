@@ -10,10 +10,11 @@ import re
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
+from collect_nse_bse_filings import curl_get
+from runtime_executables import docker_binary, psql_binary
 from runtime_storage import artifact_root
 
 
@@ -55,9 +56,11 @@ def sql_jsonb(value: object) -> str:
 
 
 def psql_command_candidates() -> list[list[str]]:
-    return [
-        [
-            "/opt/homebrew/opt/postgresql@15/bin/psql",
+    commands: list[list[str]] = []
+    local_psql = psql_binary()
+    if local_psql:
+        commands.append([
+            local_psql,
             "-h",
             "127.0.0.1",
             "-p",
@@ -71,9 +74,9 @@ def psql_command_candidates() -> list[list[str]]:
             "ai_os",
             "-d",
             "ai_os",
-        ],
-        [
-            "docker",
+        ])
+    commands.append([
+            docker_binary(),
             "exec",
             "-i",
             "ai_os_postgres",
@@ -87,8 +90,8 @@ def psql_command_candidates() -> list[list[str]]:
             "ai_os",
             "-d",
             "ai_os",
-        ],
-    ]
+        ])
+    return commands
 
 
 def run_psql_text(sql: str) -> str:
@@ -389,9 +392,9 @@ def download_pdf(filing: dict[str, Any]) -> Path:
         "Accept": "application/pdf,*/*",
         "Referer": "https://www.nseindia.com/",
     }
-    request = urllib.request.Request(source_url, headers=headers)
-    with urllib.request.urlopen(request, timeout=45) as response:
-        data = response.read()
+    status, data = curl_get(source_url, headers, timeout=45)
+    if status != 200:
+        raise RuntimeError(f"PDF download returned HTTP {status}: {source_url}")
     if not data.startswith(b"%PDF"):
         raise ValueError(f"downloaded content is not a PDF: {source_url}")
     target.write_bytes(data)

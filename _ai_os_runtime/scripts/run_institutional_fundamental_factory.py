@@ -5,10 +5,12 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -97,17 +99,24 @@ def slug(value: object) -> str:
 class PsqlGateway:
     @staticmethod
     def _commands() -> list[list[str]]:
-        return [
-            [
-                "/opt/homebrew/opt/postgresql@15/bin/psql", "-h", "127.0.0.1",
+        configured_psql = os.environ.get("AI_OS_PSQL_BIN", "").strip()
+        local_psql = configured_psql if configured_psql and Path(configured_psql).is_file() else shutil.which("psql")
+        commands: list[list[str]] = []
+        if local_psql:
+            commands.append([
+                local_psql, "-h", "127.0.0.1",
                 "-p", POSTGRES_PORT, "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1",
                 "-U", "ai_os", "-d", "ai_os",
-            ],
-            [
-                "docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-t",
+            ])
+        docker = shutil.which("docker") or next(
+            (path for path in ("/opt/homebrew/bin/docker", "/usr/local/bin/docker") if Path(path).is_file()),
+            "docker",
+        )
+        commands.append([
+                docker, "exec", "-i", "ai_os_postgres", "psql", "-q", "-t",
                 "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os",
-            ],
-        ]
+            ])
+        return commands
 
     def _run_json(self, sql: str) -> Any:
         env = os.environ.copy()

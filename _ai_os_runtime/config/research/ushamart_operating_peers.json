@@ -1,0 +1,33 @@
+{
+  "subject_exchange": "NSE",
+  "subject_symbol": "USHAMART",
+  "peer_set_key": "nse-ushamart-operating-peers-v1",
+  "peer_set_name": "Usha Martin operating peers",
+  "methodology": "Point-in-time listed Indian operating peers require explicit primary-source evidence of material steel-wire or wire-rope product overlap. Membership does not establish valuation comparability; financial and operating normalization remains required.",
+  "valid_from": "2025-03-31",
+  "peers": [
+    {
+      "exchange": "NSE",
+      "symbol": "BHARATWIRE",
+      "legal_name": "Bharat Wire Ropes Limited",
+      "isin": "INE316L01019",
+      "membership_role": "direct_operating_peer",
+      "inclusion_reason": "NSE integrated filing reports the single segment as manufacturing of wire, wire ropes and slings.",
+      "source_url": "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_110051_11082025193004_iXBRL_WEB.html",
+      "source_title": "NSE Integrated Filing - Bharat Wire Ropes Limited",
+      "required_phrases": ["BHARAT WIRE ROPES LIMITED", "MANUFACTURING OF WIRE, WIRE ROPES, SLINGS"]
+    },
+    {
+      "exchange": "NSE",
+      "symbol": "BEDMUTHA",
+      "legal_name": "Bedmutha Industries Limited",
+      "isin": "INE844K01012",
+      "membership_role": "adjacent_operating_peer",
+      "inclusion_reason": "The official company product page lists rope wire and steel wire ropes within its steel-wire portfolio.",
+      "source_url": "https://bedmutha.com/steel-wire/",
+      "source_title": "Bedmutha Industries - Steel Wire",
+      "identity_source_url": "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_93486_23052025235310_iXBRL_WEB.html",
+      "required_phrases": ["BEDMUTHA INDUSTRIES", "Steel Wire Ropes"]
+    }
+  ]
+}
