@@ -190,6 +190,7 @@ class SectorIntelligenceSafetyAndCliTests(unittest.TestCase):
         self.assertIn("IS NOT DISTINCT FROM", sql)
         self.assertIn("INSERT INTO sector_intelligence.breadth_observations", sql)
         self.assertIn("INSERT INTO sector_intelligence.sector_rankings", sql)
+        self.assertIn("taxonomy_node_id = EXCLUDED.taxonomy_node_id", sql)
 
     def test_run_engine_derives_breadth_without_manual_payload(self) -> None:
         result = engine.run_engine(self.valid_payload())

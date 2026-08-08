@@ -694,6 +694,8 @@ BEGIN
              item->>'source_state_fingerprint', item->>'generation_version'
       FROM jsonb_array_elements(doc->'tradingview_artifacts') item
     ON CONFLICT (artifact_key) DO UPDATE SET
+        taxonomy_node_id = EXCLUDED.taxonomy_node_id, index_id = EXCLUDED.index_id,
+        target_workspace = EXCLUDED.target_workspace,
         generated_expression = EXCLUDED.generated_expression, pine_source = EXCLUDED.pine_source,
         chart_layout = EXCLUDED.chart_layout, source_state_fingerprint = EXCLUDED.source_state_fingerprint,
         generation_version = EXCLUDED.generation_version, generated_at = now();
