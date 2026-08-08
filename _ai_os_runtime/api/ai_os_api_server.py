@@ -19340,9 +19340,25 @@ def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
             "description,config,created_at AS updated_at FROM agent.tool_registry "
             "WHERE tool_name='kronos_inference_adapter' LIMIT 1"
         )
+        score_filter = (
+            f"WHERE score.forecast_run_id IN ("
+            f"SELECT forecast_run_id FROM strategy.v_kronos_research_runs WHERE graph_run_id={run_id})"
+            if run_id is not None
+            else ""
+        )
+        snapshot["kronos_scores"] = run_psql_json(
+            "SELECT score.id AS score_id,score.forecast_run_id,score.score_kind,"
+            "score.evaluation_start_ts,score.evaluation_end_ts,score.realized_points,"
+            "score.interval_coverage,score.directional_accuracy,score.crps,"
+            "score.mean_interval_width,score.validation_status,score.feature_payload,"
+            "score.evidence,score.scored_by,score.scored_at "
+            f"FROM strategy.kronos_forecast_scores score {score_filter} "
+            "ORDER BY score.scored_at DESC,score.id DESC LIMIT 160"
+        )
     except Exception as exc:  # noqa: BLE001
         snapshot["kronos_runs"] = []
         snapshot["kronos_adapter"] = []
+        snapshot["kronos_scores"] = []
         issues.append({"section": "kronos_research", "error": f"{type(exc).__name__}: {exc}"})
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -19354,6 +19370,46 @@ def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
         "issues": issues,
         **snapshot,
     }
+
+
+def calibrate_kronos_forecast(payload: dict) -> dict:
+    raw_id = payload.get("forecast_run_id") or payload.get("forecastRunId")
+    try:
+        forecast_run_id = int(raw_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("forecast_run_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Model Validation Agent").strip() or "Model Validation Agent"
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "calibrate_kronos_forecast.py"),
+        "--forecast-run-id",
+        str(forecast_run_id),
+        "--actor",
+        actor,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=VAULT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Kronos calibration returned invalid JSON") from exc
+    if completed.returncode != 0:
+        raise ValueError(str(result.get("error") or completed.stderr or "Kronos calibration failed"))
+    audit_api_write(
+        "ai_os_api_calibrate_kronos_forecast",
+        "calibrate_kronos_forecast",
+        actor,
+        "strategy.kronos_forecast_scores",
+        result,
+        payload,
+    )
+    return result
 
 
 def start_graph_control_run(payload: dict) -> dict:
@@ -19858,6 +19914,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/graphs/corrections":
                 self._send_json(record_graph_control_correction(payload), 201)
+                return
+            if self.path == "/api/kronos/forecasts/calibrate":
+                self._send_json(calibrate_kronos_forecast(payload), 200)
                 return
             if self.path == "/api/agents/comments":
                 self._send_json(create_agent_comment(payload), 201)

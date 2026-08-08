@@ -87,6 +87,7 @@ class KronosAdapterTest(unittest.TestCase):
                 side_effect=[
                     [{"forecast_run_id": 31, "symbol": "NIFTY", "stored_paths": 20}],
                     [{"tool_name": "kronos_inference_adapter", "enabled": True}],
+                    [{"score_id": 9, "forecast_run_id": 31, "score_kind": "realized_calibration"}],
                 ],
             ) as query,
         ):
@@ -94,10 +95,12 @@ class KronosAdapterTest(unittest.TestCase):
 
         self.assertEqual(snapshot["kronos_runs"][0]["forecast_run_id"], 31)
         self.assertTrue(snapshot["kronos_adapter"][0]["enabled"])
+        self.assertEqual(snapshot["kronos_scores"][0]["score_kind"], "realized_calibration")
         self.assertEqual(snapshot["issues"], [])
         self.assertIn("strategy.v_kronos_research_runs", query.call_args_list[0].args[0])
         self.assertIn("kronos_inference_adapter", query.call_args_list[1].args[0])
         self.assertIn("created_at AS updated_at", query.call_args_list[1].args[0])
+        self.assertIn("strategy.kronos_forecast_scores", query.call_args_list[2].args[0])
 
     def test_graph_snapshot_reports_missing_kronos_schema_without_fake_rows(self) -> None:
         with (
@@ -108,6 +111,7 @@ class KronosAdapterTest(unittest.TestCase):
 
         self.assertEqual(snapshot["kronos_runs"], [])
         self.assertEqual(snapshot["kronos_adapter"], [])
+        self.assertEqual(snapshot["kronos_scores"], [])
         self.assertEqual(snapshot["issues"][0]["section"], "kronos_research")
 
     def test_graph_studio_renders_kronos_distribution_and_lineage(self) -> None:
@@ -129,6 +133,7 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertIn("broker_order_allowed: false", source)
         self.assertIn("kronos_runs: z.array(liveRow).default([])", schema)
         self.assertIn("kronos_adapter: z.array(liveRow).default([])", schema)
+        self.assertIn("kronos_scores: z.array(liveRow).default([])", schema)
 
     def test_daily_forecast_timestamps_skip_weekend_and_exchange_holiday(self) -> None:
         timestamps = run_kronos_forecast.future_timestamps(

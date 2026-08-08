@@ -466,6 +466,7 @@ export const GraphControlSnapshotSchema = z.object({
   waiting: z.array(liveRow).default([]),
   kronos_runs: z.array(liveRow).default([]),
   kronos_adapter: z.array(liveRow).default([]),
+  kronos_scores: z.array(liveRow).default([]),
   issues: z.array(liveRow).default([]),
 }).passthrough();
 

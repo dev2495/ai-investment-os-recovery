@@ -1251,3 +1251,10 @@ export function useRecordGraphCorrection() {
     actor?: string;
   }, LiveRow>("/api/graphs/corrections", GRAPH_INVALIDATIONS);
 }
+
+export function useCalibrateKronosForecast() {
+  return useInvalidating<{ forecast_run_id: number; actor?: string }, LiveRow>(
+    "/api/kronos/forecasts/calibrate",
+    GRAPH_INVALIDATIONS
+  );
+}

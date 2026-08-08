@@ -1020,6 +1020,63 @@ def run_kronos_adapter(job: dict[str, Any], context: dict[str, Any]) -> dict[str
     }
     return result
 
+
+def run_kronos_calibration(job: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    message = context.get("agent_message") or {}
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    graph_run_id = metadata.get("graph_run_id")
+    if not str(graph_run_id or "").isdigit():
+        raise ValueError("The Kronos calibration node is missing graph_run_id.")
+    forecast = psql_one(
+        f"""
+        SELECT id,run_key,status
+        FROM strategy.kronos_forecast_runs
+        WHERE graph_run_id={int(graph_run_id)}
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1
+        """
+    )
+    if not forecast or forecast.get("status") != "completed":
+        raise RuntimeError("A completed Kronos forecast is required before realized calibration.")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "calibrate_kronos_forecast.py"),
+        "--forecast-run-id",
+        str(int(forecast["id"])),
+        "--actor",
+        str(job.get("owner_agent") or "Data Scientist"),
+    ]
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+        env={**os.environ, "AI_OS_RUNTIME_ROOT": str(RUNTIME_ROOT)},
+    )
+    result: dict[str, Any] = {}
+    for raw_line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            result = candidate
+            break
+    if completed.returncode != 0:
+        detail = result.get("error") or completed.stderr.strip() or "Kronos calibration failed."
+        raise RuntimeError(str(detail))
+    context["kronos_calibration"] = result
+    context["execution_envelope"] = {
+        **(context.get("execution_envelope") or {}),
+        "mode": "deterministic_model_validation",
+        "capital_action_allowed": False,
+        "automatic_strategy_promotion_allowed": False,
+        "live_execution_allowed": False,
+        "broker_order_allowed": False,
+    }
+    return result
+
 def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any]) -> tuple[str, list[str]]:
     skill_key = str(skill.get("skill_key") or job.get("suggested_skill_key") or "refresh_dashboard_widget")
     lines: list[str] = []
@@ -1046,6 +1103,23 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         )
         next_actions.append("Run realized calibration, walk-forward cost-aware backtesting, and independent Model Risk review.")
         next_actions.append("Keep every forecast-derived feature out of signals, paper orders, and live orders until the graph's human decision gate.")
+    elif skill_key == "quant_data_science_review" and context.get("kronos_calibration"):
+        calibration = context["kronos_calibration"]
+        metrics = calibration.get("metrics") or {}
+        lines.append(
+            f"Scored Kronos forecast run {calibration.get('forecast_run_id')} against "
+            f"{metrics.get('realized_points')} of {metrics.get('expected_horizon')} canonical future bars."
+        )
+        lines.append(
+            f"Calibration status={calibration.get('status')}; interval coverage={metrics.get('interval_coverage')}; "
+            f"directional accuracy={metrics.get('directional_accuracy')}; CRPS={metrics.get('crps')}; "
+            f"timestamp match rate={metrics.get('timestamp_match_rate')}."
+        )
+        lines.append(
+            "This is one realized origin and cannot validate the model, promote a strategy, allocate capital, or create an order."
+        )
+        next_actions.append("Accumulate at least 20 non-overlapping matured origins and run walk-forward model review.")
+        next_actions.append("Repair source timestamp semantics when timestamp match rate is below one.")
     elif job.get("source_kind") == "committee_packet_position":
         position = committee_position_for(job, profile, context)
         packet = context.get("committee_packet") or {}
@@ -1802,6 +1876,17 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     "gate_ids": [],
                     "reason": "pinned local model adapter with independent tool readiness and no provider spend",
                 }
+            elif skill_key == "quant_data_science_review" and job.get("source_kind") == "agent_message":
+                message_metadata = (context_for(skill_key, job.get("widget_key"), job).get("agent_message") or {}).get("metadata") or {}
+                if message_metadata.get("graph_key") == "kronos_forecast_research":
+                    gate_result = {
+                        "overall_status": "passed",
+                        "next_task_status": "in_progress",
+                        "gate_ids": [],
+                        "reason": "deterministic realized calibration with no provider spend or execution authority",
+                    }
+                else:
+                    gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             else:
                 gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             if gate_result.get("overall_status") != "passed":
@@ -1823,6 +1908,12 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             context["execution_envelope"] = execution_envelope_for(profile, skill)
             if skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
                 run_kronos_adapter(job, context)
+            if (
+                skill_key == "quant_data_science_review"
+                and job.get("source_kind") == "agent_message"
+                and ((context.get("agent_message") or {}).get("metadata") or {}).get("graph_key") == "kronos_forecast_research"
+            ):
+                run_kronos_calibration(job, context)
             summary, next_actions = summary_for(job, profile, skill, context)
             note_path = write_note(job, profile, skill, context, summary, next_actions)
             completed = complete_job(job, profile, skill, context, summary, note_path)

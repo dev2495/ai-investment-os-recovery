@@ -164,6 +164,17 @@ def materialize_agent_schedules(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/agents/schedules/run", payload))
 
 
+def calibrate_kronos_forecast(arguments: dict) -> dict:
+    forecast_run_id = arguments.get("forecast_run_id")
+    if forecast_run_id is None:
+        raise ValueError("forecast_run_id is required")
+    payload = {
+        "forecast_run_id": int(forecast_run_id),
+        "actor": str(arguments.get("actor") or "Model Validation Agent"),
+    }
+    return tool_result(post_api_json("/api/kronos/forecasts/calibrate", payload, timeout=180.0))
+
+
 def list_open_tasks(arguments: dict) -> dict:
     limit = limit_arg(arguments)
     return tool_result(
@@ -6052,6 +6063,19 @@ TOOLS = {
             "required": ["taxonomy_key", "as_of_date"],
         },
         "handler": build_sector_underwrite,
+    },
+    "ai_os_calibrate_kronos_forecast": {
+        "description": "Score one completed Kronos forecast against canonical realized OHLCV. The result is model-risk evidence only and cannot promote a strategy, allocate capital, or create a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "forecast_run_id": {"type": "integer", "minimum": 1},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Model Validation Agent"},
+            },
+            "required": ["forecast_run_id"],
+        },
+        "handler": calibrate_kronos_forecast,
     },
     "ai_os_run_sector_acceptance": {
         "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",
