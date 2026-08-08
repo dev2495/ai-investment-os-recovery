@@ -569,6 +569,7 @@ def build_office_snapshot() -> dict:
     data = run_psql_json_object(
         queries,
         row_limit=160,
+        batch_size=4,
         error_collector=issues,
     )
 

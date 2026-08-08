@@ -15,10 +15,12 @@ class OfficeSnapshotContractTest(unittest.TestCase):
             queries: dict[str, str],
             *,
             row_limit: int | None = None,
+            batch_size: int | None = None,
             error_collector: list[dict] | None = None,
         ) -> dict[str, list[dict]]:
             captured.update(queries)
             self.assertEqual(row_limit, 160)
+            self.assertEqual(batch_size, 4)
             self.assertIsNotNone(error_collector)
             return {key: [] for key in queries}
 
