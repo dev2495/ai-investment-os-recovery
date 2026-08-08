@@ -284,12 +284,12 @@ def sync_historical(
               "volume=EXCLUDED.volume,source_system_id=EXCLUDED.source_system_id"
         )
     committed = query_json(
-        "SELECT count(*)::integer AS rows FROM trading.ohlcv "
+        "SELECT count(*)::integer AS committed_count FROM trading.ohlcv "
         f"WHERE symbol_id={symbol_id} AND timeframe={sql_literal(canonical_timeframe)} "
         f"AND ts::date BETWEEN {sql_literal(date_from)}::date AND {sql_literal(date_to)}::date "
         f"AND source_system_id={source_id}"
     )
-    committed_rows = int(committed[0]["rows"]) if committed else 0
+    committed_rows = int(committed[0]["committed_count"]) if committed else 0
     if values and committed_rows == 0:
         raise RuntimeError(f"historical candles were returned but none committed for {exchange}:{symbol}")
     return {

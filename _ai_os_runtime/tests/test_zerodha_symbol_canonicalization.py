@@ -24,6 +24,7 @@ def test_broker_instrument_types_are_canonicalized() -> None:
 def test_historical_sync_verifies_committed_rows() -> None:
     source = SCRIPT.read_text()
     assert "historical candles were returned but none committed" in source
+    assert "committed_count" in source
     assert '"api_rows": len(values)' in source
     assert '"rows": committed_rows' in source
 
