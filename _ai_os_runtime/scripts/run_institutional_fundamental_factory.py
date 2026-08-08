@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -73,6 +74,11 @@ def sql_literal(value: object) -> str:
 
 def sql_jsonb(value: object) -> str:
     return f"{sql_literal(json.dumps(value, sort_keys=True, default=str))}::jsonb"
+
+
+def stable_fingerprint(value: object) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def parse_as_of(value: str) -> datetime:
@@ -352,6 +358,15 @@ class PsqlGateway:
                 holding_thesis_id = coalesce(EXCLUDED.holding_thesis_id, research.investment_dossiers.holding_thesis_id),
                 dossier_status = 'in_review', owner_agent = EXCLUDED.owner_agent, updated_at = now()
             RETURNING id, holding_thesis_id
+        ), matching_version AS (
+            SELECT existing.id, existing.dossier_id, existing.version_number
+            FROM dossier
+            JOIN research.investment_dossier_versions existing
+              ON existing.dossier_id = dossier.id
+             AND existing.source_cutoff_at = {sql_literal(plan['as_of'])}::timestamptz
+             AND existing.decision_summary ->> 'input_fingerprint' = {sql_literal(plan['input_fingerprint'])}
+            ORDER BY existing.id DESC
+            LIMIT 1
         ), next_version AS (
             SELECT dossier.id AS dossier_id, dossier.holding_thesis_id,
                    coalesce(max(existing.version_number), 0) + 1 AS version_number,
@@ -363,7 +378,7 @@ class PsqlGateway:
                 FROM research.investment_dossier_versions item WHERE item.dossier_id = dossier.id
             ) current ON true
             GROUP BY dossier.id, dossier.holding_thesis_id
-        ), version AS (
+        ), inserted_version AS (
             INSERT INTO research.investment_dossier_versions (
                 dossier_id, version_number, version_status, research_as_of, source_cutoff_at,
                 executive_conclusion, decision_summary, evidence_coverage, generated_by,
@@ -372,13 +387,22 @@ class PsqlGateway:
                      {sql_literal(plan['as_of'])}::timestamptz, {sql_literal(plan['as_of'])}::timestamptz,
                      {sql_literal(plan['executive_conclusion'])}, {sql_jsonb(plan['decision_summary'])},
                      {sql_jsonb(plan['evidence_coverage'])}, {sql_literal(plan['actor'])}, supersedes_version_id
-              FROM next_version RETURNING id, dossier_id, version_number
+              FROM next_version
+             WHERE NOT EXISTS (SELECT 1 FROM matching_version)
+             RETURNING id, dossier_id, version_number
+        ), version AS (
+            SELECT id, dossier_id, version_number, true AS version_reused
+            FROM matching_version
+            UNION ALL
+            SELECT id, dossier_id, version_number, false AS version_reused
+            FROM inserted_version
         ), updated AS (
             UPDATE research.investment_dossiers dossier
             SET current_version_number = version.version_number, updated_at = now()
             FROM version WHERE dossier.id = version.dossier_id RETURNING dossier.id
         )
         SELECT version.dossier_id, version.id AS dossier_version_id, version.version_number,
+               version.version_reused,
                next_version.holding_thesis_id, NULL::bigint AS acceptance_run_id
         FROM version JOIN next_version ON next_version.dossier_id = version.dossier_id;
 
@@ -389,7 +413,8 @@ class PsqlGateway:
           FROM (VALUES {section_values}) AS incoming(
             section_key, section_order, section_title, section_status,
             content_markdown, primary_evidence_id, evidence_as_of, generated_by
-          ) JOIN institutional_factory_context context ON true;
+          ) JOIN institutional_factory_context context ON true
+        ON CONFLICT (dossier_version_id, section_key) DO NOTHING;
 
         INSERT INTO research.investment_dossier_section_evidence (
             dossier_section_id, evidence_id, evidence_role, citation_note
@@ -453,6 +478,8 @@ class PsqlGateway:
         SELECT json_build_object(
             'dossier_id', context.dossier_id, 'dossier_version_id', context.dossier_version_id,
             'version_number', context.version_number, 'acceptance_run_id', context.acceptance_run_id,
+            'input_fingerprint', {sql_literal(plan['input_fingerprint'])},
+            'version_reused', context.version_reused,
             'acceptance_run_opened', context.acceptance_run_id IS NOT NULL,
             'acceptance_status', {sql_literal(plan['acceptance_status'])},
             'sections_written', {len(sections)}, 'specialist_opinions_cloned',
@@ -685,7 +712,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     thesis_id = latest_dossier.get("holding_thesis_id") or context.get("target_thesis_id")
     company_key = company.get("company_key") or company.get("primary_symbol") or company["id"]
     latest_cutoff = parse_timestamp(latest_dossier.get("source_cutoff_at"))
-    return {
+    plan = {
         "status": "planned" if request.dry_run else "ready_to_persist",
         "dry_run": request.dry_run,
         "run_key": request.run_key,
@@ -708,6 +735,18 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
         "acceptance_note": "Acceptance passed." if not failed else "Acceptance failed: " + ", ".join(failed),
         "execution_envelope": {"capital_action_allowed": False, "broker_execution_allowed": False, "research_only": True},
     }
+    plan["input_fingerprint"] = stable_fingerprint({
+        "company_id": plan["company_id"],
+        "holding_thesis_id": plan["holding_thesis_id"],
+        "as_of": plan["as_of"],
+        "sections": plan["sections"],
+        "decision_summary": plan["decision_summary"],
+        "evidence_coverage": plan["evidence_coverage"],
+        "refresh_triggers": plan["refresh_triggers"],
+        "acceptance_gates": plan["acceptance_gates"],
+    })
+    plan["decision_summary"]["input_fingerprint"] = plan["input_fingerprint"]
+    return plan
 
 
 def run_factory(request: FactoryRequest, gateway: FactoryGateway) -> dict[str, Any]:
