@@ -7,9 +7,31 @@ from pathlib import Path
 from unittest import mock
 
 from _ai_os_runtime.scripts import sync_zerodha_read_only as zerodha
+from _ai_os_runtime.scripts import check_source_freshness as freshness
 
 
 class ZerodhaTokenExpiryTest(unittest.TestCase):
+    def test_freshness_uses_newest_successful_evidence_timestamp(self) -> None:
+        with mock.patch.object(freshness, "run_psql_json", return_value=[]) as database:
+            freshness.source_rows("zerodha_live", 1)
+
+        statement = database.call_args.args[0]
+        self.assertIn("GREATEST(", statement)
+        self.assertIn("latest_quote.latest_quote_at", statement)
+        self.assertIn("latest_ok.latest_ok_at", statement)
+        self.assertIn("latest_check.checked_at", statement)
+
+    def test_health_record_updates_connector_and_source_freshness_inputs(self) -> None:
+        with mock.patch.object(zerodha, "psql") as database:
+            zerodha.record_health("healthy", 7)
+
+        statement = database.call_args.args[0]
+        self.assertIn("core.connector_health_checks", statement)
+        self.assertIn("core.data_source_checks", statement)
+        self.assertIn("'zerodha_live'", statement)
+        self.assertIn("'ok',200,7", statement)
+        self.assertIn("broker_write_allowed", statement)
+
     def test_next_expiry_before_six_is_same_day(self) -> None:
         now = datetime(2026, 8, 1, 5, 30, tzinfo=zerodha.INDIA_TZ)
         self.assertEqual(

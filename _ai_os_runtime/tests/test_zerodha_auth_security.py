@@ -130,6 +130,26 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
         self.assertEqual(result["jobs"]["market"]["status"], "started")
         self.assertFalse(result["broker_write_allowed"])
 
+    def test_read_sync_refreshes_source_freshness_without_broker_writes(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "_run_zerodha_adapter",
+                return_value={"status": "completed", "broker_write_allowed": False},
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "check_source_freshness",
+                return_value={"checked": 1, "fresh": 1, "stale_or_error": 0},
+            ) as freshness,
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.sync_zerodha_read_only({"datasets": ["funds"], "actor": "Devarsh"})
+
+        freshness.assert_called_once_with({"source_key": "zerodha_live", "actor": "Devarsh"})
+        self.assertEqual(result["source_freshness"]["fresh"], 1)
+        self.assertFalse(result["broker_write_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()

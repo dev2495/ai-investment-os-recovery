@@ -219,12 +219,27 @@ def exchange_request_token(api_key: str, api_secret: str, request_token: str) ->
 
 
 def record_health(status: str, rows: int = 0, error: str | None = None) -> None:
+    source_status = "ok" if status == "healthy" else "error"
     psql(
         "INSERT INTO core.connector_health_checks "
         "(target_kind,target_key,check_name,check_type,status,rows_seen,error_message,sample_payload,checked_by) VALUES ("
         "'data_source_connector','zerodha_live_connector','zerodha_read_sync','live_read',"
         f"{sql_literal(status)},{rows},{sql_literal(error)},"
-        "'{\"broker_write_allowed\":false,\"manual_daily_login_required\":true}'::jsonb,'Zerodha Read-Only Connector')"
+        "'{\"broker_write_allowed\":false,\"manual_daily_login_required\":true}'::jsonb,'Zerodha Read-Only Connector'); "
+        "INSERT INTO core.data_source_checks "
+        "(source_key,check_name,check_type,target_url,status,http_status,rows_seen,sample_payload,error_message) VALUES ("
+        "'zerodha_live','Zerodha read-only account sync','broker_api_read','https://api.kite.trade',"
+        f"{sql_literal(source_status)},{'200' if source_status == 'ok' else 'NULL'},{rows},"
+        "'{\"broker_write_allowed\":false,\"manual_daily_login_required\":true}'::jsonb,"
+        f"{sql_literal(error)}); "
+        "UPDATE core.source_connector_profiles SET health_status="
+        f"{sql_literal('configured' if source_status == 'ok' else 'error')},last_checked_at=now(),"
+        f"last_rows_seen={rows},last_error={sql_literal(error)},updated_at=now() "
+        "WHERE connector_key='zerodha_live_connector'; "
+        "UPDATE core.data_source_registry SET status="
+        f"{sql_literal('active' if source_status == 'ok' else 'error')},"
+        "last_seen_at=CASE WHEN " + sql_literal(source_status) + "='ok' THEN now() ELSE last_seen_at END,updated_at=now() "
+        "WHERE source_key='zerodha_live'"
     )
 
 

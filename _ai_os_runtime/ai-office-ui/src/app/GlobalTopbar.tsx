@@ -219,6 +219,7 @@ function BrokerSessionDrawer(props: {
   const instruments = num(warehouse, "active_instruments");
   const latestQuote = text(warehouse, "latest_quote_at", "");
   const latestOption = text(warehouse, "latest_option_at", "");
+  const sessionExpiry = text(auth, "access_token_expires_at", text(props.auth, "access_token_expires_at", ""));
   const streamConnected = text(stream, "connection_state") === "connected";
 
   return (
@@ -233,7 +234,7 @@ function BrokerSessionDrawer(props: {
 
         <section className="aios-broker-session__stage">
           <div><ShieldCheck size={17} /><strong>1. Authenticate today</strong></div>
-          <p>Zerodha requires one human login each trading day. The callback exchanges and stores the token automatically.</p>
+          <p>Zerodha requires one human login each trading day. If login ends on a kite.zerodha.com page, copy its full address and paste it below. The one-time request token is exchanged and stored only by the backend.</p>
           <Button variant="primary" icon={RefreshCw} onClick={props.reconnect} disabled={props.reconnectPending}>{props.reconnectPending ? "Opening login…" : connected ? "Renew today’s session" : "Connect Zerodha"}</Button>
           <TextArea
             rows={3}
@@ -249,6 +250,7 @@ function BrokerSessionDrawer(props: {
           >
             {props.exchangePending ? "Connecting session…" : props.exchangeComplete ? "Session connected" : "Use pasted login URL"}
           </Button>
+          {connected ? <p>Current session is verified{sessionExpiry ? ` until ${new Date(sessionExpiry).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}` : ""}.</p> : null}
         </section>
 
         <section className="aios-broker-session__stage">

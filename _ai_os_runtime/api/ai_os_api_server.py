@@ -9403,6 +9403,17 @@ def sync_zerodha_read_only(payload: dict) -> dict:
     if not datasets:
         raise ValueError("at least one valid read-only Zerodha dataset is required")
     result=_run_zerodha_adapter(["--datasets",*datasets],150)
+    if result.get("status") == "completed":
+        try:
+            result["source_freshness"] = check_source_freshness({
+                "source_key": "zerodha_live",
+                "actor": str(payload.get("actor") or "Data Engineering Agent"),
+            })
+        except (RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            result["source_freshness"] = {
+                "status": "check_failed",
+                "error": f"{type(exc).__name__}: {exc}"[:500],
+            }
     audit_api_write("ai_os_api_zerodha_read_sync","sync_zerodha_read_only",str(payload.get("actor") or "Data Engineering Agent"),"trading.broker_read_snapshots",result,{"datasets":datasets,"broker_write_allowed":False})
     return result
 
