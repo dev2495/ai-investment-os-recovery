@@ -5,7 +5,7 @@ import {
   ShieldCheck, Workflow, RefreshCw, Upload, FileCheck2,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence } from "../../data/actions";
+import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorRemediation } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
@@ -47,7 +47,7 @@ export default function SectorIntelligence() {
       </div>
       <SectorRunControl indices={data?.custom_indices ?? []} />
       {tab === "overview" ? <SectorPriceBaselineControl hierarchy={data?.hierarchy ?? []} /> : null}
-      {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} /> : null}
+      {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} acceptance={data?.acceptance_runs ?? []} /> : null}
       {tab === "overview" ? <SectorSourceImportControl /> : null}
 
 
@@ -116,8 +116,9 @@ function SectorPriceBaselineControl({ hierarchy }: { hierarchy: LiveRow[] }) {
   );
 }
 
-function SectorAcceptanceControl({ hierarchy }: { hierarchy: LiveRow[] }) {
+function SectorAcceptanceControl({ hierarchy, acceptance }: { hierarchy: LiveRow[]; acceptance: LiveRow[] }) {
   const mutation = useRunSectorAcceptance();
+  const remediation = useSyncSectorRemediation();
   const pushToast = useUIStore((state) => state.pushToast);
   const nodes = React.useMemo(() => {
     const unique = new Map<string, { id: number; label: string }>();
@@ -151,15 +152,36 @@ function SectorAcceptanceControl({ hierarchy }: { hierarchy: LiveRow[] }) {
     });
   }
 
+  function assignBlockedWork() {
+    const taxonomyNodeId = Number(nodeId);
+    if (!taxonomyNodeId) return;
+    remediation.mutate({ taxonomy_node_id: taxonomyNodeId, operator_confirmed: true, actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({
+        title: "Sector specialists assigned",
+        message: `${num(result, "created_task_count")} new tasks · ${num(result, "blocked_gate_count")} unresolved gates`,
+        tone: num(result, "created_task_count") > 0 ? "ok" : "warn",
+        duration: 6000,
+      }),
+      onError: (error) => pushToast({ title: "Assignment failed", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  const selectedLatest = acceptance.find((row) => text(row, "taxonomy_key") && text(row, "node_name") === nodes.find((node) => String(node.id) === nodeId)?.label);
+  const blockedCount = num(selectedLatest ?? {}, "blocked_count");
+
   return (
     <Panel icon={ShieldCheck} title="Run Real-Sector Acceptance" actions={<Badge tone={mutation.isError ? "risk" : mutation.isPending ? "warn" : "accent"}>{mutation.isPending ? "Checking" : "10 gates"}</Badge>}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 2fr) minmax(160px, 1fr) auto", gap: "var(--space-3)", alignItems: "end" }}>
         <Field label="Sector or industry" required><Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}><option value="">Select source-backed taxonomy…</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</Select></Field>
         <Field label="As-of date" required><TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></Field>
-        <Button variant="primary" icon={ShieldCheck} onClick={run} disabled={!nodeId || !asOf || mutation.isPending}>{mutation.isPending ? "Evaluating…" : "Run acceptance"}</Button>
+        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <Button icon={Workflow} onClick={assignBlockedWork} disabled={!nodeId || blockedCount === 0 || remediation.isPending}>{remediation.isPending ? "Assigning…" : "Assign blocked work"}</Button>
+          <Button variant="primary" icon={ShieldCheck} onClick={run} disabled={!nodeId || !asOf || mutation.isPending}>{mutation.isPending ? "Evaluating…" : "Run acceptance"}</Button>
+        </div>
       </div>
       {nodes.length === 0 ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Import a source-backed taxonomy before acceptance can run.</div> : null}
       {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+      {remediation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{remediation.error.message}</div> : null}
     </Panel>
   );
 }

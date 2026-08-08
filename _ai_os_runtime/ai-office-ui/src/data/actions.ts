@@ -201,6 +201,19 @@ export function useRunSectorAcceptance() {
   );
 }
 
+export interface SectorRemediationSyncInput {
+  taxonomy_node_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useSyncSectorRemediation() {
+  return useInvalidating<SectorRemediationSyncInput, LiveRow>(
+    "/api/sector-intelligence/remediation/sync",
+    [Q.sectorIntelligence, Q.office, Q.missionControl]
+  );
+}
+
 export interface InstitutionalOptionsAnalyticsInput {
   underlying: string;
   exchange: "NFO" | "BFO";

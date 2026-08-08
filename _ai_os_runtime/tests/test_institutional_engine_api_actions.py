@@ -185,6 +185,24 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
         self.assertFalse(result["capital_action_allowed"])
         audit.assert_called_once()
 
+    def test_sector_remediation_requires_operator_confirmation_and_is_idempotent(self) -> None:
+        with self.assertRaises(ValueError):
+            ai_os_api_server.sync_sector_acceptance_remediation({"taxonomy_node_id": 12})
+        response = {"blocked_gate_count": 5,"created_task_count": 5,"broker_write_allowed": False}
+        with (
+            mock.patch.object(ai_os_api_server,"run_psql_json_statement",return_value=[response]) as database,
+            mock.patch.object(ai_os_api_server,"audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.sync_sector_acceptance_remediation({
+                "taxonomy_node_id": 12,"operator_confirmed": True,"actor": "Devarsh",
+            })
+        query = database.call_args.args[0]
+        self.assertIn("sector_acceptance_remediation",query)
+        self.assertIn("NOT EXISTS",query)
+        self.assertIn("broker_write_allowed",query)
+        self.assertEqual(result["created_task_count"],5)
+        audit.assert_called_once()
+
     def test_sector_acceptance_rejects_unbounded_or_invalid_input(self) -> None:
         for payload in (
             {"as_of_date": "2026-08-04"},

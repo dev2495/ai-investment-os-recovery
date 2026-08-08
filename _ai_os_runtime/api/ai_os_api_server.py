@@ -12507,6 +12507,126 @@ def run_sector_acceptance(payload: dict) -> dict:
     return result
 
 
+def sync_sector_acceptance_remediation(payload: dict) -> dict:
+    try:
+        taxonomy_node_id = int(payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("taxonomy_node_id must be a positive integer") from exc
+    if taxonomy_node_id <= 0:
+        raise ValueError("taxonomy_node_id must be a positive integer")
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true before assigning sector work")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    rows = run_psql_json_statement(f"""
+        WITH latest AS (
+            SELECT run.id AS acceptance_run_id,run.as_of_date,node.taxonomy_key,node.node_name
+            FROM sector_intelligence.acceptance_runs run
+            JOIN sector_intelligence.taxonomy_nodes node ON node.id=run.taxonomy_node_id
+            WHERE run.taxonomy_node_id={taxonomy_node_id}
+            ORDER BY run.as_of_date DESC,run.started_at DESC LIMIT 1
+        ), blocked AS (
+            SELECT result.gate_key,result.gate_name,result.failure_reason,result.evidence,
+                   latest.acceptance_run_id,latest.as_of_date,latest.taxonomy_key,latest.node_name,
+                   CASE result.gate_key
+                     WHEN 'fundamental_valuation_breadth' THEN 'Sector Fundamental Analyst'
+                     WHEN 'flows_and_ownership' THEN 'Sector Flow And Ownership Analyst'
+                     WHEN 'sector_dossier' THEN 'Sector Market Structure Analyst'
+                     WHEN 'committee_dissent' THEN 'Risk Agent'
+                     WHEN 'portfolio_fit' THEN 'Sector Portfolio Manager'
+                     ELSE 'Sector Data Steward'
+                   END AS owner_agent,
+                   CASE result.gate_key
+                     WHEN 'fundamental_valuation_breadth' THEN 10
+                     WHEN 'flows_and_ownership' THEN 20
+                     WHEN 'sector_dossier' THEN 30
+                     WHEN 'committee_dissent' THEN 40
+                     WHEN 'portfolio_fit' THEN 50
+                     ELSE 90
+                   END AS dependency_order
+            FROM sector_intelligence.acceptance_gate_results result
+            JOIN latest ON latest.acceptance_run_id=result.acceptance_run_id
+            WHERE result.status='blocked'
+        ), inserted_tasks AS (
+            INSERT INTO agent.tasks (
+                title,objective,owner_agent,status,priority,approval_required,
+                source_kind,source_ref,output_format,evidence
+            )
+            SELECT
+                blocked.gate_name||': '||blocked.node_name,
+                CASE blocked.gate_key
+                  WHEN 'fundamental_valuation_breadth' THEN
+                    'Build source-linked member-company financial and valuation coverage, then calculate one reproducible sector aggregate and valuation band. Use primary filings or licensed exports; do not infer missing facts.'
+                  WHEN 'flows_and_ownership' THEN
+                    'Collect at least one source-linked sector flow observation and one ownership observation from primary exchange, depository, mutual-fund, or company disclosures. Retain artifact hashes and dates.'
+                  WHEN 'sector_dossier' THEN
+                    'Create a versioned sector dossier covering industry structure, constituents, financial breadth, valuation, market structure, risks, gaps, and monitoring indicators with evidence locators.'
+                  WHEN 'committee_dissent' THEN
+                    'Open an independent sector committee packet only after the dossier is reviewable. Record sealed independent positions, explicit dissent, risk challenge, and a human-final decision gate.'
+                  WHEN 'portfolio_fit' THEN
+                    'Assess portfolio fit, existing book exposure, opportunity cost, concentration, factor overlap, and sizing constraints. Recommendation remains advisory until Devarsh approves.'
+                  ELSE 'Resolve the named sector acceptance gap using retained evidence and submit a reviewable result.'
+                END || ' No capital action or broker order is authorized.',
+                blocked.owner_agent,'queued',
+                CASE WHEN blocked.gate_key IN ('fundamental_valuation_breadth','flows_and_ownership') THEN 'high' ELSE 'normal' END,
+                true,'sector_acceptance_remediation',
+                'sector:'||{taxonomy_node_id}||':gate:'||blocked.gate_key,
+                'sector_acceptance_evidence',
+                jsonb_build_array(
+                    jsonb_build_object('taxonomy_node_id',{taxonomy_node_id},
+                                       'taxonomy_key',blocked.taxonomy_key,
+                                       'acceptance_run_id',blocked.acceptance_run_id,
+                                       'as_of_date',blocked.as_of_date,
+                                       'gate_key',blocked.gate_key,
+                                       'failure_reason',blocked.failure_reason,
+                                       'required_evidence',blocked.evidence,
+                                       'dependency_order',blocked.dependency_order),
+                    jsonb_build_object('assigned_by',{sql_literal(actor)},
+                                       'operator_confirmed',true,
+                                       'capital_action_allowed',false,
+                                       'broker_write_allowed',false)
+                )
+            FROM blocked
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent.tasks existing
+                WHERE existing.source_kind='sector_acceptance_remediation'
+                  AND existing.status NOT IN ('done','completed','cancelled','rejected')
+                  AND existing.evidence @> jsonb_build_array(jsonb_build_object(
+                      'taxonomy_node_id',{taxonomy_node_id},'gate_key',blocked.gate_key
+                  ))
+            )
+            RETURNING *
+        ), inserted_inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id,title,owner_agent,status,priority,recommended_action,evidence,target_workspace
+            )
+            SELECT task.id,task.title,task.owner_agent,'new',task.priority,
+                   'Complete the source-bounded gate evidence, preserve citations and calculations, then request independent review.',
+                   task.evidence,'sector'
+            FROM inserted_tasks task
+            RETURNING id,task_id
+        ), result_rows AS (
+            SELECT (SELECT count(*) FROM blocked) AS blocked_gate_count,
+                   (SELECT count(*) FROM inserted_tasks) AS created_task_count,
+                   coalesce((SELECT jsonb_agg(jsonb_build_object(
+                       'task_id',task.id,'title',task.title,'owner_agent',task.owner_agent,
+                       'priority',task.priority,'source_ref',task.source_ref
+                   ) ORDER BY task.id) FROM inserted_tasks task),'[]'::jsonb) AS created_tasks,
+                   {taxonomy_node_id} AS taxonomy_node_id,
+                   false AS capital_action_allowed,false AS broker_write_allowed
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)),'[]'::json)::text FROM result_rows
+    """)
+    if not rows:
+        raise ValueError("sector remediation sync returned no result")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_sync_sector_acceptance_remediation","sync_sector_acceptance_remediation",actor,
+        "agent.tasks",result,{"taxonomy_node_id":taxonomy_node_id,"operator_confirmed":True,
+                              "capital_action_allowed":False,"broker_write_allowed":False},
+    )
+    return result
+
+
 def _options_engine_payload(payload: dict) -> dict:
     underlying = str(payload.get("underlying") or "").strip().upper()
     exchange = str(payload.get("exchange") or "NFO").strip().upper()
@@ -19443,6 +19563,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/sector-intelligence/acceptance/run":
                 self._send_json(run_sector_acceptance(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/remediation/sync":
+                self._send_json(sync_sector_acceptance_remediation(payload), 201)
                 return
             if self.path == "/api/options/institutional-analytics/run":
                 self._send_json(run_institutional_options_engine(payload), 201)
