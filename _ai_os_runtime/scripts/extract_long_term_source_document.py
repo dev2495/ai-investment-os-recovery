@@ -12,7 +12,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from runtime_storage import artifact_root
+try:
+    from runtime_storage import artifact_reference, artifact_root
+except ModuleNotFoundError:  # Imported as an _ai_os_runtime package module.
+    from _ai_os_runtime.scripts.runtime_storage import artifact_reference, artifact_root
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
@@ -209,7 +212,7 @@ def insert_raw_text_artifact(document: dict[str, Any], text_path: Path, extracte
                 'long_term_source_document_text',
                 {sql_literal(clean(document.get('document_title')) + ' - extracted text')},
                 {sql_literal(document.get('source_url'))},
-                {sql_literal(str(text_path.relative_to(VAULT_ROOT)))},
+                {sql_literal(artifact_reference(text_path))},
                 {sql_literal(hash_value)},
                 'text/plain',
                 'public',
@@ -258,8 +261,8 @@ def persist_extraction(
                 {sql_literal(document.get('document_type'))},
                 {sql_literal(document.get('document_title'))},
                 {sql_literal(document.get('source_url'))},
-                {sql_literal(str(pdf_path.relative_to(VAULT_ROOT)))},
-                {sql_literal(str(text_path.relative_to(VAULT_ROOT)))},
+                {sql_literal(artifact_reference(pdf_path))},
+                {sql_literal(artifact_reference(text_path))},
                 {sql_literal(parser_name)},
                 {page_count},
                 {len(extracted_text)},
@@ -314,8 +317,8 @@ def extract_document(args: argparse.Namespace) -> dict[str, Any]:
         "page_count": page_count,
         "extracted_chars": len(extracted_text),
         "raw_artifact_id": raw_artifact_id,
-        "local_pdf_path": str(pdf_path.relative_to(VAULT_ROOT)),
-        "local_text_path": str(text_path.relative_to(VAULT_ROOT)),
+        "local_pdf_path": artifact_reference(pdf_path),
+        "local_text_path": artifact_reference(text_path),
         "snippet_count": len(extraction.get("key_snippets") or []),
         "capital_action_allowed": False,
         "live_execution_allowed": False,
