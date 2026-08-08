@@ -10,10 +10,11 @@ import { useParams } from "react-router-dom";
 import {
   Users, Building2, Gavel, ShieldCheck, Cpu, Activity, Library,
   Inbox, ChevronRight, MessageSquare, Play, Send, Search, RefreshCw,
+  ClipboardList,
 } from "lucide-react";
 import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Drawer, Field, Select, TextArea, TextInput } from "../../system/primitives";
-import { useAction, useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports } from "../../data/queries";
-import { useCreateAgentMessage, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useRunAgentWorker } from "../../data/actions";
+import { useAction, useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports, useBlueprintRequirements } from "../../data/queries";
+import { useCreateAgentMessage, useDelegateAgentTask, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useRunAgentWorker } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
@@ -353,20 +354,89 @@ export function CommitteesView() {
  * GOVERNANCE VIEW
  * ============================================================ */
 export function GovernanceView() {
-  const { data, isLoading } = useSystemHealth();
+  const [status, setStatus] = React.useState("");
+  const [domainKey, setDomainKey] = React.useState("");
+  const [priority, setPriority] = React.useState("");
+  const registry = useBlueprintRequirements({ status, domainKey, priority });
+  const delegate = useDelegateAgentTask();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const data = registry.data;
+  const summary = new Map((data?.summary ?? []).map((row) => [text(row, "metric"), num(row, "value")]));
+  const requirements = data?.requirements ?? [];
+  const domains = data?.domains ?? [];
+
+  const assignRequirement = (row: LiveRow) => {
+    const owner = text(row, "owner_agent", "Jarvis");
+    const requirement = text(row, "requirement_name", "Blueprint requirement");
+    const acceptance = text(row, "acceptance_criteria", "Complete with production evidence.");
+    const nextAction = text(row, "next_action", "Implement and attach live evidence.");
+    delegate.mutate({
+      to_agent: owner,
+      subject: `Blueprint: ${requirement}`.slice(0, 120),
+      objective: [
+        `Complete canonical blueprint requirement: ${requirement}.`,
+        `Acceptance: ${acceptance}`,
+        `Next action: ${nextAction}`,
+        `Requirement key: ${text(row, "requirement_key")}.`,
+        "Use production data only, cite durable evidence, and keep any capital or broker action human-gated.",
+      ].join("\n"),
+      priority: ["critical", "high", "medium", "low"].includes(text(row, "priority"))
+        ? text(row, "priority") as "critical" | "high" | "medium" | "low"
+        : "high",
+      workspace: text(row, "primary_workspace", "system"),
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({ title: "Requirement assigned", message: `${owner} · task ${text(result, "task_id", "queued")}`, tone: "ok", duration: 3500 }),
+      onError: (error) => pushToast({ title: "Assignment failed", message: error.message, tone: "risk", duration: 5000 }),
+    });
+  };
+
   return (
     <div className="aios-destination">
-      <Header icon={ShieldCheck} code="GOV" title="Governance" subtitle="Architecture change control, decisions, production safety." />
-      <Panel icon={ShieldCheck} title="Blueprint Summary">
-        {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
+      <Header icon={ShieldCheck} code="GOV" title="Governance & Delivery" subtitle="Canonical blueprint progress, requirement ownership, architecture controls, and production evidence." />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile><Metric label="Requirements" value={summary.get("requirements") ?? 0} /></MetricTile>
+        <MetricTile tone="ok"><Metric label="Verified" value={summary.get("done_requirements") ?? 0} /></MetricTile>
+        <MetricTile tone="warn"><Metric label="Partial" value={summary.get("partial_requirements") ?? 0} /></MetricTile>
+        <MetricTile tone="risk"><Metric label="Planned" value={summary.get("planned_requirements") ?? 0} /></MetricTile>
+        <MetricTile><Metric label="Progress" value={`${summary.get("progress_score") ?? 0}%`} /></MetricTile>
+      </div>
+      <Panel icon={ShieldCheck} title="Blueprint Domains" actions={<Badge tone={domains.length ? "ok" : "risk"}>{domains.length} domains</Badge>}>
+        {registry.isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading blueprint registry…</div> : (
           <DataTable
             columns={[
-              { key: "domain", header: "Domain", render: (r) => <strong>{text(r, "domain", text(r, "name"))}</strong> },
-              { key: "coverage", header: "Coverage", align: "right", render: (r) => `${num(r, "completed", 0)}/${num(r, "total", 0)}` },
+              { key: "domain", header: "Domain", render: (r) => <strong>{text(r, "domain_name", text(r, "domain_key"))}</strong> },
+              { key: "owner", header: "Owner", render: (r) => text(r, "owner_agent", "—") },
+              { key: "coverage", header: "Verified", align: "right", render: (r) => `${num(r, "done_count", 0)}/${num(r, "requirement_count", 0)}` },
+              { key: "progress", header: "Progress", align: "right", render: (r) => `${num(r, "progress_score", 0)}%` },
               { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "info")} /> },
             ]}
-            rows={data?.blueprint_domains ?? data?.blueprint_summary ?? []}
-            rowKey={(r, i) => text(r, "domain", text(r, "name", `b-${i}`))}
+            rows={domains}
+            rowKey={(r, i) => text(r, "domain_key", `b-${i}`)}
+            onRowClick={(row) => setDomainKey(text(row, "domain_key"))}
+            dense
+          />
+        )}
+      </Panel>
+      <Panel icon={ClipboardList} title="Requirement Delivery Board" actions={<Badge tone={requirements.length ? "warn" : "ok"}>{requirements.length} shown</Badge>}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(160px, 1fr))", gap: "var(--space-3)", padding: "var(--space-3)" }}>
+          <Field label="Status"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option><option value="planned">Planned</option><option value="partial">Partial</option><option value="blocked">Blocked</option><option value="done">Verified</option></Select></Field>
+          <Field label="Domain"><Select value={domainKey} onChange={(event) => setDomainKey(event.target.value)}><option value="">All domains</option>{domains.map((row) => <option key={text(row, "domain_key")} value={text(row, "domain_key")}>{text(row, "domain_name")}</option>)}</Select></Field>
+          <Field label="Priority"><Select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="">All priorities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></Select></Field>
+        </div>
+        {registry.isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading requirements…</div> : (
+          <DataTable
+            columns={[
+              { key: "requirement", header: "Requirement", render: (row) => <div><strong>{text(row, "requirement_name")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 3 }}>{text(row, "next_action", text(row, "acceptance_criteria")).slice(0, 170)}</div></div> },
+              { key: "domain", header: "Domain", render: (row) => text(row, "domain_name", text(row, "domain_key")) },
+              { key: "owner", header: "Owner", render: (row) => text(row, "owner_agent", "Jarvis") },
+              { key: "priority", header: "Priority", render: (row) => <StatusPill status={text(row, "priority", "high")} /> },
+              { key: "status", header: "State", render: (row) => <StatusPill status={text(row, "current_status", "planned")} /> },
+              { key: "action", header: "Action", render: (row) => text(row, "current_status") === "done" ? <Badge tone="ok">Verified</Badge> : <Button size="sm" icon={Send} onClick={() => assignRequirement(row)} disabled={delegate.isPending}>Assign</Button> },
+            ]}
+            rows={requirements}
+            rowKey={(row, index) => text(row, "requirement_key", `req-${index}`)}
+            empty={<Empty icon={ClipboardList} title="No requirements match these filters" />}
           />
         )}
       </Panel>

@@ -27,6 +27,7 @@ import {
   EntityEvidenceSchema,
   ChatResponseSchema,
   WorkspaceConfigSchema,
+  BlueprintRegistrySchema,
   validateSnapshot,
 } from "./schemas";
 import type {
@@ -45,6 +46,7 @@ import type {
   EntityEvidence,
   ChatResponse,
   WorkspaceConfig,
+  BlueprintRegistry,
 } from "./schemas";
 import type { LiveRow } from "./liveRow";
 
@@ -69,6 +71,8 @@ export const queryKeys = {
   departmentTerminal: (workspace: string) => ["department-terminal", workspace] as const,
   evidence: (kind: string, key: string) => ["evidence", kind, key] as const,
   workspaceConfig: (profileKey: string) => ["workspace-config", profileKey] as const,
+  blueprintRequirements: (status = "", domainKey = "", priority = "") =>
+    ["blueprint-requirements", status || "all", domainKey || "all", priority || "all"] as const,
 };
 
 /* ============================================================
@@ -105,6 +109,27 @@ export function useSystemHealth() {
     queryFn: async () => {
       const data = await get("/api/system-health/snapshot");
       return validateSnapshot(SystemHealthSchema, data, "system-health");
+    },
+    ...snapshotQueryOptions,
+  });
+}
+
+export function useBlueprintRequirements(filters: { status?: string; domainKey?: string; priority?: string } = {}) {
+  const status = filters.status ?? "";
+  const domainKey = filters.domainKey ?? "";
+  const priority = filters.priority ?? "";
+  return useQuery<BlueprintRegistry>({
+    queryKey: queryKeys.blueprintRequirements(status, domainKey, priority),
+    queryFn: async () => {
+      const data = await get("/api/blueprint/requirements", {
+        query: {
+          status: status || undefined,
+          domain_key: domainKey || undefined,
+          priority: priority || undefined,
+          limit: 500,
+        },
+      });
+      return validateSnapshot(BlueprintRegistrySchema, data, "blueprint-requirements");
     },
     ...snapshotQueryOptions,
   });

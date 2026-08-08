@@ -145,6 +145,21 @@ export const SystemHealthSchema = z.object({
 export type SystemHealth = z.infer<typeof SystemHealthSchema>;
 
 /* ============================================================
+ * Canonical blueprint delivery registry
+ * ============================================================ */
+export const BlueprintRegistrySchema = z.object({
+  generated_at: z.string(),
+  data_mode: dataMode.optional(),
+  version: z.array(liveRow).default([]),
+  summary: z.array(liveRow).default([]),
+  domains: z.array(liveRow).default([]),
+  requirements: z.array(liveRow).default([]),
+  sync_runs: z.array(liveRow).default([]),
+}).passthrough();
+
+export type BlueprintRegistry = z.infer<typeof BlueprintRegistrySchema>;
+
+/* ============================================================
  * Portfolio Office
  * ============================================================ */
 export const PortfolioOfficeSchema = z.object({
