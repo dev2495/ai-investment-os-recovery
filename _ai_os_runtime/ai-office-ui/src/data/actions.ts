@@ -975,6 +975,20 @@ export function useCreateAgentMessage() {
   );
 }
 
+export function useDelegateAgentTask() {
+  return useInvalidating<{
+    to_agent: string;
+    objective: string;
+    subject?: string;
+    priority?: "low" | "medium" | "high" | "critical";
+    workspace?: string;
+    actor?: string;
+  }, LiveRow>(
+    "/api/agents/delegate",
+    [Q.office, Q.missionControl]
+  );
+}
+
 export function useRunAgentWorker() {
   return useInvalidating<{ actor?: string; limit?: number; agent_key?: string }, LiveRow>(
     "/api/agents/worker/run",

@@ -5,12 +5,13 @@ import { useNavigate } from "react-router-dom";
 import * as THREE from "three";
 import { ROOMS, floorY, roomByKey, type RoomDef } from "./officeLayout";
 import { useOfficeSnapshot } from "../data/queries";
+import { useDelegateAgentTask } from "../data/actions";
 import { useUIStore } from "../store";
 import { formatRelative, num, text } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { LiveOfficeCss } from "./LiveOffice.css";
 
-const ACTIVE_STATES = ["active", "working", "running", "executing", "in_progress", "queued", "processing", "waiting_approval"];
+const ACTIVE_STATES = ["active", "working", "running", "executing", "in_progress", "processing"];
 const BLOCKED_STATES = ["blocked", "error", "failed", "critical"];
 
 function normalizeDepartment(raw: string): string {
@@ -52,8 +53,12 @@ function agentRoomKey(agent: LiveRow): string {
 function liveState(agent: LiveRow): string {
   return text(
     agent,
-    "live_state",
-    text(agent, "current_task_status", text(agent, "latest_worker_status", "idle")),
+    "presence_state",
+    text(
+      agent,
+      "live_state",
+      text(agent, "current_task_status", text(agent, "latest_worker_status", "idle")),
+    ),
   ).toLowerCase();
 }
 
@@ -147,7 +152,8 @@ function Room({
   const [centerX, centerZ] = room.center;
   const wallHeight = 2.8;
   const placements = React.useMemo(() => agentPlacements(room, agents), [agents, room]);
-  const activeCount = stats ? num(stats, "active_agent_count") : agents.filter(isBusy).length;
+  const workingCount = stats ? num(stats, "executing_agent_count") : agents.filter(isBusy).length;
+  const queuedCount = stats ? num(stats, "queued_agent_count") : agents.filter((agent) => liveState(agent) === "queued").length;
   const blockedCount = stats ? num(stats, "blocked_task_count") : agents.filter(isBlocked).length;
   const groupRef = React.useRef<THREE.Group>(null);
 
@@ -237,7 +243,7 @@ function Room({
           <span className="office-room-label__name">{room.label}</span>
           <div className="office-room-label__meta">
             <span className={`office-room-label__dot office-room-label__dot--${hasRisk ? "risk" : "ok"}`} />
-            <span>{agents.length} employees · {activeCount} active</span>
+            <span>{agents.length} employees · {workingCount} working{queuedCount ? ` · ${queuedCount} queued` : ""}</span>
             {blockedCount > 0 && <span className="office-room-label__pending">{blockedCount} blocked</span>}
           </div>
         </div>
@@ -806,7 +812,39 @@ function OfficeHud({
   onInspectTask: (agent: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
+  const delegateTask = useDelegateAgentTask();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [showDelegate, setShowDelegate] = React.useState(false);
+  const [delegateObjective, setDelegateObjective] = React.useState("");
   const room = focusedRoom ? roomByKey(focusedRoom) : null;
+  React.useEffect(() => {
+    setShowDelegate(false);
+    setDelegateObjective("");
+  }, [selectedAgent]);
+
+  function submitDelegation() {
+    if (!selectedAgent || !delegateObjective.trim()) return;
+    const agentName = text(selectedAgent, "agent_name");
+    delegateTask.mutate({
+      to_agent: agentName,
+      objective: delegateObjective.trim(),
+      priority: "high",
+      workspace: agentRoomKey(selectedAgent),
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        pushToast({
+          title: `Task queued to ${agentName}`,
+          message: `Task #${num(result, "task_id")} is durable and visible in the office.`,
+          tone: "ok",
+          duration: 5000,
+        });
+        setShowDelegate(false);
+        setDelegateObjective("");
+      },
+      onError: (error) => pushToast({ title: "Delegation failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
   return (
     <div className="office-hud">
       <div className="office-hud__top">
@@ -844,8 +882,8 @@ function OfficeHud({
               </span>
             </div>
             <div className="office-hud__work">
-              <b>{text(selectedAgent, "current_work_title", text(selectedAgent, "current_task_title", "No active assignment"))}</b>
-              <span>{text(selectedAgent, "current_work_detail", text(selectedAgent, "latest_worker_summary", "No worker output recorded."))}</span>
+              <b>{text(selectedAgent, "presence_title", "Available for assignment")}</b>
+              <span>{text(selectedAgent, "presence_detail", text(selectedAgent, "presence_reason", "No fresh assignment."))}</span>
             </div>
             <div className="office-hud__agent-facts">
               <span>Tasks <b>{num(selectedAgent, "open_task_count")}</b></span>
@@ -854,13 +892,31 @@ function OfficeHud({
             </div>
             <div className="office-hud__room-actions">
               <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
-              <button className="office-hud__btn" onClick={() => onDelegate(selectedAgent)}>Delegate task</button>
+              <button className="office-hud__btn" onClick={() => setShowDelegate((open) => !open)}>Delegate task</button>
               {num(selectedAgent, "current_task_id") > 0 && (
                 <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>
               )}
               {room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open department</button>}
               <button className="office-hud__btn" onClick={onClearAgent}>Close employee</button>
             </div>
+            {showDelegate && (
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                <textarea
+                  aria-label={`Assignment for ${text(selectedAgent, "agent_name")}`}
+                  value={delegateObjective}
+                  onChange={(event) => setDelegateObjective(event.target.value)}
+                  placeholder="State the exact deliverable, evidence required, deadline or review gate."
+                  rows={3}
+                  style={{ width: "100%", resize: "vertical", background: "rgba(5,10,12,.88)", color: "#f5f7f6", border: "1px solid rgba(255,255,255,.2)", padding: 10, font: "inherit" }}
+                />
+                <div className="office-hud__room-actions">
+                  <button className="office-hud__btn office-hud__btn--primary" disabled={!delegateObjective.trim() || delegateTask.isPending} onClick={submitDelegation}>
+                    {delegateTask.isPending ? "Queuing…" : "Queue assignment"}
+                  </button>
+                  <button className="office-hud__btn" onClick={() => setShowDelegate(false)}>Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
         ) : room ? (
           <div className="office-hud__room-card">

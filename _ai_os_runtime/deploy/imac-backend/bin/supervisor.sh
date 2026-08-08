@@ -39,10 +39,49 @@ stop_children() {
     kill "${pid}" 2>/dev/null || true
   done
   wait 2>/dev/null || true
+  rm -f "${RUN_ROOT}/api.pid" "${RUN_ROOT}/ui.pid" "${RUN_ROOT}/agent-daemon.pid"
   rm -f "${SUPERVISOR_LOCK}/pid"
   rmdir "${SUPERVISOR_LOCK}" 2>/dev/null || true
 }
 trap stop_children EXIT INT TERM
+
+stop_stale_pidfile() {
+  local pidfile="$1" expected="$2" label="$3" pid command_line
+  [[ -f "${pidfile}" ]] || return 0
+  pid="$(cat "${pidfile}" 2>/dev/null || true)"
+  [[ -n "${pid}" ]] || { rm -f "${pidfile}"; return 0; }
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    rm -f "${pidfile}"
+    return 0
+  fi
+  command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  [[ "${command_line}" == *"${expected}"* ]] || die "${label} PID file points to unrelated process ${pid}"
+  log "Stopping stale ${label} process ${pid}"
+  kill "${pid}" 2>/dev/null || true
+  for _ in {1..20}; do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -KILL "${pid}" 2>/dev/null || true
+  rm -f "${pidfile}"
+}
+
+stop_stale_listener() {
+  local port="$1" expected="$2" label="$3" pid command_line
+  command -v lsof >/dev/null 2>&1 || return 0
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    [[ "${command_line}" == *"${expected}"* ]] || die "${label} port ${port} is owned by unrelated process ${pid}"
+    log "Stopping stale ${label} listener ${pid} on ${port}"
+    kill "${pid}" 2>/dev/null || true
+  done < <(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)
+  for _ in {1..20}; do
+    lsof -tiTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1 || return 0
+    sleep 0.25
+  done
+  die "${label} port ${port} did not clear after stopping the stale AI OS process"
+}
 
 # Keep the always-on backend awake while allowing the display to sleep and lock.
 if command -v caffeinate >/dev/null 2>&1; then
@@ -187,10 +226,15 @@ export AI_OS_ALLOWED_ORIGINS="${AI_OS_ALLOWED_ORIGINS:-http://127.0.0.1:${AI_OS_
 export AI_OS_ALLOW_TOKENLESS_LOOPBACK
 export AI_OS_CHAT_MODEL_ROUTE="${AI_OS_CHAT_MODEL_ROUTE:-charlie_munger_orchestration}"
 
+stop_stale_pidfile "${RUN_ROOT}/agent-daemon.pid" "run_agent_message_daemon.py" "agent message daemon"
+stop_stale_listener "${AI_OS_API_PORT}" "ai_os_api_server.py" "AI OS API"
+stop_stale_listener "${AI_OS_UI_PORT}" "serve_spa.py" "AI OS UI"
+
 log "Starting AI OS API"
 "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_server.py" \
   >>"${LOG_ROOT}/api.log" 2>>"${LOG_ROOT}/api.err" &
 children+=("$!")
+printf '%s\n' "$!" > "${RUN_ROOT}/api.pid"
 
 log "Starting AI OS UI"
 "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/serve_spa.py" \
@@ -198,6 +242,7 @@ log "Starting AI OS UI"
   --directory "${AI_OS_REPO_ROOT}/_ai_os_runtime/ai-office-ui/dist" \
   >>"${LOG_ROOT}/ui.log" 2>>"${LOG_ROOT}/ui.err" &
 children+=("$!")
+printf '%s\n' "$!" > "${RUN_ROOT}/ui.pid"
 
 if [[ "${AI_OS_ENABLE_AGENT_DAEMON:-1}" == "1" ]]; then
   log "Starting role-scoped agent message daemon"
@@ -205,6 +250,7 @@ if [[ "${AI_OS_ENABLE_AGENT_DAEMON:-1}" == "1" ]]; then
   "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_agent_message_daemon.py" \
     >>"${LOG_ROOT}/agent-daemon.log" 2>>"${LOG_ROOT}/agent-daemon.err" &
   children+=("$!")
+  printf '%s\n' "$!" > "${RUN_ROOT}/agent-daemon.pid"
 fi
 
 wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/liveness" "AI OS API" 120

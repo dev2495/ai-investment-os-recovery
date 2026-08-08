@@ -44,7 +44,7 @@ function mergedEmployees(data: ReturnType<typeof useOfficeSnapshot>["data"]): Li
 }
 
 function employeeState(row: LiveRow): string {
-  return text(row, "live_state", text(row, "current_task_status", text(row, "latest_worker_status", "idle")));
+  return text(row, "presence_state", text(row, "live_state", text(row, "current_task_status", "available")));
 }
 
 function employeeDepartment(row: LiveRow): string {
@@ -85,7 +85,7 @@ export function OfficeView() {
   });
   const working = employees.filter((row) => {
     const state = employeeState(row).toLowerCase();
-    return ["active", "working", "running", "executing", "in_progress", "queued", "processing", "waiting_approval"].some((candidate) => state.includes(candidate));
+    return ["working", "running", "executing", "in_progress", "processing"].some((candidate) => state.includes(candidate));
   }).length;
   const blocked = employees.filter((row) => employeeState(row).toLowerCase().includes("block") || num(row, "blocked_task_count") > 0).length;
   const rooms = data?.live_office_rooms ?? [];
@@ -184,7 +184,8 @@ export function OfficeView() {
                 columns={[
                   { key: "room", header: "Department", render: (row) => <strong>{text(row, "room_name", text(row, "room_key"))}</strong> },
                   { key: "agents", header: "Employees", align: "right", render: (row) => num(row, "agent_count") },
-                  { key: "active", header: "Active", align: "right", render: (row) => num(row, "active_agent_count") },
+                  { key: "working", header: "Working", align: "right", render: (row) => num(row, "executing_agent_count") },
+                  { key: "queued", header: "Queued", align: "right", render: (row) => num(row, "queued_agent_count") },
                   { key: "tasks", header: "Open Tasks", align: "right", render: (row) => num(row, "open_task_count") },
                   { key: "inbox", header: "Inbox", align: "right", render: (row) => num(row, "open_inbox_count") },
                   { key: "state", header: "State", render: (row) => <StatusPill status={text(row, "room_state", "idle")} /> },
@@ -264,7 +265,7 @@ export function OfficeView() {
                 ),
               },
               { key: "department", header: "Department", render: employeeDepartment },
-              { key: "work", header: "Current Work", render: (row) => <div><strong>{text(row, "current_work_title", text(row, "current_task_title", "No active assignment"))}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 2 }}>{text(row, "latest_worker_summary", text(row, "current_work_detail")).slice(0, 130)}</div></div> },
+              { key: "work", header: "Current Work", render: (row) => <div><strong>{text(row, "presence_title", "Available for assignment")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 2 }}>{text(row, "presence_detail", text(row, "presence_reason")).slice(0, 130)}</div></div> },
               { key: "tasks", header: "Tasks", align: "right", render: (row) => num(row, "open_task_count") },
               { key: "inbox", header: "Inbox", align: "right", render: (row) => num(row, "open_inbox_count") },
               { key: "worker", header: "Last Worker", render: (row) => text(row, "latest_worker_skill_name", text(row, "default_model_route", "—")) },

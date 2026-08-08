@@ -430,10 +430,11 @@ def build_office_snapshot() -> dict:
         """,
         "live_office_rooms": """
             SELECT room_key, room_name, room_rank, agent_count,
-                   active_agent_count, open_task_count, blocked_task_count,
+                   active_agent_count, executing_agent_count, queued_agent_count,
+                   open_task_count, blocked_task_count,
                    unread_message_count, open_inbox_count, open_risk_event_count,
                    room_workload_score, latest_activity_at, room_state, agents
-            FROM agent.v_live_office_rooms
+            FROM agent.v_live_office_rooms_v2
             ORDER BY room_rank, room_name
         """,
         "live_office_agent_activity": """
@@ -454,8 +455,10 @@ def build_office_snapshot() -> dict:
                    latest_worker_skill_name, latest_worker_status,
                    latest_worker_summary, latest_worker_output_note_path,
                    latest_worker_finished_at, open_tasks, workload_score,
-                   live_state, latest_activity_at
-            FROM agent.v_live_office_agent_activity
+                   live_state, latest_activity_at, presence_state, presence_reason,
+                   presence_source_kind, presence_source_id, presence_started_at,
+                   presence_expires_at, presence_is_fresh, presence_title,presence_detail
+            FROM agent.v_live_office_presence_v2
             ORDER BY role_rank, agent_name
         """,
         "office_operability_acceptance": """
@@ -5456,10 +5459,11 @@ def build_snapshot() -> dict:
         """,
         "live_office_rooms": """
             SELECT room_key, room_name, room_rank, agent_count,
-                   active_agent_count, open_task_count, blocked_task_count,
+                   active_agent_count, executing_agent_count, queued_agent_count,
+                   open_task_count, blocked_task_count,
                    unread_message_count, open_inbox_count, open_risk_event_count,
                    room_workload_score, latest_activity_at, room_state, agents
-            FROM agent.v_live_office_rooms
+            FROM agent.v_live_office_rooms_v2
             ORDER BY room_rank, room_name
         """,
         "live_office_agent_activity": """
@@ -5480,8 +5484,10 @@ def build_snapshot() -> dict:
                    latest_worker_skill_name, latest_worker_status,
                    latest_worker_summary, latest_worker_output_note_path,
                    latest_worker_finished_at, open_tasks, workload_score,
-                   live_state, latest_activity_at
-            FROM agent.v_live_office_agent_activity
+                   live_state, latest_activity_at, presence_state, presence_reason,
+                   presence_source_kind, presence_source_id, presence_started_at,
+                   presence_expires_at, presence_is_fresh, presence_title,presence_detail
+            FROM agent.v_live_office_presence_v2
             ORDER BY role_rank, agent_name
         """,
         "agent_org_chart": """
@@ -8358,6 +8364,52 @@ def triage_agent_message(payload: dict) -> dict:
         raise ValueError("message_id not found")
     result = rows[0]
     audit_api_write("ai_os_api_triage_agent_message", action, actor, "agent.agent_messages", result, payload)
+    return result
+
+
+def delegate_agent_task(payload: dict) -> dict:
+    to_agent = str(payload.get("to_agent") or payload.get("toAgent") or "").strip()
+    objective = str(payload.get("objective") or payload.get("message") or "").strip()
+    if not to_agent:
+        raise ValueError("to_agent is required")
+    if not objective:
+        raise ValueError("objective is required")
+    subject = str(payload.get("subject") or f"Direct assignment: {objective[:80]}").strip()
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    priority = str(payload.get("priority") or "high").strip().lower()
+    message = create_agent_message({
+        "from_agent": "Charlie Munger",
+        "to_agent": to_agent,
+        "subject": subject,
+        "body": objective,
+        "priority": priority,
+        "actor": actor,
+        "metadata": {
+            "api_route": "/api/agents/delegate",
+            "delegated_by": actor,
+            "broker_write_allowed": False,
+        },
+    })
+    task = triage_agent_message({
+        "message_id": message["id"],
+        "action": "create_task",
+        "actor": "Charlie Munger",
+        "task_title": subject,
+        "task_objective": objective,
+        "priority": priority,
+        "target_workspace": str(payload.get("workspace") or "office"),
+        "recommended_action": "Complete the bounded assignment with cited evidence; escalate any capital action for human approval.",
+    })
+    result = {
+        "status": "queued",
+        "to_agent": to_agent,
+        "message_id": message["id"],
+        "task_id": task.get("generated_task_id"),
+        "inbox_id": task.get("generated_inbox_id"),
+        "objective": objective,
+        "broker_write_allowed": False,
+    }
+    audit_api_write("ai_os_api_delegate_agent_task", "delegate_agent_task", actor, "agent.tasks", result, payload)
     return result
 
 
@@ -15731,12 +15783,15 @@ def build_chat_context(
         queries["scoped_employee"] = f"""
             SELECT agent_name, display_title, department_key, department_name,
                    live_state, current_work_title, current_work_detail,
+                   presence_state,presence_reason,presence_source_kind,
+                   presence_source_id,presence_started_at,presence_expires_at,
+                   presence_is_fresh,presence_title,presence_detail,
                    current_task_id, current_task_title, current_task_objective,
                    current_task_status, current_task_priority, open_task_count,
                    queued_task_count, in_progress_task_count, blocked_task_count,
                    open_inbox_count, unread_message_count, latest_worker_run_id,
                    latest_worker_status, latest_worker_summary, latest_activity_at
-            FROM agent.v_live_office_agent_activity
+            FROM agent.v_live_office_presence_v2
             WHERE lower(agent_name) = lower({sql_literal(assistant_name)})
             LIMIT 1
         """
@@ -18533,6 +18588,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/agents/messages/triage":
                 self._send_json(triage_agent_message(payload), 200)
+                return
+            if self.path == "/api/agents/delegate":
+                self._send_json(delegate_agent_task(payload), 201)
                 return
             if self.path == "/api/graphs/runs/start":
                 self._send_json(start_graph_control_run(payload), 201)

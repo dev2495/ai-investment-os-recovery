@@ -966,6 +966,27 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertEqual(result["stream_restart"]["status"], "restart_requested")
         self.assertFalse(result["broker_write_allowed"])
 
+    def test_direct_office_delegation_creates_message_and_linked_task(self) -> None:
+        with (
+            mock.patch.object(ai_os_api_server, "create_agent_message", return_value={"id": 41}) as create_message,
+            mock.patch.object(
+                ai_os_api_server,
+                "triage_agent_message",
+                return_value={"generated_task_id": 73, "generated_inbox_id": 88},
+            ) as triage,
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.delegate_agent_task({
+                "to_agent": "Research Analyst",
+                "objective": "Review the latest filing with cited evidence.",
+                "actor": "Devarsh",
+            })
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(result["task_id"], 73)
+        self.assertFalse(result["broker_write_allowed"])
+        self.assertEqual(create_message.call_args.args[0]["to_agent"], "Research Analyst")
+        self.assertEqual(triage.call_args.args[0]["action"], "create_task")
+
 
 if __name__ == "__main__":
     unittest.main()
