@@ -3,18 +3,16 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import email.utils
 import hashlib
 import json
 import os
 import re
 import urllib.parse
-import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from collect_nse_bse_filings import run_psql_json, run_psql_text, sql_jsonb, sql_literal
+from collect_nse_bse_filings import curl_get, run_psql_json, run_psql_text, sql_jsonb, sql_literal
 from runtime_storage import artifact_root
 
 
@@ -49,11 +47,11 @@ class LinkParser(HTMLParser):
             self._text = []
 
 
-def request(url: str, accept: str, timeout: int = 60) -> urllib.response.addinfourl:
-    return urllib.request.urlopen(
-        urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept}),
-        timeout=timeout,
-    )
+def fetch_bytes(url: str, accept: str, timeout: int = 60) -> bytes:
+    status, body = curl_get(url, {"User-Agent": USER_AGENT, "Accept": accept}, timeout=timeout)
+    if not 200 <= status < 300:
+        raise RuntimeError(f"source returned HTTP {status}: {url}")
+    return body
 
 
 def fiscal_year(text: str) -> tuple[int, int] | None:
@@ -71,8 +69,7 @@ def fiscal_year(text: str) -> tuple[int, int] | None:
 
 
 def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> list[dict[str, Any]]:
-    with request(page_url, "text/html,application/xhtml+xml") as response:
-        page = response.read().decode("utf-8", errors="ignore")
+    page = fetch_bytes(page_url, "text/html,application/xhtml+xml").decode("utf-8", errors="ignore")
     parser = LinkParser()
     parser.feed(page)
     page_host = urllib.parse.urlsplit(page_url).hostname or ""
@@ -106,27 +103,17 @@ def download_report(report: dict[str, Any], symbol: str) -> dict[str, Any]:
     target_dir = ARTIFACT_ROOT / symbol.lower() / f"fy-{report['fiscal_year_start']}-{report['fiscal_year_end']}"
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / "annual-report.pdf"
-    digest = hashlib.sha256()
-    total = 0
-    last_modified: str | None = None
-    with request(report["url"], "application/pdf,*/*", timeout=120) as response, target.open("wb") as handle:
-        last_modified = response.headers.get("Last-Modified")
-        first = True
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            if first and not chunk.startswith(b"%PDF"):
-                raise ValueError(f"source did not return a PDF: {report['url']}")
-            first = False
-            digest.update(chunk)
-            handle.write(chunk)
-            total += len(chunk)
-    published_at = None
-    if last_modified:
-        parsed = email.utils.parsedate_to_datetime(last_modified)
-        published_at = parsed.astimezone(dt.timezone.utc).isoformat()
-    return {**report, "local_path": str(target), "content_hash": digest.hexdigest(), "bytes_downloaded": total, "published_at": published_at}
+    data = fetch_bytes(report["url"], "application/pdf,*/*", timeout=120)
+    if not data.startswith(b"%PDF"):
+        raise ValueError(f"source did not return a PDF: {report['url']}")
+    target.write_bytes(data)
+    return {
+        **report,
+        "local_path": str(target),
+        "content_hash": hashlib.sha256(data).hexdigest(),
+        "bytes_downloaded": len(data),
+        "published_at": None,
+    }
 
 
 def upsert_report(run_id: int, report: dict[str, Any], symbol: str, exchange: str, company_name: str, page_url: str) -> int:

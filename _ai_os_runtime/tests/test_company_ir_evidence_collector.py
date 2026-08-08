@@ -12,6 +12,8 @@ def test_company_ir_collector_is_primary_source_and_evidence_only() -> None:
     assert '"broker_write_allowed": False' in source
     assert "company_statement_facts" not in source
     assert "portfolio.orders" not in source
+    assert "curl_get" in source
+    assert "--insecure" not in source
 
 
 def test_company_ir_collector_excludes_subsidiaries_by_default() -> None:
