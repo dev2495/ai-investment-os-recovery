@@ -57,7 +57,11 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
                     "account_match": True,
                 },
             ) as exchange,
-            mock.patch.object(ai_os_api_server, "start_zerodha_post_login_sync") as refresh,
+            mock.patch.object(
+                ai_os_api_server,
+                "start_zerodha_post_login_sync",
+                return_value={"status": "started", "jobs": {}, "broker_write_allowed": False},
+            ) as refresh,
         ):
             result = ai_os_api_server.exchange_zerodha_callback({
                 "status": ["success"],
@@ -71,6 +75,7 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
         self.assertTrue(result["profile_validated"])
         self.assertTrue(result["account_match"])
         self.assertEqual(result["challenge_id"], 17)
+        self.assertEqual(result["post_login_sync"]["status"], "started")
         self.assertFalse(result["broker_write_allowed"])
 
     def test_schema_and_ui_use_the_challenge_flow(self) -> None:
@@ -88,7 +93,11 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
                 "exchange_zerodha_request_token",
                 return_value={"status": "authenticated", "account_match": True, "broker_write_allowed": False},
             ) as exchange,
-            mock.patch.object(ai_os_api_server, "start_zerodha_post_login_sync") as refresh,
+            mock.patch.object(
+                ai_os_api_server,
+                "start_zerodha_post_login_sync",
+                return_value={"status": "started", "jobs": {}, "broker_write_allowed": False},
+            ) as refresh,
             mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
         ):
             result = ai_os_api_server.exchange_zerodha_callback_url({
@@ -97,6 +106,7 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
             })
 
         self.assertEqual(result["status"], "authenticated")
+        self.assertEqual(result["post_login_sync"]["status"], "started")
         exchange.assert_called_once_with({"request_token": "one-time-secret", "actor": "Devarsh"})
         refresh.assert_called_once()
         self.assertNotIn("one-time-secret", repr(audit.call_args))
@@ -106,6 +116,19 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
             ai_os_api_server.exchange_zerodha_callback_url({
                 "callback_url": "https://example.test/?action=login&status=success&request_token=secret",
             })
+
+    def test_post_login_sync_reports_spawn_failure_without_failing_login(self) -> None:
+        with mock.patch.object(
+            ai_os_api_server.subprocess,
+            "Popen",
+            side_effect=[OSError("process limit"), mock.Mock(pid=42)],
+        ):
+            result = ai_os_api_server.start_zerodha_post_login_sync()
+
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["jobs"]["account"]["status"], "start_failed")
+        self.assertEqual(result["jobs"]["market"]["status"], "started")
+        self.assertFalse(result["broker_write_allowed"])
 
 
 if __name__ == "__main__":

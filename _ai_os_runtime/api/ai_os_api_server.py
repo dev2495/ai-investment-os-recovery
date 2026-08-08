@@ -9284,7 +9284,7 @@ def exchange_zerodha_callback_url(payload: dict) -> dict:
     if status != "success" or action != "login" or not request_token:
         raise ValueError("The pasted URL is not a successful Zerodha login callback")
     result = exchange_zerodha_request_token({"request_token": request_token, "actor": str(payload.get("actor") or "Devarsh")})
-    start_zerodha_post_login_sync()
+    result["post_login_sync"] = start_zerodha_post_login_sync()
     audit_api_write(
         "ai_os_api_zerodha_callback_url_exchange",
         "exchange_zerodha_callback_url",
@@ -9429,25 +9429,31 @@ def live_price_history(query: dict[str, list[str]]) -> dict:
     }
 
 
-def start_zerodha_post_login_sync() -> None:
+def start_zerodha_post_login_sync() -> dict:
     commands = [
-        [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_read_only.py"),
-         "--datasets","holdings","positions","orders","trades","funds"],
-        [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_market_data.py"),
-         "--modes","quotes","options","--underlyings","NIFTY","BANKNIFTY"],
+        ("account", [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_read_only.py"),
+         "--datasets","holdings","positions","orders","trades","funds"]),
+        ("market", [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_market_data.py"),
+         "--modes","quotes","options","--underlyings","NIFTY","BANKNIFTY"]),
     ]
-    for command in commands:
-        subprocess.Popen(
-            command,cwd=RUNTIME_ROOT,stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,
-        )
-    try:
-        subprocess.run(
-            ["/bin/launchctl","kickstart","-k",f"gui/{os.getuid()}/com.devarsh.aios.zerodha-stream"],
-            check=False,capture_output=True,text=True,timeout=15,
-        )
-    except (OSError,subprocess.TimeoutExpired):
-        pass
+    jobs: dict[str, dict[str, object]] = {}
+    for job_name, command in commands:
+        try:
+            process = subprocess.Popen(
+                command,cwd=RUNTIME_ROOT,stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,
+            )
+            jobs[job_name] = {"status": "started", "pid": process.pid}
+        except OSError as exc:
+            jobs[job_name] = {
+                "status": "start_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    return {
+        "status": "started" if any(job.get("status") == "started" for job in jobs.values()) else "start_failed",
+        "jobs": jobs,
+        "broker_write_allowed": False,
+    }
 
 
 def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
@@ -9460,7 +9466,7 @@ def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
     if not request_token:
         raise ValueError("Zerodha callback did not include request_token")
     result = exchange_zerodha_request_token({"request_token":request_token,"actor":"Zerodha OAuth Callback"})
-    start_zerodha_post_login_sync()
+    post_login_sync = start_zerodha_post_login_sync()
     return {
         "status": result.get("status"),
         "access_token_stored": bool(result.get("access_token_stored")),
@@ -9469,6 +9475,7 @@ def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
         "profile_validated": bool(result.get("profile_validated")),
         "account_match": bool(result.get("account_match")),
         "challenge_id": challenge.get("id"),
+        "post_login_sync": post_login_sync,
         "broker_write_allowed": False,
     }
 
