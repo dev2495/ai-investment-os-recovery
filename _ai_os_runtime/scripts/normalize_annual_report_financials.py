@@ -11,7 +11,7 @@ from typing import Any
 from collect_nse_bse_filings import run_psql_json, run_psql_text, sql_jsonb, sql_literal
 
 
-PARSER_VERSION = "annual_report_consolidated_rows_v2"
+PARSER_VERSION = "annual_report_consolidated_rows_v3"
 FACTS = {
     "revenue_from_operations": {
         "canonical_name": "Revenue from operations",
@@ -31,12 +31,60 @@ FACTS = {
     "total_assets": {
         "canonical_name": "Total assets",
         "statement_type": "balance_sheet",
-        "labels": (r"^total assets\b",),
+        "labels": (r"^total assets\b", r"^total\s+\(?[\d,]+\)?\s+\(?[\d,]+\)?$"),
+        "region": "assets",
     },
     "total_equity": {
         "canonical_name": "Total equity",
         "statement_type": "balance_sheet",
         "labels": (r"^total equity\b",),
+    },
+    "inventories": {
+        "canonical_name": "Inventories",
+        "statement_type": "balance_sheet",
+        "labels": (r"^(?:\([a-z]\)\s*)?inventories\b",),
+    },
+    "trade_receivables": {
+        "canonical_name": "Trade receivables",
+        "statement_type": "balance_sheet",
+        "labels": (r"^(?:\([ivx]+\)\s*)?trade receivables\b",),
+    },
+    "cash_and_cash_equivalents": {
+        "canonical_name": "Cash and cash equivalents",
+        "statement_type": "balance_sheet",
+        "labels": (r"^(?:\([ivx]+\)\s*)?cash and cash equivalents\b",),
+    },
+    "non_current_borrowings": {
+        "canonical_name": "Non-current borrowings",
+        "statement_type": "balance_sheet",
+        "labels": (r"^(?:\([ivx]+\)\s*)?borrowings\b",),
+        "section": "non_current_liabilities",
+    },
+    "current_borrowings": {
+        "canonical_name": "Current borrowings",
+        "statement_type": "balance_sheet",
+        "labels": (r"^(?:\([ivx]+\)\s*)?borrowings\b",),
+        "section": "current_liabilities",
+    },
+    "total_liabilities": {
+        "canonical_name": "Total liabilities",
+        "statement_type": "balance_sheet",
+        "labels": (r"^total liabilities\b",),
+    },
+    "operating_cash_flow": {
+        "canonical_name": "Net cash flow from operating activities",
+        "statement_type": "cash_flow",
+        "labels": (r"^net cash flows? from operating activities\b", r"^net cash generated from operating activities\b"),
+    },
+    "capital_expenditure": {
+        "canonical_name": "Purchase of property, plant and equipment and intangible assets",
+        "statement_type": "cash_flow",
+        "labels": (r"^purchase of property, plant and equipment\b",),
+    },
+    "dividends_paid": {
+        "canonical_name": "Dividends paid",
+        "statement_type": "cash_flow",
+        "labels": (r"^dividend paid\b", r"^dividends paid\b"),
     },
 }
 AMOUNT = re.compile(r"(?<![A-Za-z])\(?-?\d[\d,]*(?:\.\d+)?\)?")
@@ -78,6 +126,19 @@ def page_kind(text: str) -> str | None:
         return "income_statement"
     if re.search(r"consolidated (?:balance sheet|statement of financial position)", normalized):
         return "balance_sheet"
+    if re.search(r"consolidated (?:statement of cash flows|cash flow statement)", normalized):
+        return "cash_flow"
+    return None
+
+
+def line_pair(lines: list[str], index: int) -> tuple[tuple[float, float], str] | None:
+    for width in (1, 2, 3):
+        if index + width > len(lines):
+            break
+        candidate = " ".join(lines[index:index + width])
+        pair = reported_pair(candidate)
+        if pair is not None:
+            return pair, candidate
     return None
 
 
@@ -107,23 +168,40 @@ def extract_annual_report(path: Path, fiscal_year: int) -> tuple[list[dict[str, 
         kind = page_kind(text)
         if kind is None:
             continue
-        for line in normalized_lines(text):
+        lines = normalized_lines(text)
+        balance_region: str | None = None
+        balance_section: str | None = None
+        for line_index, line in enumerate(lines):
             lower = line.lower()
+            if kind == "balance_sheet":
+                if lower == "assets":
+                    balance_region = "assets"
+                elif lower == "equity and liabilities":
+                    balance_region = "equity_and_liabilities"
+                elif lower == "non-current liabilities":
+                    balance_section = "non_current_liabilities"
+                elif lower == "current liabilities":
+                    balance_section = "current_liabilities"
             for fact_key, definition in FACTS.items():
                 if fact_key in found or definition["statement_type"] != kind:
                     continue
+                if definition.get("region") and definition["region"] != balance_region:
+                    continue
+                if definition.get("section") and definition["section"] != balance_section:
+                    continue
                 if not any(re.search(pattern, lower) for pattern in definition["labels"]):
                     continue
-                pair = reported_pair(line)
-                if pair is None:
+                matched = line_pair(lines, line_index)
+                if matched is None:
                     continue
+                pair, reported_line = matched
                 current, comparative = pair
                 found[fact_key] = {
                     "fact_key": fact_key,
                     "fiscal_year": fiscal_year,
                     "current_value": current,
                     "comparative_value": comparative,
-                    "reported_line": line,
+                    "reported_line": reported_line,
                     "page_number": page_number,
                     "statement_type": kind,
                 }
@@ -174,7 +252,7 @@ def persist(
         definitions.append(
             "(" + ",".join((
                 sql_literal(fact_key), sql_literal(definition["canonical_name"]),
-                sql_literal(definition["statement_type"]), "'monetary'", "'INR lakh'", "'flow'" if definition["statement_type"] == "income_statement" else "'instant'",
+                sql_literal(definition["statement_type"]), "'monetary'", "'INR lakh'", "'instant'" if definition["statement_type"] == "balance_sheet" else "'flow'",
                 sql_literal(f"Machine-readable consolidated annual report row; review required before investment use."),
             )) + ")"
         )
