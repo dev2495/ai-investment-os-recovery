@@ -502,8 +502,12 @@ def run(limit: int, interval_seconds: int = 300) -> dict[str, Any]:
             calculated = persist_analytics(batch, valuation, persisted)
             calculations += sum(calculated.values())
             outcomes.append({"batch_key": batch["batch_key"], "status": "completed", "analytics_rows": calculated})
-        status = "completed" if not blocked else "degraded" if calculations else "blocked"
-        error = "validated, unexpired valuation policy required" if status == "blocked" else None
+        if not groups:
+            status = "blocked"
+            error = "no unmaterialized source option snapshots are available"
+        else:
+            status = "completed" if not blocked else "degraded" if calculations else "blocked"
+            error = "validated, unexpired valuation policy required" if status == "blocked" else None
         summary = {"groups_seen": len(groups), "outcomes": outcomes, "paper_only": True, "broker_write_allowed": False}
         record_run(run_key, status, rows_read=read_count, rows_written=written, batches=batches,
                    calculations=calculations, blocked=blocked, summary=summary, error=error,

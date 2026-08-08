@@ -13,11 +13,13 @@
 
 import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Search, Sparkles, Sun, Moon, Bell, Command, RefreshCw } from "lucide-react";
+import { Search, Sparkles, Sun, Moon, Bell, Command, RefreshCw, Database, Radio, ShieldCheck } from "lucide-react";
 import { useUIStore } from "../store";
-import { useBeginZerodhaAuth, useMissionControl, useZerodhaAuthStatus } from "../data/queries";
-import { IconButton } from "../system/primitives";
-import { bool, text } from "../data/liveRow";
+import { useBeginZerodhaAuth, useMissionControl, useZerodhaAuthStatus, useZerodhaMarketStatus } from "../data/queries";
+import { useSyncZerodhaAccount, useSyncZerodhaMarket } from "../data/actions";
+import { Button, Drawer, IconButton, StatusPill } from "../system/primitives";
+import { bool, num, text, value } from "../data/liveRow";
+import type { LiveRow } from "../data/liveRow";
 import { GlobalTopbarCss } from "./GlobalTopbar.css";
 
 /**
@@ -41,10 +43,14 @@ export function GlobalTopbar() {
   const toggleAssistant = useUIStore((s) => s.toggleAssistant);
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
+  const [brokerOpen, setBrokerOpen] = React.useState(false);
 
   const { data: mission } = useMissionControl();
   const { data: zerodha } = useZerodhaAuthStatus();
+  const { data: zerodhaMarket, refetch: refreshZerodhaMarket, isFetching: marketRefreshing } = useZerodhaMarketStatus();
   const beginZerodha = useBeginZerodhaAuth();
+  const syncAccount = useSyncZerodhaAccount();
+  const syncMarket = useSyncZerodhaMarket();
   const approvalCount = mission?.approvals?.length ?? 0;
   const riskEvents = mission?.execution_control?.filter(
     (r) => text(r, "kind") === "risk_event" || text(r, "control_key") === "global_kill_switch"
@@ -65,6 +71,7 @@ export function GlobalTopbar() {
         } else {
           popup?.close();
         }
+        setBrokerOpen(true);
       },
       onError: () => popup?.close(),
     });
@@ -115,8 +122,8 @@ export function GlobalTopbar() {
 
           <button
             className="aios-topbar__zerodha"
-            onClick={reconnectZerodha}
-            aria-label="Reconnect Zerodha"
+            onClick={() => setBrokerOpen(true)}
+            aria-label="Open Zerodha session control"
             title={
               beginZerodha.isPending
                 ? "Creating a secure Zerodha login challenge"
@@ -162,7 +169,85 @@ export function GlobalTopbar() {
           />
         </div>
       </header>
+      <BrokerSessionDrawer
+        open={brokerOpen}
+        onClose={() => setBrokerOpen(false)}
+        auth={zerodha}
+        market={zerodhaMarket}
+        reconnect={reconnectZerodha}
+        reconnectPending={beginZerodha.isPending}
+        refresh={() => refreshZerodhaMarket()}
+        refreshPending={marketRefreshing}
+        syncAccount={() => syncAccount.mutate({ datasets: ["holdings", "positions", "orders", "trades", "funds"], actor: "Devarsh" })}
+        syncAccountPending={syncAccount.isPending}
+        syncMarket={() => syncMarket.mutate({ modes: ["quotes", "options"], underlyings: ["NIFTY", "BANKNIFTY"], strike_pairs: 24, actor: "Devarsh" })}
+        syncMarketPending={syncMarket.isPending}
+        error={beginZerodha.error ?? syncAccount.error ?? syncMarket.error}
+      />
     </>
+  );
+}
+
+function BrokerSessionDrawer(props: {
+  open: boolean;
+  onClose: () => void;
+  auth?: LiveRow;
+  market?: LiveRow;
+  reconnect: () => void;
+  reconnectPending: boolean;
+  refresh: () => void;
+  refreshPending: boolean;
+  syncAccount: () => void;
+  syncAccountPending: boolean;
+  syncMarket: () => void;
+  syncMarketPending: boolean;
+  error: Error | null;
+}) {
+  const auth = value<LiveRow>(props.market, "auth", props.auth ?? {});
+  const warehouse = value<LiveRow>(props.market, "warehouse", {});
+  const stream = value<LiveRow>(props.market, "stream", {});
+  const connected = bool(props.market, "daily_access_token_available", bool(props.auth, "daily_access_token_available"));
+  const accountReady = bool(auth, "account_match") && bool(auth, "profile_validated");
+  const instruments = num(warehouse, "active_instruments");
+  const latestQuote = text(warehouse, "latest_quote_at", "");
+  const latestOption = text(warehouse, "latest_option_at", "");
+  const streamConnected = text(stream, "connection_state") === "connected";
+
+  return (
+    <Drawer open={props.open} onClose={props.onClose} title="Zerodha Market Session" subtitle="Read-only account and market data control" icon={ShieldCheck} width={520}>
+      <div className="aios-broker-session">
+        <div className="aios-broker-session__summary">
+          <div><span>Daily login</span><StatusPill status={connected ? "connected" : "login required"} /></div>
+          <div><span>Account binding</span><StatusPill status={accountReady ? "verified" : "needs verification"} /></div>
+          <div><span>Live stream</span><StatusPill status={streamConnected ? "connected" : text(stream, "health_status", "not started")} /></div>
+          <div><span>Broker execution</span><StatusPill status="locked" /></div>
+        </div>
+
+        <section className="aios-broker-session__stage">
+          <div><ShieldCheck size={17} /><strong>1. Authenticate today</strong></div>
+          <p>Zerodha requires one human login each trading day. The callback exchanges and stores the token automatically.</p>
+          <Button variant="primary" icon={RefreshCw} onClick={props.reconnect} disabled={props.reconnectPending}>{props.reconnectPending ? "Opening login…" : connected ? "Renew today’s session" : "Connect Zerodha"}</Button>
+        </section>
+
+        <section className="aios-broker-session__stage">
+          <div><Database size={17} /><strong>2. Refresh read-only data</strong></div>
+          <p>{instruments.toLocaleString("en-IN")} active instruments. Latest quote: {latestQuote || "none"}. Latest option snapshot: {latestOption || "none"}.</p>
+          <div className="aios-broker-session__buttons">
+            <Button icon={Database} onClick={props.syncAccount} disabled={!connected || props.syncAccountPending}>{props.syncAccountPending ? "Syncing account…" : "Sync account"}</Button>
+            <Button icon={Radio} onClick={props.syncMarket} disabled={!connected || props.syncMarketPending}>{props.syncMarketPending ? "Syncing market…" : "Sync market + options"}</Button>
+          </div>
+        </section>
+
+        <section className="aios-broker-session__stage">
+          <div><Radio size={17} /><strong>3. Verify readiness</strong></div>
+          <p>{streamConnected ? `${num(stream, "live_count")} instruments are streaming.` : "The stream remains paused until today’s login and data sync complete."}</p>
+          <Button variant="ghost" icon={RefreshCw} onClick={props.refresh} disabled={props.refreshPending}>{props.refreshPending ? "Checking…" : "Check status"}</Button>
+        </section>
+
+        {props.error ? <div role="alert" className="aios-broker-session__error">{props.error.message}</div> : null}
+        <div className="aios-broker-session__safety">This control cannot place, modify, or cancel orders. Broker writes remain locked.</div>
+      </div>
+    </Drawer>
   );
 }
 

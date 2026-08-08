@@ -56,6 +56,39 @@ class TradeActivityContractTest(unittest.TestCase):
         )
         self.assertIn("payload->>'option_type' AS option_type", source)
         self.assertIn("payload->>'expiry_date' AS expiry_date", source)
+        self.assertIn("payload->>'lot_size' AS lot_size", source)
+        self.assertIn("payload->>'contract_quantity' AS contract_quantity", source)
+
+    def test_option_lots_are_stored_as_contract_units_with_explicit_multiplier(self) -> None:
+        recorded = {"id": 91, "symbol": "NIFTY", "instrument_type": "option", "side": "sell"}
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json_statement", side_effect=[[recorded], [], []]) as query,
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            ai_os_api_server.record_trade(
+                {
+                    "symbol": "NIFTY", "instrument_type": "option", "side": "sell",
+                    "quantity": 2, "quantity_unit": "lots", "lot_count": 2,
+                    "lot_size": 75, "contract_quantity": 150, "price": 100,
+                },
+                execution_mode="manual_actual", source_kind="manual", actor_default="Devarsh",
+            )
+        sql = query.call_args_list[0].args[0]
+        self.assertIn('"quantity_unit": "lots"', sql)
+        self.assertIn('"lot_count": 2', sql)
+        self.assertIn('"lot_size": 75', sql)
+        self.assertIn("150.0", sql)
+
+    def test_option_lot_multiplier_mismatch_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            ai_os_api_server.record_trade(
+                {
+                    "symbol": "NIFTY", "instrument_type": "option", "side": "buy",
+                    "quantity": 2, "quantity_unit": "lots", "lot_count": 2,
+                    "lot_size": 75, "contract_quantity": 75, "price": 100,
+                },
+                execution_mode="manual_actual", source_kind="manual", actor_default="Devarsh",
+            )
 
 
 if __name__ == "__main__":

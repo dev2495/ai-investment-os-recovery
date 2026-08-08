@@ -18,6 +18,15 @@ SPEC.loader.exec_module(module)
 
 
 class InstitutionalOptionsMaterializerTests(unittest.TestCase):
+    @patch.object(module, "record_run")
+    @patch.object(module, "pending_groups", return_value=[])
+    def test_empty_source_is_blocked_not_reported_as_completed(self, pending, record) -> None:
+        result = module.run(20)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["rows_read"], 0)
+        self.assertEqual(result["batches_created"], 0)
+        self.assertIn("no unmaterialized source", record.call_args.kwargs["error"])
+
     def test_contract_quality_flags_crossed_and_missing_oi(self) -> None:
         result = module.quality_for_contract({
             "quote_source_timestamp": "2026-08-04T04:00:00+00:00",

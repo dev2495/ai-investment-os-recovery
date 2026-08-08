@@ -26,7 +26,23 @@ const Q = {
   reports: ["reports"],
   office: ["office"],
   graphControl: ["graph-control"],
+  zerodhaAuth: ["zerodha-auth"],
+  zerodhaMarket: ["zerodha-market"],
 } as const;
+
+export function useSyncZerodhaAccount() {
+  return useInvalidating<{ datasets: string[]; actor?: string }, LiveRow>(
+    "/api/zerodha/sync",
+    [Q.zerodhaAuth, Q.zerodhaMarket, Q.portfolioOffice, Q.tradingQuantRisk]
+  );
+}
+
+export function useSyncZerodhaMarket() {
+  return useInvalidating<{ modes: string[]; underlyings?: string[]; strike_pairs?: number; actor?: string }, LiveRow>(
+    "/api/zerodha/market/sync",
+    [Q.zerodhaMarket, Q.tradingQuantRisk, Q.office]
+  );
+}
 
 /** Generic invalidating mutation factory. */
 function useInvalidating<TBody, TResult = LiveRow>(
@@ -587,6 +603,10 @@ export interface ManualTradeInput {
   tags?: string[];
   side: "buy" | "sell";
   quantity: number;
+  quantity_unit?: "units" | "lots";
+  lot_count?: number;
+  lot_size?: number;
+  contract_quantity?: number;
   price: number;
   trade_date?: string;
   book_key?: string;

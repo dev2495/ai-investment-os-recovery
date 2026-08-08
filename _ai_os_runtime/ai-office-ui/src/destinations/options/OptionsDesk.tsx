@@ -334,7 +334,16 @@ function OptionsDataOperationsControl() {
 
   function runMaterializer() {
     materialize.mutate({ limit: 20, interval_seconds: 300, actor: "Devarsh" }, {
-      onSuccess: (result) => pushToast({ title: "Option warehouse refreshed", message: text(result, "status", "completed"), tone: "ok", duration: 5000 }),
+      onSuccess: (result) => {
+        const status = text(result, "status", "blocked");
+        const rowsRead = num(result, "rows_read");
+        pushToast({
+          title: status === "completed" || status === "degraded" ? "Option warehouse refreshed" : "Option warehouse not ready",
+          message: rowsRead ? `${rowsRead} source rows read · ${num(result, "calculations_completed")} analytics rows` : "No new real Zerodha option snapshots were available.",
+          tone: status === "completed" ? "ok" : "warn",
+          duration: 6500,
+        });
+      },
       onError: (error) => pushToast({ title: "Materializer failed", message: error.message, tone: "risk", duration: 7000 }),
     });
   }
@@ -402,13 +411,29 @@ function DeskView() {
   const specialistObservations = tradingData?.option_specialist_observations ?? [];
   const replaySessions = tradingData?.option_replays ?? [];
   const optionTrades = React.useMemo(
-    () => (tradingData?.trade_activity ?? []).filter((row) => {
+    () => [
+      ...(tradingData?.trade_activity ?? []).filter((row) => {
       const instrumentType = text(row, "instrument_type", text(row, "asset_class", "")).toLowerCase();
       const optionType = text(row, "option_type", "").toUpperCase();
       const notes = text(row, "notes", text(row, "thesis", "")).toUpperCase();
       return instrumentType.includes("option") || ["CE", "PE"].includes(optionType) || /\b(CE|PE)\b/.test(notes);
-    }),
-    [tradingData?.trade_activity],
+      }),
+      ...(tradingData?.option_trade_log ?? []).map((row) => ({
+        ...row,
+        symbol: text(row, "stock_ticker"),
+        strike: num(row, "strike_price"),
+        option_type: text(row, "call_put"),
+        quantity: num(row, "contracts") || num(row, "lot_size") * num(row, "no_of_trades"),
+        price: num(row, "option_value"),
+        trade_ts: text(row, "entry_date"),
+        strategy_name: text(row, "trade_type", "legacy option log"),
+        source_kind: "attached_option_log",
+        quantity_unit: "lots",
+        lot_count: num(row, "contracts"),
+        contract_quantity: num(row, "contracts") * num(row, "lot_size"),
+      })),
+    ],
+    [tradingData?.trade_activity, tradingData?.option_trade_log],
   );
 
   return (
@@ -476,7 +501,9 @@ function DeskView() {
                 return <><strong>{parts.join(" ")}</strong><div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{text(row, "strategy_name", text(row, "thesis", "manual option trade"))}</div></>;
               } },
               { key: "side", header: "Side", render: (row) => <StatusPill status={text(row, "side", text(row, "direction"))} /> },
-              { key: "quantity", header: "Qty", align: "right", render: (row) => num(row, "quantity", num(row, "qty", 0)) },
+              { key: "lots", header: "Lots", align: "right", render: (row) => text(row, "quantity_unit") === "lots" ? num(row, "lot_count", num(row, "quantity", num(row, "qty", 0))) : "—" },
+              { key: "lot_size", header: "Lot size", align: "right", render: (row) => num(row, "lot_size") || "—" },
+              { key: "quantity", header: "Units", align: "right", render: (row) => num(row, "contract_quantity", num(row, "quantity", num(row, "qty", 0))) },
               { key: "price", header: "Premium", align: "right", render: (row) => formatCurrency(num(row, "price", num(row, "trade_price", 0))) },
               { key: "book", header: "Book", render: (row) => text(row, "book_key", text(row, "book_name", "unassigned")) },
               { key: "when", header: "Recorded", render: (row) => formatRelative(text(row, "trade_ts", text(row, "created_at"))) },
@@ -898,10 +925,11 @@ function AgentView() {
 function OptionTicketDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const tradeMut = useRecordManualTrade();
   const pushToast = useUIStore((s) => s.pushToast);
-  const [form, setForm] = React.useState({ symbol: "", side: "buy" as "buy" | "sell", quantity: 1, price: 0, option_type: "CE", strike: 0, expiry_date: "", notes: "" });
+  const [form, setForm] = React.useState({ symbol: "", side: "buy" as "buy" | "sell", lot_count: 1, lot_size: 0, price: 0, option_type: "CE", strike: 0, expiry_date: "", notes: "" });
 
   function submit() {
-    if (!form.symbol || !form.strike || !form.expiry_date) { pushToast({ title: "Symbol, strike, and expiry required", tone: "warn", duration: 2500 }); return; }
+    if (!form.symbol || !form.strike || !form.expiry_date || form.lot_count <= 0 || form.lot_size <= 0) { pushToast({ title: "Complete the option contract", message: "Symbol, strike, expiry, lots, and lot size are required.", tone: "warn", duration: 3500 }); return; }
+    const contractQuantity = Number(form.lot_count) * Number(form.lot_size);
     tradeMut.mutate(
       {
         symbol: form.symbol,
@@ -913,7 +941,11 @@ function OptionTicketDrawer({ open, onClose }: { open: boolean; onClose: () => v
         strategy_name: form.notes.trim() || undefined,
         setup_type: form.notes.trim() || "manual_option_trade",
         side: form.side,
-        quantity: Number(form.quantity),
+        quantity: Number(form.lot_count),
+        quantity_unit: "lots",
+        lot_count: Number(form.lot_count),
+        lot_size: Number(form.lot_size),
+        contract_quantity: contractQuantity,
         price: Number(form.price),
         thesis: form.notes.trim() || undefined,
         notes: form.notes.trim() || undefined,
@@ -937,9 +969,11 @@ function OptionTicketDrawer({ open, onClose }: { open: boolean; onClose: () => v
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--space-3)" }}>
           <Field label="Side"><Select value={form.side} onChange={(e) => setForm({ ...form, side: e.target.value as "buy" | "sell" })}><option value="buy">Buy</option><option value="sell">Sell</option></Select></Field>
-          <Field label="Qty (lots)"><TextInput type="number" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} /></Field>
+          <Field label="Lots" required><TextInput type="number" min={1} value={form.lot_count} onChange={(e) => setForm({ ...form, lot_count: Number(e.target.value) })} /></Field>
+          <Field label="Lot size" required><TextInput type="number" min={1} value={form.lot_size} onChange={(e) => setForm({ ...form, lot_size: Number(e.target.value) })} placeholder="From contract" /></Field>
           <Field label="Premium"><TextInput type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} /></Field>
         </div>
+        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{form.lot_count > 0 && form.lot_size > 0 ? `${form.lot_count} lot(s) × ${form.lot_size} = ${form.lot_count * form.lot_size} units` : "Enter the exchange contract lot size; it is stored with the trade."}</div>
         <Field label="Notes / Strategy"><TextArea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} placeholder="e.g. Bull call spread, earnings play, hedge..." /></Field>
         <div style={{ padding: "var(--space-3)", background: "var(--status-warn-soft)", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", color: "var(--status-warn)" }}>
           <AlertTriangle size={12} style={{ display: "inline", marginRight: 6 }} />Manual record only. No live order is placed.

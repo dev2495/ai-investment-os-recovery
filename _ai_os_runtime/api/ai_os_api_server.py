@@ -3145,6 +3145,10 @@ def build_trading_quant_risk_snapshot() -> dict:
                    payload->>'strike' AS strike,
                    payload->>'expiry_date' AS expiry_date,
                    payload->>'strategy_name' AS strategy_name,
+                   payload->>'quantity_unit' AS quantity_unit,
+                   payload->>'lot_count' AS lot_count,
+                   payload->>'lot_size' AS lot_size,
+                   payload->>'contract_quantity' AS contract_quantity,
                    evidence, payload
             FROM trading.trade_activity_ledger
             ORDER BY trade_ts DESC, created_at DESC
@@ -6328,6 +6332,10 @@ def build_snapshot() -> dict:
                    payload->>\x27strike\x27 AS strike,
                    payload->>\x27expiry_date\x27 AS expiry_date,
                    payload->>\x27strategy_name\x27 AS strategy_name,
+                   payload->>\x27quantity_unit\x27 AS quantity_unit,
+                   payload->>\x27lot_count\x27 AS lot_count,
+                   payload->>\x27lot_size\x27 AS lot_size,
+                   payload->>\x27contract_quantity\x27 AS contract_quantity,
                    evidence, payload
             FROM trading.trade_activity_ledger
             ORDER BY trade_ts DESC, created_at DESC
@@ -11026,12 +11034,28 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
         raise ValueError("symbol is required")
     if side not in {"buy", "sell", "long", "short", "watch", "exit"}:
         raise ValueError("side must be one of buy, sell, long, short, watch, exit")
+    instrument_type = str(payload.get("instrument_type") or "equity").strip().lower()
+    quantity_unit = str(payload.get("quantity_unit") or "units").strip().lower()
+    if quantity_unit not in {"units", "lots"}:
+        raise ValueError("quantity_unit must be units or lots")
+    quantity = float(payload.get("quantity") or 0)
+    if quantity <= 0:
+        raise ValueError("quantity must be greater than zero")
+    lot_count = float(payload.get("lot_count") or quantity) if quantity_unit == "lots" else None
+    lot_size = float(payload.get("lot_size") or 0) if quantity_unit == "lots" else None
+    if quantity_unit == "lots" and (lot_count <= 0 or not lot_size or lot_size <= 0):
+        raise ValueError("positive lot_count and lot_size are required when quantity_unit is lots")
+    contract_quantity = lot_count * lot_size if quantity_unit == "lots" else quantity
+    supplied_contract_quantity = payload.get("contract_quantity")
+    if supplied_contract_quantity is not None and abs(float(supplied_contract_quantity) - contract_quantity) > 0.000001:
+        raise ValueError("contract_quantity does not match lot_count multiplied by lot_size")
     actor = str(payload.get("created_by") or payload.get("actor") or actor_default).strip()
     persisted_payload = {
         key: payload.get(key)
         for key in (
             "option_type", "strike", "expiry_date", "strategy_name", "notes",
             "book_key", "purpose_key", "trade_date", "trade_ts",
+            "quantity_unit", "lot_count", "lot_size", "contract_quantity",
         )
         if payload.get(key) is not None
     }
@@ -11055,9 +11079,9 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 {sql_literal(payload.get("strategy_key"))},
                 {sql_literal(symbol)},
                 {sql_literal(payload.get("exchange") or "NSE")},
-                {sql_literal(payload.get("instrument_type") or "equity")},
+                {sql_literal(instrument_type)},
                 {sql_literal(side)},
-                {sql_numeric(payload.get("quantity"), field_name="quantity")},
+                {sql_numeric(contract_quantity, field_name="quantity")},
                 {sql_numeric(payload.get("price"), field_name="price")},
                 COALESCE({sql_literal(payload.get("trade_ts") or payload.get("trade_date"))}::timestamptz, now()),
                 {sql_literal(payload.get("status") or "recorded")},

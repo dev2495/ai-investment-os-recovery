@@ -64,6 +64,7 @@ export const queryKeys = {
   office: ["office"] as const,
   graphControl: (runId?: number | null) => ["graph-control", runId ?? "all"] as const,
   zerodhaAuth: ["zerodha-auth"] as const,
+  zerodhaMarket: ["zerodha-market"] as const,
   tradingViewDesktop: ["tradingview-desktop"] as const,
   departmentTerminal: (workspace: string) => ["department-terminal", workspace] as const,
   evidence: (kind: string, key: string) => ["evidence", kind, key] as const,
@@ -118,6 +119,15 @@ export function useZerodhaAuthStatus() {
   });
 }
 
+export function useZerodhaMarketStatus() {
+  return useQuery<LiveRow>({
+    queryKey: queryKeys.zerodhaMarket,
+    queryFn: () => get<LiveRow>("/api/zerodha/market/status"),
+    ...snapshotQueryOptions,
+    refetchInterval: 15_000,
+  });
+}
+
 export function useBeginZerodhaAuth() {
   return useMutation<LiveRow, Error, void>({
     mutationFn: () => post<LiveRow>("/api/zerodha/auth/begin", { actor: "Devarsh" }),
@@ -135,6 +145,7 @@ export function useExchangeZerodhaToken() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.zerodhaAuth }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.zerodhaMarket }),
         queryClient.invalidateQueries({ queryKey: queryKeys.missionControl }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tradingQuantRisk }),
       ]);
