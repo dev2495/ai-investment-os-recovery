@@ -26,6 +26,7 @@ import {
   useOpenLongTermCommittee, useUpsertWatchlist,
   useRunInstitutionalFundamentalFactory,
   useReviewFundamentalEvidence,
+  useReviewFundamentalOpinion,
   useSyncFundamentalRemediation,
   useSyncFundamentalCompanyIntake,
   useRegisterCompanyIRSource,
@@ -412,6 +413,7 @@ function ScorecardsView() {
   const remediationTasks = data?.fundamental_remediation_tasks ?? [];
   const [selectedThesis, setSelectedThesis] = React.useState<string>("");
   const [selectedChecklist, setSelectedChecklist] = React.useState<LiveRow | null>(null);
+  const [selectedOpinion, setSelectedOpinion] = React.useState<LiveRow | null>(null);
 
   function runAll() {
     if (!selectedThesis) {
@@ -500,7 +502,7 @@ function ScorecardsView() {
             { key: "conclusion", header: "Current conclusion", render: (row) => text(row, "conclusion") },
             { key: "followups", header: "Required follow-ups", render: (row) => compactJson(value(row, "required_followups", [])) },
             { key: "evidence", header: "Evidence", render: (row) => <StatusPill status={text(row, "evidence_verification_status")} /> },
-          ]} />
+          ]} onRowClick={setSelectedOpinion} />
         )}
       </Panel>
 
@@ -537,7 +539,67 @@ function ScorecardsView() {
       </Panel>
 
       <ChecklistReviewDrawer checklist={selectedChecklist} onClose={() => setSelectedChecklist(null)} />
+      <FundamentalOpinionReviewDrawer opinion={selectedOpinion} onClose={() => setSelectedOpinion(null)} />
     </>
+  );
+}
+
+function FundamentalOpinionReviewDrawer({ opinion, onClose }: { opinion: LiveRow | null; onClose: () => void }) {
+  const mutation = useReviewFundamentalOpinion();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [rationale, setRationale] = React.useState("");
+
+  React.useEffect(() => {
+    setRationale("");
+    mutation.reset();
+  }, [opinion?.id]);
+
+  function review(decision: "reviewed" | "dissent" | "rejected") {
+    if (!opinion || rationale.trim().length < 12) return;
+    mutation.mutate({
+      opinion_id: num(opinion, "id"),
+      decision,
+      rationale: rationale.trim(),
+      operator_confirmed: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => {
+        pushToast({
+          title: decision === "reviewed" ? "Specialist opinion reviewed" : decision === "dissent" ? "Dissent preserved" : "Specialist opinion rejected",
+          message: text(opinion, "specialist_key").replace(/_/g, " "),
+          tone: decision === "reviewed" ? "ok" : "warn",
+          duration: 5000,
+        });
+        onClose();
+      },
+      onError: (error) => pushToast({ title: "Opinion review failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  const sourceUrl = opinion ? text(opinion, "source_url") : "";
+  return (
+    <Drawer open={Boolean(opinion)} onClose={onClose} title="Review Specialist Opinion" subtitle={opinion ? `${text(opinion, "primary_exchange")}:${text(opinion, "primary_symbol")} / ${text(opinion, "specialist_key").replace(/_/g, " ")}` : ""} icon={Microscope} width={760}>
+      {opinion ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Panel title={text(opinion, "agent_name")}>
+            <KeyValue label="Opinion status" value={text(opinion, "opinion_status")} />
+            <KeyValue label="Evidence status" value={text(opinion, "evidence_verification_status")} />
+            <KeyValue label="Conclusion" value={text(opinion, "conclusion")} />
+            <KeyValue label="Disconfirming evidence" value={text(opinion, "disconfirming_evidence", "None recorded")} />
+            <KeyValue label="Required follow-ups" value={compactJson(value(opinion, "required_followups", []))} />
+            {/^https?:\/\//i.test(sourceUrl) ? <a href={sourceUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontSize: "var(--text-sm)" }}>Open supporting source</a> : null}
+          </Panel>
+          <Field label="Operator review rationale" required>
+            <TextArea rows={5} value={rationale} onChange={(event) => setRationale(event.target.value)} placeholder="Record whether the conclusion is supported, what remains unresolved, and why this review status is appropriate." />
+          </Field>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", justifyContent: "flex-end" }}>
+            <Button variant="ghost" icon={AlertTriangle} onClick={() => review("rejected")} disabled={rationale.trim().length < 12 || mutation.isPending}>Reject</Button>
+            <Button variant="subtle" icon={TrendingDown} onClick={() => review("dissent")} disabled={rationale.trim().length < 12 || mutation.isPending}>Preserve dissent</Button>
+            <Button variant="primary" icon={ShieldCheck} onClick={() => review("reviewed")} disabled={rationale.trim().length < 12 || mutation.isPending}>{mutation.isPending ? "Saving review..." : "Mark reviewed"}</Button>
+          </div>
+        </div>
+      ) : null}
+    </Drawer>
   );
 }
 

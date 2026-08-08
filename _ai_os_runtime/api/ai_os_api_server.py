@@ -2581,7 +2581,8 @@ def build_research_ideas_snapshot() -> dict:
                    opinion.disconfirming_evidence, opinion.required_followups,
                    opinion.evidence_id, evidence.source_title, evidence.source_url,
                    evidence.verification_status AS evidence_verification_status,
-                   opinion.opinion_as_of, opinion.created_at, opinion.updated_at
+                   opinion.opinion_as_of, opinion.reviewed_by, opinion.reviewed_at,
+                   opinion.review_rationale, opinion.created_at, opinion.updated_at
             FROM research.fundamental_specialist_opinions opinion
             JOIN research.companies company ON company.id = opinion.company_id
             JOIN research.investment_dossier_versions version ON version.id = opinion.dossier_version_id
@@ -12479,6 +12480,72 @@ def review_fundamental_evidence(payload: dict) -> dict:
     return result
 
 
+def review_fundamental_opinion(payload: dict) -> dict:
+    """Record an explicit operator decision on one evidence-linked specialist opinion."""
+    try:
+        opinion_id = int(payload.get("opinion_id") or payload.get("opinionId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("opinion_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"reviewed", "dissent", "rejected"}:
+        raise ValueError("decision must be reviewed, dissent, or rejected")
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true for a specialist opinion decision")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    rationale = str(payload.get("rationale") or "").strip()
+    if len(rationale) < 12:
+        raise ValueError("rationale must contain at least 12 characters")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH updated AS (
+            UPDATE research.fundamental_specialist_opinions opinion
+            SET opinion_status = {sql_literal(decision)},
+                reviewed_by = {sql_literal(actor)},
+                reviewed_at = now(),
+                review_rationale = {sql_literal(rationale)},
+                updated_at = now()
+            WHERE opinion.id = {opinion_id}
+            RETURNING opinion.*
+        ), result_rows AS (
+            SELECT updated.id AS opinion_id, updated.company_id,
+                   company.company_key, company.legal_name,
+                   company.primary_symbol, company.primary_exchange,
+                   updated.holding_thesis_id, updated.dossier_version_id,
+                   updated.specialist_key, updated.agent_name,
+                   updated.opinion_status, updated.conclusion,
+                   updated.disconfirming_evidence, updated.required_followups,
+                   updated.evidence_id, updated.opinion_as_of,
+                   updated.reviewed_by, updated.reviewed_at,
+                   updated.review_rationale,
+                   false AS capital_action_allowed,
+                   false AS broker_write_allowed
+            FROM updated
+            JOIN research.companies company ON company.id = updated.company_id
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("fundamental specialist opinion was not found")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_review_fundamental_opinion",
+        "review_fundamental_opinion",
+        actor,
+        "research.fundamental_specialist_opinions",
+        result,
+        {
+            "opinion_id": opinion_id,
+            "decision": decision,
+            "operator_confirmed": True,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
 def sync_fundamental_remediation(payload: dict) -> dict:
     """Create bounded, idempotent work for unresolved institutional specialist lanes."""
     try:
@@ -20190,6 +20257,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/fundamental-evidence/review":
                 self._send_json(review_fundamental_evidence(payload), 200)
+                return
+            if self.path == "/api/research/fundamental-opinion/review":
+                self._send_json(review_fundamental_opinion(payload), 200)
                 return
             if self.path == "/api/research/fundamental-remediation/sync":
                 self._send_json(sync_fundamental_remediation(payload), 201)

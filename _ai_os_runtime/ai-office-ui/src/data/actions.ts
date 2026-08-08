@@ -161,6 +161,21 @@ export function useReviewFundamentalEvidence() {
   );
 }
 
+export interface FundamentalOpinionReviewInput {
+  opinion_id: number;
+  decision: "reviewed" | "dissent" | "rejected";
+  rationale: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useReviewFundamentalOpinion() {
+  return useInvalidating<FundamentalOpinionReviewInput, LiveRow>(
+    "/api/research/fundamental-opinion/review",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
 export interface FundamentalRemediationSyncInput {
   holding_thesis_id: number;
   operator_confirmed: true;
