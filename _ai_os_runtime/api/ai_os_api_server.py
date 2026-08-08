@@ -12393,8 +12393,52 @@ def review_fundamental_evidence(payload: dict) -> dict:
             FROM selected
             WHERE evidence.id = selected.id
             RETURNING evidence.*
-        )
-        , result_rows AS (
+        ), company_identity_review AS (
+            UPDATE research.companies company
+            SET real_company_verification_evidence_id = CASE
+                    WHEN {sql_literal(decision)} = 'human_verified'
+                         AND updated.source_url IS NOT NULL
+                         AND updated.source_type IN ('corporate_filing', 'annual_report', 'exchange_filing')
+                    THEN updated.id
+                    WHEN {sql_literal(decision)} = 'rejected'
+                         AND company.real_company_verification_evidence_id = updated.id
+                    THEN NULL
+                    ELSE company.real_company_verification_evidence_id
+                END,
+                real_company_verified_at = CASE
+                    WHEN {sql_literal(decision)} = 'human_verified'
+                         AND updated.source_url IS NOT NULL
+                         AND updated.source_type IN ('corporate_filing', 'annual_report', 'exchange_filing')
+                    THEN updated.verified_at
+                    WHEN {sql_literal(decision)} = 'rejected'
+                         AND company.real_company_verification_evidence_id = updated.id
+                    THEN NULL
+                    ELSE company.real_company_verified_at
+                END,
+                metadata = company.metadata || jsonb_build_object(
+                    'identity_review_status', {sql_literal(decision)},
+                    'identity_review_evidence_id', updated.id,
+                    'identity_reviewed_by', {sql_literal(actor)},
+                    'identity_reviewed_at', updated.verified_at
+                ),
+                updated_at = now()
+            FROM updated
+            WHERE company.id = updated.company_id
+              AND (
+                  (
+                      {sql_literal(decision)} = 'human_verified'
+                      AND updated.source_url IS NOT NULL
+                      AND updated.source_type IN ('corporate_filing', 'annual_report', 'exchange_filing')
+                  )
+                  OR (
+                      {sql_literal(decision)} = 'rejected'
+                      AND company.real_company_verification_evidence_id = updated.id
+                  )
+              )
+            RETURNING company.id AS company_id,
+                      company.real_company_verification_evidence_id,
+                      company.real_company_verified_at
+        ), result_rows AS (
             SELECT updated.id AS evidence_id, updated.company_id,
                    selected.company_key, selected.legal_name,
                    selected.primary_symbol, selected.primary_exchange,
@@ -12402,10 +12446,15 @@ def review_fundamental_evidence(payload: dict) -> dict:
                    updated.source_title, updated.verification_status,
                    updated.verified_by, updated.verified_at,
                    {sql_literal(rationale)} AS review_rationale,
+                   identity.real_company_verification_evidence_id = updated.id
+                       AS selected_for_company_identity,
+                   identity.real_company_verified_at AS company_identity_verified_at,
                    false AS capital_action_allowed,
                    false AS broker_write_allowed
             FROM updated
             JOIN selected ON selected.id = updated.id
+            LEFT JOIN company_identity_review identity
+              ON identity.company_id = updated.company_id
         )
         SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
         FROM result_rows

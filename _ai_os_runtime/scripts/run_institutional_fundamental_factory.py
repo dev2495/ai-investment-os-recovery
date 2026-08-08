@@ -708,7 +708,12 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     gates = evaluate_acceptance(company, evidence, opinions, sections, coverage, latest_dossier, committee, request.as_of)
     failed = [gate["gate_key"] for gate in gates if gate["gate_status"] != "passed"]
     specialists = sorted({str(row.get("specialist_key")) for row in opinions})
-    human_verified = any(row.get("verification_status") == "human_verified" for row in evidence)
+    identity_evidence_id = company.get("real_company_verification_evidence_id")
+    identity_human_verified = any(
+        row.get("id") == identity_evidence_id
+        and row.get("verification_status") == "human_verified"
+        for row in evidence
+    )
     thesis_id = latest_dossier.get("holding_thesis_id") or context.get("target_thesis_id")
     company_key = company.get("company_key") or company.get("primary_symbol") or company["id"]
     latest_cutoff = parse_timestamp(latest_dossier.get("source_cutoff_at"))
@@ -725,7 +730,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
         "sections": sections,
         "opinion_ids": [int(row["id"]) for row in opinions],
         "verification_evidence_id": int(company.get("real_company_verification_evidence_id") or evidence[0]["id"]),
-        "acceptance_eligible": human_verified > 0,
+        "acceptance_eligible": identity_human_verified,
         "executive_conclusion": "No capital action is authorized. Review the source-backed dossier sections, failed gates, specialist dissent, and committee record.",
         "decision_summary": {"acceptance_status": "passed" if not failed else "failed", "failed_gates": failed, "capital_action_allowed": False, "broker_execution_allowed": False},
         "evidence_coverage": {**coverage, "evidence_count": len(evidence), "specialists_present": specialists, "section_count": len(sections), "point_in_time_cutoff": request.as_of.isoformat()},

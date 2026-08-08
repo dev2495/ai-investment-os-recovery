@@ -144,6 +144,17 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertEqual(gates["market_share"]["gate_status"], "failed")
         self.assertIn("statement_history", plan["decision_summary"]["failed_gates"])
 
+    def test_acceptance_requires_the_designated_identity_evidence_to_be_human_verified(self) -> None:
+        context = complete_context()
+        context["evidence"][0]["verification_status"] = "machine_extracted"
+        context["evidence"][1]["verification_status"] = "human_verified"
+
+        plan = factory.build_plan(context, self.request())
+
+        self.assertFalse(plan["acceptance_eligible"])
+        evidence_gate = next(row for row in plan["acceptance_gates"] if row["gate_key"] == "evidence_quality")
+        self.assertEqual(evidence_gate["gate_status"], "passed")
+
     def test_missing_committee_valuation_or_challenge_blocks_acceptance(self) -> None:
         context = complete_context()
         context["committee"] = {}
