@@ -67,6 +67,7 @@ export const queryKeys = {
   graphControl: (runId?: number | null) => ["graph-control", runId ?? "all"] as const,
   zerodhaAuth: ["zerodha-auth"] as const,
   zerodhaMarket: ["zerodha-market"] as const,
+  companyIRSources: ["company-ir-sources"] as const,
   tradingViewDesktop: ["tradingview-desktop"] as const,
   departmentTerminal: (workspace: string) => ["department-terminal", workspace] as const,
   evidence: (kind: string, key: string) => ["evidence", kind, key] as const,
@@ -226,6 +227,15 @@ export function useResearchIdeas() {
       return validateSnapshot(ResearchIdeasSchema, data, "research-ideas");
     },
     ...snapshotQueryOptions,
+  });
+}
+
+export function useCompanyIRSources() {
+  return useQuery<LiveRow>({
+    queryKey: queryKeys.companyIRSources,
+    queryFn: () => get<LiveRow>("/api/research/company-ir/sources", { query: { status: "all" } }),
+    ...snapshotQueryOptions,
+    refetchInterval: 60_000,
   });
 }
 

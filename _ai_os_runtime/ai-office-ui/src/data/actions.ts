@@ -29,6 +29,7 @@ const Q = {
   blueprintRequirements: ["blueprint-requirements"],
   zerodhaAuth: ["zerodha-auth"],
   zerodhaMarket: ["zerodha-market"],
+  companyIRSources: ["company-ir-sources"],
 } as const;
 
 export function useSyncZerodhaAccount() {
@@ -99,6 +100,33 @@ export function useSyncFundamentalCompanyIntake() {
   return useInvalidating<FundamentalCompanyIntakeInput, LiveRow>(
     "/api/research/fundamental-intake/sync",
     [Q.researchIdeas, Q.portfolioOffice, Q.office]
+  );
+}
+
+export interface CompanyIRSourceInput {
+  symbol: string;
+  exchange: "NSE" | "BSE";
+  company_name: string;
+  source_kind: "ir_page" | "annual_report_pdf";
+  source_url: string;
+  fiscal_year_end?: number;
+  document_label?: string;
+  verification_evidence: Record<string, unknown>;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRegisterCompanyIRSource() {
+  return useInvalidating<CompanyIRSourceInput, LiveRow>(
+    "/api/research/company-ir/sources",
+    [Q.companyIRSources, Q.researchIdeas, Q.office]
+  );
+}
+
+export function useCollectCompanyIRSource() {
+  return useInvalidating<{ source_id: number; actor?: string; limit?: number }, LiveRow>(
+    "/api/research/company-ir/sources/collect",
+    [Q.companyIRSources, Q.researchIdeas, Q.office]
   );
 }
 

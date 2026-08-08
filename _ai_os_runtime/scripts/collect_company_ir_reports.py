@@ -101,6 +101,26 @@ def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> l
     return reports[:limit]
 
 
+def direct_report(document_url: str, fiscal_year_end: int, label: str | None = None) -> dict[str, Any]:
+    parsed = urllib.parse.urlsplit(document_url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("official document URL must use HTTPS")
+    if not parsed.path.lower().endswith(".pdf"):
+        raise ValueError("official document URL must identify a PDF")
+    current_year = dt.datetime.now(INDIA_TZ).year
+    if fiscal_year_end < 2001 or fiscal_year_end > current_year + 1:
+        raise ValueError("fiscal_year_end is outside the supported range")
+    canonical = urllib.parse.urlunsplit(
+        parsed._replace(path=urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/"), fragment="")
+    )
+    return {
+        "url": canonical,
+        "label": label or f"Annual Report FY {fiscal_year_end - 1}-{fiscal_year_end}",
+        "fiscal_year_start": fiscal_year_end - 1,
+        "fiscal_year_end": fiscal_year_end,
+    }
+
+
 def download_report(report: dict[str, Any], symbol: str) -> dict[str, Any]:
     target_dir = ARTIFACT_ROOT / symbol.lower() / f"fy-{report['fiscal_year_start']}-{report['fiscal_year_end']}"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -174,12 +194,16 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     symbol = args.symbol.strip().upper()
     exchange = args.exchange.strip().upper()
     company_name = args.company_name.strip()
-    page_url = args.url.strip()
+    page_url = str(args.url or "").strip()
+    document_url = str(args.document_url or "").strip()
     if not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
         raise ValueError("unsupported symbol format")
     if exchange not in {"NSE", "BSE"}:
         raise ValueError("exchange must be NSE or BSE")
-    if urllib.parse.urlsplit(page_url).scheme != "https":
+    if bool(page_url) == bool(document_url):
+        raise ValueError("provide exactly one investor-relations URL or official document URL")
+    source_url = page_url or document_url
+    if urllib.parse.urlsplit(source_url).scheme != "https":
         raise ValueError("investor-relations URL must use HTTPS")
     run_key = f"company-ir-{exchange.lower()}-{symbol.lower()}-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
     rows = run_psql_json(
@@ -189,21 +213,25 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             run_key,symbol,exchange,company_name,investor_relations_url,status,started_by
           ) VALUES (
             {sql_literal(run_key)},{sql_literal(symbol)},{sql_literal(exchange)},
-            {sql_literal(company_name)},{sql_literal(page_url)},'started',{sql_literal(args.actor)}
+            {sql_literal(company_name)},{sql_literal(source_url)},'started',{sql_literal(args.actor)}
           ) RETURNING id
         ) SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text FROM inserted
         """
     )
     run_id = int(rows[0]["id"])
     try:
-        discovered = discover_reports(page_url, args.include_subsidiaries, max(1, args.limit))
+        discovered = (
+            [direct_report(document_url, int(args.fiscal_year_end), args.document_label)]
+            if document_url
+            else discover_reports(page_url, args.include_subsidiaries, max(1, args.limit))
+        )
         downloaded: list[dict[str, Any]] = []
         filing_ids: list[int] = []
         if not args.dry_run:
             for report in discovered:
                 item = download_report(report, symbol)
                 downloaded.append(item)
-                filing_ids.append(upsert_report(run_id, item, symbol, exchange, company_name, page_url))
+                filing_ids.append(upsert_report(run_id, item, symbol, exchange, company_name, source_url))
         total_bytes = sum(int(row["bytes_downloaded"]) for row in downloaded)
         summary = {
             "ok": True,
@@ -212,7 +240,9 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "status": "dry_run" if args.dry_run else "completed",
             "symbol": symbol,
             "exchange": exchange,
-            "investor_relations_url": page_url,
+            "investor_relations_url": page_url or None,
+            "document_url": document_url or None,
+            "collection_mode": "direct_document" if document_url else "ir_page_discovery",
             "reports_discovered": len(discovered),
             "reports_upserted": len(filing_ids),
             "bytes_downloaded": total_bytes,
@@ -240,12 +270,20 @@ def main() -> int:
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--exchange", required=True, choices=["NSE", "BSE"])
     parser.add_argument("--company-name", required=True)
-    parser.add_argument("--url", required=True)
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--url")
+    source_group.add_argument("--document-url")
+    parser.add_argument("--fiscal-year-end", type=int)
+    parser.add_argument("--document-label")
     parser.add_argument("--limit", type=int, default=15)
     parser.add_argument("--actor", default="Fundamental Data Steward")
     parser.add_argument("--include-subsidiaries", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.document_url and args.fiscal_year_end is None:
+        parser.error("--fiscal-year-end is required with --document-url")
+    if args.url and args.fiscal_year_end is not None:
+        parser.error("--fiscal-year-end is only valid with --document-url")
     print(json.dumps(collect(args), indent=2, sort_keys=True))
     return 0
 

@@ -33,6 +33,7 @@ except ImportError:  # Direct script execution on the iMac.
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
+INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 API_HOST = os.environ.get("AI_OS_API_HOST", "127.0.0.1")
@@ -10135,8 +10136,11 @@ def run_company_ir_collector(payload: dict) -> dict:
     exchange = str(payload.get("exchange") or "").strip().upper()
     company_name = str(payload.get("company_name") or payload.get("companyName") or "").strip()
     source_url = str(payload.get("url") or payload.get("investor_relations_url") or payload.get("investorRelationsUrl") or "").strip()
-    if not symbol or not company_name or not source_url:
-        raise ValueError("symbol, company_name, and investor_relations_url are required")
+    document_url = str(payload.get("document_url") or payload.get("documentUrl") or "").strip()
+    if not symbol or not company_name:
+        raise ValueError("symbol and company_name are required")
+    if bool(source_url) == bool(document_url):
+        raise ValueError("provide exactly one investor_relations_url or document_url")
     if exchange not in {"NSE", "BSE"}:
         raise ValueError("exchange must be NSE or BSE")
     try:
@@ -10150,10 +10154,21 @@ def run_company_ir_collector(payload: dict) -> dict:
         "--symbol", symbol,
         "--exchange", exchange,
         "--company-name", company_name,
-        "--url", source_url,
         "--limit", str(limit),
         "--actor", actor,
     ]
+    if document_url:
+        fiscal_year_end = payload.get("fiscal_year_end") or payload.get("fiscalYearEnd")
+        try:
+            fiscal_year_end = int(fiscal_year_end)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fiscal_year_end is required for a direct document URL") from exc
+        command.extend(["--document-url", document_url, "--fiscal-year-end", str(fiscal_year_end)])
+        document_label = str(payload.get("document_label") or payload.get("documentLabel") or "").strip()
+        if document_label:
+            command.extend(["--document-label", document_label])
+    else:
+        command.extend(["--url", source_url])
     if payload.get("include_subsidiaries") or payload.get("includeSubsidiaries"):
         command.append("--include-subsidiaries")
     if payload.get("dry_run") or payload.get("dryRun"):
@@ -10175,6 +10190,140 @@ def run_company_ir_collector(payload: dict) -> dict:
         {key: value for key, value in payload.items() if key not in {"authorization", "token"}},
     )
     return result
+
+
+def company_ir_sources(query: dict[str, list[str]]) -> dict:
+    symbol = str((query.get("symbol") or [""])[0]).strip().upper()
+    status = str((query.get("status") or ["active"])[0]).strip().lower()
+    if symbol and not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("unsupported symbol format")
+    if status not in {"active", "paused", "rejected", "all"}:
+        raise ValueError("status must be active, paused, rejected, or all")
+    filters = ["true"]
+    if symbol:
+        filters.append(f"upper(symbol)={sql_literal(symbol)}")
+    if status != "all":
+        filters.append(f"status={sql_literal(status)}")
+    rows = run_psql_json(
+        "SELECT * FROM research.v_company_ir_source_readiness WHERE "
+        + " AND ".join(filters)
+        + " ORDER BY company_name, fiscal_year_end DESC NULLS FIRST, id"
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(rows),
+        "sources": rows,
+        "broker_write_allowed": False,
+    }
+
+
+def register_company_ir_source(payload: dict) -> dict:
+    if not bool(payload.get("operator_confirmed") or payload.get("operatorConfirmed")):
+        raise PermissionError("operator confirmation is required to register a primary source")
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    company_name = str(payload.get("company_name") or payload.get("companyName") or "").strip()
+    source_kind = str(payload.get("source_kind") or payload.get("sourceKind") or "").strip().lower()
+    source_url = str(payload.get("source_url") or payload.get("sourceUrl") or "").strip()
+    actor = str(payload.get("actor") or "Fundamental Data Steward").strip() or "Fundamental Data Steward"
+    if not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("unsupported symbol format")
+    if exchange not in {"NSE", "BSE"}:
+        raise ValueError("exchange must be NSE or BSE")
+    if not company_name:
+        raise ValueError("company_name is required")
+    if source_kind not in {"ir_page", "annual_report_pdf"}:
+        raise ValueError("source_kind must be ir_page or annual_report_pdf")
+    parsed = urllib.parse.urlsplit(source_url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("source_url must be a public HTTPS URL without credentials")
+    fiscal_year_end = payload.get("fiscal_year_end") or payload.get("fiscalYearEnd")
+    if source_kind == "annual_report_pdf":
+        if not parsed.path.lower().endswith(".pdf"):
+            raise ValueError("annual_report_pdf source_url must identify a PDF")
+        try:
+            fiscal_year_end = int(fiscal_year_end)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fiscal_year_end is required for annual_report_pdf") from exc
+        if not 2001 <= fiscal_year_end <= datetime.now(INDIA_TZ).year + 1:
+            raise ValueError("fiscal_year_end is outside the supported range")
+    elif fiscal_year_end not in (None, ""):
+        raise ValueError("fiscal_year_end is only valid for annual_report_pdf")
+    else:
+        fiscal_year_end = None
+    evidence = payload.get("verification_evidence") or payload.get("verificationEvidence") or {}
+    if not isinstance(evidence, dict):
+        raise ValueError("verification_evidence must be an object")
+    document_label = str(payload.get("document_label") or payload.get("documentLabel") or "").strip() or None
+    rows = run_psql_json(f"""
+        WITH source_row AS (
+          INSERT INTO research.company_ir_sources (
+            symbol,exchange,company_name,source_kind,source_url,fiscal_year_end,
+            document_label,status,verified_at,verified_by,verification_evidence,metadata
+          ) VALUES (
+            {sql_literal(symbol)},{sql_literal(exchange)},{sql_literal(company_name)},
+            {sql_literal(source_kind)},{sql_literal(source_url)},
+            {sql_literal(fiscal_year_end)}::integer,{sql_literal(document_label)},'active',now(),
+            {sql_literal(actor)},{sql_jsonb(evidence)},
+            '{{"broker_write_allowed":false,"review_status":"operator_verified_source"}}'::jsonb
+          )
+          ON CONFLICT (exchange,symbol,source_url) DO UPDATE SET
+            company_name=EXCLUDED.company_name,source_kind=EXCLUDED.source_kind,
+            fiscal_year_end=EXCLUDED.fiscal_year_end,document_label=EXCLUDED.document_label,
+            status='active',verified_at=now(),verified_by=EXCLUDED.verified_by,
+            verification_evidence=EXCLUDED.verification_evidence,updated_at=now()
+          RETURNING *
+        ) SELECT coalesce(json_agg(row_to_json(source_row)), '[]'::json)::text FROM source_row
+    """)
+    result = {"status": "registered", "source": rows[0], "broker_write_allowed": False}
+    audit_api_write(
+        "ai_os_api_company_ir_source_register", "register_company_ir_source", actor,
+        "research.company_ir_sources", result,
+        {"symbol": symbol, "exchange": exchange, "source_kind": source_kind, "source_host": parsed.hostname},
+    )
+    return result
+
+
+def collect_registered_company_ir_source(payload: dict) -> dict:
+    try:
+        source_id = int(payload.get("source_id") or payload.get("sourceId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("source_id is required") from exc
+    if source_id <= 0:
+        raise ValueError("source_id must be positive")
+    rows = run_psql_json(
+        "SELECT * FROM research.company_ir_sources "
+        f"WHERE id={source_id} AND status='active' LIMIT 1"
+    )
+    if not rows:
+        raise ValueError("active company IR source not found")
+    source = rows[0]
+    request: dict[str, object] = {
+        "symbol": source["symbol"], "exchange": source["exchange"],
+        "company_name": source["company_name"],
+        "actor": str(payload.get("actor") or "Fundamental Data Steward"),
+        "limit": payload.get("limit") or 15,
+    }
+    if source["source_kind"] == "annual_report_pdf":
+        request.update({
+            "document_url": source["source_url"],
+            "fiscal_year_end": source["fiscal_year_end"],
+            "document_label": source.get("document_label"),
+        })
+    else:
+        request["investor_relations_url"] = source["source_url"]
+    result = run_company_ir_collector(request)
+    run_id = int(result["run_id"])
+    run_psql_text(
+        "UPDATE research.company_ir_sources SET last_collected_at=now(),"
+        f"last_collection_run_id={run_id},updated_at=now() WHERE id={source_id}"
+    )
+    return {
+        "status": "collected",
+        "source_id": source_id,
+        "collection": result,
+        "broker_write_allowed": False,
+    }
 
 
 def run_filing_pdf_extractor(payload: dict) -> dict:
@@ -19326,6 +19475,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/zerodha/auth/status":
                 self._send_json(zerodha_auth_status())
                 return
+            if request_path == "/api/research/company-ir/sources":
+                self._send_json(company_ir_sources(query))
+                return
             if request_path == "/api/zerodha/stream/status":
                 self._send_json(zerodha_stream_status())
                 return
@@ -19587,6 +19739,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/company-ir/collect":
                 self._send_json(run_company_ir_collector(payload), 201)
+                return
+            if self.path == "/api/research/company-ir/sources":
+                self._send_json(register_company_ir_source(payload), 201)
+                return
+            if self.path == "/api/research/company-ir/sources/collect":
+                self._send_json(collect_registered_company_ir_source(payload), 201)
                 return
             if self.path == "/api/research/filings/extract-pdfs":
                 self._send_json(run_filing_pdf_extractor(payload), 201)

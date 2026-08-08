@@ -19,7 +19,7 @@ import {
   Users, Gavel, Wallet, BarChart3, Search, TrendingDown, ShieldCheck, Briefcase,
   Send, GitBranch, Target, FileText, Save, RefreshCw,
 } from "lucide-react";
-import { useResearchIdeas, usePortfolioOffice } from "../../data/queries";
+import { useResearchIdeas, usePortfolioOffice, useCompanyIRSources } from "../../data/queries";
 import {
   useRunMonteCarlo, useGenerateThesisMemo, useGenerateResearchPacket,
   useUpdateChecklist, useUpdateValuation, useDispatchSpecialists,
@@ -28,6 +28,8 @@ import {
   useReviewFundamentalEvidence,
   useSyncFundamentalRemediation,
   useSyncFundamentalCompanyIntake,
+  useRegisterCompanyIRSource,
+  useCollectCompanyIRSource,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -795,6 +797,8 @@ function CoverageView() {
 
   return (
     <>
+      <CompanyIRSourceRegistry />
+
       <Panel icon={ClipboardCheck} title="Coverage Queue">
         {isLoading ? <SkeletonGrid rows={3} /> : queue.length === 0 ? (
           <Empty icon={ClipboardCheck} title="Coverage queue empty" description="Symbols needing research coverage will appear here." />
@@ -834,6 +838,102 @@ function CoverageView() {
       <ChecklistReviewDrawer checklist={selectedChecklist} onClose={() => setSelectedChecklist(null)} />
     </>
   );
+}
+
+function CompanyIRSourceRegistry() {
+  const { data, isLoading } = useCompanyIRSources();
+  const register = useRegisterCompanyIRSource();
+  const collect = useCollectCompanyIRSource();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const sources = value<LiveRow[]>(data, "sources", []);
+  const [form, setForm] = React.useState({
+    symbol: "",
+    exchange: "NSE" as "NSE" | "BSE",
+    company_name: "",
+    source_kind: "ir_page" as "ir_page" | "annual_report_pdf",
+    source_url: "",
+    fiscal_year_end: String(new Date().getFullYear()),
+  });
+  const ready = Boolean(
+    form.symbol.trim() && form.company_name.trim() && form.source_url.trim()
+    && (form.source_kind === "ir_page" || /^20\d{2}$/.test(form.fiscal_year_end))
+  );
+
+  function submit() {
+    if (!ready) return;
+    register.mutate({
+      symbol: form.symbol.trim().toUpperCase(),
+      exchange: form.exchange,
+      company_name: form.company_name.trim(),
+      source_kind: form.source_kind,
+      source_url: form.source_url.trim(),
+      fiscal_year_end: form.source_kind === "annual_report_pdf" ? Number(form.fiscal_year_end) : undefined,
+      verification_evidence: { registered_from: "fundamental_coverage", operator_reviewed: true },
+      operator_confirmed: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => {
+        pushToast({ title: "Official source registered", message: `${form.exchange}:${form.symbol.trim().toUpperCase()} is ready for collection.`, tone: "ok", duration: 4500 });
+        setForm((current) => ({ ...current, symbol: "", company_name: "", source_url: "" }));
+      },
+      onError: (error) => pushToast({ title: "Source registration failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  function collectSource(source: LiveRow) {
+    const sourceId = num(source, "id");
+    if (!sourceId) return;
+    collect.mutate({ source_id: sourceId, actor: "Devarsh", limit: 15 }, {
+      onSuccess: (result) => {
+        const collection = value<LiveRow>(result, "collection", {});
+        pushToast({
+          title: "Official reports collected",
+          message: `${num(collection, "reports_upserted")} reports retained for ${text(source, "symbol")}.`,
+          tone: num(collection, "reports_upserted") > 0 ? "ok" : "warn",
+          duration: 6500,
+        });
+      },
+      onError: (error) => pushToast({ title: "Report collection failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  return (
+    <Panel icon={FileText} title="Official Company Sources" actions={<Badge tone={sources.length ? "ok" : "warn"}>{sources.length} registered</Badge>}>
+      <div style={{ display: "grid", gap: "var(--space-4)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+          <Field label="Symbol" required><TextInput value={form.symbol} onChange={(event) => setForm({ ...form, symbol: event.target.value.toUpperCase() })} placeholder="INFY" /></Field>
+          <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as "NSE" | "BSE" })}><option value="NSE">NSE</option><option value="BSE">BSE</option></Select></Field>
+          <Field label="Company" required><TextInput value={form.company_name} onChange={(event) => setForm({ ...form, company_name: event.target.value })} placeholder="Infosys Limited" /></Field>
+          <Field label="Source type" required><Select value={form.source_kind} onChange={(event) => setForm({ ...form, source_kind: event.target.value as "ir_page" | "annual_report_pdf" })}><option value="ir_page">Investor relations page</option><option value="annual_report_pdf">Annual report PDF</option></Select></Field>
+          {form.source_kind === "annual_report_pdf" ? <Field label="Fiscal year end" required><TextInput type="number" min="2001" max="2100" value={form.fiscal_year_end} onChange={(event) => setForm({ ...form, fiscal_year_end: event.target.value })} /></Field> : null}
+          <Field label="Official HTTPS URL" required><TextInput value={form.source_url} onChange={(event) => setForm({ ...form, source_url: event.target.value })} placeholder="https://company.com/investors/…" /></Field>
+          <Button variant="primary" icon={Save} onClick={submit} disabled={!ready || register.isPending}>{register.isPending ? "Registering…" : "Register source"}</Button>
+        </div>
+
+        {isLoading ? <SkeletonGrid rows={3} /> : sources.length === 0 ? (
+          <Empty icon={FileText} title="No official company sources registered" description="Register a verified investor-relations page or annual-report PDF." />
+        ) : (
+          <DataTable rows={sources} rowKey={(row, index) => text(row, "id", String(index))} columns={[
+            { key: "company", header: "Company", render: (row) => <><strong>{text(row, "symbol")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "company_name")}</div></> },
+            { key: "kind", header: "Source", render: (row) => <><StatusPill status={text(row, "source_kind")} /><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 4 }}>{sourceHost(text(row, "source_url"))}</div></> },
+            { key: "year", header: "FY", align: "right", render: (row) => text(row, "fiscal_year_end", "Archive") },
+            { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "last_collection_status", text(row, "status"))} /> },
+            { key: "reports", header: "Reports", align: "right", render: (row) => num(row, "last_reports_upserted") },
+            { key: "checked", header: "Verified", render: (row) => formatRelative(text(row, "verified_at")) },
+            { key: "action", header: "", align: "right", render: (row) => <Button icon={RefreshCw} onClick={(event) => { event.stopPropagation(); collectSource(row); }} disabled={collect.isPending || text(row, "status") !== "active"}>{collect.isPending ? "Collecting…" : "Collect"}</Button> },
+          ]} />
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function sourceHost(url: string) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "invalid source";
+  }
 }
 
 /* ============================================================

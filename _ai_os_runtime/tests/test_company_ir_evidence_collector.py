@@ -1,7 +1,15 @@
+import importlib.util
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+SPEC = importlib.util.spec_from_file_location("company_ir_collector", SCRIPTS / "collect_company_ir_reports.py")
+COLLECTOR = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(COLLECTOR)
 
 
 def test_company_ir_collector_is_primary_source_and_evidence_only() -> None:
@@ -44,3 +52,52 @@ def test_company_ir_collector_is_available_through_scoped_api() -> None:
     assert "def run_company_ir_collector(payload: dict) -> dict:" in source
     assert 'self.path == "/api/research/company-ir/collect"' in source
     assert '"research.company_ir_collection_runs"' in source
+
+
+def test_direct_official_pdf_has_explicit_fiscal_year_and_canonical_url() -> None:
+    report = COLLECTOR.direct_report(
+        "https://company.example/investors/Annual%20Report%202025-26.pdf?download=1#page=2",
+        2026,
+    )
+    assert report["url"] == "https://company.example/investors/Annual%20Report%202025-26.pdf?download=1"
+    assert report["fiscal_year_start"] == 2025
+    assert report["fiscal_year_end"] == 2026
+
+
+def test_direct_official_document_rejects_non_pdf_or_http() -> None:
+    for url in (
+        "http://company.example/investors/annual-report.pdf",
+        "https://company.example/investors/annual-report.html",
+    ):
+        try:
+            COLLECTOR.direct_report(url, 2026)
+        except ValueError:
+            continue
+        raise AssertionError(f"unsafe direct document accepted: {url}")
+
+
+def test_scoped_api_accepts_direct_document_with_explicit_year() -> None:
+    source = (ROOT / "api" / "ai_os_api_server.py").read_text()
+    assert 'payload.get("document_url")' in source
+    assert '"--fiscal-year-end"' in source
+    assert "provide exactly one investor_relations_url or document_url" in source
+
+
+def test_governed_ir_source_registry_requires_https_and_operator_verification() -> None:
+    migration = (ROOT / "postgres" / "init" / "204_company_ir_source_registry_v1.sql").read_text()
+    assert "research.company_ir_sources" in migration
+    assert "chk_company_ir_source_https" in migration
+    assert "chk_company_ir_source_document_year" in migration
+    assert "broker_write_allowed" in migration
+    api = (ROOT / "api" / "ai_os_api_server.py").read_text()
+    assert "def register_company_ir_source(payload: dict) -> dict:" in api
+    assert "operator confirmation is required to register a primary source" in api
+    assert 'self.path == "/api/research/company-ir/sources"' in api
+    assert 'self.path == "/api/research/company-ir/sources/collect"' in api
+
+
+def test_fundamental_coverage_exposes_source_registration_and_collection() -> None:
+    frontend = (ROOT / "ai-office-ui" / "src" / "destinations" / "fundamental" / "FundamentalResearch.tsx").read_text()
+    assert "function CompanyIRSourceRegistry()" in frontend
+    assert "Register source" in frontend
+    assert "collectSource(row)" in frontend
