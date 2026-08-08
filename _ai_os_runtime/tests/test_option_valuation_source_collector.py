@@ -1,5 +1,6 @@
 from datetime import date
 import math
+from pathlib import Path
 import unittest
 
 from _ai_os_runtime.scripts.collect_option_valuation_sources import (
@@ -31,6 +32,12 @@ class OptionValuationSourceCollectorTests(unittest.TestCase):
         result = extract_dashboard_yields(text)
         self.assertAlmostEqual(result["NIFTY"], 0.0122)
         self.assertAlmostEqual(result["BANKNIFTY"], 0.0066)
+
+    def test_daemon_refreshes_candidates_without_activating_policy(self) -> None:
+        daemon = (Path(__file__).resolve().parents[1] / "scripts" / "run_agent_message_daemon.py").read_text(encoding="utf-8")
+        self.assertIn("run_option_valuation_source_refresh", daemon)
+        self.assertIn("AI_OS_OPTION_VALUATION_SOURCE_INTERVAL_SECONDS", daemon)
+        self.assertIn("payload.get(\"activated_policy\") is not False", daemon)
 
 
 if __name__ == "__main__":

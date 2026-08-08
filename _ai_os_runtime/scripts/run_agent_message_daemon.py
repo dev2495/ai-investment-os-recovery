@@ -83,6 +83,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "market_news_ingestion",
         "research_hub_refresh",
         "institutional_options_materializer",
+        "option_valuation_source_refresh",
         "workflow_schedule_materializer",
         "graph_control_plane",
     ):
@@ -704,6 +705,31 @@ def run_institutional_options_materializer(limit: int, interval_seconds: int, ti
     return payload
 
 
+def run_option_valuation_source_refresh(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "collect_option_valuation_sources.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    managed_python = Path(os.environ.get("AI_OS_PDF_PYTHON") or (Path.home() / "AI_OS_NODE" / "runtime" / "python" / "bin" / "python3"))
+    python_executable = str(managed_python) if managed_python.is_file() else sys.executable
+    completed = subprocess.run(
+        [python_executable, str(script), "--actor", "Options Data Quality Agent"],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(60, int(timeout_seconds)),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "option valuation source refresh failed").strip()[:4000]
+    if payload.get("activated_policy") is not False or payload.get("broker_write_allowed") is not False:
+        return {"status": "failed", "error": "source refresh violated its no-activation contract"}
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI OS agent mailbox daemon.")
     parser.add_argument("--once", action="store_true", help="Run one pass and exit.")
@@ -763,6 +789,9 @@ def main() -> int:
     parser.add_argument("--institutional-options-interval", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_INTERVAL_SECONDS", "300")))
     parser.add_argument("--institutional-options-timeout", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_TIMEOUT_SECONDS", "240")))
     parser.add_argument("--institutional-options-limit", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_BATCH_LIMIT", "20")))
+    parser.add_argument("--disable-option-valuation-sources", action="store_true", help="Disable official option valuation source refresh.")
+    parser.add_argument("--option-valuation-source-interval", type=int, default=int(os.environ.get("AI_OS_OPTION_VALUATION_SOURCE_INTERVAL_SECONDS", "21600")))
+    parser.add_argument("--option-valuation-source-timeout", type=int, default=int(os.environ.get("AI_OS_OPTION_VALUATION_SOURCE_TIMEOUT_SECONDS", "180")))
     parser.add_argument("--disable-workflow-scheduler", action="store_true", help="Disable governed agent workflow schedule materialization.")
     parser.add_argument(
         "--workflow-scheduler-interval",
@@ -797,6 +826,8 @@ def main() -> int:
     research_hub_refresh_interval = max(300, int(args.research_hub_refresh_interval))
     institutional_options_enabled = not args.disable_institutional_options and os.environ.get("AI_OS_ENABLE_INSTITUTIONAL_OPTIONS", "1") != "0"
     institutional_options_interval = max(60, int(args.institutional_options_interval))
+    option_valuation_sources_enabled = not args.disable_option_valuation_sources and os.environ.get("AI_OS_ENABLE_OPTION_VALUATION_SOURCES", "1") != "0"
+    option_valuation_source_interval = max(3600, int(args.option_valuation_source_interval))
     workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
     workflow_scheduler_interval = max(30, int(args.workflow_scheduler_interval))
     graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
@@ -808,6 +839,7 @@ def main() -> int:
     last_market_calendar_run = 0.0
     last_research_hub_refresh_run = 0.0
     last_institutional_options_run = 0.0
+    last_option_valuation_source_run = 0.0
     last_workflow_scheduler_run = 0.0
     daemon_started_at = datetime.now().astimezone()
     daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
@@ -821,6 +853,7 @@ def main() -> int:
         "market_calendar": market_calendar_enabled,
         "research_hub_refresh": research_hub_refresh_enabled,
         "institutional_options": institutional_options_enabled,
+        "option_valuation_sources": option_valuation_sources_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
         "graph_control": graph_control_enabled,
     }
@@ -899,6 +932,19 @@ def main() -> int:
                     "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
                 }
             last_institutional_options_run = time.monotonic()
+        if option_valuation_sources_enabled and (
+            last_option_valuation_source_run == 0.0
+            or time.monotonic() - last_option_valuation_source_run >= option_valuation_source_interval
+        ):
+            try:
+                result["option_valuation_source_refresh"] = run_option_valuation_source_refresh(
+                    max(60, int(args.option_valuation_source_timeout))
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["option_valuation_source_refresh"] = {
+                    "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
+                }
+            last_option_valuation_source_run = time.monotonic()
         if ohlcv_aggregation_enabled and (last_ohlcv_aggregation_run == 0.0 or time.monotonic() - last_ohlcv_aggregation_run >= ohlcv_aggregation_interval):
             try:
                 result["ohlcv_aggregation"] = run_ohlcv_aggregation(max(30, int(args.ohlcv_aggregation_timeout)))
@@ -962,6 +1008,7 @@ def main() -> int:
             market_calendar = result.get("market_calendar_refresh") or {}
             research_hub = result.get("research_hub_refresh") or {}
             institutional_options = result.get("institutional_options_materializer") or {}
+            valuation_sources = result.get("option_valuation_source_refresh") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
             graph_control = result.get("graph_control_plane") or {}
             print(
@@ -974,6 +1021,7 @@ def main() -> int:
                 f"market_calendar={market_calendar.get('status', 'skipped')} "
                 f"research_hub={research_hub.get('status', 'skipped')} "
                 f"institutional_options={institutional_options.get('status', 'skipped')} "
+                f"valuation_sources={valuation_sources.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
                 f"graph_runs={graph_control.get('count', 0)}/{graph_control.get('active_runs_seen', 0)} "
                 f"graph_status={graph_control.get('status', 'skipped')} "
