@@ -17,6 +17,7 @@ from typing import Any
 from runtime_storage import artifact_reference, artifact_root
 
 from strategy_dsl_quality import parse_strategy_dsl, parse_symbols, run_data_quality_gate
+from strategy_rule_engine import CompiledRules, ENGINE_VERSION, compile_rule_set, positions_for_rule_set
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -85,6 +86,10 @@ class Bar:
     ts: str
     symbol: str
     close: float
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    volume: float = 0.0
 
 
 def fetch_candidate(candidate_id: int | None) -> dict[str, Any]:
@@ -144,12 +149,23 @@ def infer_template(candidate: dict[str, Any], override: str | None) -> str:
     return "momentum"
 
 
-def fetch_bars(symbols: list[str], timeframe: str, max_symbols: int) -> list[Bar]:
+def fetch_bars(
+    symbols: list[str],
+    timeframe: str,
+    max_symbols: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[Bar]:
     symbol_filter = ""
     if symbols:
         cleaned = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
         variants = sorted(set(cleaned + [f"NSE:{symbol}" for symbol in cleaned if ":" not in symbol]))
         symbol_filter = f"AND upper(s.symbol) = ANY(ARRAY[{','.join(sql_literal(v) for v in variants)}]::text[])"
+    date_filter = ""
+    if start_date:
+        date_filter += f" AND o.ts >= {sql_literal(start_date)}::date"
+    if end_date:
+        date_filter += f" AND o.ts < ({sql_literal(end_date)}::date + interval '1 day')"
     rows = run_psql_json(
         f"""
         WITH ranked_symbols AS (
@@ -158,6 +174,7 @@ def fetch_bars(symbols: list[str], timeframe: str, max_symbols: int) -> list[Bar
             JOIN trading.symbols s ON s.id = o.symbol_id
             WHERE o.timeframe = {sql_literal(timeframe)}
               AND o.close IS NOT NULL
+              {date_filter}
               {symbol_filter}
             GROUP BY s.id, s.symbol
             ORDER BY rows_seen DESC, s.symbol
@@ -165,15 +182,24 @@ def fetch_bars(symbols: list[str], timeframe: str, max_symbols: int) -> list[Bar
         )
         SELECT coalesce(json_agg(row_to_json(rows) ORDER BY rows.symbol, rows.ts), '[]'::json)::text
         FROM (
-            SELECT o.ts::text AS ts, rs.symbol, o.close::float8 AS close
+            SELECT o.ts::text AS ts, rs.symbol, o.close::float8 AS close,
+                   coalesce(o.open, o.close)::float8 AS open,
+                   coalesce(o.high, o.close)::float8 AS high,
+                   coalesce(o.low, o.close)::float8 AS low,
+                   coalesce(o.volume, 0)::float8 AS volume
             FROM trading.ohlcv o
             JOIN ranked_symbols rs ON rs.id = o.symbol_id
             WHERE o.timeframe = {sql_literal(timeframe)}
               AND o.close IS NOT NULL
+              {date_filter}
         ) rows
         """
     )
-    return [Bar(ts=str(row["ts"]), symbol=str(row["symbol"]), close=float(row["close"])) for row in rows]
+    return [Bar(
+        ts=str(row["ts"]), symbol=str(row["symbol"]), close=float(row["close"]),
+        open=float(row["open"]), high=float(row["high"]), low=float(row["low"]),
+        volume=float(row["volume"]),
+    ) for row in rows]
 
 
 def rolling_mean(values: list[float], window: int) -> list[float | None]:
@@ -236,8 +262,20 @@ def periods_per_year(timeframe: str) -> float:
     }.get(timeframe, 252)
 
 
-def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, template: str, cost_bps: float, slippage_bps: float, max_symbols: int) -> dict[str, Any]:
-    bars = fetch_bars(symbols, timeframe, max_symbols)
+def run_backtest(
+    candidate: dict[str, Any],
+    symbols: list[str],
+    timeframe: str,
+    template: str,
+    cost_bps: float,
+    slippage_bps: float,
+    max_symbols: int,
+    *,
+    compiled_rules: CompiledRules | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    bars = fetch_bars(symbols, timeframe, max_symbols, start_date, end_date)
     by_symbol: dict[str, list[Bar]] = {}
     for bar in bars:
         by_symbol.setdefault(bar.symbol, []).append(bar)
@@ -253,7 +291,7 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         if len(closes) < 20:
             symbol_results.append({"symbol": symbol, "bars": len(closes), "status": "insufficient_bars"})
             continue
-        positions = positions_for_template(closes, template)
+        positions = positions_for_rule_set(symbol_bars, compiled_rules) if compiled_rules else positions_for_template(closes, template)
         returns: list[float] = []
         equity = [1.0]
         for index in range(1, len(closes)):
@@ -354,6 +392,12 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         },
         "diagnostics": {
             "engine": "local_deterministic_ohlcv_backtester_v1",
+            "rule_engine": ENGINE_VERSION if compiled_rules else "legacy_explicit_template_v1",
+            "rule_hash": compiled_rules.rule_hash if compiled_rules else None,
+            "entry_expression": compiled_rules.entry if compiled_rules else None,
+            "exit_expression": compiled_rules.exit if compiled_rules else None,
+            "requested_start_date": start_date,
+            "requested_end_date": end_date,
             "data_source": "trading.ohlcv",
             "cost_bps": cost_bps,
             "slippage_bps": slippage_bps,
@@ -505,6 +549,8 @@ def main() -> int:
     parser.add_argument("--cost-bps", type=float, default=3.0)
     parser.add_argument("--slippage-bps", type=float, default=2.0)
     parser.add_argument("--max-symbols", type=int, default=14)
+    parser.add_argument("--start-date", default="")
+    parser.add_argument("--end-date", default="")
     parser.add_argument("--min-rows-per-symbol", type=int, default=50)
     parser.add_argument("--min-total-rows", type=int, default=500)
     parser.add_argument("--dry-run", action="store_true")
@@ -515,6 +561,14 @@ def main() -> int:
     timeframe = normalize_timeframe(args.timeframe or str(candidate.get("timeframe") or ""))
     template = infer_template(candidate, args.template)
     parse_result = parse_strategy_dsl(int(candidate["id"]), created_by="Backtest Engineer")
+    normalized_rules = parse_result.get("normalized_rules") or {}
+    compiled_payload = normalized_rules.get("compiled") or {}
+    compiled_rules = None
+    if parse_result.get("parse_status") == "passed":
+        compiled_rules = compile_rule_set(
+            str(compiled_payload.get("entry") or (normalized_rules.get("entry") or {}).get("expression") or ""),
+            str(compiled_payload.get("exit") or (normalized_rules.get("exit") or {}).get("expression") or ""),
+        )
     gate = run_data_quality_gate(
         int(candidate["id"]),
         symbols=symbols or parse_symbols(parse_result.get("symbols")),
@@ -543,7 +597,20 @@ def main() -> int:
             )
         )
         return 2
-    result = run_backtest(candidate, symbols, timeframe, template, args.cost_bps, args.slippage_bps, args.max_symbols)
+    if compiled_rules is None:
+        print(json.dumps({
+            "candidate": {"id": candidate["id"], "candidate_key": candidate.get("candidate_key"), "name": candidate.get("name")},
+            "status": "blocked_rule_validation",
+            "parse": parse_result,
+            "message": "Backtest blocked because no validated executable entry/exit rule set exists.",
+        }, indent=2, sort_keys=True, default=str))
+        return 2
+    result = run_backtest(
+        candidate, symbols, timeframe, template, args.cost_bps, args.slippage_bps, args.max_symbols,
+        compiled_rules=compiled_rules,
+        start_date=args.start_date or None,
+        end_date=args.end_date or None,
+    )
     result["parse"] = parse_result
     result["data_quality_gate"] = gate
     result["diagnostics"]["data_quality_gate_id"] = gate.get("id")

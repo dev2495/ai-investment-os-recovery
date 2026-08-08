@@ -216,9 +216,9 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
             <option>daily</option><option>weekly</option><option>intraday</option><option>monthly</option>
           </Select></Field>
         </div>
-        <Field label="DSL (Pine-style)" hint="Optional — define entry/exit rules. Backtest Engineer will parse this.">
+        <Field label="Strategy rules" hint="Validated local DSL. Use Entry, Exit, Risk, Symbols and Timeframe sections. Unsupported Pine code is rejected.">
           <TextArea value={form.dsl} onChange={(e) => setForm({ ...form, dsl: e.target.value })} rows={6}
-            placeholder="// entry: rsi < 30 and close > ema(close, 200)&#10;// exit: rsi > 70" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} />
+            placeholder={"Entry: rsi(close, 14) < 30 and close > ema(close, 200)\nExit: rsi(close, 14) > 70 or holding_bars >= 10\nRisk: stop_loss_pct <= 2"} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} />
         </Field>
         <Field label="Constraints"><TextArea value={form.constraints} onChange={(e) => setForm({ ...form, constraints: e.target.value })} rows={2} placeholder="Liquidity, costs, position limits, excluded dates…" /></Field>
         <Field label="Risk Notes"><TextArea value={form.risk_notes} onChange={(e) => setForm({ ...form, risk_notes: e.target.value })} rows={2} placeholder="Known failure modes and invalidation criteria…" /></Field>
@@ -433,7 +433,18 @@ function OptimizerView() {
       slippage_bps: Number(workflow.slippage_bps),
       actor: "Devarsh",
     }, {
-      onSuccess: () => { setShowWorkflow(false); pushToast({ title: "Strategy research pipeline completed", message: "Review its persisted backtest, optimization, and validation evidence before promotion.", tone: "ok", duration: 5000 }); },
+      onSuccess: (result) => {
+        setShowWorkflow(false);
+        const status = text(result, "status", "completed");
+        pushToast({
+          title: status === "needs_parameter_space" ? "Exact backtest complete; parameters required" : "Strategy research pipeline completed",
+          message: status === "needs_parameter_space"
+            ? "Custom rules were compiled and tested. Define an explicit parameter space before optimization."
+            : "Review its persisted backtest, optimization, and validation evidence before promotion.",
+          tone: status === "needs_parameter_space" ? "warn" : "ok",
+          duration: 6000,
+        });
+      },
       onError: (error) => pushToast({ title: "Strategy pipeline failed", message: error.message, tone: "risk", duration: 6000 }),
     });
   }
@@ -511,7 +522,7 @@ function OptimizerView() {
             <Field label="Timeframe"><Select value={workflow.timeframe} onChange={(e) => setWorkflow({ ...workflow, timeframe: e.target.value })}><option value="5m">5 minute</option><option value="15m">15 minute</option><option value="1h">1 hour</option><option value="1d">Daily</option></Select></Field>
           </div>
           <Field label="Symbols"><TextInput value={workflow.symbols} onChange={(e) => setWorkflow({ ...workflow, symbols: e.target.value })} placeholder="RELIANCE, HDFCBANK, NIFTY 50" /></Field>
-          <Field label="Strategy DSL (optional)"><TextArea value={workflow.dsl_text} onChange={(e) => setWorkflow({ ...workflow, dsl_text: e.target.value })} rows={5} placeholder={"Entry: close > sma(close, 20)\nExit: close < sma(close, 20) or holding_days >= 10\nRisk: stop_loss_pct <= 2"} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} /></Field>
+          <Field label="Validated strategy rules (optional)" hint="Exact bounded rules are compiled and hashed; unsupported syntax is rejected."><TextArea value={workflow.dsl_text} onChange={(e) => setWorkflow({ ...workflow, dsl_text: e.target.value })} rows={5} placeholder={"Entry: close > sma(close, 20)\nExit: close < sma(close, 20) or holding_bars >= 10\nRisk: stop_loss_pct <= 2"} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} /></Field>
           <Field label="Constraints"><TextArea value={workflow.constraints_text} onChange={(e) => setWorkflow({ ...workflow, constraints_text: e.target.value })} rows={2} /></Field>
           <Field label="Risk and invalidation"><TextArea value={workflow.risk_notes} onChange={(e) => setWorkflow({ ...workflow, risk_notes: e.target.value })} rows={2} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>

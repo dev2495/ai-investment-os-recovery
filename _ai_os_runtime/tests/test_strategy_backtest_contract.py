@@ -11,9 +11,47 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import run_strategy_backtest as backtest
+from strategy_rule_engine import compile_rule_set, positions_for_rule_set
 
 
 class StrategyBacktestContractTest(unittest.TestCase):
+    @staticmethod
+    def bars(closes: list[float]) -> list[backtest.Bar]:
+        return [
+            backtest.Bar(
+                ts=f"2026-01-{index + 1:02d}T09:15:00+00:00",
+                symbol="AAA",
+                open=close,
+                high=close + 1,
+                low=close - 1,
+                close=close,
+                volume=1000 + index,
+            )
+            for index, close in enumerate(closes)
+        ]
+
+    def test_compiled_rules_drive_positions_instead_of_hidden_template(self) -> None:
+        bars = self.bars([10, 10, 10, 12, 13, 11, 9, 12])
+        fast = compile_rule_set("close > sma(close, 3)", "close < sma(close, 3)")
+        impossible = compile_rule_set("close > sma(close, 3) * 10", "holding_bars >= 1")
+        fast_positions = positions_for_rule_set(bars, fast)
+        impossible_positions = positions_for_rule_set(bars, impossible)
+        self.assertNotEqual(fast_positions, impossible_positions)
+        self.assertGreater(sum(fast_positions), 0)
+        self.assertEqual(sum(impossible_positions), 0)
+        self.assertNotEqual(fast.rule_hash, impossible.rule_hash)
+
+    def test_compiler_rejects_arbitrary_python(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            compile_rule_set("__import__(1)", "close < sma(close, 3)")
+
+    def test_fetch_bars_applies_requested_date_window(self) -> None:
+        with mock.patch.object(backtest, "run_psql_json", return_value=[]) as query:
+            backtest.fetch_bars(["AAA"], "1d", 1, "2025-01-01", "2025-12-31")
+        sql = query.call_args.args[0]
+        self.assertIn("o.ts >= '2025-01-01'::date", sql)
+        self.assertIn("o.ts < ('2025-12-31'::date + interval '1 day')", sql)
+
     def test_equity_curve_uses_real_timestamp_aligned_returns(self) -> None:
         bars = []
         for symbol, multiplier in (("AAA", 1.0), ("BBB", 1.5)):

@@ -12109,6 +12109,10 @@ def run_strategy_backtest(payload: dict) -> dict:
         command.extend(["--timeframe", str(payload.get("timeframe"))])
     if payload.get("template"):
         command.extend(["--template", str(payload.get("template"))])
+    if payload.get("start_date") or payload.get("startDate"):
+        command.extend(["--start-date", str(payload.get("start_date") or payload.get("startDate"))])
+    if payload.get("end_date") or payload.get("endDate"):
+        command.extend(["--end-date", str(payload.get("end_date") or payload.get("endDate"))])
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "strategy backtest failed").strip()

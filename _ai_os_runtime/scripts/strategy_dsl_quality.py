@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from strategy_rule_engine import ENGINE_VERSION, compile_rule_set
 
 PARSER_VERSION = "strategy_dsl_parser_v1"
 ALLOWED_TEMPLATES = {"momentum", "mean_reversion", "breakout", "low_volatility"}
@@ -171,6 +172,7 @@ def validate_expression(label: str, value: str, errors: list[str]) -> list[str]:
             "crosses_above",
             "crosses_below",
             "holding_days",
+            "holding_bars",
             "stop_loss_pct",
             "target_pct",
             "zscore",
@@ -225,6 +227,18 @@ def parse_strategy_dsl(candidate_id: int, dsl_text: str | None = None, *, create
     if not exit_tokens and exit_rule in {"{}", "[]"}:
         errors.append("exit rule is missing")
 
+    compiled_rules = None
+    if not errors:
+        try:
+            compiled = compile_rule_set(entry, exit_rule)
+            compiled_rules = {
+                "engine": ENGINE_VERSION,
+                "entry": compiled.entry,
+                "exit": compiled.exit,
+                "rule_hash": compiled.rule_hash,
+            }
+        except ValueError as exc:
+            errors.append(str(exc))
     status = "passed" if not errors else "needs_review"
     parsed_spec = {
         "candidate_id": candidate_id,
@@ -240,6 +254,7 @@ def parse_strategy_dsl(candidate_id: int, dsl_text: str | None = None, *, create
         "exit": {"expression": exit_rule, "tokens": exit_tokens},
         "risk": {"expression": risk},
         "engine_template": template,
+        "compiled": compiled_rules,
         "paper_first": True,
         "arbitrary_code_allowed": False,
     }
