@@ -28,6 +28,8 @@ def test_pdf_extractor_reuses_verified_local_pdf() -> None:
     source = (ROOT / "scripts" / "extract_filing_pdfs.py").read_text()
     assert 'existing_path = str(filing.get("local_path") or "").strip()' in source
     assert 'handle.read(4) == b"%PDF"' in source
+    assert "except OSError as exc:" in source
+    assert 'errors.append(f"{command[0]}: {type(exc).__name__}: {exc}")' in source
 
 
 def test_company_ir_run_ledger_has_truthful_constraints() -> None:
