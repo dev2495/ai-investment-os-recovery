@@ -4353,6 +4353,20 @@ def sync_sector_fundamentals(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/sector-intelligence/fundamentals/sync", payload, timeout=320))
 
 
+def sync_sector_ownership_flows(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "lookback_days", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Flow And Ownership Analyst")
+    payload.setdefault("lookback_days", 365)
+    payload.setdefault("persist", True)
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/ownership-flows/sync", payload, timeout=920))
+
+
 def run_sector_acceptance(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
@@ -5992,6 +6006,22 @@ TOOLS = {
             "required": ["taxonomy_key", "as_of_date"],
         },
         "handler": sync_sector_fundamentals,
+    },
+    "ai_os_sync_sector_ownership_flows": {
+        "description": "Collect official NSE corporate shareholding filings and constituent-level bulk/block deals for one active sector. Raw responses and hashes are retained; investor type is not guessed from names. No capital or broker execution is available.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "lookback_days": {"type": "integer", "minimum": 1, "maximum": 366, "default": 365},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Flow And Ownership Analyst"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": sync_sector_ownership_flows,
     },
     "ai_os_run_sector_acceptance": {
         "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",

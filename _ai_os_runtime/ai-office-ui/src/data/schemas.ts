@@ -319,6 +319,8 @@ export const SectorIntelligenceSchema = z.object({
   fundamental_coverage: z.array(liveRow).default([]),
   valuation_bands: z.array(liveRow).default([]),
   flows: z.array(liveRow).default([]),
+  ownership: z.array(liveRow).default([]),
+  ownership_flow_coverage: z.array(liveRow).default([]),
   chart_artifacts: z.array(liveRow).default([]),
   source_import_runs: z.array(liveRow).default([]),
   acceptance_runs: z.array(liveRow).default([]),

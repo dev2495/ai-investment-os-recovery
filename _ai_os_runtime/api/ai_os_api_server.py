@@ -3004,11 +3004,40 @@ def build_sector_intelligence_snapshot() -> dict:
             LIMIT 200
         """,
         "flows": """
-            SELECT taxonomy_node_id, symbol_id, observed_at, flow_actor, flow_type,
-                   buy_value, sell_value, net_value, currency, source_system_id,
-                   source_reference, evidence
-            FROM sector_intelligence.flow_observations
-            ORDER BY observed_at DESC
+            SELECT flow.taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   flow.symbol_id,symbol.symbol,symbol.exchange,flow.observed_at,
+                   flow.flow_actor,flow.flow_type,flow.buy_value,flow.sell_value,
+                   flow.net_value,flow.currency,flow.source_system_id,
+                   source.name AS source_name,flow.source_reference,flow.evidence
+            FROM sector_intelligence.flow_observations flow
+            LEFT JOIN sector_intelligence.taxonomy_nodes node ON node.id=flow.taxonomy_node_id
+            LEFT JOIN trading.symbols symbol ON symbol.id=flow.symbol_id
+            LEFT JOIN core.source_systems source ON source.id=flow.source_system_id
+            ORDER BY flow.observed_at DESC
+            LIMIT 200
+        """,
+        "ownership": """
+            SELECT ownership.taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   ownership.symbol_id,symbol.symbol,symbol.exchange,
+                   ownership.period_end,ownership.holder_category,
+                   ownership.holder_name,ownership.holding_percent,
+                   ownership.shares_held,ownership.pledged_percent,
+                   ownership.change_percent_points,ownership.observation_type,
+                   ownership.source_system_id,source.name AS source_name,
+                   ownership.source_reference,ownership.evidence,ownership.created_at
+            FROM sector_intelligence.ownership_observations ownership
+            LEFT JOIN sector_intelligence.taxonomy_nodes node ON node.id=ownership.taxonomy_node_id
+            JOIN trading.symbols symbol ON symbol.id=ownership.symbol_id
+            LEFT JOIN core.source_systems source ON source.id=ownership.source_system_id
+            ORDER BY ownership.period_end DESC,ownership.created_at DESC
+            LIMIT 500
+        """,
+        "ownership_flow_coverage": """
+            SELECT taxonomy_node_id,taxonomy_key,node_name,flow_observation_count,
+                   flow_symbol_count,latest_flow_at,ownership_observation_count,
+                   ownership_symbol_count,latest_ownership_period_end
+            FROM sector_intelligence.v_sector_ownership_flow_coverage
+            ORDER BY node_name
             LIMIT 200
         """,
         "chart_artifacts": """
@@ -12737,6 +12766,61 @@ def sync_sector_fundamentals(payload: dict) -> dict:
     return result
 
 
+def sync_sector_ownership_flows(payload: dict) -> dict:
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Flow And Ownership Analyst").strip()
+    persist = payload.get("persist", True) is not False
+    try:
+        lookback_days = int(payload.get("lookback_days") or payload.get("lookbackDays") or 365)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lookback_days must be an integer") from exc
+    if not taxonomy_key or len(taxonomy_key) > 160:
+        raise ValueError("taxonomy_key is required and must be at most 160 characters")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    if lookback_days < 1 or lookback_days > 366:
+        raise ValueError("lookback_days must be between 1 and 366")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "sync_sector_ownership_flows.py"),
+        "--taxonomy-key", taxonomy_key,
+        "--as-of-date", as_of_date,
+        "--lookback-days", str(lookback_days),
+        "--actor", actor,
+    ]
+    if persist:
+        command.append("--persist")
+    completed = subprocess.run(
+        command,cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=900
+    )
+    result = _parse_engine_json(completed, "sector ownership and flow collector")
+    if result.get("broker_write_allowed") is not False or result.get("capital_action_allowed") is not False:
+        raise ValueError("sector ownership and flow collector violated its no-execution contract")
+    if persist and result.get("status") in {"completed", "partial"}:
+        result["acceptance"] = run_sector_acceptance({
+            "taxonomy_key": taxonomy_key,
+            "as_of_date": as_of_date,
+            "actor": actor,
+        })
+    audit_api_write(
+        "ai_os_api_sync_sector_ownership_flows",
+        "sync_sector_ownership_flows",
+        actor,
+        "sector_intelligence.ownership_observations/sector_intelligence.flow_observations",
+        result,
+        {
+            "taxonomy_key": taxonomy_key,
+            "as_of_date": as_of_date,
+            "lookback_days": lookback_days,
+            "persist": persist,
+            "capital_action_allowed": False,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
 def run_sector_acceptance(payload: dict) -> dict:
     taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
     taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
@@ -12768,7 +12852,7 @@ def run_sector_acceptance(payload: dict) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
         raise ValueError("run_key contains unsupported characters")
     run_rows = run_psql_json(f"""
-        SELECT sector_intelligence.run_acceptance_gates_v2(
+        SELECT sector_intelligence.run_acceptance_gates_v3(
             {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
         ) AS acceptance_run_id
     """)
@@ -19846,6 +19930,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/sector-intelligence/fundamentals/sync":
                 self._send_json(sync_sector_fundamentals(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/ownership-flows/sync":
+                self._send_json(sync_sector_ownership_flows(payload), 201)
                 return
             if self.path == "/api/sector-intelligence/activate-price-baseline":
                 self._send_json(activate_sector_price_baseline(payload), 201)

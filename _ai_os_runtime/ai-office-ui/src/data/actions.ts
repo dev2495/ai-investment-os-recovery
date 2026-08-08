@@ -203,6 +203,21 @@ export function useSyncSectorFundamentals() {
   );
 }
 
+export interface SectorOwnershipFlowSyncInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  lookback_days: number;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useSyncSectorOwnershipFlows() {
+  return useInvalidating<SectorOwnershipFlowSyncInput, LiveRow>(
+    "/api/sector-intelligence/ownership-flows/sync",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
 export interface SectorPriceBaselineInput {
   taxonomy_node_id: number;
   as_of_date: string;

@@ -6,7 +6,7 @@ import {
   Landmark,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorFundamentals, useSyncSectorRemediation } from "../../data/actions";
+import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorFundamentals, useSyncSectorOwnershipFlows, useSyncSectorRemediation } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
@@ -49,6 +49,7 @@ export default function SectorIntelligence() {
       </div>
       <SectorRunControl indices={data?.custom_indices ?? []} />
       {tab === "fundamentals" ? <SectorFundamentalSyncControl hierarchy={data?.hierarchy ?? []} /> : null}
+      {tab === "flows" ? <SectorOwnershipFlowSyncControl hierarchy={data?.hierarchy ?? []} coverage={data?.ownership_flow_coverage ?? []} /> : null}
       {tab === "overview" ? <SectorPriceBaselineControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} acceptance={data?.acceptance_runs ?? []} /> : null}
       {tab === "overview" ? <SectorSourceImportControl /> : null}
@@ -630,27 +631,61 @@ function Indices({ data }: { data: ReturnType<typeof useSectorIntelligence>["dat
 
 function Flows({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
   const flows = data?.flows ?? [];
+  const ownership = data?.ownership ?? [];
+  const coverage = data?.ownership_flow_coverage ?? [];
   const rankings = data?.rankings ?? [];
-  const aggregates = data?.aggregates ?? [];
-  const bands = data?.valuation_bands ?? [];
+  const coveredFlowSymbols = new Set(flows.map((row) => text(row, "symbol")).filter(Boolean)).size;
+  const coveredOwnershipSymbols = new Set(ownership.map((row) => text(row, "symbol")).filter(Boolean)).size;
+  const storedOwnershipRecords = coverage.reduce((total, row) => total + num(row, "ownership_observation_count"), 0);
   return (
     <>
       <MetricStrip values={[
-        ["Flow observations", flows.length],
-        ["Strength ranks", rankings.length],
-        ["Aggregates", aggregates.length],
-        ["Valuation bands", bands.length],
+        ["Transaction flows", flows.length],
+        ["Flow companies", coveredFlowSymbols],
+        ["Stored ownership records", storedOwnershipRecords],
+        ["Ownership companies", coveredOwnershipSymbols],
       ]} />
-      <Panel icon={Activity} title="Institutional And Ownership Flows">
+      <Panel icon={Activity} title="Official Constituent Transaction Flows" actions={<Badge tone={flows.length ? "ok" : "warn"}>{flows.length ? "NSE evidenced" : "No data"}</Badge>}>
         {flows.length === 0 ? (
-          <Empty icon={Activity} title="No source-backed flows" description="FII, DII, mutual-fund, promoter, insider, bulk/block and derivative flow observations have not been ingested." />
+          <Empty icon={Activity} title="No source-backed flows" description="Run the official refresh above. Market-wide FII/DII totals are not substituted for constituent evidence." />
         ) : (
           <DataTable rows={flows} rowKey={(row, index) => `${text(row, "observed_at")}:${index}`} columns={[
             { key: "time", header: "Observed", render: (row) => freshnessCell(row, "observed_at") },
+            { key: "sector", header: "Sector", render: (row) => text(row, "node_name") },
+            { key: "symbol", header: "Company", render: (row) => <strong>{text(row, "symbol")}</strong> },
             { key: "actor", header: "Actor", render: (row) => <strong>{text(row, "flow_actor")}</strong> },
             { key: "type", header: "Flow", render: (row) => text(row, "flow_type") },
+            { key: "buy", header: "Buy", align: "right", render: (row) => num(row, "buy_value") ? formatCompact(num(row, "buy_value"), "INR") : "-" },
+            { key: "sell", header: "Sell", align: "right", render: (row) => num(row, "sell_value") ? formatCompact(num(row, "sell_value"), "INR") : "-" },
             { key: "net", header: "Net", align: "right", render: (row) => formatCompact(num(row, "net_value"), text(row, "currency", "INR")) },
-            { key: "source", header: "Source", render: (row) => text(row, "source_reference", "Warehouse lineage") },
+            { key: "source", header: "Source", render: (row) => <a href={text(row, "source_reference")} target="_blank" rel="noreferrer">{text(row, "source_name", "NSE evidence")}</a> },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={Landmark} title="Official Shareholding History" actions={<Badge tone={ownership.length ? "ok" : "warn"}>{ownership.length ? "XBRL linked" : "No data"}</Badge>}>
+        {ownership.length === 0 ? (
+          <Empty icon={Landmark} title="No source-backed ownership" description="Run the official refresh to retain quarterly promoter, public and employee-trust percentages from NSE filings." />
+        ) : (
+          <DataTable rows={ownership} rowKey={(row, index) => `${text(row, "symbol")}:${text(row, "period_end")}:${text(row, "holder_category")}:${index}`} columns={[
+            { key: "period", header: "Period", render: (row) => text(row, "period_end") },
+            { key: "sector", header: "Sector", render: (row) => text(row, "node_name") },
+            { key: "symbol", header: "Company", render: (row) => <strong>{text(row, "symbol")}</strong> },
+            { key: "holder", header: "Holder category", render: (row) => text(row, "holder_name", text(row, "holder_category")) },
+            { key: "holding", header: "Holding", align: "right", render: (row) => `${num(row, "holding_percent").toFixed(2)}%` },
+            { key: "change", header: "QoQ change", align: "right", render: (row) => raw(row, "change_percent_points") == null ? "-" : `${num(row, "change_percent_points") >= 0 ? "+" : ""}${num(row, "change_percent_points").toFixed(2)} pp` },
+            { key: "source", header: "Filing", render: (row) => <a href={text(row, "source_reference")} target="_blank" rel="noreferrer">NSE XBRL</a> },
+          ]} />
+        )}
+      </Panel>
+      <Panel icon={Database} title="Coverage By Sector">
+        {coverage.length === 0 ? <Empty icon={Database} title="No coverage summary" /> : (
+          <DataTable rows={coverage} rowKey={(row, index) => text(row, "taxonomy_key", String(index))} columns={[
+            { key: "sector", header: "Sector", render: (row) => <strong>{text(row, "node_name")}</strong> },
+            { key: "flow", header: "Flow rows", align: "right", render: (row) => num(row, "flow_observation_count") },
+            { key: "flowCompanies", header: "Flow companies", align: "right", render: (row) => num(row, "flow_symbol_count") },
+            { key: "owner", header: "Ownership rows", align: "right", render: (row) => num(row, "ownership_observation_count") },
+            { key: "ownerCompanies", header: "Ownership companies", align: "right", render: (row) => num(row, "ownership_symbol_count") },
+            { key: "latest", header: "Latest filing", render: (row) => text(row, "latest_ownership_period_end", "-") },
           ]} />
         )}
       </Panel>
@@ -668,6 +703,72 @@ function Flows({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"
         )}
       </Panel>
     </>
+  );
+}
+
+function SectorOwnershipFlowSyncControl({ hierarchy, coverage }: { hierarchy: LiveRow[]; coverage: LiveRow[] }) {
+  const mutation = useSyncSectorOwnershipFlows();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const nodes = React.useMemo(() => {
+    const unique = new Map<string, { key: string; label: string }>();
+    for (const row of hierarchy) {
+      for (const [keyField, nameField] of [["sector_key", "sector_name"], ["industry_key", "industry_name"], ["sub_industry_key", "sub_industry_name"]] as const) {
+        const key = text(row, keyField);
+        const label = text(row, nameField);
+        if (key && label) unique.set(key, { key, label });
+      }
+    }
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [hierarchy]);
+  const [taxonomyKey, setTaxonomyKey] = React.useState("");
+  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+  const [lookback, setLookback] = React.useState("365");
+
+  React.useEffect(() => {
+    if (taxonomyKey || !nodes.length) return;
+    const nodeKeys = new Set(nodes.map((node) => node.key));
+    const covered = [...coverage]
+      .sort((a, b) => (
+        num(b, "flow_observation_count") + num(b, "ownership_observation_count")
+      ) - (
+        num(a, "flow_observation_count") + num(a, "ownership_observation_count")
+      ))
+      .find((row) => nodeKeys.has(text(row, "taxonomy_key")));
+    setTaxonomyKey(covered ? text(covered, "taxonomy_key") : nodes[0].key);
+  }, [taxonomyKey, nodes, coverage]);
+
+  function sync() {
+    if (!taxonomyKey || !asOf) return;
+    mutation.mutate({
+      taxonomy_key: taxonomyKey,
+      as_of_date: asOf,
+      lookback_days: Number(lookback),
+      persist: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => pushToast({
+        title: "NSE ownership and flows refreshed",
+        message: `${num(result, "ownership_observation_count")} ownership rows and ${num(result, "flow_observation_count")} constituent deal rows retained`,
+        tone: text(result, "status") === "failed" ? "risk" : "ok",
+        duration: 7000,
+      }),
+      onError: (error) => pushToast({ title: "Official NSE refresh failed", message: error.message, tone: "risk", duration: 8000 }),
+    });
+  }
+
+  return (
+    <Panel icon={Landmark} title="Refresh Official Ownership And Deal Flows" actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Collecting" : "NSE primary"}</Badge>}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Sector or industry" required><Select value={taxonomyKey} onChange={(event) => setTaxonomyKey(event.target.value)}><option value="">Select source-backed taxonomy...</option>{nodes.map((node) => <option key={node.key} value={node.key}>{node.label}</option>)}</Select></Field>
+        <Field label="As-of date" required><TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></Field>
+        <Field label="Deal lookback" required><Select value={lookback} onChange={(event) => setLookback(event.target.value)}><option value="90">90 days</option><option value="180">180 days</option><option value="365">365 days</option></Select></Field>
+        <Button variant="primary" icon={RefreshCw} onClick={sync} disabled={!taxonomyKey || !asOf || mutation.isPending}>{mutation.isPending ? "Collecting official records..." : "Refresh from NSE"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Retains raw NSE responses and hashes on the SSD. Counterparties remain institution-class unless the primary source explicitly identifies a category. No orders or capital actions are available.
+      </div>
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+    </Panel>
   );
 }
 
