@@ -324,7 +324,7 @@ class OpenRouterChatTest(unittest.TestCase):
 
     def test_scoped_context_loads_live_employee_assignment(self) -> None:
         def fake_psql(query: str):
-            if "FROM agent.v_live_office_agent_activity" in query:
+            if "FROM agent.v_live_office_presence_v2" in query:
                 return [{"agent_name": "Backtest Engineer", "live_state": "executing"}]
             return []
 

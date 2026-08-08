@@ -137,7 +137,11 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             "broker_write_allowed": False,
         }
         with (
-            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[response]) as database,
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                side_effect=[[{"acceptance_run_id": 9}], [response]],
+            ) as database,
             mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
         ):
             result = ai_os_api_server.run_sector_acceptance({
@@ -147,9 +151,10 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             })
 
         self.assertEqual(result, response)
-        query = database.call_args.args[0]
-        self.assertIn("sector_intelligence.run_acceptance_gates", query)
-        self.assertIn("sector_intelligence.v_acceptance_gate_summary", query)
+        self.assertEqual(database.call_count, 2)
+        queries = "\n".join(call.args[0] for call in database.call_args_list)
+        self.assertIn("sector_intelligence.run_acceptance_gates", queries)
+        self.assertIn("sector_intelligence.v_acceptance_gate_summary", queries)
         audit.assert_called_once()
 
     def test_sector_acceptance_rejects_unbounded_or_invalid_input(self) -> None:
@@ -222,7 +227,11 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             "gates": [],
         }
         with (
-            mock.patch.object(ai_os_api_server, "run_psql_json", return_value=[response]) as database,
+            mock.patch.object(
+                ai_os_api_server,
+                "run_psql_json",
+                side_effect=[[{"acceptance_run_id": 21}], [response]],
+            ) as database,
             mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
         ):
             result = ai_os_api_server.run_option_acceptance({
@@ -235,9 +244,10 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
             })
 
         self.assertEqual(result, response)
-        query = database.call_args.args[0]
-        self.assertIn("trading.run_option_acceptance_gates", query)
-        self.assertIn("trading.v_option_acceptance_gate_summary", query)
+        self.assertEqual(database.call_count, 2)
+        queries = "\n".join(call.args[0] for call in database.call_args_list)
+        self.assertIn("trading.run_option_acceptance_gates", queries)
+        self.assertIn("trading.v_option_acceptance_gate_summary", queries)
         audit.assert_called_once()
 
     def test_option_acceptance_rejects_unbounded_or_unsafe_input(self) -> None:
