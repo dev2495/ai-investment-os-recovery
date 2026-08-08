@@ -97,6 +97,7 @@ class KronosAdapterTest(unittest.TestCase):
         self.assertEqual(snapshot["issues"], [])
         self.assertIn("strategy.v_kronos_research_runs", query.call_args_list[0].args[0])
         self.assertIn("kronos_inference_adapter", query.call_args_list[1].args[0])
+        self.assertIn("created_at AS updated_at", query.call_args_list[1].args[0])
 
     def test_graph_snapshot_reports_missing_kronos_schema_without_fake_rows(self) -> None:
         with (

@@ -18020,7 +18020,7 @@ def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
         )
         snapshot["kronos_adapter"] = run_psql_json(
             "SELECT tool_name,tool_type,owning_agent,permission_level,enabled,"
-            "description,config,updated_at FROM agent.tool_registry "
+            "description,config,created_at AS updated_at FROM agent.tool_registry "
             "WHERE tool_name='kronos_inference_adapter' LIMIT 1"
         )
     except Exception as exc:  # noqa: BLE001
