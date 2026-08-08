@@ -14624,6 +14624,8 @@ def update_long_term_valuation_model(payload: dict) -> dict:
         command.extend(["--outputs-json", json.dumps(payload.get("outputs") or {})])
     if "evidence" in payload:
         command.extend(["--evidence-json", json.dumps(payload.get("evidence") or [])])
+    if payload.get("operator_confirmed") is True or payload.get("operatorConfirmed") is True:
+        command.append("--operator-confirmed")
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "long-term valuation update failed").strip()

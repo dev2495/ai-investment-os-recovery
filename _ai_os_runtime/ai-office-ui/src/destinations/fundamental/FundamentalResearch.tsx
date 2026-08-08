@@ -815,6 +815,7 @@ function ValuationModelDrawer({ model, onClose }: { model: LiveRow | null; onClo
       assumptions,
       outputs,
       evidence,
+      operator_confirmed: form.status === "reviewed",
       actor: "Devarsh",
     }, {
       onSuccess: () => { pushToast({ title: "Valuation model persisted", message: text(model, "model_name", modelKey), tone: "ok", duration: 3500 }); onClose(); },

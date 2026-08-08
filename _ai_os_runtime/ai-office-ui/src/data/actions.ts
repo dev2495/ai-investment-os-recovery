@@ -459,6 +459,7 @@ export interface UpdateValuationInput {
   assumptions?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
   evidence?: unknown[];
+  operator_confirmed?: boolean;
   note_path?: string;
   actor?: string;
 }
