@@ -236,6 +236,7 @@ export const ResearchIdeasSchema = z.object({
   watchlist: z.array(liveRow).default([]),
   fundamental_coverage: z.array(liveRow).default([]),
   fundamental_intake: z.array(liveRow).default([]),
+  fundamental_evidence: z.array(liveRow).default([]),
   investment_dossiers: z.array(liveRow).default([]),
   dossier_refresh_queue: z.array(liveRow).default([]),
   management_claims: z.array(liveRow).default([]),

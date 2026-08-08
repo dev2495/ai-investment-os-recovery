@@ -63,7 +63,8 @@ def complete_context(*, verified: bool = True) -> dict:
             "real_company_verified_at": "2026-01-01T00:00:00+00:00" if verified else None,
             "real_company_verification_evidence_id": 1 if verified else None,
         },
-        "latest_dossier": {"holding_thesis_id": 41, "source_cutoff_at": "2026-07-05T00:00:00+00:00"},
+        "target_thesis_id": 41,
+        "latest_dossier": {"dossier_key": "existing-reliance-dossier", "holding_thesis_id": 41, "source_cutoff_at": "2026-07-05T00:00:00+00:00"},
         "committee": {
             "committee_review_id": 81,
             "committee_decision_id": 82,
@@ -193,10 +194,21 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         sql = captured[0]
 
         self.assertIn("latest_committee AS", sql)
+        self.assertIn("target_thesis AS", sql)
+        self.assertIn("coalesce(dossier.holding_thesis_id, (SELECT id FROM target_thesis))", sql)
         self.assertIn("portfolio.long_term_committee_decisions", sql)
         self.assertIn("completed_valuation_types", sql)
         self.assertIn("portfolio.long_term_monte_carlo_runs", sql)
         self.assertIn("created_at<=", sql)
+
+    def test_existing_dossier_key_is_preserved_when_thesis_is_inferred(self) -> None:
+        context = complete_context()
+        context["latest_dossier"]["holding_thesis_id"] = None
+
+        plan = factory.build_plan(context, self.request())
+
+        self.assertEqual(plan["holding_thesis_id"], 41)
+        self.assertEqual(plan["dossier_key"], "existing-reliance-dossier")
 
     def test_dry_run_reads_but_never_persists(self) -> None:
         gateway = FakeGateway(complete_context())
@@ -215,7 +227,7 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(gateway.persisted, [])
-        self.assertIn("human-verified", result["reason"])
+        self.assertIn("primary-source evidence", result["reason"])
 
     def test_non_dry_run_persists_research_only_plan(self) -> None:
         gateway = FakeGateway(complete_context())

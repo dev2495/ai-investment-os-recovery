@@ -153,6 +153,20 @@ class PsqlGateway:
             WHERE {company_filter}
             ORDER BY company.id
             LIMIT 1
+        ), target_thesis AS (
+            SELECT thesis.id
+            FROM portfolio.holding_theses thesis
+            JOIN target
+              ON upper(thesis.symbol) = upper(target.primary_symbol)
+             AND (
+                  thesis.exchange IS NULL
+                  OR target.primary_exchange IS NULL
+                  OR upper(thesis.exchange) = upper(target.primary_exchange)
+             )
+            ORDER BY
+                CASE WHEN upper(thesis.exchange) = upper(target.primary_exchange) THEN 0 ELSE 1 END,
+                thesis.id
+            LIMIT 1
         ), eligible_evidence AS (
             SELECT evidence.*
             FROM research.fundamental_evidence evidence
@@ -161,7 +175,8 @@ class PsqlGateway:
               AND coalesce(evidence.published_at, evidence.retrieved_at) <= {cutoff}::timestamptz
               AND evidence.verification_status NOT IN ('rejected', 'superseded')
         ), latest_dossier AS (
-            SELECT dossier.id AS dossier_id, dossier.holding_thesis_id,
+            SELECT dossier.id AS dossier_id, dossier.dossier_key,
+                   coalesce(dossier.holding_thesis_id, (SELECT id FROM target_thesis)) AS holding_thesis_id,
                    version.id AS version_id, version.version_number, version.source_cutoff_at
             FROM research.investment_dossiers dossier
             JOIN target ON target.id = dossier.company_id
@@ -200,7 +215,7 @@ class PsqlGateway:
                    review.live_execution_allowed,
                    review.capital_action_allowed
             FROM portfolio.long_term_committee_reviews review
-            JOIN latest_dossier ON latest_dossier.holding_thesis_id=review.holding_thesis_id
+            JOIN target_thesis ON target_thesis.id=review.holding_thesis_id
             LEFT JOIN LATERAL (
                 SELECT item.* FROM portfolio.long_term_committee_decisions item
                 WHERE item.committee_review_id=review.id
@@ -229,6 +244,7 @@ class PsqlGateway:
                        real_company_verification_evidence_id
                 FROM target
             ) row),
+            'target_thesis_id', (SELECT id FROM target_thesis),
             'latest_dossier', (SELECT row_to_json(latest_dossier) FROM latest_dossier),
             'committee', (SELECT row_to_json(latest_committee) FROM latest_committee),
             'evidence', coalesce((SELECT json_agg(row_to_json(row) ORDER BY row.retrieved_at, row.id) FROM (
@@ -253,9 +269,9 @@ class PsqlGateway:
                 'management_claim_count', (SELECT count(*) FROM research.management_claims claim JOIN target ON target.id = claim.company_id JOIN eligible_evidence evidence ON evidence.id = claim.evidence_id WHERE claim.claim_date <= {cutoff}::date),
                 'claims_with_outcomes', (SELECT count(DISTINCT outcome.claim_id) FROM research.management_claim_outcomes outcome JOIN research.management_claims claim ON claim.id = outcome.claim_id JOIN target ON target.id = claim.company_id JOIN eligible_evidence evidence ON evidence.id = outcome.evidence_id WHERE outcome.outcome_date <= {cutoff}::date),
                 'completed_valuation_types', coalesce((SELECT json_agg(DISTINCT lower(replace(replace(model.model_type,'-','_'),' ','_')) ORDER BY lower(replace(replace(model.model_type,'-','_'),' ','_')))
-                    FROM portfolio.holding_valuation_models model JOIN latest_dossier ON latest_dossier.holding_thesis_id=model.holding_thesis_id
+                    FROM portfolio.holding_valuation_models model JOIN target_thesis ON target_thesis.id=model.holding_thesis_id
                     WHERE model.status IN ('complete','reviewed') AND model.updated_at<={cutoff}::timestamptz), '[]'::json),
-                'completed_monte_carlo_count', (SELECT count(*) FROM portfolio.long_term_monte_carlo_runs run JOIN latest_dossier ON latest_dossier.holding_thesis_id=run.holding_thesis_id
+                'completed_monte_carlo_count', (SELECT count(*) FROM portfolio.long_term_monte_carlo_runs run JOIN target_thesis ON target_thesis.id=run.holding_thesis_id
                     WHERE run.run_status='complete' AND run.created_at<={cutoff}::timestamptz)
             )
         )::text;
@@ -576,7 +592,7 @@ def evaluate_acceptance(
         for row in evidence
     ) and all((parse_timestamp(row.get("opinion_as_of")) or as_of) <= as_of for row in opinions)
     gates = [
-        _gate("real_company_verified", "Real company is human verified", bool(company.get("real_company_verified_at") and company.get("real_company_verification_evidence_id")), {"verified_at": company.get("real_company_verified_at")}, {"human_verified": True}, "Company identity lacks human-verified evidence."),
+        _gate("real_company_verified", "Company identity is matched to retained primary evidence", bool(company.get("real_company_verified_at") and company.get("real_company_verification_evidence_id")), {"identity_matched_at": company.get("real_company_verified_at"), "evidence_id": company.get("real_company_verification_evidence_id")}, {"primary_source_identity_match": True}, "Company identity lacks retained primary-source evidence."),
         _gate("point_in_time_inputs", "All inputs respect the research cutoff", point_in_time, {"as_of": as_of.isoformat()}, {"future_inputs": 0}, "At least one evidence item or opinion is newer than the cutoff."),
         _gate("fifteen_sections", "All fifteen dossier sections assembled", len(sections) == 15, len(sections), 15, "The dossier does not contain all required sections."),
         _gate("section_evidence", "Every section has stored evidence", all(row.get("evidence_ids") for row in sections), sum(1 for row in sections if row.get("evidence_ids")), 15, "At least one section has no eligible stored evidence."),
@@ -666,7 +682,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     failed = [gate["gate_key"] for gate in gates if gate["gate_status"] != "passed"]
     specialists = sorted({str(row.get("specialist_key")) for row in opinions})
     human_verified = any(row.get("verification_status") == "human_verified" for row in evidence)
-    thesis_id = latest_dossier.get("holding_thesis_id")
+    thesis_id = latest_dossier.get("holding_thesis_id") or context.get("target_thesis_id")
     company_key = company.get("company_key") or company.get("primary_symbol") or company["id"]
     latest_cutoff = parse_timestamp(latest_dossier.get("source_cutoff_at"))
     return {
@@ -678,7 +694,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
         "company_id": int(company["id"]),
         "company": company,
         "holding_thesis_id": int(thesis_id) if thesis_id is not None else None,
-        "dossier_key": f"institutional-fundamental-{slug(company_key)}-{thesis_id or 'company'}",
+        "dossier_key": latest_dossier.get("dossier_key") or f"institutional-fundamental-{slug(company_key)}-{thesis_id or 'company'}",
         "sections": sections,
         "opinion_ids": [int(row["id"]) for row in opinions],
         "verification_evidence_id": int(company.get("real_company_verification_evidence_id") or evidence[0]["id"]),
@@ -703,7 +719,7 @@ def run_factory(request: FactoryRequest, gateway: FactoryGateway) -> dict[str, A
         return {
             "status": "blocked",
             "dry_run": request.dry_run,
-            "reason": "Company is not human-verified as a real company.",
+            "reason": "Company identity is not matched to retained primary-source evidence.",
             "company": company,
             "acceptance_gates": plan["acceptance_gates"],
             "execution_envelope": plan["execution_envelope"],

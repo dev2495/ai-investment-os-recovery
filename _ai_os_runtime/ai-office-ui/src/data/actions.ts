@@ -118,6 +118,21 @@ export function useRunInstitutionalFundamentalFactory() {
   );
 }
 
+export interface FundamentalEvidenceReviewInput {
+  evidence_id: number;
+  decision: "human_verified" | "rejected";
+  rationale: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useReviewFundamentalEvidence() {
+  return useInvalidating<FundamentalEvidenceReviewInput, LiveRow>(
+    "/api/research/fundamental-evidence/review",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
 export interface SectorIntelligenceRunInput {
   index_id: number;
   as_of_date: string;

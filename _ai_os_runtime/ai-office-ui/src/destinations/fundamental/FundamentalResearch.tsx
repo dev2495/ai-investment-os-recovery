@@ -25,6 +25,7 @@ import {
   useUpdateChecklist, useUpdateValuation, useDispatchSpecialists,
   useOpenLongTermCommittee, useUpsertWatchlist,
   useRunInstitutionalFundamentalFactory,
+  useReviewFundamentalEvidence,
   useSyncFundamentalCompanyIntake,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
@@ -173,11 +174,15 @@ function FundamentalFactoryControl() {
       {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
       {mutation.isSuccess ? (() => {
         const acceptance = text(mutation.data, "acceptance_status", text(mutation.data, "status", "completed"));
-        const failed = value<string[]>(mutation.data, "failed_gates", []);
+        const gates = acceptanceGateRows(mutation.data);
+        const failed = gates.filter((gate) => text(gate, "gate_status", text(gate, "status")) !== "passed");
         return (
-          <div role="status" style={{ marginTop: "var(--space-3)", color: acceptance === "passed" ? "var(--status-ok)" : "var(--status-warn)", fontSize: "var(--text-sm)" }}>
-            <strong>{acceptance === "passed" ? "Institutional acceptance passed." : "Institutional acceptance not passed."}</strong>{" "}
-            {failed.length ? `Missing gates: ${failed.join(", ")}.` : text(mutation.data, "run_key", form.mode === "dry_run" ? "No records were written." : "Validated research records were refreshed.")}
+          <div role="status" style={{ marginTop: "var(--space-3)" }}>
+            <div style={{ color: acceptance === "passed" ? "var(--status-ok)" : "var(--status-warn)", fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+              <strong>{acceptance === "passed" ? "Institutional acceptance passed." : "Institutional acceptance not passed."}</strong>{" "}
+              {failed.length ? `${failed.length} gates require work.` : text(mutation.data, "run_key", form.mode === "dry_run" ? "No records were written." : "Validated research records were refreshed.")}
+            </div>
+            {gates.length ? <AcceptanceGateTable gates={gates} /> : null}
           </div>
         );
       })() : null}
@@ -757,10 +762,13 @@ function CoverageView() {
 function DossiersView() {
   const { data, isLoading } = useResearchIdeas();
   const coverage = data?.fundamental_coverage ?? [];
+  const evidence = data?.fundamental_evidence ?? [];
   const dossiers = data?.investment_dossiers ?? [];
   const refresh = data?.dossier_refresh_queue ?? [];
   const claims = data?.management_claims ?? [];
   const acceptance = data?.fundamental_acceptance ?? [];
+  const [selectedAcceptance, setSelectedAcceptance] = React.useState<LiveRow | null>(null);
+  const [selectedEvidence, setSelectedEvidence] = React.useState<LiveRow | null>(null);
 
   return (
     <>
@@ -815,10 +823,110 @@ function DossiersView() {
             { key: "failed", header: "Failed / blocked", align: "right", render: (row) => `${num(row, "failed_gate_count")} / ${num(row, "blocked_gate_count")}` },
             { key: "decision", header: "Decision", render: (row) => text(row, "acceptance_decision", "Pending") },
             { key: "asof", header: "Data as of", render: (row) => text(row, "data_as_of", "—") },
-          ]} />
+          ]} onRowClick={setSelectedAcceptance} />
         )}
       </Panel>
+
+      <Panel icon={ShieldCheck} title="Human Evidence Review" actions={<Badge tone={evidence.some((row) => ["unverified", "machine_extracted"].includes(text(row, "verification_status"))) ? "warn" : "ok"}>{evidence.filter((row) => ["unverified", "machine_extracted"].includes(text(row, "verification_status"))).length} pending</Badge>}>
+        {evidence.length === 0 ? (
+          <Empty icon={ShieldCheck} title="No retained fundamental evidence" description="Run company intake to register official filings and source locators." />
+        ) : (
+          <DataTable rows={evidence} rowKey={(row, index) => text(row, "id", String(index))} columns={[
+            { key: "company", header: "Company", render: (row) => <strong>{text(row, "primary_symbol", text(row, "legal_name"))}</strong> },
+            { key: "title", header: "Retained source", render: (row) => text(row, "source_title") },
+            { key: "source", header: "Source", render: (row) => text(row, "source_name", text(row, "source_type")) },
+            { key: "status", header: "Review", render: (row) => <StatusPill status={text(row, "verification_status")} /> },
+            { key: "retrieved", header: "Retrieved", render: (row) => formatRelative(text(row, "retrieved_at")) },
+          ]} onRowClick={setSelectedEvidence} />
+        )}
+      </Panel>
+
+      <AcceptanceGateDrawer acceptance={selectedAcceptance} onClose={() => setSelectedAcceptance(null)} />
+      <FundamentalEvidenceReviewDrawer evidence={selectedEvidence} onClose={() => setSelectedEvidence(null)} />
     </>
+  );
+}
+
+function AcceptanceGateTable({ gates }: { gates: LiveRow[] }) {
+  return (
+    <DataTable rows={gates} rowKey={(row, index) => text(row, "gate_key", String(index))} columns={[
+      { key: "gate", header: "Gate", render: (row) => <strong>{text(row, "gate_name", text(row, "gate_key").replace(/_/g, " "))}</strong> },
+      { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "gate_status", text(row, "status"))} /> },
+      { key: "observed", header: "Observed", render: (row) => compactJson(value(row, "observed_value", value(row, "observed", {}))) },
+      { key: "required", header: "Required", render: (row) => compactJson(value(row, "required_value", value(row, "required", {}))) },
+      { key: "reason", header: "Failure reason", render: (row) => text(row, "failure_reason", "—") },
+    ]} />
+  );
+}
+
+function AcceptanceGateDrawer({ acceptance, onClose }: { acceptance: LiveRow | null; onClose: () => void }) {
+  const gates = acceptance ? acceptanceGateRows(acceptance) : [];
+  return (
+    <Drawer open={Boolean(acceptance)} onClose={onClose} title="Acceptance Gate Detail" subtitle={acceptance ? `${text(acceptance, "primary_exchange")}:${text(acceptance, "primary_symbol")} · ${text(acceptance, "run_key")}` : ""} icon={ShieldCheck} width={900}>
+      {acceptance ? (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
+            <KeyValue label="Run status" value={text(acceptance, "run_status")} />
+            <KeyValue label="Passed gates" value={`${num(acceptance, "passed_gate_count")} / ${num(acceptance, "gate_count")}`} />
+            <KeyValue label="Research cutoff" value={text(acceptance, "data_as_of", "—")} />
+          </div>
+          <AcceptanceGateTable gates={gates} />
+        </>
+      ) : null}
+    </Drawer>
+  );
+}
+
+function FundamentalEvidenceReviewDrawer({ evidence, onClose }: { evidence: LiveRow | null; onClose: () => void }) {
+  const mutation = useReviewFundamentalEvidence();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [rationale, setRationale] = React.useState("");
+
+  React.useEffect(() => {
+    setRationale("");
+    mutation.reset();
+  }, [evidence?.id]);
+
+  function review(decision: "human_verified" | "rejected") {
+    if (!evidence || rationale.trim().length < 12) return;
+    mutation.mutate({
+      evidence_id: num(evidence, "id"),
+      decision,
+      rationale: rationale.trim(),
+      operator_confirmed: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => {
+        pushToast({ title: decision === "human_verified" ? "Evidence verified" : "Evidence rejected", message: text(evidence, "source_title"), tone: decision === "human_verified" ? "ok" : "warn", duration: 5000 });
+        onClose();
+      },
+      onError: (error) => pushToast({ title: "Evidence review failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  const sourceUrl = evidence ? text(evidence, "source_url") : "";
+  const validSourceUrl = /^https?:\/\//i.test(sourceUrl);
+  return (
+    <Drawer open={Boolean(evidence)} onClose={onClose} title="Review Fundamental Evidence" subtitle={evidence ? `${text(evidence, "primary_exchange")}:${text(evidence, "primary_symbol")}` : ""} icon={ShieldCheck} width={680}>
+      {evidence ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Panel title={text(evidence, "source_title")}>
+            <KeyValue label="Source" value={text(evidence, "source_name", text(evidence, "source_type"))} />
+            <KeyValue label="Published" value={text(evidence, "published_at", text(evidence, "source_as_of_date", "—"))} />
+            <KeyValue label="Current status" value={text(evidence, "verification_status")} />
+            <KeyValue label="Locator" value={compactJson(value(evidence, "source_locator", {}))} />
+            {validSourceUrl ? <a href={sourceUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontSize: "var(--text-sm)" }}>Open retained source</a> : null}
+          </Panel>
+          <Field label="Review rationale" required>
+            <TextArea rows={5} value={rationale} onChange={(event) => setRationale(event.target.value)} placeholder="Record what you checked in the retained source, including the company, period and relevant page or section." />
+          </Field>
+          <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
+            <Button variant="ghost" icon={AlertTriangle} onClick={() => review("rejected")} disabled={rationale.trim().length < 12 || mutation.isPending}>Reject evidence</Button>
+            <Button variant="primary" icon={ShieldCheck} onClick={() => review("human_verified")} disabled={rationale.trim().length < 12 || mutation.isPending}>{mutation.isPending ? "Saving review…" : "Verify evidence"}</Button>
+          </div>
+        </div>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -896,6 +1004,31 @@ function jsonText(input: unknown): string {
   } catch {
     return "{}";
   }
+}
+
+function compactJson(input: unknown): string {
+  if (input === null || input === undefined) return "—";
+  if (typeof input === "string") return input || "—";
+  try {
+    const rendered = JSON.stringify(input);
+    return rendered.length > 160 ? `${rendered.slice(0, 157)}…` : rendered;
+  } catch {
+    return String(input);
+  }
+}
+
+function acceptanceGateRows(row: LiveRow): LiveRow[] {
+  const direct = value<LiveRow[]>(row, "acceptance_gates", []);
+  if (direct.length) return direct;
+  const stored = value<Record<string, LiveRow>>(row, "gates", {});
+  return Object.entries(stored).map(([gateKey, gate]) => ({
+    ...gate,
+    gate_key: gateKey,
+    gate_name: text(gate, "gate_name", gateKey.replace(/_/g, " ")),
+    gate_status: text(gate, "status", text(gate, "gate_status", "blocked")),
+    observed_value: value(gate, "observed", value(gate, "observed_value", {})),
+    required_value: value(gate, "required", value(gate, "required_value", {})),
+  }));
 }
 
 function parseJsonObject(input: string, label: string): Record<string, unknown> {

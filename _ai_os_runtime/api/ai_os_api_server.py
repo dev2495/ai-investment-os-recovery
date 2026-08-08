@@ -2541,6 +2541,28 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY gross_market_value DESC, primary_symbol
             LIMIT 150
         """,
+        "fundamental_evidence": """
+            SELECT evidence.id, evidence.company_id, company.company_key,
+                   company.legal_name, company.primary_symbol, company.primary_exchange,
+                   evidence.source_type, evidence.source_name, evidence.source_url,
+                   evidence.source_title, evidence.published_at, evidence.retrieved_at,
+                   evidence.source_as_of_date, evidence.page_start, evidence.page_end,
+                   evidence.section_reference, evidence.extraction_method,
+                   evidence.verification_status, evidence.verified_by,
+                   evidence.verified_at, evidence.source_locator, evidence.metadata
+            FROM research.fundamental_evidence evidence
+            JOIN research.companies company ON company.id = evidence.company_id
+            ORDER BY
+                CASE evidence.verification_status
+                    WHEN 'unverified' THEN 0
+                    WHEN 'machine_extracted' THEN 1
+                    WHEN 'human_verified' THEN 2
+                    ELSE 3
+                END,
+                evidence.retrieved_at DESC,
+                evidence.id DESC
+            LIMIT 200
+        """,
         "investment_dossiers": """
             SELECT dossier_id, dossier_key, company_id, company_key, legal_name,
                    primary_symbol, primary_exchange, holding_thesis_id, dossier_status,
@@ -11965,6 +11987,82 @@ def run_institutional_fundamental_factory(payload: dict) -> dict:
     return result
 
 
+def review_fundamental_evidence(payload: dict) -> dict:
+    """Record an explicit human review of a bounded fundamental source."""
+    try:
+        evidence_id = int(payload.get("evidence_id") or payload.get("evidenceId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evidence_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"human_verified", "rejected"}:
+        raise ValueError("decision must be human_verified or rejected")
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true for a human evidence decision")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    rationale = str(payload.get("rationale") or "").strip()
+    if len(rationale) < 12:
+        raise ValueError("rationale must contain at least 12 characters")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT evidence.*, company.company_key, company.legal_name,
+                   company.primary_symbol, company.primary_exchange
+            FROM research.fundamental_evidence evidence
+            JOIN research.companies company ON company.id = evidence.company_id
+            WHERE evidence.id = {evidence_id}
+            FOR UPDATE OF evidence
+        ), updated AS (
+            UPDATE research.fundamental_evidence evidence
+            SET verification_status = {sql_literal(decision)},
+                verified_by = {sql_literal(actor)},
+                verified_at = now(),
+                metadata = evidence.metadata || jsonb_build_object(
+                    'last_human_review', jsonb_build_object(
+                        'decision', {sql_literal(decision)},
+                        'rationale', {sql_literal(rationale)},
+                        'reviewed_by', {sql_literal(actor)},
+                        'reviewed_at', now(),
+                        'operator_confirmed', true,
+                        'broker_write_allowed', false
+                    )
+                )
+            FROM selected
+            WHERE evidence.id = selected.id
+            RETURNING evidence.*
+        )
+        SELECT updated.id AS evidence_id, updated.company_id,
+               selected.company_key, selected.legal_name,
+               selected.primary_symbol, selected.primary_exchange,
+               updated.source_type, updated.source_name, updated.source_url,
+               updated.source_title, updated.verification_status,
+               updated.verified_by, updated.verified_at,
+               {sql_literal(rationale)} AS review_rationale,
+               false AS capital_action_allowed,
+               false AS broker_write_allowed
+        FROM updated
+        JOIN selected ON selected.id = updated.id
+        """
+    )
+    if not rows:
+        raise ValueError("fundamental evidence was not found")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_review_fundamental_evidence",
+        "review_fundamental_evidence",
+        actor,
+        "research.fundamental_evidence",
+        result,
+        {
+            "evidence_id": evidence_id,
+            "decision": decision,
+            "operator_confirmed": True,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
 def _sector_engine_payload(payload: dict) -> dict:
     selectors = [
         ("id", payload.get("index_id") or payload.get("indexId")),
@@ -19084,6 +19182,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/fundamental-factory/run":
                 self._send_json(run_institutional_fundamental_factory(payload), 201)
+                return
+            if self.path == "/api/research/fundamental-evidence/review":
+                self._send_json(review_fundamental_evidence(payload), 200)
                 return
             if self.path == "/api/sector-intelligence/run":
                 self._send_json(run_sector_intelligence_engine(payload), 201)
