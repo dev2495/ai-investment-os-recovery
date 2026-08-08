@@ -133,6 +133,19 @@ export function useReviewFundamentalEvidence() {
   );
 }
 
+export interface FundamentalRemediationSyncInput {
+  holding_thesis_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useSyncFundamentalRemediation() {
+  return useInvalidating<FundamentalRemediationSyncInput, LiveRow>(
+    "/api/research/fundamental-remediation/sync",
+    [Q.researchIdeas, Q.office, Q.missionControl]
+  );
+}
+
 export interface SectorIntelligenceRunInput {
   index_id: number;
   as_of_date: string;

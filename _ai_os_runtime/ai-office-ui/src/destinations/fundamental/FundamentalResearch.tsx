@@ -26,6 +26,7 @@ import {
   useOpenLongTermCommittee, useUpsertWatchlist,
   useRunInstitutionalFundamentalFactory,
   useReviewFundamentalEvidence,
+  useSyncFundamentalRemediation,
   useSyncFundamentalCompanyIntake,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
@@ -400,10 +401,13 @@ const SPECIALIST_MODULES = [
 function ScorecardsView() {
   const { data, isLoading } = useResearchIdeas();
   const dispatchMut = useDispatchSpecialists();
+  const remediationMut = useSyncFundamentalRemediation();
   const pushToast = useUIStore((s) => s.pushToast);
   const outputs = data?.long_term_research_updates ?? [];
   const checklists = data?.long_term_checklists ?? [];
   const theses = data?.long_term_theses ?? [];
+  const opinions = data?.fundamental_specialist_opinions ?? [];
+  const remediationTasks = data?.fundamental_remediation_tasks ?? [];
   const [selectedThesis, setSelectedThesis] = React.useState<string>("");
   const [selectedChecklist, setSelectedChecklist] = React.useState<LiveRow | null>(null);
 
@@ -418,6 +422,29 @@ function ScorecardsView() {
     );
   }
 
+  function createRemediationWork() {
+    if (!selectedThesis) {
+      pushToast({ title: "Pick a thesis first", tone: "warn", duration: 2500 });
+      return;
+    }
+    remediationMut.mutate(
+      { holding_thesis_id: Number(selectedThesis), operator_confirmed: true, actor: "Devarsh" },
+      {
+        onSuccess: (result) => pushToast({
+          title: "Remediation work synchronized",
+          message: `${num(result, "created_task_count")} new tasks across ${num(result, "unresolved_lane_count")} unresolved lanes.`,
+          tone: "ok",
+          duration: 4500,
+        }),
+        onError: (error) => pushToast({ title: "Remediation sync failed", message: error.message, tone: "risk", duration: 6000 }),
+      }
+    );
+  }
+
+  const selectedOpinions = selectedThesis
+    ? opinions.filter((row) => num(row, "holding_thesis_id") === Number(selectedThesis))
+    : opinions;
+
   return (
     <>
       <Panel icon={Microscope} title="12 Specialist Scorecards"
@@ -428,6 +455,7 @@ function ScorecardsView() {
               {theses.map((t, i) => <option key={i} value={text(t, "holding_thesis_id", text(t, "id", i))}>{text(t, "symbol")} — {text(t, "company_name", text(t, "name"))}</option>)}
             </Select>
             <Button size="sm" icon={Sparkles} onClick={runAll} disabled={dispatchMut.isPending}>Dispatch All</Button>
+            <Button size="sm" variant="subtle" icon={Send} onClick={createRemediationWork} disabled={remediationMut.isPending}>Assign Gaps</Button>
           </>
         }
       >
@@ -458,6 +486,34 @@ function ScorecardsView() {
             );
           })}
         </div>
+      </Panel>
+
+      <Panel icon={ShieldCheck} title="Institutional Specialist Opinions" actions={<Badge tone={selectedOpinions.some((row) => ["draft", "rejected", "stale"].includes(text(row, "opinion_status"))) ? "warn" : "ok"}>{selectedOpinions.length} latest lanes</Badge>}>
+        {selectedOpinions.length === 0 ? (
+          <Empty icon={Microscope} title="No institutional opinions" description="Run the company factory after intake to stage the evidence-first 12-lane review." />
+        ) : (
+          <DataTable rows={selectedOpinions} rowKey={(row, index) => text(row, "id", String(index))} columns={[
+            { key: "specialist", header: "Specialist", render: (row) => <div><strong>{text(row, "specialist_key").replace(/_/g, " ")}</strong><div className="micro">{text(row, "agent_name")}</div></div> },
+            { key: "status", header: "Opinion", render: (row) => <StatusPill status={text(row, "opinion_status")} /> },
+            { key: "conclusion", header: "Current conclusion", render: (row) => text(row, "conclusion") },
+            { key: "followups", header: "Required follow-ups", render: (row) => compactJson(value(row, "required_followups", [])) },
+            { key: "evidence", header: "Evidence", render: (row) => <StatusPill status={text(row, "evidence_verification_status")} /> },
+          ]} />
+        )}
+      </Panel>
+
+      <Panel icon={Send} title="Fundamental Remediation Queue" actions={<Badge tone={remediationTasks.some((row) => ["queued", "in_progress", "needs_review"].includes(text(row, "status"))) ? "warn" : "ok"}>{remediationTasks.length} tasks</Badge>}>
+        {remediationTasks.length === 0 ? (
+          <Empty icon={Send} title="No remediation tasks" description="Use Assign Gaps to route unresolved specialist evidence and calculations to their owning agents." />
+        ) : (
+          <DataTable rows={remediationTasks} rowKey={(row, index) => text(row, "id", String(index))} columns={[
+            { key: "task", header: "Work", render: (row) => <strong>{text(row, "title")}</strong> },
+            { key: "owner", header: "Owner", render: (row) => text(row, "owner_agent") },
+            { key: "priority", header: "Priority", render: (row) => <StatusPill status={text(row, "priority")} /> },
+            { key: "status", header: "Task", render: (row) => <StatusPill status={text(row, "status")} /> },
+            { key: "inbox", header: "Inbox", render: (row) => <StatusPill status={text(row, "inbox_status", "new")} /> },
+          ]} />
+        )}
       </Panel>
 
       <Panel icon={ClipboardCheck} title="Specialist Outputs">
@@ -491,6 +547,7 @@ function ValuationView() {
   const mcRuns = data?.long_term_monte_carlo_runs ?? [];
   const models = data?.long_term_valuation_models ?? [];
   const [selected, setSelected] = React.useState<LiveRow | null>(null);
+  const [selectedMonteCarlo, setSelectedMonteCarlo] = React.useState<LiveRow | null>(null);
 
   return (
     <>
@@ -525,17 +582,18 @@ function ValuationView() {
           ) : (
             <ScrollList>
               {mcRuns.slice(0, 10).map((run, i) => (
-                <div key={i} style={{ padding: "var(--space-3)", borderBottom: "1px solid var(--border-subtle)" }}>
+                <button key={i} type="button" onClick={() => setSelectedMonteCarlo(run)} style={{ width: "100%", textAlign: "left", color: "inherit", background: "transparent", padding: "var(--space-3)", border: 0, borderBottom: "1px solid var(--border-subtle)", cursor: "pointer" }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <strong>{text(run, "symbol", text(run, "holding_symbol"))}</strong>
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{formatRelative(text(run, "ran_at", text(run, "created_at")))}</span>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "var(--space-2)", marginTop: "var(--space-2)", fontSize: "var(--text-xs)" }}>
-                    <div><div className="micro">P10</div>{formatCompact(num(run, "p10_outcome", 0), "INR")}</div>
-                    <div><div className="micro">Median</div>{formatCompact(num(run, "median_outcome", 0), "INR")}</div>
-                    <div><div className="micro">P90</div>{formatCompact(num(run, "p90_outcome", 0), "INR")}</div>
+                    <div><div className="micro">P10</div>{formatCompact(monteCarloTerminalPrice(run, "p10"), "INR")}</div>
+                    <div><div className="micro">Median</div>{formatCompact(monteCarloTerminalPrice(run, "p50"), "INR")}</div>
+                    <div><div className="micro">P90</div>{formatCompact(monteCarloTerminalPrice(run, "p90"), "INR")}</div>
                   </div>
-                </div>
+                  <div style={{ marginTop: "var(--space-2)", display: "flex", gap: "var(--space-2)" }}><StatusPill status={text(run, "run_status", "needs_review")} /> {value<unknown[]>(run, "warnings", []).length ? <Badge tone="warn">{value<unknown[]>(run, "warnings", []).length} warning</Badge> : null}</div>
+                </button>
               ))}
             </ScrollList>
           )}
@@ -543,7 +601,29 @@ function ValuationView() {
       </div>
 
       <ValuationModelDrawer model={selected} onClose={() => setSelected(null)} />
+      <MonteCarloReviewDrawer run={selectedMonteCarlo} onClose={() => setSelectedMonteCarlo(null)} />
     </>
+  );
+}
+
+function MonteCarloReviewDrawer({ run, onClose }: { run: LiveRow | null; onClose: () => void }) {
+  return (
+    <Drawer open={Boolean(run)} onClose={onClose} title={`${text(run, "symbol")} — Monte Carlo Review`} subtitle="Deterministic simulation inputs, outputs, warnings and lineage" icon={TrendingUp} width={760}>
+      {run ? <div style={{ display: "grid", gap: "var(--space-4)" }}>
+        <Panel title="Run control">
+          <KeyValue label="Status" value={text(run, "run_status")} />
+          <KeyValue label="Simulations" value={String(num(run, "simulation_count"))} />
+          <KeyValue label="Horizon" value={`${num(run, "horizon_years")} years`} />
+          <KeyValue label="Starting multiple" value={text(run, "starting_multiple", "—")} />
+        </Panel>
+        <Panel title="Blocking warnings">
+          {value<unknown[]>(run, "warnings", []).length ? value<unknown[]>(run, "warnings", []).map((warning, index) => <div key={index} style={{ color: "var(--risk)", marginBottom: "var(--space-2)" }}>{String(warning)}</div>) : <StatusPill status="clear" />}
+        </Panel>
+        <Panel title="Assumptions"><pre style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-xs)", margin: 0 }}>{jsonText(value(run, "assumptions", {}))}</pre></Panel>
+        <Panel title="Input snapshot"><pre style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-xs)", margin: 0 }}>{jsonText(value(run, "input_snapshot", {}))}</pre></Panel>
+        <Panel title="Evidence lineage"><pre style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-xs)", margin: 0 }}>{jsonText(value(run, "evidence", []))}</pre></Panel>
+      </div> : null}
+    </Drawer>
   );
 }
 
@@ -1015,6 +1095,15 @@ function compactJson(input: unknown): string {
   } catch {
     return String(input);
   }
+}
+
+function monteCarloTerminalPrice(row: LiveRow, percentile: "p10" | "p50" | "p90"): number {
+  const summary = value<Record<string, unknown>>(row, "percentile_summary", {});
+  const terminal = summary.terminal_price;
+  if (!terminal || typeof terminal !== "object" || Array.isArray(terminal)) return 0;
+  const raw = (terminal as Record<string, unknown>)[percentile];
+  const parsed = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function acceptanceGateRows(row: LiveRow): LiveRow[] {

@@ -2500,8 +2500,9 @@ def build_research_ideas_snapshot() -> dict:
             SELECT id, run_key, holding_thesis_id, valuation_model_id,
                    symbol, exchange, company_name, run_status,
                    horizon_years, simulation_count, seed, start_price,
-                   starting_multiple, percentile_summary,
-                   probability_summary, warnings, note_path,
+                   starting_multiple, starting_metric, assumptions,
+                   input_snapshot, outputs, percentile_summary,
+                   probability_summary, warnings, evidence, note_path,
                    created_by, created_at,
                    long_term_gross_exposure, client_count, clients
             FROM portfolio.v_long_term_monte_carlo_runs
@@ -2562,6 +2563,49 @@ def build_research_ideas_snapshot() -> dict:
                 evidence.retrieved_at DESC,
                 evidence.id DESC
             LIMIT 200
+        """,
+        "fundamental_specialist_opinions": """
+            SELECT DISTINCT ON (opinion.company_id, opinion.specialist_key)
+                   opinion.id, opinion.company_id, company.company_key,
+                   company.legal_name, company.primary_symbol, company.primary_exchange,
+                   opinion.dossier_version_id,
+                   coalesce(opinion.holding_thesis_id, dossier.holding_thesis_id) AS holding_thesis_id,
+                   opinion.specialist_key, opinion.agent_name, opinion.opinion_status,
+                   opinion.conclusion, opinion.score_low, opinion.score_base,
+                   opinion.score_high, opinion.confidence_pct,
+                   opinion.disconfirming_evidence, opinion.required_followups,
+                   opinion.evidence_id, evidence.source_title, evidence.source_url,
+                   evidence.verification_status AS evidence_verification_status,
+                   opinion.opinion_as_of, opinion.created_at, opinion.updated_at
+            FROM research.fundamental_specialist_opinions opinion
+            JOIN research.companies company ON company.id = opinion.company_id
+            JOIN research.investment_dossier_versions version ON version.id = opinion.dossier_version_id
+            JOIN research.investment_dossiers dossier ON dossier.id = version.dossier_id
+            JOIN research.fundamental_evidence evidence ON evidence.id = opinion.evidence_id
+            ORDER BY opinion.company_id, opinion.specialist_key,
+                     opinion.opinion_as_of DESC, opinion.id DESC
+        """,
+        "fundamental_remediation_tasks": """
+            SELECT task.id, task.title, task.objective, task.owner_agent,
+                   task.status, task.priority, task.approval_required,
+                   task.source_ref, task.output_format, task.evidence,
+                   task.created_at, task.updated_at,
+                   inbox.id AS inbox_id, inbox.status AS inbox_status,
+                   inbox.target_workspace
+            FROM agent.tasks task
+            LEFT JOIN LATERAL (
+                SELECT item.id, item.status, item.target_workspace
+                FROM agent.inbox_items item
+                WHERE item.task_id = task.id
+                ORDER BY item.updated_at DESC, item.id DESC
+                LIMIT 1
+            ) inbox ON true
+            WHERE task.source_kind = 'fundamental_specialist_remediation'
+            ORDER BY
+                CASE task.status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2
+                     WHEN 'needs_review' THEN 3 ELSE 4 END,
+                task.updated_at DESC
+            LIMIT 100
         """,
         "investment_dossiers": """
             SELECT dossier_id, dossier_key, company_id, company_key, legal_name,
@@ -12031,17 +12075,21 @@ def review_fundamental_evidence(payload: dict) -> dict:
             WHERE evidence.id = selected.id
             RETURNING evidence.*
         )
-        SELECT updated.id AS evidence_id, updated.company_id,
-               selected.company_key, selected.legal_name,
-               selected.primary_symbol, selected.primary_exchange,
-               updated.source_type, updated.source_name, updated.source_url,
-               updated.source_title, updated.verification_status,
-               updated.verified_by, updated.verified_at,
-               {sql_literal(rationale)} AS review_rationale,
-               false AS capital_action_allowed,
-               false AS broker_write_allowed
-        FROM updated
-        JOIN selected ON selected.id = updated.id
+        , result_rows AS (
+            SELECT updated.id AS evidence_id, updated.company_id,
+                   selected.company_key, selected.legal_name,
+                   selected.primary_symbol, selected.primary_exchange,
+                   updated.source_type, updated.source_name, updated.source_url,
+                   updated.source_title, updated.verification_status,
+                   updated.verified_by, updated.verified_at,
+                   {sql_literal(rationale)} AS review_rationale,
+                   false AS capital_action_allowed,
+                   false AS broker_write_allowed
+            FROM updated
+            JOIN selected ON selected.id = updated.id
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
         """
     )
     if not rows:
@@ -12059,6 +12107,138 @@ def review_fundamental_evidence(payload: dict) -> dict:
             "operator_confirmed": True,
             "broker_write_allowed": False,
         },
+    )
+    return result
+
+
+def sync_fundamental_remediation(payload: dict) -> dict:
+    """Create bounded, idempotent work for unresolved institutional specialist lanes."""
+    try:
+        holding_thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("holding_thesis_id is required and must be an integer") from exc
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true before assigning remediation work")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH target AS (
+            SELECT thesis.id AS holding_thesis_id, thesis.symbol, thesis.exchange,
+                   thesis.company_name, company.id AS company_id
+            FROM portfolio.holding_theses thesis
+            JOIN research.companies company
+              ON upper(company.primary_symbol)=upper(thesis.symbol)
+             AND upper(company.primary_exchange)=upper(thesis.exchange)
+            WHERE thesis.id={holding_thesis_id}
+        ), latest_dossier AS (
+            SELECT version.id AS dossier_version_id
+            FROM research.investment_dossiers dossier
+            JOIN research.investment_dossier_versions version ON version.dossier_id=dossier.id
+            JOIN target ON target.company_id=dossier.company_id
+            ORDER BY version.research_as_of DESC, version.id DESC
+            LIMIT 1
+        ), unresolved AS (
+            SELECT DISTINCT ON (opinion.specialist_key)
+                   opinion.id AS opinion_id, opinion.specialist_key,
+                   opinion.agent_name, opinion.opinion_status, opinion.conclusion,
+                   opinion.required_followups, opinion.evidence_id,
+                   target.symbol, target.exchange, target.company_name,
+                   CASE opinion.specialist_key
+                     WHEN 'moat' THEN 'Moat Analyst'
+                     WHEN 'industry' THEN 'Industry Analyst'
+                     WHEN 'governance' THEN 'Governance Analyst'
+                     WHEN 'forensic_accounting' THEN 'Forensic Accounting Agent'
+                     WHEN 'valuation' THEN 'Valuation Agent'
+                     WHEN 'portfolio_fit' THEN 'Long-Term Portfolio Manager'
+                     WHEN 'risk' THEN 'Independent Risk Agent'
+                     ELSE opinion.agent_name
+                   END AS owner_agent
+            FROM research.fundamental_specialist_opinions opinion
+            JOIN target ON target.company_id=opinion.company_id
+            JOIN latest_dossier ON latest_dossier.dossier_version_id=opinion.dossier_version_id
+            WHERE opinion.opinion_status IN ('draft','rejected','stale')
+               OR jsonb_array_length(opinion.required_followups) > 0
+            ORDER BY opinion.specialist_key, opinion.opinion_as_of DESC, opinion.id DESC
+        ), inserted_tasks AS (
+            INSERT INTO agent.tasks (
+                title, objective, owner_agent, status, priority,
+                approval_required, source_kind, source_ref, output_format, evidence
+            )
+            SELECT
+                'Resolve ' || replace(unresolved.specialist_key, '_', ' ') || ': ' || unresolved.symbol,
+                'Close the retained evidence and analysis gaps for the ' ||
+                replace(unresolved.specialist_key, '_', ' ') ||
+                ' lane. Current conclusion: ' || unresolved.conclusion ||
+                '. Required follow-ups: ' || unresolved.required_followups::text ||
+                '. Return source locators, calculations, disconfirming evidence, and a reviewable opinion. No capital action or broker order is authorized.',
+                unresolved.owner_agent, 'queued',
+                CASE unresolved.specialist_key
+                  WHEN 'valuation' THEN 'high' WHEN 'portfolio_fit' THEN 'high'
+                  WHEN 'governance' THEN 'high' WHEN 'forensic_accounting' THEN 'high'
+                  ELSE 'normal' END,
+                true, 'fundamental_specialist_remediation',
+                'fundamental-thesis:' || {holding_thesis_id} || ':specialist:' || unresolved.specialist_key,
+                'institutional_fundamental_specialist_opinion',
+                jsonb_build_array(
+                    jsonb_build_object('opinion_id', unresolved.opinion_id,
+                                       'evidence_id', unresolved.evidence_id,
+                                       'specialist_key', unresolved.specialist_key,
+                                       'holding_thesis_id', {holding_thesis_id},
+                                       'required_followups', unresolved.required_followups),
+                    jsonb_build_object('capital_action_allowed', false,
+                                       'broker_write_allowed', false,
+                                       'assigned_by', {sql_literal(actor)})
+                )
+            FROM unresolved
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent.tasks existing
+                WHERE existing.source_kind='fundamental_specialist_remediation'
+                  AND existing.status NOT IN ('done','completed','cancelled','rejected')
+                  AND existing.evidence @> jsonb_build_array(jsonb_build_object(
+                      'holding_thesis_id', {holding_thesis_id},
+                      'specialist_key', unresolved.specialist_key
+                  ))
+            )
+            RETURNING *
+        ), inserted_inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            )
+            SELECT task.id, task.title, task.owner_agent, 'new', task.priority,
+                   'Complete the named evidence follow-ups, retain source locators, and submit the specialist opinion for independent review.',
+                   task.evidence, 'fundamental'
+            FROM inserted_tasks task
+            RETURNING id, task_id
+        )
+        , result_rows AS (
+            SELECT
+                (SELECT count(*) FROM unresolved) AS unresolved_lane_count,
+                (SELECT count(*) FROM inserted_tasks) AS created_task_count,
+                coalesce((SELECT jsonb_agg(jsonb_build_object(
+                    'task_id', task.id, 'title', task.title, 'owner_agent', task.owner_agent,
+                    'priority', task.priority, 'source_ref', task.source_ref
+                ) ORDER BY task.id) FROM inserted_tasks task), '[]'::jsonb) AS created_tasks,
+                {holding_thesis_id} AS holding_thesis_id,
+                false AS capital_action_allowed,
+                false AS broker_write_allowed
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("fundamental remediation sync returned no result")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_sync_fundamental_remediation",
+        "sync_fundamental_remediation",
+        actor,
+        "agent.tasks",
+        result,
+        {"holding_thesis_id": holding_thesis_id, "operator_confirmed": True,
+         "capital_action_allowed": False, "broker_write_allowed": False},
     )
     return result
 
@@ -19185,6 +19365,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/fundamental-evidence/review":
                 self._send_json(review_fundamental_evidence(payload), 200)
+                return
+            if self.path == "/api/research/fundamental-remediation/sync":
+                self._send_json(sync_fundamental_remediation(payload), 201)
                 return
             if self.path == "/api/sector-intelligence/run":
                 self._send_json(run_sector_intelligence_engine(payload), 201)
