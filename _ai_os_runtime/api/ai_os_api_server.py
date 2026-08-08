@@ -9027,6 +9027,44 @@ def exchange_zerodha_request_token(payload: dict) -> dict:
     return result
 
 
+def exchange_zerodha_callback_url(payload: dict) -> dict:
+    callback_url = str(payload.get("callback_url") or payload.get("callbackUrl") or "").strip()
+    parsed = urllib.parse.urlparse(callback_url)
+    if parsed.scheme != "https" or parsed.hostname != "kite.zerodha.com":
+        raise ValueError("Paste the completed https://kite.zerodha.com login URL")
+    query = urllib.parse.parse_qs(parsed.query)
+    status = str((query.get("status") or [""])[0]).strip().lower()
+    action = str((query.get("action") or [""])[0]).strip().lower()
+    request_token = str((query.get("request_token") or [""])[0]).strip()
+    if status != "success" or action != "login" or not request_token:
+        raise ValueError("The pasted URL is not a successful Zerodha login callback")
+    result = exchange_zerodha_request_token({"request_token": request_token, "actor": str(payload.get("actor") or "Devarsh")})
+    start_zerodha_post_login_sync()
+    audit_api_write(
+        "ai_os_api_zerodha_callback_url_exchange",
+        "exchange_zerodha_callback_url",
+        str(payload.get("actor") or "Devarsh"),
+        "core.connector_health_checks",
+        {"status": result.get("status"), "account_match": result.get("account_match")},
+        {"callback_url_received": True, "broker_write_allowed": False},
+    )
+    return result
+
+
+def refresh_zerodha_service_session(payload: dict) -> dict:
+    result = dict(_run_zerodha_adapter(["--materialize-service-session"], 30))
+    result["stream_restart"] = restart_zerodha_stream_async()
+    audit_api_write(
+        "ai_os_api_zerodha_service_session_refresh",
+        "refresh_zerodha_service_session",
+        str(payload.get("actor") or "Jarvis"),
+        "core.connector_health_checks",
+        {"status": result.get("status"), "service_session_stored": result.get("service_session_stored")},
+        {"broker_write_allowed": False},
+    )
+    return result
+
+
 def sync_zerodha_read_only(payload: dict) -> dict:
     allowed={"holdings","positions","orders","trades","funds"}
     datasets=[str(x) for x in (payload.get("datasets") or sorted(allowed)) if str(x) in allowed]
@@ -18749,6 +18787,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/zerodha/auth/exchange":
                 self._send_json(exchange_zerodha_request_token(payload), 200)
+                return
+            if self.path == "/api/zerodha/auth/exchange-url":
+                self._send_json(exchange_zerodha_callback_url(payload), 200)
+                return
+            if self.path == "/api/zerodha/auth/service-session/refresh":
+                self._send_json(refresh_zerodha_service_session(payload), 200)
                 return
             if self.path == "/api/zerodha/sync":
                 self._send_json(sync_zerodha_read_only(payload), 201)

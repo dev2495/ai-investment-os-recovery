@@ -15,9 +15,9 @@ import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Search, Sparkles, Sun, Moon, Bell, Command, RefreshCw, Database, Radio, ShieldCheck } from "lucide-react";
 import { useUIStore } from "../store";
-import { useBeginZerodhaAuth, useMissionControl, useZerodhaAuthStatus, useZerodhaMarketStatus } from "../data/queries";
+import { useBeginZerodhaAuth, useExchangeZerodhaCallbackUrl, useMissionControl, useZerodhaAuthStatus, useZerodhaMarketStatus } from "../data/queries";
 import { useSyncZerodhaAccount, useSyncZerodhaMarket } from "../data/actions";
-import { Button, Drawer, IconButton, StatusPill } from "../system/primitives";
+import { Button, Drawer, IconButton, StatusPill, TextArea } from "../system/primitives";
 import { bool, num, text, value } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { GlobalTopbarCss } from "./GlobalTopbar.css";
@@ -49,6 +49,7 @@ export function GlobalTopbar() {
   const { data: zerodha } = useZerodhaAuthStatus();
   const { data: zerodhaMarket, refetch: refreshZerodhaMarket, isFetching: marketRefreshing } = useZerodhaMarketStatus();
   const beginZerodha = useBeginZerodhaAuth();
+  const exchangeCallback = useExchangeZerodhaCallbackUrl();
   const syncAccount = useSyncZerodhaAccount();
   const syncMarket = useSyncZerodhaMarket();
   const approvalCount = mission?.approvals?.length ?? 0;
@@ -176,13 +177,16 @@ export function GlobalTopbar() {
         market={zerodhaMarket}
         reconnect={reconnectZerodha}
         reconnectPending={beginZerodha.isPending}
+        exchangeCallback={(url) => exchangeCallback.mutate(url)}
+        exchangePending={exchangeCallback.isPending}
+        exchangeComplete={exchangeCallback.isSuccess}
         refresh={() => refreshZerodhaMarket()}
         refreshPending={marketRefreshing}
         syncAccount={() => syncAccount.mutate({ datasets: ["holdings", "positions", "orders", "trades", "funds"], actor: "Devarsh" })}
         syncAccountPending={syncAccount.isPending}
         syncMarket={() => syncMarket.mutate({ modes: ["quotes", "options"], underlyings: ["NIFTY", "BANKNIFTY"], strike_pairs: 24, actor: "Devarsh" })}
         syncMarketPending={syncMarket.isPending}
-        error={beginZerodha.error ?? syncAccount.error ?? syncMarket.error}
+        error={beginZerodha.error ?? exchangeCallback.error ?? syncAccount.error ?? syncMarket.error}
       />
     </>
   );
@@ -195,6 +199,9 @@ function BrokerSessionDrawer(props: {
   market?: LiveRow;
   reconnect: () => void;
   reconnectPending: boolean;
+  exchangeCallback: (url: string) => void;
+  exchangePending: boolean;
+  exchangeComplete: boolean;
   refresh: () => void;
   refreshPending: boolean;
   syncAccount: () => void;
@@ -203,6 +210,7 @@ function BrokerSessionDrawer(props: {
   syncMarketPending: boolean;
   error: Error | null;
 }) {
+  const [callbackUrl, setCallbackUrl] = React.useState("");
   const auth = value<LiveRow>(props.market, "auth", props.auth ?? {});
   const warehouse = value<LiveRow>(props.market, "warehouse", {});
   const stream = value<LiveRow>(props.market, "stream", {});
@@ -227,6 +235,20 @@ function BrokerSessionDrawer(props: {
           <div><ShieldCheck size={17} /><strong>1. Authenticate today</strong></div>
           <p>Zerodha requires one human login each trading day. The callback exchanges and stores the token automatically.</p>
           <Button variant="primary" icon={RefreshCw} onClick={props.reconnect} disabled={props.reconnectPending}>{props.reconnectPending ? "Opening login…" : connected ? "Renew today’s session" : "Connect Zerodha"}</Button>
+          <TextArea
+            rows={3}
+            value={callbackUrl}
+            onChange={(event) => setCallbackUrl(event.target.value)}
+            placeholder="Paste the completed Zerodha login URL"
+            aria-label="Completed Zerodha login URL"
+          />
+          <Button
+            icon={ShieldCheck}
+            onClick={() => props.exchangeCallback(callbackUrl.trim())}
+            disabled={!callbackUrl.trim() || props.exchangePending}
+          >
+            {props.exchangePending ? "Connecting session…" : props.exchangeComplete ? "Session connected" : "Use pasted login URL"}
+          </Button>
         </section>
 
         <section className="aios-broker-session__stage">

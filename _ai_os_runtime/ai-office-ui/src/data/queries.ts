@@ -153,6 +153,25 @@ export function useExchangeZerodhaToken() {
   });
 }
 
+export function useExchangeZerodhaCallbackUrl() {
+  const queryClient = useQueryClient();
+  return useMutation<LiveRow, Error, string>({
+    mutationFn: (callbackUrl) =>
+      post<LiveRow>("/api/zerodha/auth/exchange-url", {
+        callback_url: callbackUrl,
+        actor: "Devarsh",
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.zerodhaAuth }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.zerodhaMarket }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.missionControl }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.tradingQuantRisk }),
+      ]);
+    },
+  });
+}
+
 
 export function useTradingViewDesktopStatus() {
   return useQuery<LiveRow>({

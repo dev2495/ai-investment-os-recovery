@@ -41,6 +41,7 @@ REQUIRED_SPECIALISTS = {
     "capital_allocation", "financial_quality", "forensic_accounting",
     "valuation", "bear_case", "risk", "portfolio_fit",
 }
+ACCEPTED_OPINION_STATUSES = {"evidence_complete", "reviewed", "dissent"}
 
 TRIGGER_TYPE_BY_SOURCE = {
     "results": "results",
@@ -542,8 +543,12 @@ def evaluate_acceptance(
     committee: dict[str, Any],
     as_of: datetime,
 ) -> list[dict[str, Any]]:
-    specialists = {str(row.get("specialist_key")) for row in opinions}
-    specialist_rows = {str(row.get("specialist_key")): row for row in opinions}
+    qualified_opinions = [
+        row for row in opinions
+        if str(row.get("opinion_status") or "").lower() in ACCEPTED_OPINION_STATUSES
+    ]
+    specialists = {str(row.get("specialist_key")) for row in qualified_opinions}
+    specialist_rows = {str(row.get("specialist_key")): row for row in qualified_opinions}
     human_verified = sum(1 for row in evidence if row.get("verification_status") == "human_verified")
     valuation_types = {str(value).lower().replace("-", "_").replace(" ", "_") for value in coverage.get("completed_valuation_types") or []}
     valuation_families = {
@@ -637,7 +642,14 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     sections: list[dict[str, Any]] = []
     for order, (key, title, specialist_keys, source_types) in enumerate(SECTION_SPECS, start=1):
         selected, section_opinions, topical = _evidence_for_section(evidence, opinions, specialist_keys, source_types)
-        section_complete = bool(topical and section_opinions)
+        section_complete = bool(
+            topical
+            and section_opinions
+            and all(
+                str(row.get("opinion_status") or "").lower() in ACCEPTED_OPINION_STATUSES
+                for row in section_opinions
+            )
+        )
         if key == "specialist_opinions_committee_decision":
             section_complete = section_complete and bool(committee.get("committee_decision_id"))
         sections.append({

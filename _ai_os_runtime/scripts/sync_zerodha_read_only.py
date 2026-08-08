@@ -9,11 +9,13 @@ import hmac
 import json
 import os
 import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 
 BASE_URL = os.environ.get("AI_OS_ZERODHA_BASE_URL", "https://api.kite.trade").rstrip("/")
@@ -21,6 +23,10 @@ LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
 KEYCHAIN_SERVICE = os.environ.get("AI_OS_ZERODHA_TOKEN_SERVICE", "ai-os-zerodha-access-token")
 KEYCHAIN_EXPIRY_SERVICE = os.environ.get("AI_OS_ZERODHA_TOKEN_EXPIRY_SERVICE", "ai-os-zerodha-access-token-expiry")
 KEYCHAIN_USER_SERVICE = os.environ.get("AI_OS_ZERODHA_USER_SERVICE", "ai-os-zerodha-user-id")
+SESSION_FILE = Path(os.environ.get(
+    "AI_OS_ZERODHA_SESSION_FILE",
+    str(Path.home() / "Library/Application Support/AIOS/credentials/zerodha-session.json"),
+))
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 ENDPOINTS = {
     "holdings": "/portfolio/holdings",
@@ -102,12 +108,13 @@ def parse_token_expiry(raw_value: str) -> datetime | None:
 
 def keychain_token() -> str:
     env_token = os.environ.get("AI_OS_ZERODHA_ACCESS_TOKEN", "").strip()
-    return env_token or keychain_secret(KEYCHAIN_SERVICE)
+    return env_token or keychain_secret(KEYCHAIN_SERVICE) or str(read_session_file().get("access_token") or "")
 
 
 def token_expiry() -> datetime | None:
     raw_value = os.environ.get("AI_OS_ZERODHA_ACCESS_TOKEN_EXPIRES", "").strip()
-    return parse_token_expiry(raw_value or keychain_secret(KEYCHAIN_EXPIRY_SERVICE))
+    stored = read_session_file()
+    return parse_token_expiry(raw_value or keychain_secret(KEYCHAIN_EXPIRY_SERVICE) or str(stored.get("expires_at") or ""))
 
 
 def token_is_current(token: str, expiry: datetime | None, now: datetime | None = None) -> bool:
@@ -117,9 +124,32 @@ def token_is_current(token: str, expiry: datetime | None, now: datetime | None =
     return expiry > current
 
 
+def read_session_file() -> dict[str, str]:
+    try:
+        payload = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def store_session_file(token: str, expiry: datetime) -> None:
+    SESSION_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary = tempfile.mkstemp(prefix="zerodha-session.", dir=str(SESSION_FILE.parent), text=True)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"access_token": token, "expires_at": expiry.isoformat()}, handle)
+            handle.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, SESSION_FILE)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def store_keychain_token(token: str, expiry: datetime) -> None:
     store_keychain_secret(KEYCHAIN_SERVICE, "access_token", token)
     store_keychain_secret(KEYCHAIN_EXPIRY_SERVICE, "expires_at", expiry.isoformat())
+    store_session_file(token, expiry)
 
 
 def bound_user_id() -> str:
@@ -247,6 +277,7 @@ def main() -> int:
     parser.add_argument("--login-url", action="store_true")
     parser.add_argument("--exchange-request-token")
     parser.add_argument("--check-config", action="store_true")
+    parser.add_argument("--materialize-service-session", action="store_true")
     parser.add_argument("--datasets", nargs="*", choices=sorted(ENDPOINTS), default=list(ENDPOINTS))
     args = parser.parse_args()
 
@@ -256,6 +287,13 @@ def main() -> int:
     access_token_expiry = token_expiry()
     access_token_current = token_is_current(access_token, access_token_expiry)
     expected_user_id = bound_user_id()
+    if args.materialize_service_session:
+        if not access_token_current or access_token_expiry is None:
+            print(json.dumps({"status": "daily_login_required", "service_session_stored": False, "broker_write_allowed": False}, indent=2))
+            return 2
+        store_session_file(access_token, access_token_expiry)
+        print(json.dumps({"status": "ready", "service_session_stored": True, "expires_at": access_token_expiry.isoformat(), "broker_write_allowed": False}, indent=2))
+        return 0
     if args.login_url:
         print(json.dumps({"status": "ready" if api_key else "needs_credentials", "login_url": LOGIN_URL.format(api_key=urllib.parse.quote(api_key)) if api_key else None, "manual_daily_login_required": True, "broker_write_allowed": False}, indent=2))
         return 0 if api_key else 2

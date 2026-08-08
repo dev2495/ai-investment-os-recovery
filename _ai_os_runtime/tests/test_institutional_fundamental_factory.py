@@ -171,6 +171,19 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
 
         self.assertEqual(gate["gate_status"], "failed")
 
+    def test_draft_specialist_opinion_does_not_satisfy_coverage_or_section_readiness(self) -> None:
+        context = complete_context()
+        draft = next(row for row in context["opinions"] if row["specialist_key"] == "portfolio_fit")
+        draft["opinion_status"] = "draft"
+
+        plan = factory.build_plan(context, self.request())
+        gates = {row["gate_key"]: row for row in plan["acceptance_gates"]}
+
+        self.assertEqual(gates["specialist_coverage"]["gate_status"], "failed")
+        self.assertEqual(gates["portfolio_fit"]["gate_status"], "failed")
+        portfolio_section = next(row for row in plan["sections"] if row["section_key"] == "portfolio_fit_opportunity_cost")
+        self.assertEqual(portfolio_section["section_status"], "draft")
+
     def test_context_query_is_point_in_time_for_valuation_and_committee(self) -> None:
         gateway = factory.PsqlGateway()
         captured: list[str] = []

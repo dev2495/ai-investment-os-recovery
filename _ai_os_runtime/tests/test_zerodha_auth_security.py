@@ -81,6 +81,32 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
         self.assertIn("useBeginZerodhaAuth", frontend)
         self.assertNotIn("request_token", frontend)
 
+    def test_pasted_callback_url_is_validated_exchanged_and_not_audited_raw(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "exchange_zerodha_request_token",
+                return_value={"status": "authenticated", "account_match": True, "broker_write_allowed": False},
+            ) as exchange,
+            mock.patch.object(ai_os_api_server, "start_zerodha_post_login_sync") as refresh,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.exchange_zerodha_callback_url({
+                "callback_url": "https://kite.zerodha.com/?action=login&status=success&request_token=one-time-secret",
+                "actor": "Devarsh",
+            })
+
+        self.assertEqual(result["status"], "authenticated")
+        exchange.assert_called_once_with({"request_token": "one-time-secret", "actor": "Devarsh"})
+        refresh.assert_called_once()
+        self.assertNotIn("one-time-secret", repr(audit.call_args))
+
+    def test_pasted_callback_rejects_untrusted_host(self) -> None:
+        with self.assertRaises(ValueError):
+            ai_os_api_server.exchange_zerodha_callback_url({
+                "callback_url": "https://example.test/?action=login&status=success&request_token=secret",
+            })
+
 
 if __name__ == "__main__":
     unittest.main()
