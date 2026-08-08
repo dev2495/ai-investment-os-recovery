@@ -87,7 +87,9 @@ def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> l
             continue
         if parsed.hostname not in {page_host, f"www.{page_host}", page_host.removeprefix("www.")}:
             continue
-        canonical = urllib.parse.urlunsplit(parsed._replace(fragment=""))
+        canonical = urllib.parse.urlunsplit(
+            parsed._replace(path=urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/"), fragment="")
+        )
         if canonical in seen:
             continue
         year = fiscal_year(haystack)

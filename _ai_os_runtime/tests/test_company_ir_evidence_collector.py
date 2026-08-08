@@ -14,6 +14,7 @@ def test_company_ir_collector_is_primary_source_and_evidence_only() -> None:
     assert "portfolio.orders" not in source
     assert "curl_get" in source
     assert "--insecure" not in source
+    assert "urllib.parse.quote(urllib.parse.unquote(parsed.path)" in source
 
 
 def test_company_ir_collector_excludes_subsidiaries_by_default() -> None:
