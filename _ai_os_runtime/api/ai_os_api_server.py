@@ -2591,6 +2591,28 @@ def build_research_ideas_snapshot() -> dict:
             ORDER BY opinion.company_id, opinion.specialist_key,
                      opinion.opinion_as_of DESC, opinion.id DESC
         """,
+        "governance_forensic_observations": """
+            SELECT observation.id, observation.company_id, company.company_key,
+                   company.legal_name, company.primary_symbol, company.primary_exchange,
+                   observation.observation_key, observation.category,
+                   observation.observation_status, observation.severity,
+                   observation.conclusion, observation.disclosed_value,
+                   observation.disclosed_unit, observation.period_end,
+                   observation.source_page, observation.source_excerpt,
+                   observation.extraction_method, observation.verification_status,
+                   observation.available_at, observation.metadata,
+                   observation.evidence_id, evidence.source_title, evidence.source_url,
+                   observation.created_at, observation.updated_at
+            FROM research.governance_forensic_observations observation
+            JOIN research.companies company ON company.id=observation.company_id
+            JOIN research.fundamental_evidence evidence ON evidence.id=observation.evidence_id
+            WHERE observation.verification_status NOT IN ('rejected','superseded')
+            ORDER BY
+              CASE observation.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
+                   WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,
+              observation.available_at DESC, observation.id DESC
+            LIMIT 300
+        """,
         "fundamental_remediation_tasks": """
             SELECT task.id, task.title, task.objective, task.owner_agent,
                    task.status, task.priority, task.approval_required,

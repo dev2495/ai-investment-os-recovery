@@ -238,6 +238,7 @@ export const ResearchIdeasSchema = z.object({
   fundamental_intake: z.array(liveRow).default([]),
   fundamental_evidence: z.array(liveRow).default([]),
   fundamental_specialist_opinions: z.array(liveRow).default([]),
+  governance_forensic_observations: z.array(liveRow).default([]),
   fundamental_remediation_tasks: z.array(liveRow).default([]),
   investment_dossiers: z.array(liveRow).default([]),
   dossier_refresh_queue: z.array(liveRow).default([]),

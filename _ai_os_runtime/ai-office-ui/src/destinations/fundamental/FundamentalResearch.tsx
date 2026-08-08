@@ -410,6 +410,7 @@ function ScorecardsView() {
   const checklists = data?.long_term_checklists ?? [];
   const theses = data?.long_term_theses ?? [];
   const opinions = data?.fundamental_specialist_opinions ?? [];
+  const governanceObservations = data?.governance_forensic_observations ?? [];
   const remediationTasks = data?.fundamental_remediation_tasks ?? [];
   const [selectedThesis, setSelectedThesis] = React.useState<string>("");
   const [selectedChecklist, setSelectedChecklist] = React.useState<LiveRow | null>(null);
@@ -448,6 +449,11 @@ function ScorecardsView() {
   const selectedOpinions = selectedThesis
     ? opinions.filter((row) => num(row, "holding_thesis_id") === Number(selectedThesis))
     : opinions;
+  const selectedThesisRow = theses.find((row) => num(row, "holding_thesis_id", num(row, "id")) === Number(selectedThesis));
+  const selectedSymbol = selectedThesisRow ? text(selectedThesisRow, "symbol", text(selectedThesisRow, "holding_symbol")) : "";
+  const selectedGovernanceObservations = selectedSymbol
+    ? governanceObservations.filter((row) => text(row, "primary_symbol").toUpperCase() === selectedSymbol.toUpperCase())
+    : governanceObservations;
 
   return (
     <>
@@ -504,6 +510,29 @@ function ScorecardsView() {
             { key: "evidence", header: "Evidence", render: (row) => <StatusPill status={text(row, "evidence_verification_status")} /> },
           ]} onRowClick={setSelectedOpinion} />
         )}
+      </Panel>
+
+      <Panel icon={Gavel} title="Governance & Forensic Evidence" actions={<Badge tone={selectedGovernanceObservations.some((row) => ["high", "critical"].includes(text(row, "severity"))) ? "risk" : "ok"}>{selectedGovernanceObservations.length} cited observations</Badge>}>
+        {selectedGovernanceObservations.length === 0 ? (
+          <Empty icon={Search} title="No structured governance review" description="Run the annual-report governance extractor after a primary report is retained." />
+        ) : (
+          <DataTable rows={selectedGovernanceObservations} rowKey={(row, index) => text(row, "id", String(index))} columns={[
+            { key: "issue", header: "Observation", render: (row) => <div><strong>{text(row, "observation_key").replace(/_/g, " ")}</strong><div className="micro">{text(row, "category").replace(/_/g, " ")}</div></div> },
+            { key: "severity", header: "Severity", render: (row) => <StatusPill status={text(row, "severity")} /> },
+            { key: "status", header: "Disclosure", render: (row) => <StatusPill status={text(row, "observation_status")} /> },
+            { key: "conclusion", header: "Conclusion", render: (row) => text(row, "conclusion") },
+            { key: "page", header: "Page", align: "right", render: (row) => num(row, "source_page") },
+            { key: "source", header: "Source", render: (row) => {
+              const url = text(row, "source_url");
+              return /^https?:\/\//i.test(url) ? <a href={url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>Open report</a> : text(row, "source_title");
+            } },
+          ]} />
+        )}
+        {selectedGovernanceObservations.length > 0 ? (
+          <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border-subtle)", color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>
+            Machine extraction completes the checklist but does not clear an issue. Open the cited report and use the evidence review workflow before marking evidence human verified.
+          </div>
+        ) : null}
       </Panel>
 
       <Panel icon={Send} title="Fundamental Remediation Queue" actions={<Badge tone={remediationTasks.some((row) => ["queued", "in_progress", "needs_review"].includes(text(row, "status"))) ? "warn" : "ok"}>{remediationTasks.length} tasks</Badge>}>
