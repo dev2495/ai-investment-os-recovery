@@ -3003,6 +3003,36 @@ def build_sector_intelligence_snapshot() -> dict:
             ORDER BY as_of_date DESC, calculated_at DESC
             LIMIT 200
         """,
+        "valuation_history": """
+            SELECT history.taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   history.valuation_date,history.price_to_earnings,
+                   history.price_to_book,history.dividend_yield_percent,
+                   source.name AS source_name,history.source_reference,
+                   history.source_artifact_path,history.source_artifact_sha256,
+                   history.request_number,history.input_fingerprint,
+                   history.quality_status,history.ingested_at
+            FROM sector_intelligence.index_valuation_history history
+            JOIN sector_intelligence.taxonomy_nodes node
+              ON node.id=history.taxonomy_node_id
+            JOIN core.source_systems source ON source.id=history.source_system_id
+            ORDER BY history.valuation_date DESC
+            LIMIT 300
+        """,
+        "underwrites": """
+            SELECT taxonomy_node_id,taxonomy_key,node_name,coverage_id,
+                   coverage_status,owner_agent,dossier_version,last_reviewed_at,
+                   next_review_due_at,thesis_summary,evidence_references,data_gaps,
+                   monitoring_indicators,dossier_sections,source_cutoff_at,
+                   dossier_fingerprint,committee_packet_id,packet_key,packet_type,
+                   packet_as_of_date,decision_question,proposed_action,
+                   independent_positions,dissent_summary,risk_challenges,
+                   committee_status,human_final_required,capital_action_allowed,
+                   packet_fingerprint,pe_observation_count,earliest_pe_date,
+                   latest_pe_date,latest_ingested_at
+            FROM sector_intelligence.v_sector_underwrite_control
+            ORDER BY node_name
+            LIMIT 200
+        """,
         "flows": """
             SELECT flow.taxonomy_node_id,node.taxonomy_key,node.node_name,
                    flow.symbol_id,symbol.symbol,symbol.exchange,flow.observed_at,
@@ -12821,6 +12851,42 @@ def sync_sector_ownership_flows(payload: dict) -> dict:
     return result
 
 
+def build_sector_underwrite(payload: dict) -> dict:
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    persist = payload.get("persist", True) is not False
+    if not taxonomy_key or len(taxonomy_key) > 160:
+        raise ValueError("taxonomy_key is required and must be at most 160 characters")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "build_sector_underwrite.py"),
+        "--taxonomy-key", taxonomy_key,
+        "--as-of-date", as_of_date,
+        "--actor", actor,
+    ]
+    if persist:
+        command.append("--persist")
+    completed = subprocess.run(
+        command,cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=1200
+    )
+    result = _parse_engine_json(completed, "sector institutional underwrite builder")
+    if result.get("broker_write_allowed") is not False or result.get("capital_action_allowed") is not False:
+        raise ValueError("sector institutional underwrite violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_build_sector_underwrite","build_sector_underwrite",actor,
+        "sector_intelligence.research_coverage/sector_intelligence.sector_committee_packets",
+        result,
+        {
+            "taxonomy_key": taxonomy_key,"as_of_date": as_of_date,"persist": persist,
+            "capital_action_allowed": False,"broker_write_allowed": False,
+        },
+    )
+    return result
+
+
 def run_sector_acceptance(payload: dict) -> dict:
     taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
     taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
@@ -12852,7 +12918,7 @@ def run_sector_acceptance(payload: dict) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
         raise ValueError("run_key contains unsupported characters")
     run_rows = run_psql_json(f"""
-        SELECT sector_intelligence.run_acceptance_gates_v3(
+        SELECT sector_intelligence.run_acceptance_gates_v4(
             {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
         ) AS acceptance_run_id
     """)
@@ -19933,6 +19999,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/sector-intelligence/ownership-flows/sync":
                 self._send_json(sync_sector_ownership_flows(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/underwrite/build":
+                self._send_json(build_sector_underwrite(payload), 201)
                 return
             if self.path == "/api/sector-intelligence/activate-price-baseline":
                 self._send_json(activate_sector_price_baseline(payload), 201)

@@ -6,12 +6,12 @@ import {
   Landmark,
 } from "lucide-react";
 import { useSectorIntelligence } from "../../data/queries";
-import { useActivateSectorPriceBaseline, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorFundamentals, useSyncSectorOwnershipFlows, useSyncSectorRemediation } from "../../data/actions";
+import { useActivateSectorPriceBaseline, useBuildSectorUnderwrite, useImportSectorIntelligencePackage, useRunSectorAcceptance, useRunSectorIntelligence, useSyncSectorFundamentals, useSyncSectorOwnershipFlows, useSyncSectorRemediation } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Badge, Button, DataTable, Empty, Field, Metric, MetricTile, Panel, Select, Skeleton, StatusPill, Tabs, TextArea, TextInput,
 } from "../../system/primitives";
-import { bool, formatCompact, formatRelative, num, raw, text } from "../../data/liveRow";
+import { bool, formatCompact, formatRelative, num, raw, rows, text } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -50,6 +50,7 @@ export default function SectorIntelligence() {
       <SectorRunControl indices={data?.custom_indices ?? []} />
       {tab === "fundamentals" ? <SectorFundamentalSyncControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "flows" ? <SectorOwnershipFlowSyncControl hierarchy={data?.hierarchy ?? []} coverage={data?.ownership_flow_coverage ?? []} /> : null}
+      {tab === "committee" ? <SectorUnderwriteControl hierarchy={data?.hierarchy ?? []} underwrites={data?.underwrites ?? []} /> : null}
       {tab === "overview" ? <SectorPriceBaselineControl hierarchy={data?.hierarchy ?? []} /> : null}
       {tab === "overview" ? <SectorAcceptanceControl hierarchy={data?.hierarchy ?? []} acceptance={data?.acceptance_runs ?? []} /> : null}
       {tab === "overview" ? <SectorSourceImportControl /> : null}
@@ -772,8 +773,68 @@ function SectorOwnershipFlowSyncControl({ hierarchy, coverage }: { hierarchy: Li
   );
 }
 
+function SectorUnderwriteControl({ hierarchy, underwrites }: { hierarchy: LiveRow[]; underwrites: LiveRow[] }) {
+  const mutation = useBuildSectorUnderwrite();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const nodes = React.useMemo(() => {
+    const unique = new Map<string, { key: string; label: string }>();
+    for (const row of hierarchy) {
+      for (const [keyField, nameField] of [["sector_key", "sector_name"], ["industry_key", "industry_name"], ["sub_industry_key", "sub_industry_name"]] as const) {
+        const key = text(row, keyField);
+        const label = text(row, nameField);
+        if (key && label) unique.set(key, { key, label });
+      }
+    }
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [hierarchy]);
+  const [taxonomyKey, setTaxonomyKey] = React.useState("");
+  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+
+  React.useEffect(() => {
+    if (taxonomyKey || !nodes.length) return;
+    const completed = underwrites.find((row) => num(row, "pe_observation_count") >= 2000);
+    setTaxonomyKey(completed ? text(completed, "taxonomy_key") : nodes[0].key);
+  }, [taxonomyKey, nodes, underwrites]);
+
+  function build() {
+    if (!taxonomyKey || !asOf) return;
+    mutation.mutate({
+      taxonomy_key: taxonomyKey,
+      as_of_date: asOf,
+      persist: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        const acceptance = raw(result, "acceptance") as LiveRow | undefined;
+        pushToast({
+          title: "Institutional sector underwrite built",
+          message: num(acceptance, "passed_count") + " of " + num(acceptance, "gate_count") + " gates passed; " + num(result, "open_data_gap_count") + " evidence gaps retained",
+          tone: text(acceptance, "status") === "passed" ? "ok" : "warn",
+          duration: 8000,
+        });
+      },
+      onError: (error) => pushToast({ title: "Sector underwrite failed", message: error.message, tone: "risk", duration: 9000 }),
+    });
+  }
+
+  return (
+    <Panel icon={FileCheck2} title="Build Institutional Sector Underwrite" actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Collecting 10Y history" : "Human-final research"}</Badge>}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+        <Field label="Sector or industry" required><Select value={taxonomyKey} onChange={(event) => setTaxonomyKey(event.target.value)}><option value="">Select taxonomy...</option>{nodes.map((node) => <option key={node.key} value={node.key}>{node.label}</option>)}</Select></Field>
+        <Field label="Point-in-time cutoff" required><TextInput type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></Field>
+        <Button variant="primary" icon={FileCheck2} onClick={build} disabled={!taxonomyKey || !asOf || mutation.isPending}>{mutation.isPending ? "Building source-backed dossier..." : "Build dossier & open committee"}</Button>
+      </div>
+      <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+        Retains official daily P/E, P/B and dividend-yield responses on the SSD, evaluates 15 dossier sections, records six independent positions and dissent, then runs v4 acceptance. Missing evidence remains visible. Capital and broker authority stay locked.
+      </div>
+      {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
+    </Panel>
+  );
+}
+
 function Committee({ data }: { data: ReturnType<typeof useSectorIntelligence>["data"] }) {
   const committee = data?.committee ?? [];
+  const underwrites = (data?.underwrites ?? []).filter((row) => num(row, "dossier_version") > 0);
   const mandates = data?.portfolio_manager ?? [];
   const execution = data?.execution_control?.[0];
   return (
@@ -781,9 +842,51 @@ function Committee({ data }: { data: ReturnType<typeof useSectorIntelligence>["d
       <MetricStrip values={[
         ["Open packets", committee.filter((row) => !["decided", "closed"].includes(text(row, "status"))).length],
         ["PM mandates", mandates.length],
+        ["Institutional dossiers", underwrites.filter((row) => num(row, "dossier_version") > 0).length],
         ["Human final required", committee.filter((row) => text(row, "human_final_required") === "true").length],
         ["Broker writes", execution && text(execution, "live_broker_writes_allowed") === "true" ? 1 : 0],
       ]} />
+      <Panel icon={FileCheck2} title="Institutional Sector Underwrites" actions={<Badge tone={underwrites.length ? "ok" : "warn"}>{underwrites.length ? "Evidence retained" : "Not built"}</Badge>}>
+        {underwrites.length === 0 ? (
+          <Empty icon={FileCheck2} title="No institutional underwrite" description="Build one above from official valuation history and the stored fundamental, ownership, flow and portfolio evidence." />
+        ) : (
+          <DataTable rows={underwrites} rowKey={(row, index) => text(row, "taxonomy_key", String(index))} columns={[
+            { key: "sector", header: "Sector", render: (row) => <div><strong>{text(row, "node_name")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>v{num(row, "dossier_version")}</div></div> },
+            { key: "valuation", header: "10Y P/E history", align: "right", render: (row) => <div><strong>{num(row, "pe_observation_count").toLocaleString("en-IN")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "earliest_pe_date", "-")} to {text(row, "latest_pe_date", "-")}</div></div> },
+            { key: "coverage", header: "Dossier", render: (row) => <StatusPill status={text(row, "coverage_status", "not_built")} /> },
+            { key: "committee", header: "Committee", render: (row) => <div><StatusPill status={text(row, "committee_status", "not_open")} /><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{rows(row, "independent_positions").length} independent positions</div></div> },
+            { key: "action", header: "Proposed action", render: (row) => <strong>{text(row, "proposed_action", "No action")}</strong> },
+            { key: "capital", header: "Capital authority", render: (row) => <StatusPill status={bool(row, "capital_action_allowed") ? "enabled" : "locked"} /> },
+          ]} />
+        )}
+      </Panel>
+      {underwrites.map((underwrite) => (
+        <Panel key={"dossier:" + text(underwrite, "taxonomy_key")} icon={Layers} title={text(underwrite, "node_name") + " Dossier And Dissent"} actions={<Badge tone="accent">Human final</Badge>}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "var(--space-3)" }}>
+            <div>
+              <strong>Investment conclusion</strong>
+              <p style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{text(underwrite, "thesis_summary", "No conclusion stored.")}</p>
+            </div>
+            <div>
+              <strong>Independent dissent</strong>
+              <p style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{text(underwrite, "dissent_summary", "No dissent stored.")}</p>
+            </div>
+            <div>
+              <strong>Portfolio fit</strong>
+              <p style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{text((raw(underwrite, "dossier_sections") as LiveRow | undefined)?.portfolio_fit as LiveRow | undefined, "conclusion", "Not evaluated.")}</p>
+            </div>
+            <div>
+              <strong>Opportunity cost</strong>
+              <p style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{text((raw(underwrite, "dossier_sections") as LiveRow | undefined)?.opportunity_cost as LiveRow | undefined, "conclusion", "Not evaluated.")}</p>
+            </div>
+          </div>
+          <div style={{ marginTop: "var(--space-3)", display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
+            {Object.entries((raw(underwrite, "dossier_sections") as Record<string, LiveRow> | undefined) ?? {}).map(([key, section]) => (
+              <Badge key={key} tone={text(section, "status").includes("gap") || text(section, "status").includes("incomplete") ? "warn" : "accent"}>{key.replace(/_/g, " ")}: {text(section, "status", "unknown")}</Badge>
+            ))}
+          </div>
+        </Panel>
+      ))}
       <Panel icon={ShieldCheck} title="Sector Portfolio Manager Mandates">
         {mandates.length === 0 ? (
           <Empty icon={ShieldCheck} title="No active sector mandate" description="Mandates require an explicit benchmark, eligible sector scope, risk limits and human approval policy." />

@@ -318,6 +318,8 @@ export const SectorIntelligenceSchema = z.object({
   aggregates: z.array(liveRow).default([]),
   fundamental_coverage: z.array(liveRow).default([]),
   valuation_bands: z.array(liveRow).default([]),
+  valuation_history: z.array(liveRow).default([]),
+  underwrites: z.array(liveRow).default([]),
   flows: z.array(liveRow).default([]),
   ownership: z.array(liveRow).default([]),
   ownership_flow_coverage: z.array(liveRow).default([]),

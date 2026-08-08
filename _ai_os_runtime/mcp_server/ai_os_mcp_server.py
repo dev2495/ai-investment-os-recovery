@@ -4367,6 +4367,21 @@ def sync_sector_ownership_flows(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/sector-intelligence/ownership-flows/sync", payload, timeout=920))
 
 
+def build_sector_underwrite(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Portfolio Manager")
+    payload.setdefault("persist", True)
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/underwrite/build", payload, timeout=1220))
+
+
 def run_sector_acceptance(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
@@ -6022,6 +6037,21 @@ TOOLS = {
             "required": ["taxonomy_key", "as_of_date"],
         },
         "handler": sync_sector_ownership_flows,
+    },
+    "ai_os_build_sector_underwrite": {
+        "description": "Build a paper-only institutional sector underwrite from official ten-year point-in-time valuation history, stored fundamentals, ownership, flows and portfolio evidence. It records independent dissent and evidence gaps and cannot authorize capital, execution, or broker orders.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": build_sector_underwrite,
     },
     "ai_os_run_sector_acceptance": {
         "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",

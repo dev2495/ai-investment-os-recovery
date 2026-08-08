@@ -218,6 +218,20 @@ export function useSyncSectorOwnershipFlows() {
   );
 }
 
+export interface SectorUnderwriteInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useBuildSectorUnderwrite() {
+  return useInvalidating<SectorUnderwriteInput, LiveRow>(
+    "/api/sector-intelligence/underwrite/build",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
 export interface SectorPriceBaselineInput {
   taxonomy_node_id: number;
   as_of_date: string;
