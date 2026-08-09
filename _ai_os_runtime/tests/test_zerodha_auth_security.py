@@ -111,6 +111,29 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
         refresh.assert_called_once()
         self.assertNotIn("one-time-secret", repr(audit.call_args))
 
+    def test_pasted_callback_trims_sentence_punctuation_from_request_token(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "exchange_zerodha_request_token",
+                return_value={"status": "authenticated", "account_match": True},
+            ) as exchange,
+            mock.patch.object(ai_os_api_server, "start_zerodha_post_login_sync", return_value={}),
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            ai_os_api_server.exchange_zerodha_callback_url({
+                "callback_url": "https://kite.zerodha.com/?action=login&status=success&request_token=one-time-secret.",
+                "actor": "Devarsh",
+            })
+
+        exchange.assert_called_once_with({"request_token": "one-time-secret", "actor": "Devarsh"})
+
+    def test_pasted_callback_rejects_invalid_request_token_characters(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid characters"):
+            ai_os_api_server.exchange_zerodha_callback_url({
+                "callback_url": "https://kite.zerodha.com/?action=login&status=success&request_token=invalid%2Ftoken",
+            })
+
     def test_pasted_callback_rejects_untrusted_host(self) -> None:
         with self.assertRaises(ValueError):
             ai_os_api_server.exchange_zerodha_callback_url({

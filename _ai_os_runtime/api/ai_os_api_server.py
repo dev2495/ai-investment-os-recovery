@@ -9449,7 +9449,9 @@ def exchange_zerodha_callback_url(payload: dict) -> dict:
     query = urllib.parse.parse_qs(parsed.query)
     status = str((query.get("status") or [""])[0]).strip().lower()
     action = str((query.get("action") or [""])[0]).strip().lower()
-    request_token = str((query.get("request_token") or [""])[0]).strip()
+    request_token = str((query.get("request_token") or [""])[0]).strip().rstrip(".,;:!?)]}>\'\"")
+    if request_token and not re.fullmatch(r"[A-Za-z0-9_-]{10,256}", request_token):
+        raise ValueError("The Zerodha request token contains invalid characters")
     if status != "success" or action != "login" or not request_token:
         raise ValueError("The pasted URL is not a successful Zerodha login callback")
     actor = str(payload.get("actor") or "Devarsh")
