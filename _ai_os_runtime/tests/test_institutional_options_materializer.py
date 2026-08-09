@@ -140,6 +140,8 @@ class InstitutionalOptionsMaterializerTests(unittest.TestCase):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn('max(parse_timestamp(row["source_timestamp"]) for row in scope).isoformat()', source)
         self.assertIn("prior_oi_changes", source)
+        self.assertIn('replay_frames([event], [event["received_at"]])', source)
+        self.assertNotIn('replay_frames(payload, [row["received_at"] for row in scope])', source)
 
 
 if __name__ == "__main__":

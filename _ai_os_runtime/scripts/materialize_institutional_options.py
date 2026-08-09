@@ -518,7 +518,11 @@ def rebuild_point_in_time_replay(batch: dict[str, Any]) -> int:
         }
         for row in scope
     ]
-    frames = replay_frames(payload, [row["received_at"] for row in scope])
+    frames: list[dict[str, Any]] = []
+    for event in payload:
+        event_frames = replay_frames([event], [event["received_at"]])
+        if event_frames:
+            frames.append(event_frames[0])
     if len(frames) < 2:
         return 0
     by_key = {row["batch_key"]: row for row in scope}
