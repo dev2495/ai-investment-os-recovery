@@ -82,6 +82,17 @@ class SectorIntelligencePackageImportTests(unittest.TestCase):
         with self.assertRaisesRegex(module.PackageError, "must identify one"):
             module.validate_package(value)
 
+    def test_overlapping_membership_windows_are_rejected(self) -> None:
+        value = package()
+        value["memberships"][0]["valid_to"] = "2021-12-31"
+        value["memberships"].append({
+            **value["memberships"][0],
+            "valid_from": "2021-01-01",
+            "valid_to": None,
+        })
+        with self.assertRaisesRegex(module.PackageError, "overlapping membership windows"):
+            module.validate_package(value)
+
 
 if __name__ == "__main__":
     unittest.main()

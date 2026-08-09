@@ -103,18 +103,38 @@ def validate_package(package: dict[str, Any]) -> dict[str, Any]:
                 raise PackageError(f"taxonomy parent level is invalid for {key}")
 
     memberships = list(package.get("memberships") or [])
+    membership_windows: dict[tuple[str, str, str, str, str], list[tuple[date, date | None]]] = {}
     for position, raw in enumerate(memberships):
         row = dict(raw)
-        nonempty(row.get("symbol"), f"memberships[{position}].symbol")
-        nonempty(row.get("exchange"), f"memberships[{position}].exchange")
-        nonempty(row.get("instrument_type"), f"memberships[{position}].instrument_type")
+        symbol = nonempty(row.get("symbol"), f"memberships[{position}].symbol").upper()
+        exchange = nonempty(row.get("exchange"), f"memberships[{position}].exchange").upper()
+        instrument_type = nonempty(row.get("instrument_type"), f"memberships[{position}].instrument_type").lower()
         taxonomy_key = nonempty(row.get("taxonomy_key"), f"memberships[{position}].taxonomy_key")
         if taxonomy_key not in taxonomy_by_key:
             raise PackageError(f"membership taxonomy_key not in package: {taxonomy_key}")
-        iso_date(row.get("valid_from"), f"memberships[{position}].valid_from")
+        valid_from = date.fromisoformat(iso_date(row.get("valid_from"), f"memberships[{position}].valid_from"))
+        valid_to = (
+            date.fromisoformat(iso_date(row.get("valid_to"), f"memberships[{position}].valid_to"))
+            if row.get("valid_to") else None
+        )
+        if valid_to and valid_to < valid_from:
+            raise PackageError(f"memberships[{position}].valid_to precedes valid_from")
         if not row.get("evidence"):
             raise PackageError(f"memberships[{position}].evidence is required")
         nonempty(row.get("source_reference") or artifact_ref, f"memberships[{position}].source_reference")
+        role = str(row.get("membership_role") or "constituent")
+        membership_windows.setdefault(
+            (symbol, exchange, instrument_type, taxonomy_key, role), []
+        ).append((valid_from, valid_to))
+    for identity, windows in membership_windows.items():
+        ordered = sorted(windows)
+        for previous, current in zip(ordered, ordered[1:]):
+            if previous[1] is None or previous[1] >= current[0]:
+                raise PackageError(
+                    "overlapping membership windows for "
+                    + "/".join(identity)
+                    + f": {previous[0]}..{previous[1]} overlaps {current[0]}..{current[1]}"
+                )
 
     metrics = list(package.get("metrics") or [])
     metric_keys: set[str] = set()
