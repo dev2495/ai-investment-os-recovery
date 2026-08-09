@@ -651,14 +651,18 @@ def exposure_estimates(
                 continue
         grid.append({"spot": shocked_spot, "shock_percent": shock, "aggregate_gex": aggregate})
     gamma_flip = None
-    for left, right in zip(grid, grid[1:]):
-        if left["aggregate_gex"] == 0:
-            gamma_flip = left["spot"]
-            break
-        if left["aggregate_gex"] * right["aggregate_gex"] < 0:
-            weight = -left["aggregate_gex"] / (right["aggregate_gex"] - left["aggregate_gex"])
-            gamma_flip = left["spot"] + weight * (right["spot"] - left["spot"])
-            break
+    gex_values = [point["aggregate_gex"] for point in grid]
+    if used and any(value < 0 for value in gex_values) and any(value > 0 for value in gex_values):
+        for left, right in zip(grid, grid[1:]):
+            left_gex = left["aggregate_gex"]
+            right_gex = right["aggregate_gex"]
+            if left_gex == 0:
+                gamma_flip = left["spot"]
+                break
+            if left_gex * right_gex <= 0 and right_gex != left_gex:
+                weight = -left_gex / (right_gex - left_gex)
+                gamma_flip = left["spot"] + weight * (right["spot"] - left["spot"])
+                break
     quality = "passed" if used else "not_computable"
     return {
         "metrics": totals if used else {key: None for key in totals},

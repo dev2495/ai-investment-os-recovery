@@ -169,11 +169,26 @@ def test_exposures_have_explicit_assumptions_and_no_action_authority() -> None:
     result = engine.exposure_estimates([contract], 100)
     assert result["quality_status"] == "passed"
     assert result["metrics"]["gex"] < 0
+    assert result["gamma_flip"] is None
     assert result["assumptions"]["open_interest_sign_method"] == "calls_negative_puts_positive"
     assert "limitation" in result["assumptions"]
     assert result["paper_only"] is True
     assert result["broker_write_allowed"] is False
     assert result["capital_action_allowed"] is False
+
+
+def test_zero_gamma_grid_does_not_fabricate_a_gamma_flip() -> None:
+    result = engine.exposure_estimates([
+        {
+            "calculation_status": "not_computable",
+            "option_type": "CE",
+            "open_interest": 100,
+            "contract_multiplier": 1,
+        }
+    ], 100)
+    assert result["quality_status"] == "not_computable"
+    assert result["gamma_flip"] is None
+    assert all(value is None for value in result["metrics"].values())
 
 
 def test_replay_enforces_source_and_arrival_no_lookahead() -> None:
