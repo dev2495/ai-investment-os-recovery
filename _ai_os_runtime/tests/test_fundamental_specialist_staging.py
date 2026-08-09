@@ -36,18 +36,23 @@ def test_staging_preserves_drafts_dissent_and_execution_guardrails() -> None:
         "gross_exposure": 1_899_270, "valuation_complete": 0, "monte_carlo_complete": 0,
         "valuation_types": [],
         "governance_forensic": {"count": 8, "categories": 6, "active_issues": 2, "high_severity": 3, "evidence_id": 21},
+        "industry_observations": {"count": 5, "categories": 5, "quantified": 1, "market_share_not_disclosed": 1, "evidence_id": 21},
+        "portfolio_fit_context": {"risk_limit_clients": 2, "breaches": 1, "warnings": 0, "suitable_clients": 0},
     }
     rows = build_opinions(context, datetime(2026, 8, 8, tzinfo=timezone.utc))
     by_key = {row["specialist_key"]: row for row in rows}
 
     assert len(rows) == 12
     assert by_key["financial_quality"]["opinion_status"] == "evidence_complete"
-    assert by_key["moat"]["opinion_status"] == "draft"
     assert by_key["governance"]["opinion_status"] == "evidence_complete"
     assert by_key["forensic_accounting"]["opinion_status"] == "evidence_complete"
+    assert by_key["industry"]["opinion_status"] == "evidence_complete"
+    assert by_key["moat"]["opinion_status"] == "evidence_complete"
+    assert by_key["portfolio_fit"]["opinion_status"] == "evidence_complete"
+    assert "No add or sizing action is supportable" in by_key["portfolio_fit"]["conclusion"]
     assert "not a clean-company clearance" in by_key["governance"]["conclusion"]
     assert by_key["bear_case"]["opinion_status"] == "dissent"
-    assert "0 numeric market-share" in by_key["moat"]["conclusion"]
+    assert "numeric market share remains unavailable" in by_key["moat"]["conclusion"]
     assert all(row["disconfirming_evidence"] for row in rows)
     assert all(row["evidence_id"] in {21, 29} for row in rows)
 

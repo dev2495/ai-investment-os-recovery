@@ -84,6 +84,7 @@ def complete_context(*, verified: bool = True) -> dict:
             "segment_fact_years": 8,
             "operational_kpi_count": 5,
             "market_share_series_count": 2,
+            "market_share_unavailability_count": 0,
             "peer_count": 5,
             "management_communication_count": 7,
             "management_claim_count": 8,
@@ -134,6 +135,7 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         context = complete_context()
         context["coverage"]["annual_statement_years"] = 4
         context["coverage"]["market_share_series_count"] = 0
+        context["coverage"]["market_share_unavailability_count"] = 0
 
         plan = factory.build_plan(context, self.request())
         gates = {row["gate_key"]: row for row in plan["acceptance_gates"]}
@@ -143,6 +145,17 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertEqual(gates["statement_history"]["observed_value"], {"value": 4})
         self.assertEqual(gates["market_share"]["gate_status"], "failed")
         self.assertIn("statement_history", plan["decision_summary"]["failed_gates"])
+
+    def test_explicit_primary_source_market_share_unavailability_resolves_gate_without_number(self) -> None:
+        context = complete_context()
+        context["coverage"]["market_share_series_count"] = 0
+        context["coverage"]["market_share_unavailability_count"] = 1
+
+        plan = factory.build_plan(context, self.request())
+        gate = next(row for row in plan["acceptance_gates"] if row["gate_key"] == "market_share")
+
+        self.assertEqual(gate["gate_status"], "passed")
+        self.assertEqual(gate["observed_value"], {"numeric_series": 0, "explicit_unavailability": 1})
 
     def test_acceptance_requires_the_designated_identity_evidence_to_be_human_verified(self) -> None:
         context = complete_context()
