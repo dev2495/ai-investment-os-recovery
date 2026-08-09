@@ -205,6 +205,7 @@ Basic (In INR) 91.22 72.44"""
 
 def test_normalizer_retains_review_and_execution_guards() -> None:
     source = PATH.read_text()
+    assert "filing.extraction_status IN ('captured','extracted')" in source
     assert "machine_extracted_unreviewed" in source
     assert '"broker_write_allowed": False' in source
     assert "--persist" in source
