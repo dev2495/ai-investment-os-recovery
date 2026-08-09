@@ -103,6 +103,54 @@ def test_premium_series_buildup_and_expected_move() -> None:
     assert engine.classify_buildup(1, -10) == "short_covering"
 
 
+def test_last_traded_premium_history_is_warning_not_executable() -> None:
+    payload = {
+        "as_of": "2026-08-04T09:00:01Z",
+        "dry_run": True,
+        "valuation": {
+            "model": "black_scholes_merton",
+            "valuation_timestamp": "2026-08-04T09:00:00Z",
+            "spot_price": 100,
+            "risk_free_rate": 0.05,
+            "dividend_yield": 0,
+            "time_to_expiry_years": 0.1,
+        },
+        "contracts": [
+            {
+                "trading_symbol": "CALL",
+                "strike": 100,
+                "option_type": "CE",
+                "quote_source_timestamp": "2026-08-04T09:00:00Z",
+                "received_at": "2026-08-04T09:00:01Z",
+                "last_price": 5,
+                "bid_price": 0,
+                "ask_price": 0,
+                "open_interest": 100,
+                "volume": 0,
+            },
+            {
+                "trading_symbol": "PUT",
+                "strike": 100,
+                "option_type": "PE",
+                "quote_source_timestamp": "2026-08-04T09:00:00Z",
+                "received_at": "2026-08-04T09:00:01Z",
+                "last_price": 4,
+                "bid_price": 0,
+                "ask_price": 0,
+                "open_interest": 100,
+                "volume": 0,
+            },
+        ],
+    }
+    result = engine.analyze_chain(payload)
+    series = result["premium_series"]["atm_straddle"]
+    assert series["combined_premium"] == pytest.approx(9)
+    assert series["quality_status"] == "warning"
+    assert "empty_quote" in series["quality_flags"]
+    assert all(row["calculation_status"] != "validated" for row in result["contracts"])
+    assert result["broker_write_allowed"] is False
+
+
 def test_exposures_have_explicit_assumptions_and_no_action_authority() -> None:
     metrics = engine.black_scholes_merton("call", 100, 100, 0.25, 0.05, 0.2)
     contract = {

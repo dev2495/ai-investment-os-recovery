@@ -10,6 +10,12 @@ class ZerodhaOptionSourceTimestampContractTests(unittest.TestCase):
         self.assertIn('"collected_at": collected_at', source)
         self.assertNotIn("f\"{sql_literal(observed_at)}::timestamptz,'Zerodha'", source)
 
+    def test_collector_captures_multiple_expiries_for_term_structure(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "sync_zerodha_market_data.py").read_text(encoding="utf-8")
+        self.assertIn('parser.add_argument("--expiry-count", type=int, default=3)', source)
+        self.assertIn("WITH selected_expiries AS", source)
+        self.assertIn("ORDER BY expiry LIMIT", source)
+
 
 if __name__ == "__main__":
     unittest.main()

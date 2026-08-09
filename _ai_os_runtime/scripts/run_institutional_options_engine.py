@@ -465,7 +465,12 @@ def select_market_price(contract: dict[str, Any]) -> tuple[str, float] | None:
 
 
 def premium_series(contracts: Iterable[dict[str, Any]], spot: float, strangle_width: float | None = None) -> dict[str, Any]:
-    """Select nearest ATM straddle and symmetric-width strangle from valid prices."""
+    """Select source-priced ATM and OTM premium series.
+
+    A last-traded price can retain historical premium evidence when executable
+    depth is unavailable.  Such a series is explicitly warning quality and
+    never becomes a liquidity or execution signal.
+    """
     spot = _positive(spot, "spot")
     priced: dict[tuple[float, str], tuple[dict[str, Any], float]] = {}
     for contract in contracts:
@@ -478,15 +483,26 @@ def premium_series(contracts: Iterable[dict[str, Any]], spot: float, strangle_wi
     result: dict[str, Any] = {"atm_straddle": None, "strangle": None, **SAFETY}
     if common:
         strike = min(common, key=lambda item: (abs(item - spot), item))
-        call_price = priced[(strike, "call")][1]
-        put_price = priced[(strike, "put")][1]
+        call_contract, call_price = priced[(strike, "call")]
+        put_contract, put_price = priced[(strike, "put")]
+        flags = list(dict.fromkeys(
+            list(call_contract.get("_premium_quality_flags") or [])
+            + list(put_contract.get("_premium_quality_flags") or [])
+        ))
         result["atm_straddle"] = {
             "series_type": "atm_straddle", "reference_spot": spot,
             "call_strike": strike, "put_strike": strike,
             "call_premium": call_price, "put_premium": put_price,
             "combined_premium": call_price + put_price,
             "selection_method": "nearest_common_strike_to_spot",
-            "quality_status": "passed", "assumptions": {}, **SAFETY,
+            "quality_status": "warning" if flags else "passed",
+            "quality_flags": flags,
+            "assumptions": {
+                "call_price_field": call_contract.get("_premium_price_field"),
+                "put_price_field": put_contract.get("_premium_price_field"),
+                "executable_quote_required_for_trade_decisions": True,
+            },
+            **SAFETY,
         }
     width = _positive(strangle_width, "strangle_width") if strangle_width is not None else None
     call_strikes = sorted(strike for strike, kind in priced if kind == "call" and strike > spot)
@@ -496,16 +512,27 @@ def premium_series(contracts: Iterable[dict[str, Any]], spot: float, strangle_wi
         put_target = spot - (width or 0.0)
         call_strike = min(call_strikes, key=lambda item: (abs(item - call_target), item))
         put_strike = min(put_strikes, key=lambda item: (abs(item - put_target), -item))
-        call_price = priced[(call_strike, "call")][1]
-        put_price = priced[(put_strike, "put")][1]
+        call_contract, call_price = priced[(call_strike, "call")]
+        put_contract, put_price = priced[(put_strike, "put")]
+        flags = list(dict.fromkeys(
+            list(call_contract.get("_premium_quality_flags") or [])
+            + list(put_contract.get("_premium_quality_flags") or [])
+        ))
         result["strangle"] = {
             "series_type": "strangle", "reference_spot": spot,
             "call_strike": call_strike, "put_strike": put_strike,
             "call_premium": call_price, "put_premium": put_price,
             "combined_premium": call_price + put_price,
             "selection_method": "nearest_otm_strikes_to_symmetric_target",
-            "quality_status": "passed",
-            "assumptions": {"requested_width": width}, **SAFETY,
+            "quality_status": "warning" if flags else "passed",
+            "quality_flags": flags,
+            "assumptions": {
+                "requested_width": width,
+                "call_price_field": call_contract.get("_premium_price_field"),
+                "put_price_field": put_contract.get("_premium_price_field"),
+                "executable_quote_required_for_trade_decisions": True,
+            },
+            **SAFETY,
         }
     return result
 
@@ -683,7 +710,7 @@ def analyze_chain(payload: dict[str, Any]) -> dict[str, Any]:
     filters = payload.get("filters") or {}
     results: list[dict[str, Any]] = []
     validated_for_exposure: list[dict[str, Any]] = []
-    eligible_for_premium: list[dict[str, Any]] = []
+    priced_for_premium: list[dict[str, Any]] = []
     for contract in contracts:
         check = filter_contract(
             contract, as_of,
@@ -693,11 +720,17 @@ def analyze_chain(payload: dict[str, Any]) -> dict[str, Any]:
             min_volume=float(filters.get("min_volume", 0.0)),
         )
         base = {"trading_symbol": contract.get("trading_symbol"), "strike": contract.get("strike"), "option_type": contract.get("option_type"), "filter": check}
+        selected = select_market_price(contract)
+        if selected is not None:
+            priced_for_premium.append({
+                **contract,
+                "_premium_price_field": selected[0],
+                "_premium_quality_flags": check["quality_flags"],
+            })
         if not check["eligible"]:
             results.append({**base, **implied_volatility(0.0, model, str(contract.get("option_type")), reference, contract.get("strike"), valuation.get("time_to_expiry_years"), valuation.get("risk_free_rate"), valuation.get("dividend_yield", 0.0))})
             results[-1]["quality_flags"] = list(dict.fromkeys(check["quality_flags"] + results[-1]["quality_flags"]))
             continue
-        selected = select_market_price(contract)
         if selected is None:
             failed = implied_volatility(-1.0, model, str(contract.get("option_type")), reference, contract.get("strike"), valuation.get("time_to_expiry_years"), valuation.get("risk_free_rate"), valuation.get("dividend_yield", 0.0))
             failed["quality_flags"] = ["no_valid_market_price"]
@@ -710,7 +743,6 @@ def analyze_chain(payload: dict[str, Any]) -> dict[str, Any]:
         )
         row = {**base, "price_field_used": selected[0], "option_price_used": selected[1], **solved}
         results.append(row)
-        eligible_for_premium.append(contract)
         if solved["calculation_status"] == "validated":
             validated_for_exposure.append({
                 **contract, **solved, "model_name": model,
@@ -719,7 +751,7 @@ def analyze_chain(payload: dict[str, Any]) -> dict[str, Any]:
                 "dividend_yield": valuation.get("dividend_yield", 0.0),
             })
     spot = valuation.get("spot_price", reference)
-    premiums = premium_series(eligible_for_premium, spot, payload.get("strangle_width"))
+    premiums = premium_series(priced_for_premium, spot, payload.get("strangle_width"))
     moves: list[dict[str, Any]] = []
     if premiums["atm_straddle"]:
         moves.append(expected_move(spot, "atm_straddle", combined_premium=premiums["atm_straddle"]["combined_premium"]))

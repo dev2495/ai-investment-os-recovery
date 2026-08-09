@@ -310,7 +310,13 @@ def sync_historical(
     }
 
 
-def sync_options(api_key: str, access_token: str, underlyings: list[str], strike_pairs: int) -> dict:
+def sync_options(
+    api_key: str,
+    access_token: str,
+    underlyings: list[str],
+    strike_pairs: int,
+    expiry_count: int,
+) -> dict:
     collected_at = datetime.now(timezone.utc).isoformat()
     stored = 0
     summaries: list[dict] = []
@@ -326,17 +332,27 @@ def sync_options(api_key: str, access_token: str, underlyings: list[str], strike
             summaries.append({"underlying": normalized, "status": "spot_unavailable"})
             continue
         instruments = query_json(
-            "WITH nearest AS (SELECT min(expiry) expiry FROM market.zerodha_instruments "
-            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') AND expiry>=current_date) "
+            "WITH selected_expiries AS (SELECT DISTINCT expiry FROM market.zerodha_instruments "
+            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') "
+            f"AND expiry>=current_date ORDER BY expiry LIMIT {max(1, min(int(expiry_count), 6))}) "
             "SELECT instrument_token,trading_symbol,exchange,"
             "market.zerodha_instruments.expiry AS expiry,strike,instrument_type "
-            "FROM market.zerodha_instruments,nearest "
-            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') AND market.zerodha_instruments.expiry=nearest.expiry "
+            "FROM market.zerodha_instruments JOIN selected_expiries USING (expiry) "
+            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') "
             "ORDER BY strike,instrument_type"
         )
-        strikes = sorted({float(row["strike"]) for row in instruments if row.get("strike") is not None}, key=lambda x: abs(x-float(spot)))
-        selected_strikes = set(strikes[: max(2, strike_pairs)])
-        selected = [row for row in instruments if float(row.get("strike") or 0) in selected_strikes]
+        selected: list[dict] = []
+        for expiry in sorted({str(row.get("expiry")) for row in instruments if row.get("expiry")}):
+            expiry_rows = [row for row in instruments if str(row.get("expiry")) == expiry]
+            strikes = sorted(
+                {float(row["strike"]) for row in expiry_rows if row.get("strike") is not None},
+                key=lambda value: abs(value - float(spot)),
+            )
+            selected_strikes = set(strikes[: max(2, strike_pairs)])
+            selected.extend(
+                row for row in expiry_rows
+                if float(row.get("strike") or 0) in selected_strikes
+            )
         identifiers = [f"{row['exchange']}:{row['trading_symbol']}" for row in selected]
         quotes = quote_batches(api_key, access_token, identifiers)
         values: list[str] = []
@@ -389,7 +405,8 @@ def sync_options(api_key: str, access_token: str, underlyings: list[str], strike
         stored += len(values)
         summaries.append({
             "underlying": normalized, "status": "completed", "spot": spot,
-            "expiry": selected[0].get("expiry") if selected else None, "contracts": len(values),
+            "expiries": sorted({str(row.get("expiry")) for row in selected if row.get("expiry")}),
+            "contracts": len(values),
             "missing_source_timestamps": missing_timestamps,
             "iv_and_greeks": "not_provided_by_kite",
         })
@@ -402,6 +419,7 @@ def main() -> int:
     parser.add_argument("--exchanges", nargs="+", default=["ALL"])
     parser.add_argument("--underlyings", nargs="+", default=["NIFTY", "BANKNIFTY"])
     parser.add_argument("--strike-pairs", type=int, default=24)
+    parser.add_argument("--expiry-count", type=int, default=3)
     parser.add_argument("--historical-exchange")
     parser.add_argument("--historical-symbol")
     parser.add_argument("--from-date")
@@ -428,7 +446,13 @@ def main() -> int:
         if "quotes" in args.modes:
             results["quotes"] = sync_quotes(api_key, access_token)
         if "options" in args.modes:
-            results["options"] = sync_options(api_key, access_token, args.underlyings, max(2, min(args.strike_pairs, 60)))
+            results["options"] = sync_options(
+                api_key,
+                access_token,
+                args.underlyings,
+                max(2, min(args.strike_pairs, 60)),
+                max(1, min(args.expiry_count, 6)),
+            )
         if "historical" in args.modes:
             required = [args.historical_exchange, args.historical_symbol, args.from_date, args.to_date]
             if not all(required):
