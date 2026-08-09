@@ -34,6 +34,7 @@ def test_staging_preserves_drafts_dissent_and_execution_guardrails() -> None:
         "market_share_series": 0, "peers": 2, "communications": 12,
         "claims": 3, "claim_outcomes": 1, "position_rows": 2, "client_count": 2,
         "gross_exposure": 1_899_270, "valuation_complete": 0, "monte_carlo_complete": 0,
+        "valuation_types": [],
         "governance_forensic": {"count": 8, "categories": 6, "active_issues": 2, "high_severity": 3, "evidence_id": 21},
     }
     rows = build_opinions(context, datetime(2026, 8, 8, tzinfo=timezone.utc))
@@ -49,3 +50,17 @@ def test_staging_preserves_drafts_dissent_and_execution_guardrails() -> None:
     assert "0 numeric market-share" in by_key["moat"]["conclusion"]
     assert all(row["disconfirming_evidence"] for row in rows)
     assert all(row["evidence_id"] in {21, 29} for row in rows)
+
+
+def test_valuation_lane_completes_only_with_all_calculation_families() -> None:
+    context = {
+        "company": {"id": 43, "primary_symbol": "USHAMART"},
+        "dossier": {"dossier_version_id": 4, "holding_thesis_id": 2},
+        "evidence": [{"id": 21, "source_type": "corporate_filing", "source_title": "Annual Report FY 2025-26"}],
+        "fact_coverage": {}, "valuation_complete": 3,
+        "valuation_types": ["dcf", "reverse_dcf", "multiples"], "monte_carlo_complete": 1,
+    }
+    rows = build_opinions(context, datetime(2026, 8, 8, tzinfo=timezone.utc))
+    valuation = next(row for row in rows if row["specialist_key"] == "valuation")
+    assert valuation["opinion_status"] == "evidence_complete"
+    assert "operator reviewed" in valuation["conclusion"]
