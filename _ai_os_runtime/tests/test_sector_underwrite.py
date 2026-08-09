@@ -63,6 +63,9 @@ class SectorUnderwriteTests(unittest.TestCase):
             "portfolio": {"positions": [{"symbol": "INFY", "as_of": "2025-09-17"}],
                           "sector_market_value": "83971.1", "total_market_value": "23472021.79",
                           "latest_portfolio_as_of": "2026-06-30"},
+            "comparators": [{"taxonomy_key": "nse-index:nifty-bank", "node_name": "Nifty Bank",
+                             "as_of_date": "2026-08-09", "current_value": "13.72",
+                             "percentile_rank": "4.1", "observation_count": 2477}],
         }
         stats = {"current_value": Decimal("30"), "percentile_rank": Decimal("55"),
                  "observation_count": 2500, "median_value": Decimal("27")}
@@ -75,7 +78,12 @@ class SectorUnderwriteTests(unittest.TestCase):
         self.assertEqual(len(sections), 15)
         self.assertEqual(sections["macro_sensitivities"]["status"], "gap")
         self.assertEqual(sections["macro_sensitivities"]["evidence"], [])
-        self.assertIn("block any allocation recommendation", thesis)
+        self.assertEqual(sections["opportunity_cost"]["status"], "source_backed_comparator")
+        self.assertFalse(any(
+            item["gap"] == "cross_sector_opportunity_cost_comparator"
+            for item in sections["evidence_gaps"]["evidence"]
+        ))
+        self.assertIn("No capital change is authorized", thesis)
         self.assertGreaterEqual(len(references), 3)
         self.assertGreaterEqual(len(monitoring), 3)
 

@@ -310,6 +310,32 @@ def collect_evidence(node_id: int, as_of_date: dt.date) -> dict[str, Any]:
             SELECT count(*) AS definition_count,count(*) FILTER (WHERE status='active') AS active_count
             FROM sector_intelligence.custom_index_definitions
             WHERE taxonomy_node_id={node_id}
+        ), comparators AS (
+            SELECT DISTINCT ON (node.id)
+                   node.id AS taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   band.as_of_date,band.current_value,band.percentile_rank,
+                   band.observation_count,band.input_fingerprint,
+                   coverage.coverage_status
+            FROM sector_intelligence.valuation_bands band
+            JOIN sector_intelligence.metric_definitions metric
+              ON metric.id=band.metric_definition_id
+            JOIN sector_intelligence.taxonomy_nodes node
+              ON node.id=band.taxonomy_node_id
+            LEFT JOIN LATERAL (
+                SELECT research.coverage_status
+                FROM sector_intelligence.research_coverage research
+                WHERE research.taxonomy_node_id=node.id
+                  AND research.source_cutoff_at::date<={sql_literal(as_of_date.isoformat())}::date
+                ORDER BY research.source_cutoff_at DESC,research.version DESC
+                LIMIT 1
+            ) coverage ON true
+            WHERE node.node_level='sector'
+              AND node.id<>{node_id}
+              AND metric.metric_key='price_to_earnings'
+              AND band.as_of_date<={sql_literal(as_of_date.isoformat())}::date
+              AND band.lookback_years>=10
+              AND band.observation_count>=2000
+            ORDER BY node.id,band.as_of_date DESC,band.calculated_at DESC
         )
         SELECT coalesce(json_agg(row_to_json(result)), '[]'::json)::text FROM (
             SELECT json_build_object(
@@ -317,6 +343,10 @@ def collect_evidence(node_id: int, as_of_date: dt.date) -> dict[str, Any]:
                 'flows',(SELECT row_to_json(flows) FROM flows),
                 'ownership',(SELECT row_to_json(ownership) FROM ownership),
                 'indices',(SELECT row_to_json(indices) FROM indices),
+                'comparators',coalesce(
+                    (SELECT json_agg(row_to_json(comparators) ORDER BY percentile_rank,taxonomy_node_id)
+                     FROM comparators),'[]'::json
+                ),
                 'portfolio',json_build_object(
                     'positions',coalesce((SELECT json_agg(row_to_json(portfolio_rows)) FROM portfolio_rows),'[]'::json),
                     'sector_market_value',coalesce((SELECT sum(market_value) FROM portfolio_rows),0),
@@ -349,14 +379,43 @@ def build_dossier(
     total_value = Decimal(str(portfolio.get("total_market_value") or 0))
     sector_weight = (sector_value * 100 / total_value) if total_value else Decimal(0)
     portfolio_positions = portfolio.get("positions") or []
+    comparators = list(evidence.get("comparators") or [])
+    latest_portfolio_as_of = portfolio.get("latest_portfolio_as_of")
+    try:
+        latest_portfolio_date = dt.date.fromisoformat(str(latest_portfolio_as_of)[:10])
+    except (TypeError, ValueError):
+        latest_portfolio_date = None
+    portfolio_fresh = bool(
+        latest_portfolio_date and 0 <= (as_of_date - latest_portfolio_date).days <= 3
+    )
     data_gaps = [
         {"gap": "sector_operating_kpi_history", "status": "missing_source_backed_history"},
         {"gap": "market_share_and_capacity_history", "status": "missing_source_backed_history"},
-        {"gap": "cross_sector_opportunity_cost_comparator", "status": "not_yet_comparable"},
-        {"gap": "portfolio_mark_freshness", "status": "review_required",
-         "evidence": portfolio_positions},
         {"gap": "macro_and_raw_material_sensitivity", "status": "missing_validated_model"},
     ]
+    if not comparators:
+        data_gaps.append(
+            {"gap": "cross_sector_opportunity_cost_comparator", "status": "not_yet_comparable"}
+        )
+    if not portfolio_fresh:
+        data_gaps.append({
+            "gap": "portfolio_mark_freshness",
+            "status": "review_required",
+            "latest_portfolio_as_of": str(latest_portfolio_as_of or ""),
+            "evidence": portfolio_positions,
+        })
+    comparator_status = "source_backed_comparator" if comparators else "incomplete_cross_sector_comparator"
+    comparator_conclusion = (
+        f"{len(comparators)} alternative sector valuation dossiers provide point-in-time "
+        "opportunity-cost context; this is comparative evidence, not an allocation recommendation."
+        if comparators else
+        "No allocation recommendation is permitted until comparable point-in-time valuation "
+        "and evidence coverage exist for alternative sectors."
+    )
+    portfolio_freshness_text = (
+        f"marks are current through {latest_portfolio_date.isoformat()}"
+        if portfolio_fresh else "position freshness requires review"
+    )
     common = {"as_of_date": as_of_date.isoformat(), "taxonomy_key": node["taxonomy_key"]}
     sections = {
         "executive_conclusion": {**common, "status": "monitoring",
@@ -390,14 +449,14 @@ def build_dossier(
             "conclusion": "No validated macro or raw-material sensitivity model is available; no relationship is inferred.",
             "evidence": []},
         "portfolio_fit": {**common, "status": "evaluated",
-            "conclusion": f"Stored positions map {sector_weight:.4f}% of total marked portfolio value to this sector; position freshness requires review.",
+            "conclusion": f"Stored positions map {sector_weight:.4f}% of total marked portfolio value to this sector; {portfolio_freshness_text}.",
             "evidence": [evidence_item("sector_market_value", str(sector_value), "portfolio.v_latest_positions"),
                          evidence_item("total_market_value", str(total_value), "portfolio.v_latest_positions"),
                          evidence_item("positions", portfolio_positions, "portfolio.v_latest_positions")]},
-        "opportunity_cost": {**common, "status": "incomplete_cross_sector_comparator",
-            "conclusion": "No allocation recommendation is permitted until comparable point-in-time valuation and evidence coverage exist for alternative sectors.",
+        "opportunity_cost": {**common, "status": comparator_status,
+            "conclusion": comparator_conclusion,
             "evidence": [evidence_item("current_pe_percentile", str(stats["percentile_rank"]), HISTORICAL_PAGE),
-                         evidence_item("comparator_status", "not_yet_comparable", "sector_intelligence.valuation_bands")]},
+                         evidence_item("comparator_sectors", comparators, "sector_intelligence.valuation_bands")]},
         "bull_case": {**common, "status": "hypothesis_not_forecast",
             "conclusion": "Bull-case operating assumptions are not asserted until operating KPI and macro evidence is available.",
             "evidence": []},
@@ -421,6 +480,9 @@ def build_dossier(
         {"source": "NSE corporate shareholding filings", "reference": "sector_intelligence.ownership_observations"},
         {"source": "NSE bulk and block deal archives", "reference": "sector_intelligence.flow_observations"},
         {"source": "Portfolio warehouse", "reference": "portfolio.v_latest_positions"},
+        {"source": "Cross-sector valuation dossiers",
+         "reference": "sector_intelligence.valuation_bands",
+         "comparators": comparators},
     ]
     monitoring = [
         {"indicator": "ten_year_pe_percentile", "value": str(stats["percentile_rank"]), "source": HISTORICAL_PAGE},
@@ -429,11 +491,11 @@ def build_dossier(
         {"indicator": "observed_flow_net_value", "value": flows["net_value"], "source": "sector_intelligence.flow_observations"},
         {"indicator": "portfolio_mark_freshness", "value": portfolio.get("latest_portfolio_as_of"), "source": "portfolio.v_latest_positions"},
     ]
+    gap_names = ", ".join(str(item["gap"]) for item in data_gaps)
     thesis = (
         f"{node['node_name']} has source-backed constituent fundamentals, official ten-year valuation, "
         f"ownership and observed block/bulk-deal flow evidence. Stored portfolio exposure is {sector_weight:.4f}%. "
-        "Operating KPI, market-share, macro-sensitivity, cross-sector comparison and position-freshness gaps "
-        "block any allocation recommendation; continue monitoring and evidence collection."
+        f"Remaining evidence blockers: {gap_names or 'none'}. No capital change is authorized by this dossier."
     )
     return sections, evidence_references, monitoring, thesis
 
@@ -444,15 +506,23 @@ def build_committee(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str, list[dict[str, Any]]]:
     portfolio_fit = sections["portfolio_fit"]
     opportunity_cost = sections["opportunity_cost"]
+    gap_keys = {str(item.get("gap") or "") for item in data_gaps}
+    comparator_unresolved = (
+        ["cross-sector comparator"]
+        if "cross_sector_opportunity_cost_comparator" in gap_keys else []
+    )
+    freshness_unresolved = (
+        ["position mark freshness"] if "portfolio_mark_freshness" in gap_keys else []
+    )
     positions = [
         {"agent": "Sector Fundamental Analyst", "position": "monitor",
          "confidence": "medium", "evidence_refs": [1], "unresolved": ["operating KPI history", "market share"]},
-        {"agent": "Sector Valuation Analyst", "position": "valuation history validated; no capital conclusion",
-         "confidence": "high", "evidence_refs": [0], "unresolved": ["cross-sector comparator"]},
+        {"agent": "Sector Valuation Analyst", "position": "valuation history and available cross-sector comparison validated; no capital conclusion",
+         "confidence": "high", "evidence_refs": [0, 4], "unresolved": comparator_unresolved},
         {"agent": "Sector Flow And Ownership Analyst", "position": "monitor official ownership and observed deal flows",
          "confidence": "medium", "evidence_refs": [1, 2], "unresolved": ["market-wide institutional flow attribution"]},
-        {"agent": "Portfolio Fit Agent", "position": "exposure measured; refresh stale marks before a decision",
-         "confidence": "high", "evidence_refs": [3], "unresolved": ["position mark freshness"]},
+        {"agent": "Portfolio Fit Agent", "position": "exposure and mark freshness measured",
+         "confidence": "high", "evidence_refs": [3], "unresolved": freshness_unresolved},
         {"agent": "Risk Agent", "position": "oppose allocation recommendation until evidence gaps close",
          "confidence": "high", "evidence_refs": [0, 1, 2, 3], "unresolved": ["macro sensitivity", "evidence completeness"]},
         {"agent": "Bear Case Agent", "position": "dissent: valuation history alone is not a complete underwrite",
@@ -460,13 +530,12 @@ def build_committee(
     ]
     dissent = (
         "Valuation and source-lineage evidence support continued monitoring, but Risk and Bear Case dissent "
-        "from any allocation action because stale portfolio marks and missing operating, market-share, macro "
-        "and cross-sector evidence prevent a complete underwrite."
+        "from any allocation action while the enumerated evidence gaps remain open."
     )
     risk_challenges = [
-        {"challenge": "Portfolio marks may be stale.", "required_action": "Refresh broker positions and prices."},
-        {"challenge": "Operating and market-share history is incomplete.", "required_action": "Collect primary-source KPI evidence."},
-        {"challenge": "Opportunity cost is not comparable.", "required_action": "Build equivalent dossiers for alternative sectors."},
+        {"challenge": str(item["gap"]), "status": str(item.get("status") or "open"),
+         "required_action": "Collect and validate the named primary-source evidence before allocation review."}
+        for item in data_gaps
     ]
     snapshot = {
         "valuation": sections["valuation"],
