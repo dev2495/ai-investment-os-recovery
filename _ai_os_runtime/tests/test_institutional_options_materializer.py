@@ -19,13 +19,41 @@ SPEC.loader.exec_module(module)
 
 class InstitutionalOptionsMaterializerTests(unittest.TestCase):
     @patch.object(module, "record_run")
+    @patch.object(module, "recent_valued_batches", return_value=[])
     @patch.object(module, "pending_groups", return_value=[])
-    def test_empty_source_is_blocked_not_reported_as_completed(self, pending, record) -> None:
+    def test_empty_source_is_blocked_not_reported_as_completed(self, pending, recent, record) -> None:
         result = module.run(20)
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["rows_read"], 0)
         self.assertEqual(result["batches_created"], 0)
-        self.assertIn("no unmaterialized source", record.call_args.kwargs["error"])
+        self.assertIn("no unmaterialized or refreshable", record.call_args.kwargs["error"])
+
+
+    @patch.object(module, "record_run")
+    @patch.object(module, "rebuild_point_in_time_replay", return_value=5)
+    @patch.object(module, "persist_volatility_metrics", return_value=3)
+    @patch.object(module, "volatility_refresh_batches")
+    @patch.object(module, "recent_valued_batches")
+    @patch.object(module, "pending_groups", return_value=[])
+    def test_existing_valued_batches_refresh_without_new_source(
+        self, pending, recent, refresh, volatility, replay, record
+    ) -> None:
+        batch = {
+            "id": 42, "batch_key": "stored", "provider": "Zerodha",
+            "exchange": "NFO", "underlying": "NIFTY", "expiry": "2026-08-11",
+            "minute_ts": "2026-08-10T04:00:00+00:00",
+            "source_timestamp": "2026-08-10T04:00:01+00:00",
+            "received_at": "2026-08-10T04:00:02+00:00", "spot_price": 25000,
+        }
+        recent.return_value = [batch]
+        refresh.return_value = [batch]
+        result = module.run(20)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["volatility_metrics_written"], 3)
+        self.assertEqual(result["replay_frames_written"], 5)
+        volatility.assert_called_once_with(batch)
+        replay.assert_called_once_with(batch)
+        self.assertIsNone(record.call_args.kwargs["error"])
 
     def test_contract_quality_flags_crossed_and_missing_oi(self) -> None:
         result = module.quality_for_contract({

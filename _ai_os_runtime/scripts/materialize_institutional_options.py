@@ -105,6 +105,34 @@ def pending_groups(limit: int) -> list[dict[str, Any]]:
     )
 
 
+def recent_valued_batches(limit: int) -> list[dict[str, Any]]:
+    """Return source-backed valued batches still missing replay or volatility outputs."""
+    return rows(
+        f"""
+        SELECT DISTINCT batch.id,batch.batch_key,batch.provider,batch.exchange,batch.underlying,
+               batch.expiry::text,batch.minute_ts::text,batch.source_timestamp::text,
+               batch.received_at::text,batch.spot_price::float8
+        FROM trading.option_chain_snapshot_batches batch
+        JOIN trading.option_chain_contract_snapshots contract ON contract.batch_id=batch.id
+        JOIN trading.option_iv_greeks_results result ON result.contract_snapshot_id=contract.id
+        WHERE result.calculation_status='validated'
+          AND result.quality_status IN ('passed','warning')
+          AND (
+              NOT EXISTS (
+                  SELECT 1 FROM trading.option_volatility_metrics metric
+                  WHERE metric.batch_id=batch.id AND metric.calculation_version={sql_literal(MODEL_VERSION)}
+              )
+              OR NOT EXISTS (
+                  SELECT 1 FROM trading.option_replay_frames frame
+                  WHERE frame.batch_id=batch.id
+              )
+          )
+        ORDER BY batch.minute_ts DESC,batch.id DESC
+        LIMIT {max(1, int(limit))}
+        """
+    )
+
+
 def source_contracts(group: dict[str, Any]) -> list[dict[str, Any]]:
     return rows(
         f"""
@@ -1107,8 +1135,18 @@ def run(limit: int, interval_seconds: int = 300) -> dict[str, Any]:
                 "specialist_rows": specialist_rows,
                 "analytics_rows": calculated,
             })
+        refresh_seeds = list(valued_batches.values())
+        if not refresh_seeds and not groups:
+            refresh_seeds = recent_valued_batches(max(20, limit))
+            for batch in refresh_seeds:
+                valued_batches[int(batch["id"])] = batch
+                scope_key = (
+                    str(batch["provider"]), str(batch["exchange"]),
+                    str(batch["underlying"]), str(batch["expiry"]),
+                )
+                touched_scopes[scope_key] = batch
         volatility_rows = 0
-        for volatility_batch in volatility_refresh_batches(list(valued_batches.values())):
+        for volatility_batch in volatility_refresh_batches(refresh_seeds):
             volatility_rows += persist_volatility_metrics(volatility_batch)
         calculations += volatility_rows
         written += volatility_rows
@@ -1117,9 +1155,12 @@ def run(limit: int, interval_seconds: int = 300) -> dict[str, Any]:
             replay_rows += rebuild_point_in_time_replay(replay_batch)
         calculations += replay_rows
         written += replay_rows
-        if not groups:
+        if not groups and not refresh_seeds:
             status = "blocked"
-            error = "no unmaterialized source option snapshots are available"
+            error = "no unmaterialized or refreshable valued option snapshots are available"
+        elif not groups:
+            status = "completed" if calculations else "blocked"
+            error = None if calculations else "stored valued snapshots produced no missing analytics"
         else:
             status = "completed" if not blocked else "degraded" if calculations else "blocked"
             error = "validated, source-timed valuation policy required for IV and Greeks" if status == "blocked" else None
