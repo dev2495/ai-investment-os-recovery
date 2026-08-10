@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from _ai_os_runtime.deploy.macbook_operator.macbook_operator_gateway import (
     OperatorGatewayHandler,
+    redact_log_text,
     sanitized_path,
 )
 
@@ -34,6 +35,14 @@ class MacBookOperatorGatewayTests(unittest.TestCase):
     def test_sensitive_query_values_are_redacted(self) -> None:
         safe = sanitized_path("/api/zerodha/auth/callback?request_token=secret&status=success")
         self.assertNotIn("secret", safe)
+        self.assertIn("status=success", safe)
+
+    def test_http_request_line_never_logs_sensitive_query_values(self) -> None:
+        safe = redact_log_text(
+            '"GET /api/zerodha/auth/callback?request_token=secret&status=success HTTP/1.1"'
+        )
+        self.assertNotIn("secret", safe)
+        self.assertIn("request_token=[redacted]", safe)
         self.assertIn("status=success", safe)
 
     def test_gateway_forwards_get_and_post_without_changing_contract(self) -> None:

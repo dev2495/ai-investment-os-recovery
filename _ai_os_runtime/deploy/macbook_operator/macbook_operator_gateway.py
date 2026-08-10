@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import urllib.error
 import urllib.parse
@@ -34,6 +35,9 @@ HOP_BY_HOP = {
     "upgrade",
 }
 SENSITIVE_QUERY_KEYS = {"request_token", "access_token", "refresh_token", "api_key", "token"}
+SENSITIVE_LOG_VALUE = re.compile(
+    r"(?i)([?&](?:request_token|access_token|refresh_token|api_key|token)=)([^&\s\"]*)"
+)
 
 
 def sanitized_path(path: str) -> str:
@@ -44,6 +48,10 @@ def sanitized_path(path: str) -> str:
         for key, value in query
     ]
     return urllib.parse.urlunsplit(("", "", parsed.path, urllib.parse.urlencode(safe_query), ""))
+
+
+def redact_log_text(value: str) -> str:
+    return SENSITIVE_LOG_VALUE.sub(r"\1[redacted]", value)
 
 
 def probe_json(url: str, timeout: float = 3.0) -> dict:
@@ -61,7 +69,7 @@ class OperatorGatewayHandler(BaseHTTPRequestHandler):
     upstream_base = UPSTREAM
 
     def log_message(self, format: str, *args: object) -> None:
-        safe_args = tuple(sanitized_path(arg) if isinstance(arg, str) and arg.startswith("/") else arg for arg in args)
+        safe_args = tuple(redact_log_text(arg) if isinstance(arg, str) else arg for arg in args)
         super().log_message(format, *safe_args)
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
