@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.devarsh.aios.api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON__</string>
+    <string>-u</string>
+    <string>__GATEWAY__</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AI_OS_OPERATOR_GATEWAY_HOST</key><string>127.0.0.1</string>
+    <key>AI_OS_OPERATOR_GATEWAY_PORT</key><string>8765</string>
+    <key>AI_OS_UPSTREAM_API</key><string>__UPSTREAM__</string>
+    <key>AI_OS_OPERATOR_GATEWAY_TIMEOUT</key><string>300</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__LOG_ROOT__/operator-gateway.log</string>
+  <key>StandardErrorPath</key><string>__LOG_ROOT__/operator-gateway.err</string>
+</dict>
+</plist>
