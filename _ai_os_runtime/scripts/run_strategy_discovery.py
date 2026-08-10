@@ -512,14 +512,14 @@ def recent_optimizer(candidate: dict[str, Any], cooldown_hours: int) -> dict[str
         f"""
         SELECT optimizer.id AS workflow_run_id, optimizer.run_key,
                optimizer.optimization_run_id, optimizer.backtest_run_id,
-               optimizer.finished_at
+               optimizer.finished_at, optimizer.status, optimizer.failure_reason
         FROM strategy.strategy_discovery_candidates discovery
         JOIN strategy.user_defined_optimizer_runs optimizer
           ON optimizer.id = discovery.optimizer_run_id
         WHERE discovery.opportunity_fingerprint = {sql_literal(candidate.get('opportunity_fingerprint'))}
           AND discovery.source_fingerprint = {sql_literal(candidate.get('source_fingerprint'))}
           AND discovery.is_canonical
-          AND optimizer.status = 'completed'
+          AND optimizer.status IN ('completed', 'failed', 'needs_parameter_space')
           AND optimizer.finished_at >= now() - make_interval(hours => {max(1, cooldown_hours)})
         ORDER BY optimizer.finished_at DESC
         LIMIT 1
@@ -527,11 +527,24 @@ def recent_optimizer(candidate: dict[str, Any], cooldown_hours: int) -> dict[str
     )
     if not rows:
         return None
+    previous = rows[0]
+    previous_status = str(previous.get("status") or "")
+    if previous_status == "completed":
+        return {
+            **previous,
+            "status": "reused",
+            "source_fingerprint": candidate["source_fingerprint"],
+            "reuse_reason": f"unchanged source was optimized within the last {max(1, cooldown_hours)} hours",
+        }
     return {
-        "status": "reused",
-        **rows[0],
+        **previous,
+        "status": "deferred_unchanged_failure",
+        "previous_status": previous_status,
         "source_fingerprint": candidate["source_fingerprint"],
-        "reuse_reason": f"unchanged source was optimized within the last {max(1, cooldown_hours)} hours",
+        "reuse_reason": (
+            f"unchanged source already reached {previous_status or 'a blocked gate'} within the last "
+            f"{max(1, cooldown_hours)} hours; retry after source evidence changes or cooldown expires"
+        ),
     }
 
 
@@ -654,6 +667,7 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
     output_candidates = []
     optimizer_count = 0
     optimizer_reused_count = 0
+    optimizer_deferred_count = 0
     for index, candidate in enumerate(candidates[: args.max_candidates], start=1):
         idea = upsert_generated_idea(args.run_key, candidate)
         optimizer = route_optimizer(args, args.run_key, index, candidate) if index <= args.route_top else None
@@ -661,6 +675,8 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
             optimizer_count += 1
         if optimizer and optimizer.get("status") == "reused":
             optimizer_reused_count += 1
+        if optimizer and optimizer.get("status") == "deferred_unchanged_failure":
+            optimizer_deferred_count += 1
         row = upsert_candidate(int(run["id"]), args.run_key, candidate, idea, optimizer)
         observation = record_observation(int(run["id"]), int(row["id"]), candidate)
         output_candidates.append({"candidate": row, "generated_idea": idea, "optimizer": optimizer, "observation": observation})
@@ -673,6 +689,7 @@ def run_discovery(args: argparse.Namespace) -> dict[str, Any]:
         "generated_idea_count": len(output_candidates),
         "optimizer_routed_count": optimizer_count,
         "optimizer_reused_count": optimizer_reused_count,
+        "optimizer_deferred_count": optimizer_deferred_count,
         "source_scope": [source.strip() for source in args.sources.split(",") if source.strip()],
         "live_execution_allowed": False,
         "seed_data_allowed": False,
