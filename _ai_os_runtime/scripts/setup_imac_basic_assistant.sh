@@ -27,13 +27,23 @@ docker exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 \
 
 "${OLLAMA_BIN}" pull "${MODEL}"
 
-python3 "${RUNTIME_ROOT}/scripts/run_local_model_evals.py" \
+if ! python3 "${RUNTIME_ROOT}/scripts/run_local_model_evals.py" \
   --model "${MODEL}" \
   --provider ollama \
   --base-url "http://127.0.0.1:11434" \
   --artifact-root "${DATA_ROOT}/evals/local_models" \
   --persist \
-  --promote
+  --promote; then
+  docker exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 <<'SQL'
+UPDATE agent.model_endpoints
+SET status='disabled', health_status='eval_failed', last_checked_at=now(),
+    last_error='The exact installed model did not pass the governed conversation_v1 promotion gate.',
+    updated_at=now()
+WHERE endpoint_key='ollama_granite4_3b_imac';
+SQL
+  echo "Granite 4 remains disabled because conversation_v1 did not pass." >&2
+  exit 1
+fi
 
 docker exec -i ai_os_postgres psql -U ai_os -d ai_os -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
@@ -55,9 +65,7 @@ SET status='active', health_status='healthy', last_checked_at=now(),
     last_error=NULL, updated_at=now()
 WHERE endpoint_key='ollama_granite4_3b_imac';
 
-UPDATE agent.agent_model_assignments
-SET fallback_route='imac_basic_assistant', updated_at=now()
-WHERE agent_name='Charlie Munger';
+SELECT agent.activate_final_local_model_fleet();
 SQL
 
-echo "Granite 4 iMac assistant is evaluated, approved, and active as Charlie's private fallback."
+echo "Model endpoint passed its evaluation gate; canonical Charlie fleet assignment was reconciled."

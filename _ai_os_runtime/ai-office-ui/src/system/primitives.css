@@ -386,6 +386,10 @@
   align-items: center;
   gap: var(--space-1);
   border-bottom: 1px solid var(--border);
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .aios-tab {
   display: inline-flex;

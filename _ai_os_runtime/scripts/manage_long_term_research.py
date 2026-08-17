@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -77,6 +78,80 @@ def parse_json_arg(raw: str | None, fallback: object) -> object:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON argument: {raw}") from exc
+
+
+VALUATION_STATUSES = {
+    "not_started",
+    "in_progress",
+    "source_required",
+    "needs_review",
+    "complete",
+    "reviewed",
+}
+
+
+def optional_finite_number(value: object, label: str) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be a finite number")
+    return number
+
+
+def evidence_reference(item: object) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        for key in ("source", "source_url", "url", "path", "ref", "dataset"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def validate_valuation_update(
+    *,
+    status: str,
+    fair_value_low: float | None,
+    fair_value_base: float | None,
+    fair_value_high: float | None,
+    assumptions: object,
+    outputs: object,
+    evidence: object,
+    operator_confirmed: bool,
+) -> None:
+    if status not in VALUATION_STATUSES:
+        raise ValueError(f"Unsupported valuation status: {status}")
+    if not isinstance(assumptions, dict):
+        raise ValueError("assumptions must be a JSON object")
+    if not isinstance(outputs, dict):
+        raise ValueError("outputs must be a JSON object")
+    if not isinstance(evidence, list):
+        raise ValueError("evidence must be a JSON array")
+    values = [fair_value_low, fair_value_base, fair_value_high]
+    if any(value is not None and value < 0 for value in values):
+        raise ValueError("fair values cannot be negative")
+    present = [value for value in values if value is not None]
+    if len(present) == 3 and not (fair_value_low <= fair_value_base <= fair_value_high):
+        raise ValueError("fair_value_low must be <= fair_value_base <= fair_value_high")
+    if status in {"complete", "reviewed"}:
+        if len(present) != 3:
+            raise ValueError("complete or reviewed valuation requires low, base, and high fair values")
+        if fair_value_base is None or fair_value_base <= 0:
+            raise ValueError("complete or reviewed valuation requires a positive base fair value")
+        if not assumptions:
+            raise ValueError("complete or reviewed valuation requires explicit assumptions")
+        if not outputs:
+            raise ValueError("complete or reviewed valuation requires calculated outputs")
+        references = [evidence_reference(item) for item in evidence]
+        if not references or any(not reference for reference in references):
+            raise ValueError("complete or reviewed valuation requires explicit source references")
+    if status == "reviewed" and not operator_confirmed:
+        raise ValueError("reviewed valuation requires operator_confirmed=true")
 
 
 def fetch_thesis(holding_thesis_id: int | None, symbol: str | None, exchange: str | None) -> dict[str, Any]:
@@ -452,18 +527,59 @@ def action_checklist(args: argparse.Namespace) -> dict[str, Any]:
 def action_valuation(args: argparse.Namespace) -> dict[str, Any]:
     if not args.holding_thesis_id or not args.model_key:
         raise ValueError("holding_thesis_id and model_key are required for valuation updates")
-    assumptions = parse_json_arg(args.assumptions_json, {})
-    outputs = parse_json_arg(args.outputs_json, {})
+    existing_rows = run_psql_json(
+        f"""
+        SELECT coalesce(json_agg(row_to_json(model)), '[]'::json)::text
+        FROM (
+            SELECT *
+            FROM portfolio.holding_valuation_models
+            WHERE holding_thesis_id = {int(args.holding_thesis_id)}
+              AND model_key = {sql_literal(args.model_key)}
+            LIMIT 1
+        ) model
+        """
+    )
+    if not existing_rows:
+        raise ValueError("No valuation row found. Check holding_thesis_id and model_key.")
+    existing = existing_rows[0]
+    assumptions = parse_json_arg(args.assumptions_json, existing.get("assumptions") or {})
+    outputs = parse_json_arg(args.outputs_json, existing.get("outputs") or {})
     evidence = parse_json_arg(args.evidence_json, [])
+    fair_value_low = optional_finite_number(
+        args.fair_value_low if args.fair_value_low is not None else existing.get("fair_value_low"),
+        "fair_value_low",
+    )
+    fair_value_base = optional_finite_number(
+        args.fair_value_base if args.fair_value_base is not None else existing.get("fair_value_base"),
+        "fair_value_base",
+    )
+    fair_value_high = optional_finite_number(
+        args.fair_value_high if args.fair_value_high is not None else existing.get("fair_value_high"),
+        "fair_value_high",
+    )
+    expected_cagr_pct = optional_finite_number(
+        args.expected_cagr_pct if args.expected_cagr_pct is not None else existing.get("expected_cagr_pct"),
+        "expected_cagr_pct",
+    )
+    validate_valuation_update(
+        status=args.status,
+        fair_value_low=fair_value_low,
+        fair_value_base=fair_value_base,
+        fair_value_high=fair_value_high,
+        assumptions=assumptions,
+        outputs=outputs,
+        evidence=evidence,
+        operator_confirmed=bool(args.operator_confirmed),
+    )
     rows = run_psql_json(
         f"""
         WITH updated AS (
             UPDATE portfolio.holding_valuation_models
             SET status = {sql_literal(args.status)},
-                fair_value_low = {sql_literal(args.fair_value_low)},
-                fair_value_base = {sql_literal(args.fair_value_base)},
-                fair_value_high = {sql_literal(args.fair_value_high)},
-                expected_cagr_pct = {sql_literal(args.expected_cagr_pct)},
+                fair_value_low = {sql_literal(fair_value_low)},
+                fair_value_base = {sql_literal(fair_value_base)},
+                fair_value_high = {sql_literal(fair_value_high)},
+                expected_cagr_pct = {sql_literal(expected_cagr_pct)},
                 assumptions = {sql_jsonb(assumptions)},
                 outputs = {sql_jsonb(outputs)},
                 note_path = COALESCE({sql_literal(args.note_path)}, note_path),
@@ -512,7 +628,7 @@ def action_valuation(args: argparse.Namespace) -> dict[str, Any]:
                 outputs,
                 {sql_jsonb(evidence)},
                 note_path,
-                {sql_jsonb({'source': 'manage_long_term_research.py', 'mode': 'valuation'})},
+                {sql_jsonb({'source': 'manage_long_term_research.py', 'mode': 'valuation', 'operator_confirmed': bool(args.operator_confirmed)})},
                 {sql_literal(args.actor)}
             FROM updated
             RETURNING *
@@ -554,6 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
     valuation.add_argument("--evidence-json")
     valuation.add_argument("--note-path")
     valuation.add_argument("--actor", default="Valuation Agent")
+    valuation.add_argument("--operator-confirmed", action="store_true")
     return parser
 
 

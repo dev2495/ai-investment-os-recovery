@@ -1,0 +1,366 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import time
+import urllib.parse
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Any
+
+from collect_nse_bse_filings import curl_get, run_psql_json, run_psql_text, sql_jsonb, sql_literal
+from runtime_storage import artifact_root
+
+
+USER_AGENT = os.environ.get(
+    "AI_OS_PUBLIC_CHECK_USER_AGENT",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AI-OS-Research/0.1",
+)
+ARTIFACT_ROOT = artifact_root("company_ir")
+INDIA_TZ = dt.timezone(dt.timedelta(hours=5, minutes=30))
+NON_ANNUAL_REPORT_TERMS = (
+    "agm notice", "agm-notice", "newspaper", "annual return", "annual-return",
+    "secretarial compliance", "secretarial-compliance", "esg dashboard", "esg-",
+    "share based employee", "share-based-employee", "sweat equity", "brsr",
+)
+
+
+class LinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[tuple[str, str]] = []
+        self._href: str | None = None
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "a":
+            self._href = dict(attrs).get("href")
+            self._text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a" and self._href is not None:
+            self.links.append((self._href, " ".join(self._text).strip()))
+            self._href = None
+            self._text = []
+
+
+def fetch_bytes(url: str, accept: str, timeout: int = 60) -> bytes:
+    status, body = curl_get(url, {"User-Agent": USER_AGENT, "Accept": accept}, timeout=timeout)
+    if not 200 <= status < 300:
+        raise RuntimeError(f"source returned HTTP {status}: {url}")
+    return body
+
+
+def fiscal_year(text: str) -> tuple[int, int] | None:
+    normalized = re.sub(r"[_–—]", "-", urllib.parse.unquote(text))
+    # Prefer an explicit fiscal-year range. The former loose two-digit
+    # matcher could read pairs from cache-busting filename prefixes and
+    # silently classify a current report as an old fiscal year.
+    match = re.search(r"\b((?:19|20)\d{2})\s*-\s*((?:19|20)?\d{2})\b", normalized)
+    if match:
+        start = int(match.group(1))
+        raw_end = match.group(2)
+        end = int(raw_end) if len(raw_end) == 4 else (start // 100) * 100 + int(raw_end)
+        if end < start:
+            end += 100
+        if end == start + 1 and 2000 <= start <= 2100:
+            return start, end
+    # Some issuer files carry only the fiscal year end (SBCL_AR_2026 or
+    # Shivalik_AR2024). Accept it only beside an annual-report marker.
+    single = re.search(
+        r"(?:annual[\s-]*report|(?:^|-)ar)(?:[\s-]*(?:final|file))?[\s-]*((?:19|20)\d{2})\b",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not single:
+        single = re.search(
+            r"\b((?:19|20)\d{2})\b(?=[\s-]*(?:annual[\s-]*report|ar)\b)",
+            normalized,
+            re.IGNORECASE,
+        )
+    if single:
+        end = int(single.group(1))
+        return end - 1, end
+    return None
+
+
+def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> list[dict[str, Any]]:
+    page = fetch_bytes(page_url, "text/html,application/xhtml+xml").decode("utf-8", errors="ignore")
+    parser = LinkParser()
+    parser.feed(page)
+    page_host = urllib.parse.urlsplit(page_url).hostname or ""
+    seen: set[str] = set()
+    reports: list[dict[str, Any]] = []
+    for href, label in parser.links:
+        url = urllib.parse.urljoin(page_url, href)
+        parsed = urllib.parse.urlsplit(url)
+        haystack = f"{label} {parsed.path}".lower()
+        document_name = f"{label} {Path(urllib.parse.unquote(parsed.path)).name}".lower()
+        if parsed.scheme != "https" or not parsed.path.lower().endswith(".pdf"):
+            continue
+        if not include_subsidiaries and any(word in haystack for word in ("subsidiary", "subsidiaries", "subsidairy", "subsidiairies")):
+            continue
+        if not (
+            re.search(r"annual[\s_-]*report", document_name)
+            or re.search(r"(?:^|[_-])ar(?:[_-]|\d)", document_name)
+        ):
+            continue
+        if any(term in document_name for term in NON_ANNUAL_REPORT_TERMS):
+            continue
+        if parsed.hostname not in {page_host, f"www.{page_host}", page_host.removeprefix("www.")}:
+            continue
+        canonical = urllib.parse.urlunsplit(
+            parsed._replace(path=urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/"), fragment="")
+        )
+        if canonical in seen:
+            continue
+        year = fiscal_year(haystack)
+        if year is None:
+            continue
+        seen.add(canonical)
+        reports.append({"url": canonical, "label": label or f"Annual Report FY {year[0]}-{year[1]}", "fiscal_year_start": year[0], "fiscal_year_end": year[1]})
+    reports.sort(key=lambda row: (row["fiscal_year_end"], row["url"]), reverse=True)
+    return reports[:limit]
+
+
+def direct_report(document_url: str, fiscal_year_end: int, label: str | None = None) -> dict[str, Any]:
+    parsed = urllib.parse.urlsplit(document_url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("official document URL must use HTTPS")
+    if not parsed.path.lower().endswith(".pdf"):
+        raise ValueError("official document URL must identify a PDF")
+    current_year = dt.datetime.now(INDIA_TZ).year
+    if fiscal_year_end < 2001 or fiscal_year_end > current_year + 1:
+        raise ValueError("fiscal_year_end is outside the supported range")
+    canonical = urllib.parse.urlunsplit(
+        parsed._replace(path=urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/"), fragment="")
+    )
+    return {
+        "url": canonical,
+        "label": label or f"Annual Report FY {fiscal_year_end - 1}-{fiscal_year_end}",
+        "fiscal_year_start": fiscal_year_end - 1,
+        "fiscal_year_end": fiscal_year_end,
+    }
+
+
+def download_report(report: dict[str, Any], symbol: str) -> dict[str, Any]:
+    target_dir = ARTIFACT_ROOT / symbol.lower() / f"fy-{report['fiscal_year_start']}-{report['fiscal_year_end']}"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "annual-report.pdf"
+    if target.is_file():
+        cached = target.read_bytes()
+        if cached.startswith(b"%PDF"):
+            return {
+                **report,
+                "local_path": str(target),
+                "content_hash": hashlib.sha256(cached).hexdigest(),
+                "bytes_downloaded": 0,
+                "cached_bytes": len(cached),
+                "cache_hit": True,
+                "published_at": None,
+            }
+    data = fetch_bytes(report["url"], "application/pdf,*/*", timeout=120)
+    if not data.startswith(b"%PDF"):
+        raise ValueError(f"source did not return a PDF: {report['url']}")
+    target.write_bytes(data)
+    return {
+        **report,
+        "local_path": str(target),
+        "content_hash": hashlib.sha256(data).hexdigest(),
+        "bytes_downloaded": len(data),
+        "cached_bytes": 0,
+        "cache_hit": False,
+        "published_at": None,
+    }
+
+
+def upsert_report(run_id: int, report: dict[str, Any], symbol: str, exchange: str, company_name: str, page_url: str) -> int:
+    fiscal_label = f"FY {report['fiscal_year_start']}-{str(report['fiscal_year_end'])[-2:]}"
+    title = f"{company_name} Annual Report {fiscal_label}"
+    payload = {
+        "source_type": "official_company_ir",
+        "investor_relations_page": page_url,
+        "fiscal_year_start": report["fiscal_year_start"],
+        "fiscal_year_end": report["fiscal_year_end"],
+        "document_sha256": report["content_hash"],
+        "collector_run_id": run_id,
+        "financial_facts_extracted": False,
+    }
+    rows = run_psql_json(
+        f"""
+        WITH artifact AS (
+            INSERT INTO core.raw_artifacts (
+                artifact_type, title, source_url, local_path, content_hash,
+                mime_type, sensitivity, metadata
+            ) VALUES (
+                'company_annual_report', {sql_literal(title)}, {sql_literal(report['url'])},
+                {sql_literal(report['local_path'])}, {sql_literal(report['content_hash'])},
+                'application/pdf', 'public', {sql_jsonb(payload)}
+            )
+            ON CONFLICT (source_system_id, source_url, local_path, content_hash) DO UPDATE SET
+                title=EXCLUDED.title, metadata=EXCLUDED.metadata, captured_at=now()
+            RETURNING id
+        ), filing AS (
+            INSERT INTO research.corporate_filings (
+                source_name, exchange, symbol, company_name, filing_type, event_type,
+                title, filed_at, source_url, attachment_url, local_path, content_hash,
+                extraction_status, payload, raw_artifact_id
+            ) VALUES (
+                'Company IR', {sql_literal(exchange)}, {sql_literal(symbol)}, {sql_literal(company_name)},
+                'annual_report', 'routine_filing', {sql_literal(title)},
+                {sql_literal(report.get('published_at'))}::timestamptz,
+                {sql_literal(report['url'])}, {sql_literal(report['url'])},
+                {sql_literal(report['local_path'])}, {sql_literal(report['content_hash'])},
+                'captured', {sql_jsonb(payload)}, (SELECT id FROM artifact)
+            )
+            ON CONFLICT (source_name, source_url, content_hash) DO UPDATE SET
+                exchange=EXCLUDED.exchange, symbol=EXCLUDED.symbol, company_name=EXCLUDED.company_name,
+                title=EXCLUDED.title, filed_at=EXCLUDED.filed_at, attachment_url=EXCLUDED.attachment_url,
+                local_path=EXCLUDED.local_path, payload=EXCLUDED.payload,
+                raw_artifact_id=EXCLUDED.raw_artifact_id
+            RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(filing)), '[]'::json)::text FROM filing
+        """
+    )
+    filing_id = int(rows[0]["id"])
+    # A captured filing is not usable by the financial normalizer until it is
+    # attached to the verified company evidence graph. Keep this evidence at
+    # captured/unverified status; page extraction and validation advance it.
+    run_psql_text(
+        f"""
+        INSERT INTO research.fundamental_evidence (
+          company_id,corporate_filing_id,raw_artifact_id,source_type,source_name,
+          source_url,source_title,published_at,retrieved_at,source_as_of_date,
+          content_hash,extraction_method,verification_status,source_locator,metadata
+        )
+        SELECT company.id,filing.id,filing.raw_artifact_id,'annual_report','Company IR',
+          filing.source_url,filing.title,filing.filed_at,now(),
+          make_date({int(report['fiscal_year_end'])},3,31),filing.content_hash,
+          'captured_official_pdf','unverified',
+          {sql_jsonb({'fiscal_year_start': report['fiscal_year_start'], 'fiscal_year_end': report['fiscal_year_end'], 'investor_relations_page': page_url})},
+          {sql_jsonb({'collector_run_id': run_id, 'public_source': True, 'broker_write_allowed': False})}
+        FROM research.companies company
+        JOIN research.corporate_filings filing ON filing.id={filing_id}
+        WHERE company.primary_symbol={sql_literal(symbol)}
+          AND company.primary_exchange={sql_literal(exchange)}
+          AND NOT EXISTS (
+            SELECT 1 FROM research.fundamental_evidence existing
+            WHERE existing.company_id=company.id AND existing.corporate_filing_id=filing.id
+          )
+        """
+    )
+    return filing_id
+
+
+def collect(args: argparse.Namespace) -> dict[str, Any]:
+    symbol = args.symbol.strip().upper()
+    exchange = args.exchange.strip().upper()
+    company_name = args.company_name.strip()
+    page_url = str(args.url or "").strip()
+    document_url = str(args.document_url or "").strip()
+    if not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("unsupported symbol format")
+    if exchange not in {"NSE", "BSE"}:
+        raise ValueError("exchange must be NSE or BSE")
+    if bool(page_url) == bool(document_url):
+        raise ValueError("provide exactly one investor-relations URL or official document URL")
+    source_url = page_url or document_url
+    if urllib.parse.urlsplit(source_url).scheme != "https":
+        raise ValueError("investor-relations URL must use HTTPS")
+    run_key = f"company-ir-{exchange.lower()}-{symbol.lower()}-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+    rows = run_psql_json(
+        f"""
+        WITH inserted AS (
+          INSERT INTO research.company_ir_collection_runs (
+            run_key,symbol,exchange,company_name,investor_relations_url,status,started_by
+          ) VALUES (
+            {sql_literal(run_key)},{sql_literal(symbol)},{sql_literal(exchange)},
+            {sql_literal(company_name)},{sql_literal(source_url)},'started',{sql_literal(args.actor)}
+          ) RETURNING id
+        ) SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text FROM inserted
+        """
+    )
+    run_id = int(rows[0]["id"])
+    try:
+        discovered = (
+            [direct_report(document_url, int(args.fiscal_year_end), args.document_label)]
+            if document_url
+            else discover_reports(page_url, args.include_subsidiaries, max(1, args.limit))
+        )
+        downloaded: list[dict[str, Any]] = []
+        filing_ids: list[int] = []
+        if not args.dry_run:
+            for report in discovered:
+                item = download_report(report, symbol)
+                downloaded.append(item)
+                filing_ids.append(upsert_report(run_id, item, symbol, exchange, company_name, source_url))
+                if not item.get("cache_hit"):
+                    time.sleep(1.0)
+        total_bytes = sum(int(row["bytes_downloaded"]) for row in downloaded)
+        summary = {
+            "ok": True,
+            "run_id": run_id,
+            "run_key": run_key,
+            "status": "dry_run" if args.dry_run else "completed",
+            "symbol": symbol,
+            "exchange": exchange,
+            "investor_relations_url": page_url or None,
+            "document_url": document_url or None,
+            "collection_mode": "direct_document" if document_url else "ir_page_discovery",
+            "reports_discovered": len(discovered),
+            "reports_upserted": len(filing_ids),
+            "bytes_downloaded": total_bytes,
+            "filing_ids": filing_ids,
+            "fiscal_years": [row["fiscal_year_end"] for row in discovered],
+            "financial_facts_extracted": False,
+            "broker_write_allowed": False,
+        }
+        run_psql_text(
+            f"UPDATE research.company_ir_collection_runs SET status={sql_literal(summary['status'])}, "
+            f"rows_seen={len(discovered)}, reports_upserted={len(filing_ids)}, bytes_downloaded={total_bytes}, "
+            f"finished_at=now(), summary={sql_jsonb(summary)} WHERE id={run_id}"
+        )
+        return summary
+    except Exception as exc:
+        run_psql_text(
+            f"UPDATE research.company_ir_collection_runs SET status='failed',finished_at=now(),"
+            f"error_message={sql_literal(type(exc).__name__ + ': ' + str(exc))} WHERE id={run_id}"
+        )
+        raise
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Collect official company investor-relations annual reports as evidence.")
+    parser.add_argument("--symbol", required=True)
+    parser.add_argument("--exchange", required=True, choices=["NSE", "BSE"])
+    parser.add_argument("--company-name", required=True)
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--url")
+    source_group.add_argument("--document-url")
+    parser.add_argument("--fiscal-year-end", type=int)
+    parser.add_argument("--document-label")
+    parser.add_argument("--limit", type=int, default=15)
+    parser.add_argument("--actor", default="Fundamental Data Steward")
+    parser.add_argument("--include-subsidiaries", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    if args.document_url and args.fiscal_year_end is None:
+        parser.error("--fiscal-year-end is required with --document-url")
+    if args.url and args.fiscal_year_end is not None:
+        parser.error("--fiscal-year-end is only valid with --document-url")
+    print(json.dumps(collect(args), indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,29 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mlx_root="${AI_OS_MLX_ROOT:-/Volumes/Devarsh SSD/AI OS Data/mlx}"
-venv="${AI_OS_MLX_VENV:-/Volumes/Devarsh SSD/AI OS Data/venvs/mlx}"
-model_path="${AI_OS_MLX_MODEL_PATH:-${mlx_root}/models/qwen3.5-9b-4bit-20353927}"
-port="${AI_OS_MLX_PORT:-11435}"
+aios_root="${AI_OS_MACBOOK_ROOT:-${HOME}/Library/Application Support/AIOS}"
+venv="${AI_OS_MLX_VLM_VENV:-${aios_root}/venvs/mlx-vlm}"
+model_path="${AI_OS_MLX_MODEL_PATH:-${aios_root}/models/qwen3.5-9b-4bit-8b2b98c}"
+host="${AI_OS_MLX_HOST:-100.75.156.32}"
+port="${AI_OS_MLX_PORT:-11436}"
 
-[[ "${mlx_root}" == /Volumes/* ]] || { echo "MLX runtime must be on an external volume" >&2; exit 2; }
-[[ -x "${venv}/bin/mlx_lm.server" ]] || { echo "Pinned MLX-LM runtime is not installed" >&2; exit 3; }
-[[ -f "${model_path}/config.json" ]] || { echo "Pinned MLX model is not installed at ${model_path}" >&2; exit 4; }
+[[ -x "${venv}/bin/mlx_vlm.server" ]] || { echo "Pinned MLX-VLM runtime is not installed" >&2; exit 3; }
+[[ -f "${model_path}/config.json" ]] || { echo "Pinned Qwen3.5 model is not installed at ${model_path}" >&2; exit 4; }
 
-export HF_HOME="${AI_OS_HF_HOME:-/Volumes/Devarsh SSD/AI OS Data/huggingface}"
+export HF_HOME="${AI_OS_HF_HOME:-${aios_root}/huggingface}"
 export HF_HUB_CACHE="${HF_HOME}/hub"
+export HF_XET_CACHE="${HF_HOME}/xet"
 export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
 export TOKENIZERS_PARALLELISM=false
-mkdir -p "${HF_HUB_CACHE}" "${TRANSFORMERS_CACHE}"
+export APC_ENABLED=1
+export APC_NUM_BLOCKS="${AI_OS_APC_NUM_BLOCKS:-512}"
+mkdir -p "${HF_HUB_CACHE}" "${HF_XET_CACHE}" "${TRANSFORMERS_CACHE}"
 
-exec "${venv}/bin/mlx_lm.server" \
-  --model "${model_path}" \
-  --host 127.0.0.1 \
-  --port "${port}" \
-  --decode-concurrency 1 \
-  --prompt-concurrency 1 \
-  --prompt-cache-size 2 \
-  --prompt-cache-bytes 1073741824 \
-  --prefill-step-size 1024 \
-  --max-tokens 1400 \
-  --chat-template-args '{"enable_thinking":false}'
+server_args=(
+  --model "${model_path}"
+  --host "${host}"
+  --port "${port}"
+  --vision-cache-size 0
+  --prefill-step-size 1024
+  --max-tokens "${AI_OS_MLX_MAX_TOKENS:-1400}"
+  --max-kv-size "${AI_OS_MLX_MAX_KV_SIZE:-8192}"
+  --log-level INFO
+)
+
+# Qwen3.5 produced corrupt output with KV-cache quantization in qualification.
+# Keep it opt-in until a pinned runtime/model combination passes the same gates.
+if [[ "${AI_OS_MLX_ENABLE_KV_QUANT:-0}" == "1" ]]; then
+  server_args+=(--kv-bits 8 --kv-group-size 64 --quantized-kv-start 2048)
+fi
+
+exec "${venv}/bin/mlx_vlm.server" "${server_args[@]}"

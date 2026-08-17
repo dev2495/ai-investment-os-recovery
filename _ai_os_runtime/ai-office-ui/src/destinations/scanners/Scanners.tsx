@@ -16,7 +16,7 @@
  */
 
 import React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Radar, TrendingUp, Zap, Activity, Lightbulb, Flame, Plus,
   ChevronRight, Star, Send, Filter,
@@ -40,9 +40,9 @@ const TABS = [
 ];
 
 export default function Scanners({ defaultTab = "momentum" }: { defaultTab?: string }) {
-  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const tab = params.tab ?? defaultTab;
+  const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
   function setTab(key: string) { navigate(`/scanners/${key}`); }
 
   return (
@@ -54,7 +54,7 @@ export default function Scanners({ defaultTab = "momentum" }: { defaultTab?: str
             Scanners
           </div>
           <Badge tone="accent">SCAN</Badge>
-          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>intraday + swing setups from live data</span>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>source-qualified intraday + swing setups; empty until accepted feeds are available</span>
         </div>
         <div className="aios-destination__subtitle">
           Momentum signals, breakout candidates, volume/OI spurts, generated ideas, and unusual options flow.

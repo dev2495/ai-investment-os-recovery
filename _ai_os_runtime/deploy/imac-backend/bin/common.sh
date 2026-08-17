@@ -14,6 +14,8 @@ REPORTS_LABEL="com.devarsh.aios.imac.scheduled-reports"
 SUPERVISOR_PLIST="${LAUNCHD_ROOT}/${SUPERVISOR_LABEL}.plist"
 BACKUP_PLIST="${LAUNCHD_ROOT}/${BACKUP_LABEL}.plist"
 REPORTS_PLIST="${LAUNCHD_ROOT}/${REPORTS_LABEL}.plist"
+ZERODHA_STREAM_LABEL="com.devarsh.aios.zerodha-stream"
+ZERODHA_STREAM_PLIST="${LAUNCHD_ROOT}/${ZERODHA_STREAM_LABEL}.plist"
 LAUNCHD_DOMAIN="gui/$(id -u)"
 
 log() {
@@ -41,15 +43,17 @@ load_env() {
   export OLLAMA_NOHISTORY=true
   export OLLAMA_NO_CLOUD=1
   export PLAYWRIGHT_BROWSERS_PATH="${AI_OS_PLAYWRIGHT_BROWSERS_PATH}"
-  export AI_OS_TRADINGVIEW_CDP_PORT
 }
 
 ensure_ssd() {
-  local volume_name mount_point
+  local mount_line volume_name
   [[ -d "${AI_OS_SSD_ROOT}" ]] || die "SSD is not mounted at ${AI_OS_SSD_ROOT}"
-  mount_point="$(diskutil info "${AI_OS_SSD_ROOT}" 2>/dev/null | awk -F: '/Mount Point/{sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
-  volume_name="$(diskutil info "${AI_OS_SSD_ROOT}" 2>/dev/null | awk -F: '/Volume Name/{sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
-  [[ "${mount_point}" == "${AI_OS_SSD_ROOT}" ]] || die "Unexpected SSD mount point: ${mount_point:-missing}"
+
+  mount_line="$(/sbin/mount | /usr/bin/grep -F " on ${AI_OS_SSD_ROOT} (" | /usr/bin/head -n 1 || true)"
+  [[ -n "${mount_line}" ]] || die "SSD path is not an active mount: ${AI_OS_SSD_ROOT}"
+  [[ "${mount_line}" == *"(apfs,"* ]] || die "SSD is not mounted as APFS"
+
+  volume_name="$(basename "${AI_OS_SSD_ROOT}")"
   [[ "${volume_name}" == "Devarsh SSD" ]] || die "Unexpected SSD volume: ${volume_name:-missing}"
   [[ -d "${AI_OS_VAULT_ROOT}/ai memory" ]] || die "Obsidian vault is missing"
 }

@@ -175,7 +175,7 @@ export async function uploadFile(
   path: string,
   file: File | Blob,
   query?: Record<string, string>,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; headers?: Record<string, string> }
 ): Promise<unknown> {
   const url = buildUrl(path, query);
   const response = await fetch(url, {
@@ -185,6 +185,7 @@ export async function uploadFile(
     headers: {
       "Content-Type": (file as File).type || "application/octet-stream",
       ...(OPERATOR_TOKEN ? { Authorization: `Bearer ${OPERATOR_TOKEN}` } : {}),
+      ...(options?.headers ?? {}),
     },
     body: file,
   });

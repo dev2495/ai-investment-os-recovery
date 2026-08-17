@@ -95,18 +95,22 @@ function DashboardView() {
 
 function MarketsView() {
   const { data: research } = useResearchIdeas();
-  const quotes = research?.market_events?.filter((r) => text(r, "indicator_name", text(r, "name")).toLowerCase().includes("index")) ?? [];
+  const { data: mission } = useMissionControl();
+  const quotes = research?.market_quotes ?? mission?.market_quotes ?? [];
 
   return (
-    <Panel icon={TrendingUp} title="Market Quotes">
+    <Panel icon={TrendingUp} title="Stored Live Quotes">
       {quotes.length === 0 ? (
-        <Empty icon={TrendingUp} title="No index quotes" description="NIFTY, BANKNIFTY, SENSEX quotes flow from the market data sync." />
+        <Empty icon={TrendingUp} title="No stored quotes" description="Reconnect Zerodha and run the market sync to populate live stored quotes." />
       ) : (
         <DataTable
           columns={[
-            { key: "name", header: "Index", render: (r) => <strong>{text(r, "indicator_name", text(r, "name"))}</strong> },
-            { key: "value", header: "Value", align: "right", render: (r) => formatCompact(num(r, "value", 0)) },
-            { key: "change", header: "Change", align: "right", render: (r) => <span style={{ color: num(r, "change_pct", 0) >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{num(r, "change_pct", 0).toFixed(2)}%</span> },
+            { key: "name", header: "Instrument", render: (r) => <strong>{text(r, "description", text(r, "symbol"))}</strong> },
+            { key: "symbol", header: "Symbol", render: (r) => text(r, "symbol") },
+            { key: "value", header: "Price", align: "right", render: (r) => formatCompact(num(r, "price", 0)) },
+            { key: "change", header: "Change", align: "right", render: (r) => <span style={{ color: num(r, "change_percent", 0) >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{num(r, "change_percent", 0).toFixed(2)}%</span> },
+            { key: "provider", header: "Provider", render: (r) => text(r, "provider") },
+            { key: "quote_ts", header: "As of", render: (r) => formatRelative(text(r, "quote_ts")) },
           ]}
           rows={quotes}
           rowKey={(r, i) => String(text(r, "id", i))}

@@ -7,6 +7,7 @@ import math
 import os
 import statistics
 import subprocess
+import time
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from typing import Any
 from runtime_storage import artifact_reference, artifact_root
 
 from strategy_dsl_quality import parse_strategy_dsl, parse_symbols, run_data_quality_gate
+from strategy_rule_engine import CompiledRules, ENGINE_VERSION, compile_rule_set, positions_for_rule_set
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -32,25 +34,73 @@ def sql_jsonb(value: object) -> str:
     return f"{sql_literal(json.dumps(value, sort_keys=True, default=str))}::jsonb"
 
 
-def run_psql_json(sql: str) -> list[dict[str, Any]]:
+def run_psql_json(
+    sql: str,
+    *,
+    statement_timeout_ms: int = 30000,
+    timeout_seconds: float = 35,
+) -> list[dict[str, Any]]:
+    """Run one JSON-returning SQL statement with bounded cancellation.
+
+    Existing callers retain the historical 30s/35s defaults. Latency-sensitive
+    supervised workloads can choose a smaller statement/subprocess timeout so a
+    slow analytical query cannot starve the operator API heartbeat.
+    """
+    statement_timeout_ms = max(250, int(statement_timeout_ms))
+    timeout_seconds = max(0.5, float(timeout_seconds))
     psql_bin = os.environ.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
     password = os.environ.get("AI_OS_POSTGRES_PASSWORD")
-    if Path(psql_bin).exists() and password:
+    workload_psql_mode = (os.environ.get("AI_OS_WORKLOAD_PSQL_MODE") or "host").strip().lower()
+    use_host_psql = bool(workload_psql_mode != "docker" and Path(psql_bin).exists() and password)
+    if use_host_psql:
         command = [
             psql_bin,
             f"host={os.environ.get('AI_OS_POSTGRES_HOST') or '127.0.0.1'} "
             f"port={os.environ.get('AI_OS_POSTGRES_PORT') or '54329'} "
             f"dbname={os.environ.get('AI_OS_POSTGRES_DB') or 'ai_os'} "
             f"user={os.environ.get('AI_OS_POSTGRES_USER') or 'ai_os'} "
-            "connect_timeout=3 options='-c statement_timeout=30000 -c lock_timeout=5000'",
+            f"connect_timeout=3 options='-c statement_timeout={statement_timeout_ms} "
+            f"-c lock_timeout={min(5000, statement_timeout_ms)}'",
             "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql,
         ]
         env = os.environ.copy()
         env["PGPASSWORD"] = password
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=35)
+        completed = subprocess.run(
+            command, text=True, capture_output=True, check=False, env=env,
+            timeout=timeout_seconds,
+        )
     else:
         command = ["docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"]
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, timeout=35)
+        completed = subprocess.run(
+            command, input=sql, text=True, capture_output=True, check=False,
+            timeout=timeout_seconds,
+        )
+    transient_markers = (
+        "timeout expired",
+        "connection refused",
+        "connection reset",
+        "server closed the connection unexpectedly",
+        "the database system is starting up",
+        "the database system is shutting down",
+    )
+    retry_delays = (0.5, 1.5)
+    for delay in retry_delays:
+        if completed.returncode == 0:
+            break
+        error_text = (completed.stderr or completed.stdout or "").strip()
+        if not any(marker in error_text.lower() for marker in transient_markers):
+            break
+        time.sleep(delay)
+        if use_host_psql:
+            completed = subprocess.run(
+                command, text=True, capture_output=True, check=False, env=env,
+                timeout=timeout_seconds,
+            )
+        else:
+            completed = subprocess.run(
+                command, input=sql, text=True, capture_output=True, check=False,
+                timeout=timeout_seconds,
+            )
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout).strip())
     output = completed.stdout.strip()
@@ -62,6 +112,10 @@ class Bar:
     ts: str
     symbol: str
     close: float
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    volume: float = 0.0
 
 
 def fetch_candidate(candidate_id: int | None) -> dict[str, Any]:
@@ -121,12 +175,23 @@ def infer_template(candidate: dict[str, Any], override: str | None) -> str:
     return "momentum"
 
 
-def fetch_bars(symbols: list[str], timeframe: str, max_symbols: int) -> list[Bar]:
+def fetch_bars(
+    symbols: list[str],
+    timeframe: str,
+    max_symbols: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[Bar]:
     symbol_filter = ""
     if symbols:
         cleaned = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
         variants = sorted(set(cleaned + [f"NSE:{symbol}" for symbol in cleaned if ":" not in symbol]))
         symbol_filter = f"AND upper(s.symbol) = ANY(ARRAY[{','.join(sql_literal(v) for v in variants)}]::text[])"
+    date_filter = ""
+    if start_date:
+        date_filter += f" AND o.ts >= {sql_literal(start_date)}::date"
+    if end_date:
+        date_filter += f" AND o.ts < ({sql_literal(end_date)}::date + interval '1 day')"
     rows = run_psql_json(
         f"""
         WITH ranked_symbols AS (
@@ -135,6 +200,7 @@ def fetch_bars(symbols: list[str], timeframe: str, max_symbols: int) -> list[Bar
             JOIN trading.symbols s ON s.id = o.symbol_id
             WHERE o.timeframe = {sql_literal(timeframe)}
               AND o.close IS NOT NULL
+              {date_filter}
               {symbol_filter}
             GROUP BY s.id, s.symbol
             ORDER BY rows_seen DESC, s.symbol
@@ -142,15 +208,24 @@ def fetch_bars(symbols: list[str], timeframe: str, max_symbols: int) -> list[Bar
         )
         SELECT coalesce(json_agg(row_to_json(rows) ORDER BY rows.symbol, rows.ts), '[]'::json)::text
         FROM (
-            SELECT o.ts::text AS ts, rs.symbol, o.close::float8 AS close
+            SELECT o.ts::text AS ts, rs.symbol, o.close::float8 AS close,
+                   coalesce(o.open, o.close)::float8 AS open,
+                   coalesce(o.high, o.close)::float8 AS high,
+                   coalesce(o.low, o.close)::float8 AS low,
+                   coalesce(o.volume, 0)::float8 AS volume
             FROM trading.ohlcv o
             JOIN ranked_symbols rs ON rs.id = o.symbol_id
             WHERE o.timeframe = {sql_literal(timeframe)}
               AND o.close IS NOT NULL
+              {date_filter}
         ) rows
         """
     )
-    return [Bar(ts=str(row["ts"]), symbol=str(row["symbol"]), close=float(row["close"])) for row in rows]
+    return [Bar(
+        ts=str(row["ts"]), symbol=str(row["symbol"]), close=float(row["close"]),
+        open=float(row["open"]), high=float(row["high"]), low=float(row["low"]),
+        volume=float(row["volume"]),
+    ) for row in rows]
 
 
 def rolling_mean(values: list[float], window: int) -> list[float | None]:
@@ -213,13 +288,26 @@ def periods_per_year(timeframe: str) -> float:
     }.get(timeframe, 252)
 
 
-def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, template: str, cost_bps: float, slippage_bps: float, max_symbols: int) -> dict[str, Any]:
-    bars = fetch_bars(symbols, timeframe, max_symbols)
+def run_backtest(
+    candidate: dict[str, Any],
+    symbols: list[str],
+    timeframe: str,
+    template: str,
+    cost_bps: float,
+    slippage_bps: float,
+    max_symbols: int,
+    *,
+    compiled_rules: CompiledRules | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    bars = fetch_bars(symbols, timeframe, max_symbols, start_date, end_date)
     by_symbol: dict[str, list[Bar]] = {}
     for bar in bars:
         by_symbol.setdefault(bar.symbol, []).append(bar)
 
     all_returns: list[float] = []
+    returns_by_ts: dict[str, list[float]] = {}
     trade_count = 0
     symbol_results: list[dict[str, Any]] = []
     total_cost = (cost_bps + slippage_bps) / 10000.0
@@ -229,7 +317,7 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         if len(closes) < 20:
             symbol_results.append({"symbol": symbol, "bars": len(closes), "status": "insufficient_bars"})
             continue
-        positions = positions_for_template(closes, template)
+        positions = positions_for_rule_set(symbol_bars, compiled_rules) if compiled_rules else positions_for_template(closes, template)
         returns: list[float] = []
         equity = [1.0]
         for index in range(1, len(closes)):
@@ -239,8 +327,8 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
                 trade_count += 1
             net_return = positions[index - 1] * raw_return - turnover * total_cost
             returns.append(net_return)
+            returns_by_ts.setdefault(symbol_bars[index].ts, []).append(net_return)
             equity.append(equity[-1] * (1.0 + net_return))
-        all_returns.extend(returns)
         symbol_results.append(
             {
                 "symbol": symbol,
@@ -255,13 +343,22 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
             }
         )
 
+    portfolio_returns = [
+        (ts, statistics.mean(values))
+        for ts, values in sorted(returns_by_ts.items())
+        if values
+    ]
+    all_returns = [value for _, value in portfolio_returns]
+    equity = [1.0]
+    equity_curve: list[dict[str, Any]] = []
+    for ts, value in portfolio_returns:
+        equity.append(equity[-1] * (1.0 + value))
+        equity_curve.append({"ts": ts, "equity": equity[-1], "return": value})
+
     if all_returns:
         average = statistics.mean(all_returns)
         stdev = statistics.pstdev(all_returns)
         sharpe = average / stdev * math.sqrt(periods_per_year(timeframe)) if stdev else None
-        equity = [1.0]
-        for value in all_returns:
-            equity.append(equity[-1] * (1.0 + value))
         total_return = equity[-1] - 1.0
         win_rate = sum(1 for value in all_returns if value > 0) / len(all_returns)
         status = "completed"
@@ -271,8 +368,15 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         sharpe = None
         total_return = 0.0
         win_rate = 0.0
-        equity = [1.0]
         status = "insufficient_data"
+
+    curve_points_total = len(equity_curve)
+    if curve_points_total > 500:
+        step = math.ceil(curve_points_total / 499)
+        sampled_curve = equity_curve[::step]
+        if sampled_curve[-1] != equity_curve[-1]:
+            sampled_curve.append(equity_curve[-1])
+        equity_curve = sampled_curve
 
     bars_tested = sum(item["bars"] for item in symbol_results)
     warnings = []
@@ -282,6 +386,10 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         warnings.append("Symbol coverage is narrow; run broader universe data before committee review.")
     if status != "completed":
         warnings.append("No valid return stream was produced.")
+
+    tested_results = [item for item in symbol_results if item.get("status") == "tested"]
+    data_start = min((str(item["first_ts"])[:10] for item in tested_results), default=None)
+    data_end = max((str(item["last_ts"])[:10] for item in tested_results), default=None)
 
     return {
         "candidate": {
@@ -295,6 +403,8 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         "timeframe": timeframe,
         "symbols_requested": symbols,
         "symbols_tested": sorted(by_symbol),
+        "data_start": data_start,
+        "data_end": data_end,
         "metrics": {
             "total_return": total_return,
             "average_bar_return": average,
@@ -308,14 +418,24 @@ def run_backtest(candidate: dict[str, Any], symbols: list[str], timeframe: str, 
         },
         "diagnostics": {
             "engine": "local_deterministic_ohlcv_backtester_v1",
+            "rule_engine": ENGINE_VERSION if compiled_rules else "legacy_explicit_template_v1",
+            "rule_hash": compiled_rules.rule_hash if compiled_rules else None,
+            "entry_expression": compiled_rules.entry if compiled_rules else None,
+            "exit_expression": compiled_rules.exit if compiled_rules else None,
+            "requested_start_date": start_date,
+            "requested_end_date": end_date,
             "data_source": "trading.ohlcv",
             "cost_bps": cost_bps,
             "slippage_bps": slippage_bps,
             "paper_first": True,
             "live_execution_allowed": False,
+            "equity_curve": equity_curve,
+            "equity_curve_points_total": curve_points_total,
+            "equity_curve_method": "equal_weight_mean_of_available_symbol_returns_by_timestamp",
+            "equity_curve_source": "trading.ohlcv",
             "warnings": warnings,
             "symbol_results": symbol_results,
-            "method": "Close-to-close long/flat signal simulation with transaction cost on position changes.",
+            "method": "Close-to-close long/flat signal simulation with transaction cost on position changes; portfolio returns are equal-weighted by timestamp across available symbols.",
         },
     }
 
@@ -371,8 +491,8 @@ def persist_result(candidate: dict[str, Any], result: dict[str, Any]) -> dict[st
         VALUES (
             {int(candidate["id"])},
             {sql_literal(run_status)},
-            NULL,
-            NULL,
+            {sql_literal(result.get("data_start"))}::date,
+            {sql_literal(result.get("data_end"))}::date,
             {sql_literal(candidate.get("universe"))},
             {sql_literal(result["timeframe"])},
             {sql_jsonb(metrics)},
@@ -455,6 +575,8 @@ def main() -> int:
     parser.add_argument("--cost-bps", type=float, default=3.0)
     parser.add_argument("--slippage-bps", type=float, default=2.0)
     parser.add_argument("--max-symbols", type=int, default=14)
+    parser.add_argument("--start-date", default="")
+    parser.add_argument("--end-date", default="")
     parser.add_argument("--min-rows-per-symbol", type=int, default=50)
     parser.add_argument("--min-total-rows", type=int, default=500)
     parser.add_argument("--dry-run", action="store_true")
@@ -465,6 +587,14 @@ def main() -> int:
     timeframe = normalize_timeframe(args.timeframe or str(candidate.get("timeframe") or ""))
     template = infer_template(candidate, args.template)
     parse_result = parse_strategy_dsl(int(candidate["id"]), created_by="Backtest Engineer")
+    normalized_rules = parse_result.get("normalized_rules") or {}
+    compiled_payload = normalized_rules.get("compiled") or {}
+    compiled_rules = None
+    if parse_result.get("parse_status") == "passed":
+        compiled_rules = compile_rule_set(
+            str(compiled_payload.get("entry") or (normalized_rules.get("entry") or {}).get("expression") or ""),
+            str(compiled_payload.get("exit") or (normalized_rules.get("exit") or {}).get("expression") or ""),
+        )
     gate = run_data_quality_gate(
         int(candidate["id"]),
         symbols=symbols or parse_symbols(parse_result.get("symbols")),
@@ -493,7 +623,20 @@ def main() -> int:
             )
         )
         return 2
-    result = run_backtest(candidate, symbols, timeframe, template, args.cost_bps, args.slippage_bps, args.max_symbols)
+    if compiled_rules is None:
+        print(json.dumps({
+            "candidate": {"id": candidate["id"], "candidate_key": candidate.get("candidate_key"), "name": candidate.get("name")},
+            "status": "blocked_rule_validation",
+            "parse": parse_result,
+            "message": "Backtest blocked because no validated executable entry/exit rule set exists.",
+        }, indent=2, sort_keys=True, default=str))
+        return 2
+    result = run_backtest(
+        candidate, symbols, timeframe, template, args.cost_bps, args.slippage_bps, args.max_symbols,
+        compiled_rules=compiled_rules,
+        start_date=args.start_date or None,
+        end_date=args.end_date or None,
+    )
     result["parse"] = parse_result
     result["data_quality_gate"] = gate
     result["diagnostics"]["data_quality_gate_id"] = gate.get("id")

@@ -313,7 +313,7 @@ class TickWriter(threading.Thread):
 
     def run(self) -> None:
         connection = database()
-        pending: dict[int, dict[str, Any]] = {}
+        pending: list[dict[str, Any]] = []
         last_flush = time.monotonic()
         last_heartbeat = 0.0
         last_retention = 0.0
@@ -330,13 +330,13 @@ class TickWriter(threading.Thread):
                             continue
                         normalized = normalize_tick(tick, instrument)
                         if normalized:
-                            pending[token] = normalized
+                            pending.append(normalized)
                             self.last_tick_at = normalized["received_at"]
                 except queue.Empty:
                     pass
                 now_monotonic = time.monotonic()
                 if pending and (now_monotonic-last_flush >= FLUSH_SECONDS or self.stop_event.is_set()):
-                    rows = list(pending.values())
+                    rows = list(pending)
                     with connection.cursor() as cursor:
                         cursor.executemany(UPSERT_LIVE_SQL, rows)
                         cursor.executemany(UPSERT_MINUTE_SQL, rows)
@@ -411,15 +411,12 @@ def run_stream(api_key: str, access_token: str, run_seconds: int | None) -> dict
     reconnects = 0
     connection_lock = threading.Lock()
 
-    def on_ticks(_ws: KiteTicker, ticks: list[dict[str, Any]]) -> None:
+    def on_ticks(ws: KiteTicker, ticks: list[dict[str, Any]]) -> None:
         try:
-            tick_queue.put_nowait(ticks)
+            tick_queue.put(ticks, timeout=max(1.0, FLUSH_SECONDS))
         except queue.Full:
-            try:
-                tick_queue.get_nowait()
-                tick_queue.put_nowait(ticks)
-            except (queue.Empty, queue.Full):
-                pass
+            stop_event.set()
+            ws.stop()
 
     def on_connect(ws: KiteTicker, _response: object) -> None:
         nonlocal instruments

@@ -12,19 +12,108 @@
  */
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { post } from "./client";
+import { post, uploadFile } from "./client";
 import type { LiveRow } from "./liveRow";
 
 /** Common query keys to invalidate (imported from queries.ts to avoid a cycle). */
 const Q = {
   missionControl: ["mission-control"],
+  researchCases: ["research-cases"],
   portfolioOffice: ["portfolio-office"],
   researchIdeas: ["research-ideas"],
+  longTermThesis: ["long-term-thesis"],
   tradingQuantRisk: ["trading-quant-risk"],
+  optionsDaily: ["options-daily"],
+  sectorIntelligence: ["sector-intelligence"],
   strategyArsenal: ["strategy-arsenal"],
   reports: ["reports"],
   office: ["office"],
+  graphControl: ["graph-control"],
+  blueprintRequirements: ["blueprint-requirements"],
+  zerodhaAuth: ["zerodha-auth"],
+  zerodhaMarket: ["zerodha-market"],
+  companyIRSources: ["company-ir-sources"],
 } as const;
+
+export interface SecureClientReportUploadInput {
+  file: File;
+  client_code: string;
+  account_code: string;
+  report_kind: "aditya_birla_money_capital_gains" | "broker_transactions" | "holdings_statement" | "broker_ledger" | "contract_note" | "portfolio_snapshot" | "tax_report" | "other";
+  actor?: string;
+}
+
+export interface BrowserVisibleCaptureInput {
+  client_code: string;
+  account_code: string;
+  source_key: "aditya_birla_money_authenticated_portfolio" | "zerodha_authenticated_portfolio" | "authorized_broker_portfolio" | "authorized_portfolio_tracker";
+  page_title?: string;
+  captured_at: string;
+  content_type: "text/html" | "text/plain";
+  content: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useCaptureVisibleBrowserPortfolio() {
+  return useInvalidating<BrowserVisibleCaptureInput, LiveRow>(
+    "/api/client-browser-captures/submit",
+    [Q.portfolioOffice, Q.missionControl, Q.office],
+  );
+}
+
+export function useUploadSecureClientReport() {
+  const queryClient = useQueryClient();
+  return useMutation<LiveRow, Error, SecureClientReportUploadInput>({
+    mutationFn: async (input) => uploadFile(
+      "/api/client-imports/upload",
+      input.file,
+      undefined,
+      {
+        headers: {
+          "X-AI-OS-File-Name": input.file.name.replace(/[^\x20-\x7E]/g, "_"),
+          "X-AI-OS-Client-Code": input.client_code,
+          "X-AI-OS-Account-Code": input.account_code,
+          "X-AI-OS-Report-Kind": input.report_kind,
+          "X-AI-OS-Actor": input.actor ?? "Devarsh",
+        },
+      },
+    ) as Promise<LiveRow>,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: Q.portfolioOffice }),
+  });
+}
+
+export function useResolveSecureClientImportIdentity() {
+  return useInvalidating<{
+    import_key: string;
+    decision: "confirm" | "reject";
+    rationale: string;
+    operator_confirmed: true;
+    actor?: string;
+  }, LiveRow>("/api/client-imports/identity/resolve", [Q.portfolioOffice, Q.missionControl, Q.office]);
+}
+
+export function useReprocessSecureClientImport() {
+  return useInvalidating<{
+    import_key: string;
+    operator_confirmed: true;
+    actor?: string;
+  }, LiveRow>("/api/client-imports/reprocess", [Q.portfolioOffice, Q.missionControl, Q.office]);
+}
+
+export function useSyncZerodhaAccount() {
+  return useInvalidating<{ datasets: string[]; actor?: string }, LiveRow>(
+    "/api/zerodha/sync",
+    [Q.zerodhaAuth, Q.zerodhaMarket, Q.portfolioOffice, Q.tradingQuantRisk]
+  );
+}
+
+export function useSyncZerodhaMarket() {
+  return useInvalidating<{ modes: string[]; underlyings?: string[]; strike_pairs?: number; actor?: string }, LiveRow>(
+    "/api/zerodha/market/sync",
+    [Q.zerodhaMarket, Q.tradingQuantRisk, Q.office]
+  );
+}
 
 /** Generic invalidating mutation factory. */
 function useInvalidating<TBody, TResult = LiveRow>(
@@ -40,9 +129,328 @@ function useInvalidating<TBody, TResult = LiveRow>(
   });
 }
 
+export function useRunOfficeOperabilityAcceptance() {
+  return useInvalidating<{ run_key?: string; actor?: string }, LiveRow>(
+    "/api/office/operability/acceptance/run",
+    [Q.office]
+  );
+}
+
+export function useReconcileBlueprintEvidence() {
+  return useInvalidating<{ actor?: string; run_key?: string }, LiveRow>(
+    "/api/blueprint/evidence/reconcile",
+    [Q.blueprintRequirements, Q.office, Q.missionControl]
+  );
+}
+
+export function useReviewBlueprintEvidence() {
+  return useInvalidating<{
+    evidence_link_id: number;
+    decision: "verified" | "rejected";
+    delivery_status?: "partial" | "done";
+    rationale: string;
+    actor?: string;
+  }, LiveRow>(
+    "/api/blueprint/evidence/review",
+    [Q.blueprintRequirements, Q.office, Q.missionControl]
+  );
+}
+
 /* ============================================================
  * FUNDAMENTAL RESEARCH ACTIONS
  * ============================================================ */
+
+export interface FundamentalCompanyIntakeInput {
+  symbol?: string;
+  actor?: string;
+}
+
+export function useSyncFundamentalCompanyIntake() {
+  return useInvalidating<FundamentalCompanyIntakeInput, LiveRow>(
+    "/api/research/fundamental-intake/sync",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office]
+  );
+}
+
+export interface CompanyIRSourceInput {
+  symbol: string;
+  exchange: "NSE" | "BSE";
+  company_name: string;
+  source_kind: "ir_page" | "annual_report_pdf";
+  source_url: string;
+  fiscal_year_end?: number;
+  document_label?: string;
+  verification_evidence: Record<string, unknown>;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRegisterCompanyIRSource() {
+  return useInvalidating<CompanyIRSourceInput, LiveRow>(
+    "/api/research/company-ir/sources",
+    [Q.companyIRSources, Q.researchIdeas, Q.office]
+  );
+}
+
+export function useCollectCompanyIRSource() {
+  return useInvalidating<{ source_id: number; actor?: string; limit?: number }, LiveRow>(
+    "/api/research/company-ir/sources/collect",
+    [Q.companyIRSources, Q.researchIdeas, Q.office]
+  );
+}
+
+export interface InstitutionalFundamentalFactoryInput {
+  symbol: string;
+  exchange: string;
+  as_of: string;
+  dry_run: boolean;
+  actor?: string;
+  run_key?: string;
+}
+
+export function useRunInstitutionalFundamentalFactory() {
+  return useInvalidating<InstitutionalFundamentalFactoryInput, LiveRow>(
+    "/api/research/fundamental-factory/run",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
+export interface FundamentalEvidenceReviewInput {
+  evidence_id: number;
+  decision: "human_verified" | "rejected";
+  rationale: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useReviewFundamentalEvidence() {
+  return useInvalidating<FundamentalEvidenceReviewInput, LiveRow>(
+    "/api/research/fundamental-evidence/review",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
+export interface FundamentalOpinionReviewInput {
+  opinion_id: number;
+  decision: "reviewed" | "dissent" | "rejected";
+  rationale: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useReviewFundamentalOpinion() {
+  return useInvalidating<FundamentalOpinionReviewInput, LiveRow>(
+    "/api/research/fundamental-opinion/review",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
+export interface FundamentalRemediationSyncInput {
+  holding_thesis_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useSyncFundamentalRemediation() {
+  return useInvalidating<FundamentalRemediationSyncInput, LiveRow>(
+    "/api/research/fundamental-remediation/sync",
+    [Q.researchIdeas, Q.office, Q.missionControl]
+  );
+}
+
+export interface SectorIntelligenceRunInput {
+  index_id: number;
+  as_of_date: string;
+  horizon: "1D" | "1W" | "1M" | "3M" | "6M" | "1Y";
+  dry_run: boolean;
+  actor?: string;
+}
+
+export function useRunSectorIntelligence() {
+  return useInvalidating<SectorIntelligenceRunInput, LiveRow>(
+    "/api/sector-intelligence/run",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorFundamentalSyncInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useSyncSectorFundamentals() {
+  return useInvalidating<SectorFundamentalSyncInput, LiveRow>(
+    "/api/sector-intelligence/fundamentals/sync",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorOwnershipFlowSyncInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  lookback_days: number;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useSyncSectorOwnershipFlows() {
+  return useInvalidating<SectorOwnershipFlowSyncInput, LiveRow>(
+    "/api/sector-intelligence/ownership-flows/sync",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorUnderwriteInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useBuildSectorUnderwrite() {
+  return useInvalidating<SectorUnderwriteInput, LiveRow>(
+    "/api/sector-intelligence/underwrite/build",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorPriceBaselineInput {
+  taxonomy_node_id: number;
+  as_of_date: string;
+  actor?: string;
+}
+
+export function useActivateSectorPriceBaseline() {
+  return useInvalidating<SectorPriceBaselineInput, LiveRow>(
+    "/api/sector-intelligence/activate-price-baseline",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorIntelligenceImportInput {
+  package: Record<string, unknown>;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useImportSectorIntelligencePackage() {
+  return useInvalidating<SectorIntelligenceImportInput, LiveRow>(
+    "/api/sector-intelligence/import",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorAcceptanceInput {
+  taxonomy_node_id: number;
+  as_of_date: string;
+  run_key?: string;
+  actor?: string;
+}
+
+export function useRunSectorAcceptance() {
+  return useInvalidating<SectorAcceptanceInput, LiveRow>(
+    "/api/sector-intelligence/acceptance/run",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorRemediationSyncInput {
+  taxonomy_node_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useSyncSectorRemediation() {
+  return useInvalidating<SectorRemediationSyncInput, LiveRow>(
+    "/api/sector-intelligence/remediation/sync",
+    [Q.sectorIntelligence, Q.office, Q.missionControl]
+  );
+}
+
+export interface InstitutionalOptionsAnalyticsInput {
+  underlying: string;
+  exchange: "NFO" | "BFO";
+  expiry_date: string;
+  as_of: string;
+  model: "black_scholes_merton" | "black_76";
+  filters: {
+    max_age_seconds: number;
+    max_spread_bps: number;
+    min_open_interest: number;
+    min_volume: number;
+  };
+  dry_run: boolean;
+  actor?: string;
+}
+
+export function useRunInstitutionalOptionsAnalytics() {
+  return useInvalidating<InstitutionalOptionsAnalyticsInput, LiveRow>(
+    "/api/options/institutional-analytics/run",
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
+  );
+}
+
+export interface OptionAcceptanceInput {
+  exchange: "NFO" | "BFO";
+  underlying: string;
+  expiry_date: string;
+  window_start: string;
+  window_end: string;
+  run_key?: string;
+  actor?: string;
+}
+
+export function useRunOptionAcceptance() {
+  return useInvalidating<OptionAcceptanceInput, LiveRow>(
+    "/api/options/institutional-analytics/acceptance/run",
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
+  );
+}
+
+export interface InstitutionalOptionsMaterializeInput {
+  limit: number;
+  interval_seconds: number;
+  actor?: string;
+}
+
+export function useMaterializeInstitutionalOptions() {
+  return useInvalidating<InstitutionalOptionsMaterializeInput, LiveRow>(
+    "/api/options/institutional-analytics/materialize",
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
+  );
+}
+
+export interface OptionValuationPolicyInput {
+  policy_key: string;
+  provider: string;
+  exchange: "NFO" | "BFO";
+  underlying: string;
+  model_family: "black_scholes_merton" | "black_76";
+  risk_free_rate: number;
+  dividend_yield: number;
+  rate_observation_id: number;
+  dividend_observation_id: number;
+  effective_from: string;
+  expires_at: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useUpsertOptionValuationPolicy() {
+  return useInvalidating<OptionValuationPolicyInput, LiveRow>(
+    "/api/options/valuation-policy/upsert",
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
+  );
+}
+
+export function useRefreshOptionValuationSources() {
+  return useInvalidating<{ sources?: Array<"rate" | "dividends">; actor?: string }, LiveRow>(
+    "/api/options/valuation-sources/refresh",
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
+  );
+}
 
 export interface LongTermMonteCarloInput {
   holding_thesis_id: number;
@@ -66,7 +474,9 @@ export function useRunMonteCarlo() {
 }
 
 export interface LongTermThesisMemoInput {
-  holding_thesis_id: number;
+  holding_thesis_id?: number;
+  symbol?: string;
+  exchange?: string;
   actor?: string;
   force?: boolean;
 }
@@ -90,10 +500,112 @@ export function useGenerateResearchPacket() {
   );
 }
 
+export interface ProposeResearchCaseInput {
+  request_text: string;
+  entity: string;
+  company_id?: number;
+  owner_agent?: string;
+  priority?: "low" | "normal" | "medium" | "high" | "critical";
+  horizon?: string;
+  mandate?: string;
+  create_distinct_confirmed?: boolean;
+  actor?: string;
+}
+
+export function useProposeResearchCase() {
+  return useInvalidating<ProposeResearchCaseInput, LiveRow>(
+    "/api/research/cases/propose",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases],
+  );
+}
+
+export interface StartResearchCaseInput {
+  research_case_id: number;
+  model_preflight_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useStartResearchCase() {
+  return useInvalidating<StartResearchCaseInput, LiveRow>(
+    "/api/research/cases/start",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office, Q.graphControl],
+  );
+}
+
+export interface PrepareResearchCaseResumeInput {
+  research_case_id: number;
+  actor?: string;
+}
+
+export function usePrepareResearchCaseResume() {
+  return useInvalidating<PrepareResearchCaseResumeInput, LiveRow>(
+    "/api/research/cases/resume-preflight",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office],
+  );
+}
+
+export interface RepairResearchCaseInput {
+  research_case_id: number;
+  model_preflight_id?: number;
+  force_new_iteration?: boolean;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRepairResearchCase() {
+  return useInvalidating<RepairResearchCaseInput, LiveRow>(
+    "/api/research/cases/repair",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office, Q.graphControl],
+  );
+}
+
+export interface ApproveResearchModelPreflightInput {
+  preflight_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useApproveResearchModelPreflight() {
+  return useInvalidating<ApproveResearchModelPreflightInput, LiveRow>(
+    "/api/research/model-runs/preflight/approve",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office],
+  );
+}
+
+export interface PreflightThesisReportInput {
+  holding_thesis_id: number;
+  actor?: string;
+}
+
+export function usePreflightThesisReport() {
+  return useInvalidating<PreflightThesisReportInput, LiveRow>(
+    "/api/portfolio/long-term-thesis/report/preflight",
+    [Q.longTermThesis],
+  );
+}
+
+export interface GenerateThesisReportInput {
+  holding_thesis_id: number;
+  report_preflight_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useGenerateThesisReport() {
+  return useInvalidating<GenerateThesisReportInput, LiveRow>(
+    "/api/portfolio/long-term-thesis/report",
+    [Q.longTermThesis, Q.researchIdeas, Q.reports],
+  );
+}
+
 export interface UpdateChecklistInput {
-  checklist_id: number;
+  holding_thesis_id: number;
+  checklist_key: string;
   status?: string;
-  notes?: string;
+  score?: number;
+  findings?: unknown[];
+  evidence?: unknown[];
   actor?: string;
 }
 
@@ -105,11 +617,18 @@ export function useUpdateChecklist() {
 }
 
 export interface UpdateValuationInput {
-  valuation_model_id: number;
-  model_type?: string;
-  inputs?: Record<string, unknown>;
+  holding_thesis_id: number;
+  model_key: string;
+  status?: string;
+  fair_value_low?: number;
+  fair_value_base?: number;
+  fair_value_high?: number;
+  expected_cagr_pct?: number;
+  assumptions?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
-  notes?: string;
+  evidence?: unknown[];
+  operator_confirmed?: boolean;
+  note_path?: string;
   actor?: string;
 }
 
@@ -155,6 +674,20 @@ export interface ResolveCommitteeInput {
 export function useResolveLongTermCommittee() {
   return useInvalidating<ResolveCommitteeInput, LiveRow>(
     "/api/portfolio/long-term-committee/decision",
+    [Q.researchIdeas, Q.office]
+  );
+}
+
+export function useResolveStrategyCommittee() {
+  return useInvalidating<{ committee_review_id: number; decision: string; notes?: string; actor?: string }, LiveRow>(
+    "/api/strategy/committee/decision",
+    [Q.strategyArsenal, Q.tradingQuantRisk, Q.office]
+  );
+}
+
+export function useResolveSpecialSituationDecision() {
+  return useInvalidating<{ special_memo_id: number; decision: string; notes?: string; actor?: string }, LiveRow>(
+    "/api/research/special-situations/decision",
     [Q.researchIdeas, Q.office]
   );
 }
@@ -208,7 +741,7 @@ export function useCreateStrategyIntake() {
 }
 
 export interface BacktestInput {
-  intake_id: number;
+  candidate_id: number;
   start_date?: string;
   end_date?: string;
   parameters?: Record<string, unknown>;
@@ -223,7 +756,7 @@ export function useRunBacktest() {
 }
 
 export interface OptimizationInput {
-  intake_id: number;
+  candidate_id: number;
   parameter_space?: Record<string, unknown>;
   walk_forward?: boolean;
   actor?: string;
@@ -237,15 +770,77 @@ export function useRunOptimization() {
 }
 
 export interface UserOptimizerInput {
-  intake_id: number;
-  parameters?: Record<string, unknown>;
-  data_source?: string;
+  strategy_name: string;
+  intake_text: string;
+  asset_class?: string;
+  universe?: string;
+  timeframe?: string;
+  template?: string;
+  symbols?: string[];
+  dsl_text?: string;
+  constraints_text?: string;
+  risk_notes?: string;
+  cost_bps?: number;
+  slippage_bps?: number;
+  max_symbols?: number;
+  min_rows_per_symbol?: number;
+  min_total_rows?: number;
   actor?: string;
 }
 
 export function useRunUserOptimizer() {
   return useInvalidating<UserOptimizerInput, LiveRow>(
     "/api/strategy/user-defined-optimizer/run",
+    [Q.strategyArsenal, Q.tradingQuantRisk]
+  );
+}
+
+export interface QuantAnalyticsInput {
+  strategy_ids?: number[];
+  timeframe?: string;
+  limit?: number;
+  max_symbols?: number;
+  cost_bps?: number;
+  slippage_bps?: number;
+  participation_rate?: number;
+  actor?: string;
+}
+
+export function useRunQuantAnalytics() {
+  return useInvalidating<QuantAnalyticsInput, LiveRow>(
+    "/api/strategy/quant-analytics/run",
+    [Q.strategyArsenal, Q.tradingQuantRisk]
+  );
+}
+
+export interface StrategyPortfolioAllocationInput {
+  capital_base?: number;
+  max_weight?: number;
+  ruin_threshold_pct?: number;
+  horizon_bars?: number;
+  simulation_count?: number;
+  analytics_run_key?: string;
+  timeframe?: string;
+  actor?: string;
+}
+
+export function useRunStrategyPortfolioAllocation() {
+  return useInvalidating<StrategyPortfolioAllocationInput, LiveRow>(
+    "/api/strategy/portfolio-allocation/run",
+    [Q.strategyArsenal, Q.tradingQuantRisk]
+  );
+}
+
+export interface StrategyRetirementInput {
+  analytics_run_key?: string;
+  allocation_key?: string;
+  review_key_prefix?: string;
+  actor?: string;
+}
+
+export function useRunStrategyRetirementReview() {
+  return useInvalidating<StrategyRetirementInput, LiveRow>(
+    "/api/strategy/retirement/run",
     [Q.strategyArsenal, Q.tradingQuantRisk]
   );
 }
@@ -260,6 +855,20 @@ export function useRunDiscovery() {
   return useInvalidating<DiscoveryInput, LiveRow>(
     "/api/strategy/discovery/run",
     [Q.strategyArsenal]
+  );
+}
+
+export interface ResolveDiscoveryTriageInput {
+  discovery_candidate_id: number;
+  decision: "reject" | "request_more_evidence" | "route_quant_lab" | "route_special_situation" | "open_committee_review";
+  notes: string;
+  actor?: string;
+}
+
+export function useResolveDiscoveryTriage() {
+  return useInvalidating<ResolveDiscoveryTriageInput, LiveRow>(
+    "/api/strategy/discovery/triage/resolve",
+    [Q.strategyArsenal, Q.tradingQuantRisk, Q.office]
   );
 }
 
@@ -288,7 +897,7 @@ export function useRunModelValidation() {
 }
 
 export interface PaperMonitorInput {
-  strategy_id: number;
+  committee_review_id: number;
   actor?: string;
 }
 
@@ -299,6 +908,20 @@ export function useStartPaperMonitor() {
   );
 }
 
+export function useRunBrokerReconciliation() {
+  return useInvalidating<{ actor?: string }, LiveRow>(
+    "/api/broker-reconciliation/run",
+    [Q.portfolioOffice, Q.missionControl]
+  );
+}
+
+export function useRunP2CursorReconciliation() {
+  return useInvalidating<{ actor?: string; client_code?: string }, LiveRow>(
+    "/api/p2cursor-reconciliation/run",
+    [Q.portfolioOffice, Q.missionControl]
+  );
+}
+
 /* ============================================================
  * TRADING ACTIONS (manual + paper — NOT live execution)
  * ============================================================ */
@@ -306,8 +929,19 @@ export function useStartPaperMonitor() {
 export interface ManualTradeInput {
   symbol: string;
   exchange?: string;
+  instrument_type?: "equity" | "future" | "option" | string;
+  option_type?: "CE" | "PE";
+  strike?: number;
+  expiry_date?: string;
+  strategy_name?: string;
+  setup_type?: string;
+  tags?: string[];
   side: "buy" | "sell";
   quantity: number;
+  quantity_unit?: "units" | "lots";
+  lot_count?: number;
+  lot_size?: number;
+  contract_quantity?: number;
   price: number;
   trade_date?: string;
   book_key?: string;
@@ -335,20 +969,82 @@ export function useRecordPaperTrade() {
   );
 }
 
+
+export interface TradingViewDesktopInput {
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+  target_url?: string;
+  actor?: string;
+}
+
+export function useOpenTradingViewDesktop() {
+  return useInvalidating<TradingViewDesktopInput, LiveRow>(
+    "/api/tradingview/desktop/open",
+    [Q.tradingQuantRisk]
+  );
+}
+
+export interface TradingViewTemplateInput extends TradingViewDesktopInput {
+  template_key: string;
+  parameters?: Record<string, unknown>;
+}
+
+export function useRunTradingViewTemplate() {
+  return useInvalidating<TradingViewTemplateInput, LiveRow>(
+    "/api/tradingview/template-actions",
+    [Q.tradingQuantRisk, Q.office]
+  );
+}
+
 /* ============================================================
  * PORTFOLIO ACTIONS
  * ============================================================ */
 
+export interface ClientOnboardingInput {
+  client_code: string;
+  display_name: string;
+  risk_profile: string;
+  objectives: string[];
+  constraints?: string[];
+  investment_horizon: string;
+  liquidity_needs?: string;
+  risk_tolerance: string;
+  risk_capacity: string;
+  suitability_status: "needs_review" | "suitable" | "conditionally_suitable" | "unsuitable";
+  suitability_notes?: string;
+  source_evidence: Array<string | Record<string, unknown>>;
+  account?: {
+    account_code: string;
+    account_name?: string;
+    account_type?: string;
+    broker?: string;
+    base_currency?: string;
+    external_account_ref?: string;
+  };
+  actor?: string;
+}
+
+export function useStageClientOnboarding() {
+  return useInvalidating<ClientOnboardingInput, LiveRow>(
+    "/api/client-office/onboarding/stage",
+    [Q.portfolioOffice, Q.office, Q.missionControl]
+  );
+}
+
 export interface HoldingUpdateInput {
-  client_id?: number;
+  client_code: string;
+  account_code: string;
   symbol: string;
   exchange?: string;
   quantity?: number;
-  average_cost?: number;
-  book_key?: string;
-  purpose?: string;
-  thesis_id?: number;
-  horizon?: string;
+  average_price?: number;
+  market_price?: number;
+  market_value?: number;
+  instrument_type?: string;
+  as_of?: string;
+  update_reason: string;
+  payload?: Record<string, unknown>;
   actor?: string;
 }
 
@@ -402,6 +1098,24 @@ export function useIngestMarketNews() {
   );
 }
 
+export interface InvestorSourceInput {
+  feed_name: string;
+  provider?: string;
+  url: string;
+  geography?: string;
+  topics?: string[];
+  refresh_minutes?: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRegisterInvestorSource() {
+  return useInvalidating<InvestorSourceInput, LiveRow>(
+    "/api/research/investor-sources/register",
+    [Q.researchIdeas, Q.missionControl]
+  );
+}
+
 export interface PaperIngestInput {
   title: string;
   source_key: string;
@@ -416,6 +1130,31 @@ export function useIngestResearchPaper() {
   return useInvalidating<PaperIngestInput, LiveRow>(
     "/api/research/papers/ingest",
     [Q.researchIdeas]
+  );
+}
+
+export interface ResearchSourceIngestInput {
+  title?: string;
+  source_url?: string;
+  pasted_text?: string;
+  source_key?: "web" | "blog" | "github" | "manual";
+  source_kind?: string;
+  research_objective: string;
+  hypothesis?: string;
+  hypothesis_title?: string;
+  target_universe?: string;
+  timeframe?: string;
+  topics?: string[];
+  asset_classes?: string[];
+  desired_outputs?: string[];
+  priority?: "low" | "medium" | "high" | "critical";
+  actor?: string;
+}
+
+export function useIngestResearchSource() {
+  return useInvalidating<ResearchSourceIngestInput, LiveRow>(
+    "/api/research/sources/ingest",
+    [Q.researchIdeas, Q.strategyArsenal, Q.office, Q.missionControl]
   );
 }
 
@@ -589,6 +1328,34 @@ export function useCreateAgentMessage() {
   );
 }
 
+export function useDelegateAgentTask() {
+  return useInvalidating<{
+    to_agent: string;
+    objective: string;
+    subject?: string;
+    priority?: "low" | "medium" | "high" | "critical";
+    workspace?: string;
+    data_boundary?: "personal_private_local_only" | "client_private_local_only" | "trading_private_local_only" | "public_or_approved_internal" | "repository_private_local_only";
+    actor?: string;
+  }, LiveRow>(
+    "/api/agents/delegate",
+    [Q.office, Q.missionControl]
+  );
+}
+
+export function useUpdateInboxItem() {
+  return useInvalidating<{
+    inbox_id: number;
+    action: "claim" | "reassign" | "resolve" | "block" | "reopen";
+    actor?: string;
+    resolution_note?: string;
+    owner_agent?: string;
+  }, LiveRow>(
+    "/api/inbox/items/update",
+    [Q.office, Q.missionControl]
+  );
+}
+
 export function useRunAgentWorker() {
   return useInvalidating<{ actor?: string; limit?: number; agent_key?: string }, LiveRow>(
     "/api/agents/worker/run",
@@ -600,5 +1367,115 @@ export function useMaterializeAgentSchedules() {
   return useInvalidating<{ actor?: string; limit?: number }, LiveRow>(
     "/api/agents/schedules/run",
     [Q.office, Q.missionControl]
+  );
+}
+
+/* ============================================================
+ * GRAPH CONTROL PLANE
+ * ============================================================ */
+
+export interface StartGraphRunInput {
+  graph_key: string;
+  input_payload: Record<string, unknown>;
+  actor?: string;
+  trigger_type?: string;
+  subject_type?: string;
+  subject_ref?: string;
+  correlation_key?: string;
+  idempotency_key?: string;
+  max_steps?: number;
+}
+
+const GRAPH_INVALIDATIONS = [Q.graphControl, Q.office, Q.missionControl] as const;
+
+export function useStartGraphRun() {
+  return useInvalidating<StartGraphRunInput, LiveRow>(
+    "/api/graphs/runs/start",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useAdvanceGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string; max_steps?: number }, LiveRow>(
+    "/api/graphs/runs/advance",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useAdvanceActiveGraphRuns() {
+  return useInvalidating<{ actor?: string; limit?: number; max_steps?: number }, LiveRow>(
+    "/api/graphs/runs/advance-active",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function usePauseGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string; reason: string }, LiveRow>(
+    "/api/graphs/runs/pause",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useResumeGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string }, LiveRow>(
+    "/api/graphs/runs/resume",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useCancelGraphRun() {
+  return useInvalidating<{ graph_run_id: number; actor?: string; reason: string }, LiveRow>(
+    "/api/graphs/runs/cancel",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useResolveGraphWait() {
+  return useInvalidating<{ wait_id: number; actor?: string; resolution: Record<string, unknown> }, LiveRow>(
+    "/api/graphs/waits/resolve",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useResolveGraphDecision() {
+  return useInvalidating<{ approval_id: number; decision: string; rationale: string; actor?: string }, LiveRow>(
+    "/api/graphs/decisions",
+    GRAPH_INVALIDATIONS
+  );
+}
+
+export function useRequestGraphChange() {
+  return useInvalidating<{
+    graph_key: string;
+    title: string;
+    rationale: string;
+    proposed_patch: Record<string, unknown>;
+    safety_impact: Record<string, unknown>;
+    actor?: string;
+  }, LiveRow>("/api/graphs/change-requests", GRAPH_INVALIDATIONS);
+}
+
+export function useRecordGraphCorrection() {
+  return useInvalidating<{
+    source_kind?: string;
+    source_ref?: string;
+    graph_run_id?: number;
+    graph_node_run_id?: number;
+    correction_type?: string;
+    severity: "low" | "medium" | "high" | "critical";
+    expected_state?: Record<string, unknown>;
+    observed_state?: Record<string, unknown>;
+    root_cause?: string;
+    corrective_action: string;
+    prevention_change?: Record<string, unknown>;
+    owner_agent?: string;
+    actor?: string;
+  }, LiveRow>("/api/graphs/corrections", GRAPH_INVALIDATIONS);
+}
+
+export function useCalibrateKronosForecast() {
+  return useInvalidating<{ forecast_run_id: number; actor?: string }, LiveRow>(
+    "/api/kronos/forecasts/calibrate",
+    GRAPH_INVALIDATIONS
   );
 }

@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -19,6 +20,13 @@ VAULT_ROOT = Path(
     or RUNTIME_ROOT.parent
 )
 OUTPUT_DIR = VAULT_ROOT / "ai memory" / "00 AI OS" / "Agent Outputs" / "Worker Runs"
+WORKER_SPOOL_ROOT = Path(
+    os.environ.get("AI_OS_WORKER_SPOOL_ROOT")
+    or (Path.home() / "AI_OS_NODE" / "spool" / "agent-worker")
+)
+WORKER_MIRROR_TIMEOUT_SECONDS = max(
+    1, int(os.environ.get("AI_OS_WORKER_MIRROR_TIMEOUT_SECONDS") or 8)
+)
 
 
 def load_runtime_env() -> dict[str, str]:
@@ -43,6 +51,28 @@ def slugify(value: str) -> str:
     return cleaned[:80] or "agent-run"
 
 
+COMPANY_TOKEN_STOP_WORDS = {
+    "AI", "ANALYST", "AND", "AVAILABLE", "CHARLIE", "COMPANY", "DECISION",
+    "EVIDENCE", "FILING", "FACTS", "LATEST", "MEMO", "MISSING", "NO", "PREPARE",
+    "RESEARCH", "REVIEW", "RISK", "SEPARATE", "THE", "TRADE",
+}
+
+
+def extract_company_query(job: dict[str, Any], message: dict[str, Any]) -> str:
+    """Extract an explicit exchange-style symbol from a delegated research request."""
+    text = " ".join(
+        str(value or "")
+        for value in (
+            job.get("title"),
+            job.get("objective"),
+            message.get("subject"),
+            message.get("body"),
+        )
+    )
+    candidates = re.findall(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9&.-]{1,19}(?![A-Za-z0-9])", text)
+    return next((token for token in candidates if token not in COMPANY_TOKEN_STOP_WORDS), "")
+
+
 def sql_literal(value: Any) -> str:
     if value is None:
         return "NULL"
@@ -54,14 +84,25 @@ def sql_jsonb(value: Any) -> str:
 
 
 def psql_text(sql: str) -> str:
-    psql_bin = RUNTIME_ENV.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
+    configured_psql = str(RUNTIME_ENV.get("AI_OS_PSQL_BIN") or "").strip()
+    psql_candidates = [
+        configured_psql,
+        shutil.which("psql") or "",
+        "/opt/homebrew/bin/psql",
+        "/usr/local/bin/psql",
+    ]
+    psql_bin = next((candidate for candidate in psql_candidates if candidate and Path(candidate).exists()), "")
     db_host = RUNTIME_ENV.get("AI_OS_POSTGRES_HOST") or "127.0.0.1"
     db_port = RUNTIME_ENV.get("AI_OS_POSTGRES_PORT") or "54329"
     db_user = RUNTIME_ENV.get("AI_OS_POSTGRES_USER") or "ai_os"
     db_name = RUNTIME_ENV.get("AI_OS_POSTGRES_DB") or "ai_os"
     db_password = RUNTIME_ENV.get("AI_OS_POSTGRES_PASSWORD")
 
-    if Path(psql_bin).exists() and db_password:
+    # The supervisor deliberately uses Docker database access for this daemon.
+    # Respect that boundary so host-port credential drift cannot restart API/UI.
+    use_docker = str(RUNTIME_ENV.get('AI_OS_WORKLOAD_PSQL_MODE') or '').strip().lower() == 'docker'
+
+    if not use_docker and Path(psql_bin).exists() and db_password:
         command = [
             psql_bin,
             "-h",
@@ -82,10 +123,13 @@ def psql_text(sql: str) -> str:
         ]
         env = os.environ.copy()
         env["PGPASSWORD"] = db_password
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env)
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=30)
     else:
+        docker_bin = next((candidate for candidate in (shutil.which("docker"), "/opt/homebrew/bin/docker", "/usr/local/bin/docker") if candidate and Path(candidate).exists()), "")
+        if not Path(docker_bin).exists():
+            raise RuntimeError("Neither psql nor docker is available for the agent worker")
         command = [
-            "docker",
+            docker_bin,
             "exec",
             "ai_os_postgres",
             "psql",
@@ -101,7 +145,7 @@ def psql_text(sql: str) -> str:
             "-c",
             sql,
         ]
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, timeout=30)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "psql command failed").strip()
         raise RuntimeError(detail)
@@ -125,21 +169,37 @@ def get_queue(limit: int, include_completed: bool, task_id: int | None = None) -
         if include_completed
         else "AND (source_kind='committee_packet_position' OR coalesce(latest_worker_status, '') <> 'completed')"
     )
-    task_filter = f"AND task_id = {int(task_id)}" if task_id is not None else ""
+    task_filter = f"AND queue.task_id = {int(task_id)}" if task_id is not None else ""
     return psql_json(
         f"""
-        SELECT *
-        FROM agent.v_live_agent_worker_queue
+        SELECT queue.*
+        FROM agent.v_live_agent_worker_queue queue
         WHERE (
-            task_status IN ('queued','in_progress','needs_review')
-            OR (source_kind='committee_packet_position' AND task_status='blocked')
+            queue.task_status IN ('queued','in_progress','needs_review')
+            OR (queue.source_kind='committee_packet_position' AND queue.task_status='blocked')
         )
           {completed_filter}
           {task_filter}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM agent.agent_messages source_gate
+              WHERE source_gate.generated_task_id=queue.task_id
+                AND source_gate.metadata->>'source_qualified_worker_required'='true'
+                AND coalesce(source_gate.metadata->>'source_worker_authorized','false')<>'true'
+          )
         ORDER BY
-            CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-            CASE task_status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'needs_review' THEN 3 ELSE 4 END,
-            updated_at DESC
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM agent.agent_messages message
+                WHERE message.generated_task_id=queue.task_id
+                  AND (
+                    message.metadata ? 'graph_run_id'
+                    OR message.metadata ? 'graph_node_run_id'
+                  )
+            ) THEN 0 ELSE 1 END,
+            CASE queue.task_status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'needs_review' THEN 3 ELSE 4 END,
+            CASE queue.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+            queue.updated_at DESC
         LIMIT {int(limit)}
         """
     )
@@ -267,12 +327,23 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
     }
     if job and job.get("source_kind") == "agent_message":
         source_ref = str(job.get("source_ref") or "")
-        if source_ref.isdigit():
+        base["agent_message"] = psql_one(
+            f"""
+            SELECT id, thread_key, from_agent, to_agent, subject, body,
+                   priority, status, processing_status, related_skill_key,
+                   metadata, created_at
+            FROM agent.agent_messages
+            WHERE generated_task_id = {int(job.get("task_id"))}
+            ORDER BY created_at DESC,id DESC
+            LIMIT 1
+            """
+        )
+        if not base["agent_message"] and source_ref.isdigit():
             base["agent_message"] = psql_one(
                 f"""
                 SELECT id, thread_key, from_agent, to_agent, subject, body,
                        priority, status, processing_status, related_skill_key,
-                       created_at
+                       metadata, created_at
                 FROM agent.agent_messages
                 WHERE id = {int(source_ref)}
                 LIMIT 1
@@ -283,6 +354,187 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
             "unread_messages": psql_one("SELECT count(*)::INT AS count FROM agent.agent_messages WHERE status = 'unread'"),
             "pending_messages": psql_one("SELECT count(*)::INT AS count FROM agent.agent_messages WHERE processing_status IN ('pending','failed_retry')"),
         }
+        message = base.get("agent_message") or {}
+        message_metadata = message.get("metadata") or {}
+        graph_input = message_metadata.get("input_payload") or {}
+        if (
+            message_metadata.get("graph_key") == "research_to_investment_decision"
+            and isinstance(graph_input, dict)
+            and isinstance(graph_input.get("evidence_packet"), dict)
+        ):
+            base["market_research_packet"] = graph_input["evidence_packet"]
+            base["market_research_graph"] = {
+                "graph_run_id": message_metadata.get("graph_run_id"),
+                "graph_node_run_id": message_metadata.get("graph_node_run_id"),
+                "graph_key": message_metadata.get("graph_key"),
+                "node_key": message_metadata.get("node_key"),
+            }
+        message_text = f"{message.get('subject') or ''} {message.get('body') or ''}".lower()
+        paper_id = message_metadata.get("paper_id")
+        if not str(paper_id or "").isdigit():
+            source_aliases = (
+                ("tradingagents", "tradingagents"),
+                ("ai hedge fund", "ai hedge fund"),
+                ("newsdesk", "newsdesk"),
+                ("commodity landed", "commodity landed"),
+                ("tradingview screener", "tradingview screener"),
+                ("fii dii", "fii dii"),
+                ("options hub", "options hub"),
+                ("fundamental scanner", "fundamental scanner"),
+            )
+            source_term = next((query for alias, query in source_aliases if alias in message_text), None)
+            if source_term:
+                matched_source = psql_one(
+                    "SELECT id FROM research.research_papers "
+                    f"WHERE lower(title) LIKE {sql_literal('%' + source_term + '%')} "
+                    "ORDER BY updated_at DESC,id DESC LIMIT 1"
+                )
+                paper_id = matched_source.get("id")
+        if (
+            skill_key == "research_evidence_curation"
+            and any(
+                term in message_text
+                for term in ("coverage gap", "artifact gap", "knowledge gap", "missing note")
+            )
+        ):
+            base["artifact_gaps"] = psql_json(
+                """
+                SELECT gap_type,source_view,source_id,title,owner_agent,status,
+                       created_at,updated_at,gap_reason
+                FROM agent.v_output_artifact_gaps
+                ORDER BY updated_at DESC NULLS LAST,created_at DESC NULLS LAST
+                LIMIT 20
+                """
+            )
+            base["artifact_gap_summary"] = psql_json(
+                """
+                SELECT gap_type,count(*)::int AS gap_count,
+                       max(updated_at) AS latest_updated_at
+                FROM agent.v_output_artifact_gaps
+                GROUP BY gap_type
+                ORDER BY gap_count DESC,gap_type
+                """
+            )
+        if skill_key in {
+            "company_research_note",
+            "research_evidence_curation",
+            "generate_strategy_hypothesis",
+            "head_quant_governance",
+            "validate_strategy_model",
+        } and str(paper_id or "").isdigit():
+            numeric_paper_id = int(paper_id)
+            base["research_source"] = psql_one(
+                f"""
+                SELECT id,paper_key,title,source_url,source_kind,research_objective,
+                       target_universe,desired_outputs,extraction_word_count,
+                       extraction_status,review_status,intake_status,content_hash,
+                       metadata,evidence,left(extracted_text,12000) AS extracted_text
+                FROM research.research_papers
+                WHERE id={numeric_paper_id}
+                """
+            )
+            base["research_hypotheses"] = psql_json(
+                f"""
+                SELECT id,title,edge_hypothesis,market_scope,asset_classes,timeframe,
+                       signal_definition,data_requirements,invalidation_tests,
+                       limitations,status,owner_agent
+                FROM research.paper_strategy_hypotheses
+                WHERE paper_id={numeric_paper_id}
+                ORDER BY created_at,id
+                """
+            )
+            base["research_cycle"] = psql_one(
+                f"""
+                SELECT id,cycle_key,objective,as_of,universe,strategy_spec,status,
+                       owner_agent,evidence,broker_write_allowed,live_execution_allowed
+                FROM strategy.research_cycles
+                WHERE source_kind='research_source' AND source_ref={sql_literal(str(numeric_paper_id))}
+                ORDER BY created_at DESC,id DESC
+                LIMIT 1
+                """
+            )
+        if skill_key == "company_research_note" and not base.get("research_source"):
+            company_query = extract_company_query(job, message)
+            base["company_research"] = {
+                "query": company_query,
+                "filing_inventory": psql_one(
+                    """
+                    SELECT count(*)::INT AS total_filings,
+                           max(filed_at) AS latest_filed_at
+                    FROM research.v_corporate_filing_inbox
+                    """
+                ),
+                "filings": [],
+                "holding_theses": [],
+                "ideas": [],
+                "notes": [],
+            }
+            if company_query:
+                match = "%" + company_query.lower() + "%"
+                base["company_research"]["filings"] = psql_json(
+                    f"""
+                    SELECT filing_id,source_name,exchange,symbol,company_name,title,
+                           filing_type,event_type,filed_at,source_url,attachment_url,
+                           extraction_status,opportunity_score,risk_score,event_status
+                    FROM research.v_corporate_filing_inbox
+                    WHERE upper(coalesce(symbol,''))={sql_literal(company_query.upper())}
+                       OR lower(coalesce(company_name,'')) LIKE {sql_literal(match)}
+                       OR lower(coalesce(title,'')) LIKE {sql_literal(match)}
+                    ORDER BY filed_at DESC NULLS LAST,filing_id DESC
+                    LIMIT 10
+                    """
+                )
+                base["company_research"]["holding_theses"] = psql_json(
+                    f"""
+                    SELECT id,symbol,exchange,thesis_status,thesis_note_path,
+                           valuation_note_path,risk_note_path,last_reviewed_at,
+                           next_review_due_at,conviction_score,valuation_range,risks
+                    FROM portfolio.holding_theses
+                    WHERE upper(symbol)={sql_literal(company_query.upper())}
+                    ORDER BY last_reviewed_at DESC NULLS LAST,id DESC
+                    LIMIT 10
+                    """
+                )
+                base["company_research"]["ideas"] = psql_json(
+                    f"""
+                    SELECT id,idea_type,title,symbols,thesis,catalyst,expected_timeframe,
+                           opportunity_score,risk_score,status,owner_agent,evidence,
+                           output_note_path,updated_at
+                    FROM research.ideas
+                    WHERE {sql_literal(company_query.upper())}=ANY(symbols)
+                       OR lower(title) LIKE {sql_literal(match)}
+                    ORDER BY updated_at DESC,id DESC
+                    LIMIT 10
+                    """
+                )
+                base["company_research"]["notes"] = psql_json(
+                    f"""
+                    SELECT id,note_path,title,note_type,tags,body_summary,last_modified_at,indexed_at
+                    FROM knowledge.obsidian_notes
+                    WHERE lower(title) LIKE {sql_literal(match)}
+                       OR lower(coalesce(body_summary,'')) LIKE {sql_literal(match)}
+                       OR {sql_literal(company_query.lower())}=ANY(
+                           SELECT lower(tag) FROM unnest(tags) AS tag
+                       )
+                    ORDER BY coalesce(last_modified_at,indexed_at) DESC,id DESC
+                    LIMIT 10
+                    """
+                )
+                base["selected_filing_evidence"] = base["company_research"]["filings"]
+        if skill_key in {"head_quant_governance", "validate_strategy_model", "generate_strategy_hypothesis"}:
+            base["workflow_contracts"] = psql_json(
+                """
+                SELECT workflow_key,workflow_name,workflow_type,owner_agent,status,
+                       permission_level,approval_required,notes,metadata
+                FROM agent.workflow_registry
+                WHERE workflow_key IN (
+                    'checkpointed_research_committee',
+                    'outcome_grounded_decision_review',
+                    'mrchartist_multi_source_intelligence'
+                )
+                ORDER BY workflow_key
+                """
+            )
     if job and job.get("source_kind") == "committee_packet_position":
         source_ref = str(job.get("source_ref") or "")
         packet_id = source_ref.split(":", 1)[0]
@@ -307,6 +559,135 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
                   AND membership.agent_name={sql_literal(str(job.get('owner_agent') or ''))}
                 """
             )
+    if skill_key.startswith("sector_"):
+        base["sector_intelligence"] = {
+            "freshness": psql_json(
+                """
+                SELECT taxonomy_node_id,taxonomy_key,node_name,latest_metric_at,
+                       latest_market_monitor_at,latest_flow_at,
+                       latest_ownership_period_end,latest_research_review_at
+                FROM sector_intelligence.v_sector_data_freshness
+                ORDER BY node_name
+                LIMIT 40
+                """
+            ),
+            "custom_indices": psql_json(
+                """
+                SELECT index_id,index_key,index_name,status,weighting_method,
+                       rebalance_frequency,latest_rebalance_date,
+                       current_constituent_count,latest_calculated_at,latest_index_value
+                FROM sector_intelligence.v_custom_index_control
+                ORDER BY status,index_name
+                LIMIT 30
+                """
+            ),
+            "rankings": psql_json(
+                """
+                SELECT taxonomy_node_id,as_of_date,ranking_universe,ranking_type,
+                       horizon,score,rank_value,universe_size,calculation_version,
+                       input_fingerprint,calculated_at
+                FROM sector_intelligence.sector_rankings
+                ORDER BY as_of_date DESC,ranking_type,rank_value
+                LIMIT 60
+                """
+            ),
+            "source_imports": psql_json(
+                """
+                SELECT run.run_key,source.name AS source_name,run.source_artifact_ref,
+                       run.observed_at,run.status,run.taxonomy_rows,
+                       run.membership_rows,run.metric_rows,run.index_rows,
+                       run.validation_errors,run.imported_at
+                FROM sector_intelligence.source_import_runs run
+                JOIN core.source_systems source ON source.id=run.source_system_id
+                ORDER BY run.imported_at DESC
+                LIMIT 10
+                """
+            ),
+            "acceptance": psql_json(
+                """
+                SELECT acceptance_run_id,run_key,taxonomy_key,node_name,as_of_date,
+                       status,gate_count,passed_count,failed_count,blocked_count,
+                       gates,started_at,finished_at,broker_write_allowed
+                FROM sector_intelligence.v_acceptance_gate_summary
+                ORDER BY started_at DESC
+                LIMIT 10
+                """
+            ),
+        }
+    if skill_key in {"options_data_quality_control", "options_iv_greeks_review", "options_overlay_review"}:
+        base["institutional_options"] = {
+            "readiness": psql_json(
+                """
+                SELECT provider,exchange,underlying,expiry,minute_ts,
+                       freshness_status,batch_quality_status,contract_count,
+                       policy_key,model_family,policy_expires_at,
+                       analytics_readiness,broker_write_allowed
+                FROM trading.v_option_analytics_readiness
+                ORDER BY minute_ts DESC,underlying
+                LIMIT 30
+                """
+            ),
+            "pipeline_runs": psql_json(
+                """
+                SELECT run_key,status,rows_read,rows_written,batches_created,
+                       calculations_completed,calculations_blocked,
+                       quality_summary,error_message,started_at,finished_at
+                FROM ops.institutional_pipeline_runs
+                WHERE workload_key='institutional_options_materializer'
+                ORDER BY started_at DESC
+                LIMIT 10
+                """
+            ),
+            "acceptance": psql_json(
+                """
+                SELECT run_key,exchange,underlying,expiry,status,gate_count,
+                       passed_count,failed_count,blocked_count,
+                       validated_greeks_ratio,liquid_contract_ratio,
+                       stale_contract_ratio,replay_coverage_ratio,
+                       paper_attribution_coverage_ratio,started_at,finished_at
+                FROM trading.v_option_acceptance_gate_summary
+                ORDER BY started_at DESC
+                LIMIT 10
+                """
+            ),
+        }
+    if skill_key == "company_research_note" or skill_key.startswith("long_term_"):
+        base["fundamental_factory"] = {
+            "coverage": psql_json(
+                """
+                SELECT company_key,legal_name,primary_symbol,primary_exchange,
+                       real_company_verified,annual_statement_years,segment_count,
+                       operational_kpi_count,market_share_series_count,peer_count,
+                       management_communication_count,management_claim_count,
+                       claims_with_outcomes,latest_statement_available_at,
+                       latest_evidence_retrieved_at
+                FROM research.v_company_fundamental_coverage
+                ORDER BY real_company_verified DESC,annual_statement_years DESC,legal_name
+                LIMIT 20
+                """
+            ),
+            "dossiers": psql_json(
+                """
+                SELECT dossier_key,legal_name,primary_symbol,dossier_status,
+                       version_number,version_status,research_as_of,evidence_coverage,
+                       section_count,reviewed_section_count,specialist_count,
+                       has_portfolio_fit,updated_at
+                FROM research.v_latest_investment_dossiers
+                ORDER BY updated_at DESC
+                LIMIT 20
+                """
+            ),
+            "acceptance": psql_json(
+                """
+                SELECT run_key,legal_name,primary_symbol,run_status,
+                       real_company_verified,data_as_of,gate_count,passed_gate_count,
+                       failed_gate_count,blocked_gate_count,started_at,completed_at
+                FROM research.v_real_company_acceptance_status
+                ORDER BY started_at DESC
+                LIMIT 20
+                """
+            ),
+        }
     if skill_key == "portfolio_snapshot_review" or widget_key == "portfolio_latest_positions":
         base["portfolio"] = psql_one(
             """
@@ -364,6 +745,34 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
             FROM research.v_research_hub_summary
             ORDER BY artifact_count DESC
             LIMIT 6
+            """
+        )
+        base["recent_filings"] = psql_json(
+            """
+            SELECT filing_id,source_name,exchange,symbol,company_name,title,
+                   filing_type,event_type,filed_at,source_url,attachment_url,
+                   extraction_status,opportunity_score,risk_score,event_status,
+                   assigned_agent,event_created_at
+            FROM research.v_corporate_filing_inbox
+            WHERE filed_at >= current_date - interval '2 days'
+            ORDER BY filed_at DESC NULLS LAST,event_created_at DESC NULLS LAST,filing_id DESC
+            LIMIT 20
+            """
+        )
+        base["special_situation_filings"] = psql_json(
+            """
+            SELECT filing_id,source_name,exchange,symbol,company_name,title,
+                   filing_type,event_type,filed_at,source_url,attachment_url,
+                   extraction_status,opportunity_score,risk_score,event_status,
+                   assigned_agent,event_created_at
+            FROM research.v_corporate_filing_inbox
+            WHERE filed_at >= current_date - interval '14 days'
+              AND event_type IN (
+                  'merger','demerger','reverse_merger','open_offer','buyback',
+                  'delisting','scheme_of_arrangement','preferential_allotment'
+              )
+            ORDER BY filed_at DESC NULLS LAST,event_created_at DESC NULLS LAST,filing_id DESC
+            LIMIT 20
             """
         )
     elif skill_key == "model_runtime_check" or widget_key == "model_runtime_status":
@@ -570,12 +979,322 @@ def advance_committee_after_all_positions(packet_id: int) -> dict[str, Any]:
     return {"status": result.get("packet_status"), "advanced": True, "packet": result}
 
 
+
+def run_kronos_adapter(job: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    tool = psql_one(
+        """
+        SELECT enabled,config
+        FROM agent.tool_registry
+        WHERE tool_name='kronos_inference_adapter'
+        LIMIT 1
+        """
+    )
+    if not tool.get("enabled"):
+        raise RuntimeError(
+            "Kronos inference adapter is not ready. Run setup_kronos_runtime.sh and activate its verified registry entry."
+        )
+    message = context.get("agent_message") or {}
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    payload = metadata.get("input_payload") if isinstance(metadata.get("input_payload"), dict) else {}
+    if not payload:
+        raise ValueError("The Kronos graph node is missing its typed input_payload.")
+    script = RUNTIME_ROOT / "scripts" / "run_kronos_forecast.py"
+    command = [
+        sys.executable,
+        str(script),
+        "--task-id",
+        str(int(job["task_id"])),
+        "--payload-json",
+        json.dumps(payload, sort_keys=True),
+    ]
+    graph_run_id = metadata.get("graph_run_id")
+    graph_node_run_id = metadata.get("graph_node_run_id")
+    if str(graph_run_id or "").isdigit():
+        command.extend(["--graph-run-id", str(int(graph_run_id))])
+    if str(graph_node_run_id or "").isdigit():
+        command.extend(["--graph-node-run-id", str(int(graph_node_run_id))])
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=int(os.environ.get("AI_OS_KRONOS_TASK_TIMEOUT_SECONDS") or 7200),
+        env={**os.environ, "AI_OS_RUNTIME_ROOT": str(RUNTIME_ROOT)},
+    )
+    result: dict[str, Any] = {}
+    for raw_line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            result = candidate
+            break
+    if completed.returncode != 0 or result.get("status") != "completed":
+        detail = result.get("error") or completed.stderr.strip() or "Kronos adapter failed."
+        raise RuntimeError(str(detail))
+    context["kronos_forecast"] = result
+    context["execution_envelope"] = {
+        **(context.get("execution_envelope") or {}),
+        "mode": "pinned_local_model_adapter",
+        "model_invocation": "Kronos-mini",
+        "capital_action_allowed": False,
+        "live_execution_allowed": False,
+        "broker_order_allowed": False,
+    }
+    return result
+
+
+def run_kronos_calibration(job: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    message = context.get("agent_message") or {}
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    graph_run_id = metadata.get("graph_run_id")
+    if not str(graph_run_id or "").isdigit():
+        raise ValueError("The Kronos calibration node is missing graph_run_id.")
+    forecast = psql_one(
+        f"""
+        SELECT id,run_key,status
+        FROM strategy.kronos_forecast_runs
+        WHERE graph_run_id={int(graph_run_id)}
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1
+        """
+    )
+    if not forecast or forecast.get("status") != "completed":
+        raise RuntimeError("A completed Kronos forecast is required before realized calibration.")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "calibrate_kronos_forecast.py"),
+        "--forecast-run-id",
+        str(int(forecast["id"])),
+        "--actor",
+        str(job.get("owner_agent") or "Data Scientist"),
+    ]
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+        env={**os.environ, "AI_OS_RUNTIME_ROOT": str(RUNTIME_ROOT)},
+    )
+    result: dict[str, Any] = {}
+    for raw_line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            result = candidate
+            break
+    if completed.returncode != 0:
+        detail = result.get("error") or completed.stderr.strip() or "Kronos calibration failed."
+        raise RuntimeError(str(detail))
+    context["kronos_calibration"] = result
+    context["execution_envelope"] = {
+        **(context.get("execution_envelope") or {}),
+        "mode": "deterministic_model_validation",
+        "capital_action_allowed": False,
+        "automatic_strategy_promotion_allowed": False,
+        "live_execution_allowed": False,
+        "broker_order_allowed": False,
+    }
+    return result
+
+def market_research_summary_for(skill_key: str, context: dict[str, Any]) -> tuple[str, list[str]]:
+    packet = context.get("market_research_packet") or {}
+    quality = packet.get("quality") or {}
+    news = list(packet.get("news") or [])
+    quotes = list(packet.get("quotes") or [])
+    events = list(packet.get("events") or [])
+    freshness = list(packet.get("freshness") or [])
+    subject = str(packet.get("subject") or "public market evidence review")
+    symbol = str(packet.get("symbol") or "").strip()
+
+    news_lines = [
+        f"- [{row.get('title') or 'Untitled source'}]({row.get('source_url')}) — "
+        f"{row.get('publisher') or row.get('source_name') or 'publisher unavailable'}, "
+        f"published `{row.get('published_at') or 'unknown'}`, captured `{row.get('captured_at') or 'unknown'}`; "
+        f"materiality={((row.get('materiality') or {}).get('score'))}."
+        for row in news
+    ]
+    quote_lines = [
+        f"- `{row.get('exchange') or ''}:{row.get('symbol') or row.get('provider_symbol') or ''}` "
+        f"last `{row.get('last_price')}`, change `{row.get('change_percent')}`, received `{row.get('received_at')}` "
+        f"from `{row.get('provider')}`; broker_write_allowed={bool(row.get('broker_write_allowed'))}."
+        for row in quotes
+    ]
+    event_lines = [
+        f"- `{row.get('event_date')}` {row.get('exchange') or ''}:{row.get('symbol') or ''} "
+        f"{row.get('event_type') or row.get('purpose') or 'event'}; "
+        f"source `{row.get('source_key')}`" + (f" ([evidence]({row.get('source_url')}))." if row.get('source_url') else ".")
+        for row in events
+    ]
+    freshness_lines = [
+        f"- `{row.get('source_key')}` status=`{row.get('status')}`, severity=`{row.get('severity')}`, "
+        f"staleness_minutes=`{row.get('staleness_minutes')}`, checked=`{row.get('latest_check_at')}`."
+        for row in freshness
+    ]
+    missing = [str(value) for value in quality.get("missing_evidence") or []]
+    warnings = [str(value) for value in quality.get("warnings") or []]
+    control_lines = [
+        f"- Packet `{packet.get('packet_version')}` fingerprint `{packet.get('source_fingerprint')}`.",
+        f"- Data-quality status: `{quality.get('status')}`; news={quality.get('news_count', 0)}, "
+        f"quotes={quality.get('quote_count', 0)}, events={quality.get('event_count', 0)}, freshness checks={quality.get('freshness_count', 0)}.",
+        "- Capital action allowed: false. Live execution allowed: false. Broker write allowed: false.",
+    ]
+
+    role_section: list[str]
+    next_actions: list[str]
+    if skill_key == "research_evidence_curation":
+        role_section = [
+            "### Evidence intake conclusion",
+            "- The packet is a frozen public-source snapshot for this graph run; downstream nodes must use this fingerprint.",
+            "- News headlines and quote rows are evidence of recorded source output, not proof that every reported claim is true.",
+        ]
+        next_actions = [
+            "Send the same packet to business, filing, bear-case, and valuation review; require each node to state missing evidence.",
+            "Pause the workflow if the source gate is blocked or the source fingerprint cannot be reproduced.",
+        ]
+    elif skill_key == "company_research_note":
+        role_section = [
+            "### Business review boundary",
+            "- The public items establish current topics and reported events only; they do not establish economics, moat, management quality, or intrinsic value.",
+            "- No company statement facts or accepted dossier were supplied by this packet.",
+        ]
+        next_actions = [
+            "Open the cited primary source for each material claim and request official company/exchange evidence before changing a thesis.",
+            "Keep portfolio sizing and trade recommendations blocked.",
+        ]
+    elif skill_key == "analyze_corporate_filing":
+        filing_rows = list(context.get("recent_filings") or [])
+        role_section = [
+            "### Filing review boundary",
+            *(
+                [f"- Stored official filing rows available to this node: {len(filing_rows)}; inspect their attachment/extraction status before relying on terms."]
+                if filing_rows
+                else ["- No accepted official filing row is available to this node. Reported terms in public news remain unverified."]
+            ),
+        ]
+        next_actions = [
+            "Revalidate and run the lawful official filing collector for the exact issuer/symbol before claiming filing terms.",
+            "Do not infer missing consideration, dates, approvals, or conditions from a headline.",
+        ]
+    elif skill_key == "long_term_bear_case_review":
+        role_section = [
+            "### Disconfirming-evidence review",
+            "- Source concentration, missing official filings/fundamentals, and absent valuation inputs are active risks, not footnotes.",
+            "- A public headline can be wrong, late, incomplete, promotional, or already reflected in price.",
+        ]
+        next_actions = [
+            "Seek a primary-source contradiction, adverse event, balance-sheet constraint, and thesis invalidation test.",
+            "Request more evidence rather than converting narrative momentum into a recommendation.",
+        ]
+    elif skill_key == "long_term_valuation_review":
+        role_section = [
+            "### Valuation gate",
+            "- No accepted company cash-flow, balance-sheet, share-count, segment, or forecast inputs are present in this public-market packet.",
+            "- Intrinsic value, target price, margin of safety, and position size are therefore unavailable.",
+        ]
+        next_actions = [
+            "Acquire versioned official financial inputs and explicit assumptions before running a valuation model.",
+            "Return a missing-evidence result; do not estimate from headlines or a last price.",
+        ]
+    elif skill_key == "risk_gate_review":
+        role_section = [
+            "### Independent risk gate",
+            "- This packet supports research triage only. It contains no reconciled portfolio, limits, liquidity model, stress result, or validated strategy evidence.",
+            "- Capital allocation, client action, paper promotion, staged live action, and broker execution remain blocked.",
+        ]
+        next_actions = [
+            "Route unresolved evidence gaps to accountable owners and keep the human decision framed as approve more research, defer, or reject.",
+            "Require a separate portfolio/risk gate before any action proposal.",
+        ]
+    else:
+        role_section = ["### Bounded review", "- Use only the cited packet and preserve every missing-evidence condition."]
+        next_actions = ["Route the packet to human review without creating a trade or external action."]
+
+    summary = "\n".join([
+        "## Public Market Research Evidence Brief",
+        f"- Subject: {subject}" + (f"; symbol `{symbol}`." if symbol else "."),
+        f"- Snapshot generated `{packet.get('generated_at')}` using `{packet.get('selection_mode')}` over {packet.get('lookback_hours')} hours.",
+        "",
+        "### Source controls",
+        *control_lines,
+        *([f"- Missing evidence: {value}" for value in missing] or ["- No blocking source-gate failure was recorded."]),
+        *([f"- Warning: {value}" for value in warnings] or []),
+        "",
+        "### Cited public news",
+        *(news_lines or ["- No cited public news rows were available."]),
+        "",
+        "### Read-only market observations",
+        *(quote_lines or ["- No matching read-only quote was available; no price-dependent conclusion is made."]),
+        "",
+        "### Stored corporate events",
+        *(event_lines or ["- No matching stored event was available."]),
+        "",
+        "### Freshness evidence",
+        *(freshness_lines or ["- No source-freshness evidence was available."]),
+        "",
+        *role_section,
+    ])
+    return summary, next_actions
+
+
 def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any]) -> tuple[str, list[str]]:
     skill_key = str(skill.get("skill_key") or job.get("suggested_skill_key") or "refresh_dashboard_widget")
     lines: list[str] = []
     next_actions: list[str] = []
 
-    if job.get("source_kind") == "committee_packet_position":
+    if context.get("market_research_packet") and skill_key in {
+        "research_evidence_curation",
+        "company_research_note",
+        "analyze_corporate_filing",
+        "long_term_bear_case_review",
+        "long_term_valuation_review",
+        "risk_gate_review",
+    }:
+        summary, next_actions = market_research_summary_for(skill_key, context)
+        lines.append(summary)
+    elif skill_key == "kronos_forecast_feature_generation" and context.get("kronos_forecast"):
+        forecast = context["kronos_forecast"]
+        validation = forecast.get("validation") or {}
+        terminal = ((forecast.get("features") or {}).get("terminal_return") or {})
+        lines.append(
+            f"Generated {forecast.get('path_count')} pinned Kronos mini research paths over "
+            f"{forecast.get('horizon')} bars on {forecast.get('device')} and persisted "
+            f"{forecast.get('stored_points')} forecast points as run {forecast.get('forecast_run_id')}."
+        )
+        lines.append(
+            "This is a forecast distribution feature, not a trade signal. "
+            f"Terminal median return={terminal.get('median')}; "
+            f"10th-90th percentile={terminal.get('p10')} to {terminal.get('p90')}; "
+            f"OHLC validity={validation.get('ohlc_validity')}; "
+            f"volume validity={validation.get('volume_validity')}."
+        )
+        lines.append(
+            f"Point-in-time source hash: {forecast.get('source_hash')}; output hash: {forecast.get('output_hash')}."
+        )
+        next_actions.append("Run realized calibration, walk-forward cost-aware backtesting, and independent Model Risk review.")
+        next_actions.append("Keep every forecast-derived feature out of signals, paper orders, and live orders until the graph's human decision gate.")
+    elif skill_key == "quant_data_science_review" and context.get("kronos_calibration"):
+        calibration = context["kronos_calibration"]
+        metrics = calibration.get("metrics") or {}
+        lines.append(
+            f"Scored Kronos forecast run {calibration.get('forecast_run_id')} against "
+            f"{metrics.get('realized_points')} of {metrics.get('expected_horizon')} canonical future bars."
+        )
+        lines.append(
+            f"Calibration status={calibration.get('status')}; interval coverage={metrics.get('interval_coverage')}; "
+            f"directional accuracy={metrics.get('directional_accuracy')}; CRPS={metrics.get('crps')}; "
+            f"timestamp match rate={metrics.get('timestamp_match_rate')}."
+        )
+        lines.append(
+            "This is one realized origin and cannot validate the model, promote a strategy, allocate capital, or create an order."
+        )
+        next_actions.append("Accumulate at least 20 non-overlapping matured origins and run walk-forward model review.")
+        next_actions.append("Repair source timestamp semantics when timestamp match rate is below one.")
+    elif job.get("source_kind") == "committee_packet_position":
         position = committee_position_for(job, profile, context)
         packet = context.get("committee_packet") or {}
         lines.append(
@@ -585,6 +1304,307 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         lines.append(position["thesis"])
         next_actions.append("Submit the position, wait for every required member, then open post-quorum challenge and chair synthesis.")
         next_actions.append("Require Devarsh's human-final decision before capital, client-facing, or broker action.")
+    elif skill_key == "research_evidence_curation" and "artifact_gaps" in context:
+        gaps = context.get("artifact_gaps") or []
+        remediation_by_type = {
+            "worker_run_missing_note": (
+                "Re-materialize the worker output into Obsidian, persist output_note_path, "
+                "and verify the note exists before closing the run."
+            ),
+            "long_term_research_update_missing_note": (
+                "Create a company research note linked to the update, symbol, thesis, source lineage, "
+                "and review date; then reconcile note_path."
+            ),
+            "strategy_committee_missing_memo": (
+                "Generate the committee memo from the sealed review packet, attach evidence and dissent, "
+                "and keep the decision pending human approval."
+            ),
+        }
+        gap_lines: list[str] = []
+        for index, gap in enumerate(gaps, start=1):
+            gap_type = str(gap.get("gap_type") or "unclassified_gap")
+            remediation = remediation_by_type.get(
+                gap_type,
+                "Route the source row to its owner, materialize the missing durable artifact, "
+                "and reconcile the registry before closure.",
+            )
+            gap_lines.extend([
+                f"### Gap {index}: {gap.get('title') or gap_type}",
+                f"- Type: {gap_type}; status: {gap.get('status') or 'unknown'}; owner: {gap.get('owner_agent') or 'unassigned'}.",
+                f"- Evidence row: {gap.get('source_view') or 'unknown'}:{gap.get('source_id') or 'unknown'}; updated: {gap.get('updated_at') or gap.get('created_at') or 'unknown'}.",
+                f"- Verified reason: {gap.get('gap_reason') or 'No reason was supplied by the gap registry.'}",
+                f"- Remediation contract: {remediation}",
+                "",
+            ])
+        lines.append("\n".join([
+            "## Knowledge Coverage Gap Review",
+            f"Reviewed {len(gaps)} current gap rows from authoritative view agent.v_output_artifact_gaps.",
+            "This run is a read-only evidence review: no source records were altered and no trading action was requested or allowed.",
+            "",
+            *(
+                gap_lines
+                if gap_lines
+                else [
+                    "No open output-artifact gaps were returned by the warehouse at execution time.",
+                    "The empty result is bounded to the current view and timestamp; it is not evidence that every research domain is complete.",
+                ]
+            ),
+            "## Control Conclusion",
+            "- Each gap remains open until its owning source row has a verified Obsidian artifact and the registry no longer returns it.",
+            "- Capital action allowed: false. Live execution allowed: false. Broker orders allowed: false.",
+        ]))
+        next_actions.extend([
+            "Assign each remediation contract to the listed owner and retain the source-view/source-ID pair in the task evidence.",
+            "After remediation, rerun this skill and close only the gaps that disappear from agent.v_output_artifact_gaps.",
+        ])
+    elif context.get("research_source") and skill_key in {"company_research_note", "research_evidence_curation"}:
+        source = context.get("research_source") or {}
+        source_text = str(source.get("extracted_text") or "")
+        headings = [
+            line.lstrip("# ").strip()
+            for line in source_text.splitlines()
+            if line.strip().startswith("#") and line.lstrip("# ").strip()
+        ][:8]
+        evidence_lines = []
+        for line in source_text.splitlines():
+            candidate = line.strip().lstrip("-*> ").strip()
+            if len(candidate) < 45:
+                continue
+            lowered = candidate.lower()
+            if any(token in lowered for token in ("proof of concept", "educational", "agent", "risk", "backtest", "portfolio", "signal", "valuation")):
+                evidence_lines.append(candidate[:320])
+            if len(evidence_lines) >= 6:
+                break
+        summary = "\n".join([
+            "### Verified source facts",
+            f"- Source: [{source.get('title')}]({source.get('source_url')})",
+            f"- Content hash: `{source.get('content_hash')}`; extracted words: {source.get('extraction_word_count')}; extraction status: `{source.get('extraction_status')}`.",
+            f"- Operator objective: {source.get('research_objective')}",
+            f"- Source sections detected: {', '.join(headings) if headings else 'No explicit headings detected.'}",
+            "",
+            "### Source-backed claims",
+            *([f"- {line}" for line in evidence_lines] or ["- No claim is promoted until a human reviewer opens the stored source artifact."]),
+            "",
+            "### Fact, inference, and unknown",
+            "- Fact: the stored artifact and hash above are the evidence boundary for this review.",
+            "- Inference: the architecture can inform employee roles and research sequencing, but it does not establish investable alpha.",
+            "- Unknown: empirical edge, capacity, slippage, market-regime stability, and India-specific data availability remain unverified.",
+            "- Constraint: source claims marked as educational or proof-of-concept must not be represented as production evidence.",
+        ])
+        lines.append(summary)
+        next_actions.extend([
+            "Open the stored source artifact and approve or reject each extracted claim before durable thesis use.",
+            "Send only approved, falsifiable claims to Head of Quant for point-in-time testing.",
+        ])
+    elif skill_key == "company_research_note":
+        research = context.get("company_research") or {}
+        query = str(research.get("query") or "").strip()
+        inventory = research.get("filing_inventory") or {}
+        filings = list(research.get("filings") or [])
+        theses = list(research.get("holding_theses") or [])
+        ideas = list(research.get("ideas") or [])
+        notes = list(research.get("notes") or [])
+        as_of = inventory.get("latest_filed_at") or "unavailable"
+        filing_lines = [
+            f"- Filing `{row.get('filing_id')}`: {row.get('source_name')} "
+            f"{row.get('exchange') or ''}:{row.get('symbol') or ''}, "
+            f"filed `{row.get('filed_at') or 'unknown'}`; "
+            f"[{row.get('title') or 'Untitled filing'}]"
+            f"({row.get('attachment_url') or row.get('source_url') or ''}); "
+            f"extraction=`{row.get('extraction_status') or 'unknown'}`."
+            for row in filings
+        ]
+        thesis_lines = [
+            f"- Holding thesis `{row.get('id')}`: status=`{row.get('thesis_status')}`, "
+            f"last_reviewed=`{row.get('last_reviewed_at') or 'never'}`, "
+            f"conviction=`{row.get('conviction_score')}`."
+            for row in theses
+        ]
+        idea_lines = [
+            f"- Idea `{row.get('id')}`: {row.get('title')} status=`{row.get('status')}`, "
+            f"owner=`{row.get('owner_agent') or 'unassigned'}`, updated=`{row.get('updated_at')}`."
+            for row in ideas
+        ]
+        note_lines = [
+            f"- Note `{row.get('note_path')}`: {row.get('title')}, "
+            f"indexed=`{row.get('indexed_at')}`."
+            for row in notes
+        ]
+        lines.append("\n".join([
+            "## Company Research Decision Memo",
+            f"- Requested company/symbol: `{query or 'not identified'}`.",
+            f"- Filing warehouse boundary: {inventory.get('total_filings', 0)} rows; latest filed_at `{as_of}`.",
+            "",
+            "### Verified facts",
+            *(filing_lines or [f"- No official filing row matched `{query}` in the current warehouse. This is a missing-evidence result, not evidence that no filing exists."]),
+            *(thesis_lines or [f"- No holding-thesis row matched `{query}`."]),
+            *(idea_lines or [f"- No research-idea row matched `{query}`."]),
+            *(note_lines or [f"- No indexed Obsidian note matched `{query}`."]),
+            "",
+            "### Inference",
+            "- No investment inference is promoted unless it is traceable to the matched source rows above.",
+            "- Existing triage scores, thesis status, and idea status are workflow metadata, not a buy or sell conclusion.",
+            "",
+            "### Missing evidence",
+            *(
+                ["- The matched filing attachments still require document-level extraction and term verification."]
+                if filings
+                else ["- The requested official filing is absent from the current matched warehouse set; collector coverage or entity mapping must be checked."]
+            ),
+            "- Current market context, management commentary, valuation, disconfirming evidence, and portfolio fit were not supplied by this bounded request.",
+            "",
+            "### Decision status",
+            "- Insufficient evidence for a trade, price target, sizing, or client action.",
+            "- Broker write allowed: false. Live execution allowed: false. Human review required: true.",
+        ]))
+        if not query:
+            next_actions.append("Ask the operator for an exact exchange symbol or company name, then rerun the evidence lookup.")
+        elif not filings:
+            next_actions.append(
+                f"Run the official NSE/BSE collector and entity-resolution check for `{query}`, "
+                "then repeat this memo with the matched filing ID."
+            )
+        else:
+            next_actions.append("Extract and verify every matched official attachment before updating the durable company thesis.")
+        next_actions.append("Route any verified material finding to independent Risk and human review; do not place an order.")
+    elif context.get("research_source") and skill_key in {"generate_strategy_hypothesis", "head_quant_governance", "validate_strategy_model"}:
+        source = context.get("research_source") or {}
+        hypotheses = context.get("research_hypotheses") or []
+        cycle = context.get("research_cycle") or {}
+        requested = str((source.get("metadata") or {}).get("requested_hypothesis") or "").strip()
+        if not requested and hypotheses:
+            requested = str(hypotheses[0].get("edge_hypothesis") or "").strip()
+        if not requested:
+            requested = "No trade signal is emitted unless a source-supported alpha rule has point-in-time inputs and can abstain when evidence is insufficient."
+        universe = source.get("target_universe") or cycle.get("universe") or "operator-defined liquid instruments"
+        workflow_contracts = context.get("workflow_contracts") or []
+        workflow_lines = [
+            "### Current registered workflow controls",
+            *(
+                [
+                    f"- `{row.get('workflow_key')}`: {row.get('workflow_name')} is `{row.get('status')}`, "
+                    f"permission `{row.get('permission_level')}`, human approval required={bool(row.get('approval_required'))}."
+                    for row in workflow_contracts
+                ]
+                or ["- No matching workflow contract is registered; comparison remains blocked until the control plane is defined."]
+            ),
+            "- TradingAgents patterns are adopted as typed, checkpointed research handoffs only; the internal workflow registry and human approval boundary remain controlling.",
+            "",
+        ]
+        summary = "\n".join([
+            "### Falsifiable hypothesis",
+            f"- {requested}",
+            "- Null: the rule has no positive net out-of-sample expectancy after costs and produces no improvement over the declared benchmark.",
+            "",
+            "### Point-in-time test specification",
+            f"1. Freeze cycle `{cycle.get('cycle_key') or 'new-cycle-required'}` at `{cycle.get('as_of') or 'explicit as_of required'}` for universe `{universe}`.",
+            "2. Version every source record by event time and ingestion time; use only values observable before each decision timestamp.",
+            "3. Convert the narrative into one deterministic signal contract: inputs, transforms, lookback, direction, conviction, confidence, and explicit abstain conditions.",
+            "4. Use anchored walk-forward splits with a final untouched holdout; purge overlapping labels and embargo adjacent observations.",
+            "5. Compare against buy-and-hold, cash, and a simple non-LLM rule using identical universe, rebalance times, and costs.",
+            "6. Apply fees, bid-ask spread, impact, borrow/funding, turnover, liquidity, and capacity assumptions before scoring.",
+            "7. Report CAGR, volatility, Sharpe/Sortino, max drawdown, hit rate, turnover, exposure, tail loss, stability by regime, and abstention rate.",
+            "8. Run survivorship, delisting, corporate-action, timestamp, restatement, duplicate-row, and data-gap checks before any result is reviewable.",
+            "",
+            *workflow_lines,
+            "### Invalidation and promotion gates",
+            "- Reject if the effect disappears after costs, depends on leaked/restated data, fails the untouched holdout, or is concentrated in too few names/dates.",
+            "- Reject if parameter neighborhoods are unstable, regime performance is contradictory without a declared filter, or capacity is below the intended book size.",
+            "- Abstain when required inputs are stale, contradictory, outside the tested universe, or below the confidence floor.",
+            "- Promotion path: research -> independent model validation -> risk review -> paper monitor -> paper trade. No automatic live promotion.",
+            f"- Current execution flags: broker_write_allowed={bool(cycle.get('broker_write_allowed'))}; live_execution_allowed={bool(cycle.get('live_execution_allowed'))}.",
+        ])
+        lines.append(summary)
+        next_actions.extend([
+            "Specify the exact alpha formula, rebalance timestamp, benchmark, cost schedule, and data tables before queueing a backtest.",
+            "Create a new immutable research cycle for every changed hypothesis or data cut; never overwrite this cycle.",
+            "Require independent Model Validation and Risk approval before paper monitoring or trading.",
+        ])
+    elif skill_key == "analyze_corporate_filing":
+        message = context.get("agent_message") or {}
+        objective = " ".join(
+            str(value or "")
+            for value in (job.get("objective"), message.get("subject"), message.get("body"))
+        ).lower()
+        special_terms = (
+            "merger", "demerger", "reverse merger", "open offer", "buyback",
+            "delisting", "scheme of arrangement", "preferential allotment",
+            "special situation",
+        )
+        special_requested = any(term in objective for term in special_terms)
+        evidence_rows = list(
+            (context.get("special_situation_filings") if special_requested else context.get("recent_filings"))
+            or []
+        )
+        requested_event_types: set[str] = set()
+        event_phrases = (
+            ("reverse merger", "reverse_merger"),
+            ("demerger", "demerger"),
+            ("open offer", "open_offer"),
+            ("buyback", "buyback"),
+            ("delisting", "delisting"),
+            ("scheme of arrangement", "scheme_of_arrangement"),
+            ("preferential allotment", "preferential_allotment"),
+        )
+        for phrase, event_type in event_phrases:
+            if phrase in objective:
+                requested_event_types.add(event_type)
+        if "merger" in objective and not {"reverse_merger", "demerger"}.intersection(requested_event_types):
+            requested_event_types.add("merger")
+        if requested_event_types:
+            evidence_rows = [
+                row for row in evidence_rows
+                if str(row.get("event_type") or "") in requested_event_types
+            ]
+        context["selected_filing_evidence"] = evidence_rows
+        filing_lines: list[str] = []
+        unparsed_count = 0
+        for row in evidence_rows:
+            source_url = str(row.get("attachment_url") or row.get("source_url") or "").strip()
+            extraction_status = str(row.get("extraction_status") or "unknown")
+            if extraction_status not in {"extracted", "completed", "parsed"}:
+                unparsed_count += 1
+            company = str(row.get("company_name") or row.get("symbol") or "Unknown company")
+            exchange_symbol = ":".join(
+                value for value in (str(row.get("exchange") or ""), str(row.get("symbol") or "")) if value
+            ) or "symbol unavailable"
+            title = str(row.get("title") or "Untitled filing").replace("\n", " ").strip()
+            filing_lines.append(
+                f"- **{company}** (`{exchange_symbol}`), stored event `{row.get('event_type') or 'unclassified'}`, "
+                f"filed `{row.get('filed_at') or 'time unavailable'}`; filing id `{row.get('filing_id')}`."
+            )
+            filing_lines.append(
+                f"  Source: [{title}]({source_url})" if source_url else f"  Source URL missing for: {title}"
+            )
+            filing_lines.append(
+                "  Triage state: "
+                f"extraction=`{extraction_status}`, event_status=`{row.get('event_status') or 'unknown'}`, "
+                f"opportunity_score=`{row.get('opportunity_score')}`, risk_score=`{row.get('risk_score')}`."
+            )
+        if requested_event_types:
+            scope_label = (
+                "event types " + ", ".join(sorted(requested_event_types)) + " from the last 14 days"
+            )
+        else:
+            scope_label = "special-situation filings from the last 14 days" if special_requested else "filings from the last 2 days"
+        summary = "\n".join([
+            "### Evidence-reviewed filing set",
+            f"- Scope: {scope_label}; bounded rows returned: {len(evidence_rows)}.",
+            *(filing_lines or ["- No matching stored filing rows were found. This is an evidence gap, not a negative finding."]),
+            "",
+            "### Facts, inferences, and unknowns",
+            "- Fact: every item above is a stored NSE/BSE collector row and carries its source or attachment URL when supplied by the exchange.",
+            "- Inference boundary: the stored event label and opportunity/risk scores are triage metadata, not verified transaction terms or an investment conclusion.",
+            f"- Document gap: {unparsed_count} of {len(evidence_rows)} rows do not have a completed parsed-document status; terms inside those attachments remain unverified.",
+            "- Unknowns until document review: consideration, swap ratio, record date, approvals, conditions precedent, timeline, tax treatment, liquidity, and break risk.",
+            "- Decision boundary: this memo makes no buy, sell, sizing, capital-allocation, or execution recommendation.",
+        ])
+        lines.append(summary)
+        if evidence_rows:
+            next_actions.append("Parse the linked exchange attachments and extract the exact transaction terms before forming a thesis.")
+            next_actions.append("Route verified terms to Special Situations, independent Risk, and then human committee review; keep broker writes locked.")
+        else:
+            next_actions.append("Refine the company, symbol, event type, or date window and rerun the official filing collector.")
     elif job.get("source_kind") == "agent_message":
         message = context.get("agent_message", {})
         lines.append(
@@ -625,16 +1645,6 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
             f"{strategy.get('validations', {}).get('count', 0)} validation reviews."
         )
         next_actions.append("Prioritize candidates that have data lineage, transaction costs, and validation coverage.")
-    elif skill_key == "analyze_corporate_filing":
-        research = context.get("research", {})
-        lines.append(
-            "Research inbox has "
-            f"{research.get('corporate_filings', {}).get('count', 0)} corporate filings, "
-            f"{research.get('filing_events', {}).get('count', 0)} filing events, "
-            f"{research.get('news_items', {}).get('count', 0)} news items, and "
-            f"{research.get('social_items', {}).get('count', 0)} social items."
-        )
-        next_actions.append("Next build should enable NSE/BSE collectors and filing PDF parsing before opinion generation.")
     elif skill_key == "model_runtime_check":
         runtime = context.get("runtime", {})
         lines.append(
@@ -677,7 +1687,6 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
 
 
 def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any], summary: str, next_actions: list[str]) -> Path:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     today = datetime.now().strftime("%Y-%m-%d")
     filename = (
         f"{today} task-{job.get('task_id')} "
@@ -685,6 +1694,8 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
         f"{slugify(str(job.get('suggested_skill_key') or 'skill'))}.md"
     )
     path = OUTPUT_DIR / filename
+    relative_path = path.relative_to(VAULT_ROOT)
+    spool_path = WORKER_SPOOL_ROOT / relative_path
     evidence = [
         "agent.v_live_agent_worker_queue",
         "agent.v_active_agents",
@@ -692,6 +1703,30 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
         str(job.get("source_kind") or ""),
         str(job.get("source_ref") or ""),
     ]
+    for filing in (context.get("selected_filing_evidence") or context.get("special_situation_filings") or context.get("recent_filings") or []):
+        evidence.append(
+            "research.v_corporate_filing_inbox "
+            f"filing_id={filing.get('filing_id')} "
+            f"source={filing.get('attachment_url') or filing.get('source_url') or 'missing'}"
+        )
+    for gap in context.get("artifact_gaps") or []:
+        evidence.append(
+            "agent.v_output_artifact_gaps "
+            f"gap_type={gap.get('gap_type')} "
+            f"source={gap.get('source_view')}:{gap.get('source_id')}"
+        )
+    market_packet = context.get("market_research_packet") or {}
+    if market_packet:
+        evidence.append(
+            "market.public_evidence_packet "
+            f"fingerprint={market_packet.get('source_fingerprint')} "
+            f"quality={(market_packet.get('quality') or {}).get('status')}"
+        )
+        for item in market_packet.get("news") or []:
+            evidence.append(
+                "market.news_items "
+                f"id={item.get('id')} source={item.get('source_url')} captured_at={item.get('captured_at')}"
+            )
     body = [
         f"# Agent Worker Run - Task {job.get('task_id')}",
         "",
@@ -731,7 +1766,40 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
             "",
         ]
     )
-    path.write_text("\n".join(body), encoding="utf-8")
+    note_text = "\n".join(body)
+    spool_path.parent.mkdir(parents=True, exist_ok=True)
+    spool_tmp = spool_path.with_suffix(spool_path.suffix + ".tmp")
+    spool_tmp.write_text(note_text, encoding="utf-8")
+    spool_tmp.replace(spool_path)
+
+    mirror = {
+        "status": "pending",
+        "vault_path": str(path),
+        "spool_path": str(spool_path),
+    }
+    try:
+        subprocess.run(
+            ["/bin/mkdir", "-p", str(path.parent)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=WORKER_MIRROR_TIMEOUT_SECONDS,
+        )
+        subprocess.run(
+            ["/bin/cp", "-f", str(spool_path), str(path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=WORKER_MIRROR_TIMEOUT_SECONDS,
+        )
+        mirror["status"] = "mirrored"
+    except subprocess.TimeoutExpired as exc:
+        mirror.update({"status": "deferred_timeout", "error": f"{type(exc).__name__}: {exc}"[:500]})
+    except (OSError, subprocess.CalledProcessError) as exc:
+        mirror.update({"status": "deferred_error", "error": f"{type(exc).__name__}: {exc}"[:500]})
+    context["note_persistence"] = mirror
     return path
 
 
@@ -740,14 +1808,74 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     evidence = [
         {"source": "agent.v_live_agent_worker_queue", "task_id": job.get("task_id")},
         {"source": "agent.v_agent_skill_matrix", "skill_key": skill.get("skill_key")},
-        {"source": "obsidian_note", "path": relative_note},
+        {
+            "source": "obsidian_note" if (context.get("note_persistence") or {}).get("status") == "mirrored" else "obsidian_mirror_pending",
+            "path": relative_note,
+            "mirror_status": (context.get("note_persistence") or {}).get("status"),
+        },
+        {
+            "source": "durable_internal_spool",
+            "path": (context.get("note_persistence") or {}).get("spool_path"),
+        },
     ]
+    for filing in (context.get("selected_filing_evidence") or context.get("special_situation_filings") or context.get("recent_filings") or []):
+        evidence.append({
+            "source": "research.v_corporate_filing_inbox",
+            "filing_id": filing.get("filing_id"),
+            "source_url": filing.get("attachment_url") or filing.get("source_url"),
+            "event_type": filing.get("event_type"),
+            "extraction_status": filing.get("extraction_status"),
+        })
+    for gap in context.get("artifact_gaps") or []:
+        evidence.append({
+            "source": "agent.v_output_artifact_gaps",
+            "gap_type": gap.get("gap_type"),
+            "source_view": gap.get("source_view"),
+            "source_id": gap.get("source_id"),
+            "owner_agent": gap.get("owner_agent"),
+        })
+    market_packet = context.get("market_research_packet") or {}
+    if market_packet:
+        evidence.append({
+            "source": "market.public_evidence_packet",
+            "packet_version": market_packet.get("packet_version"),
+            "source_fingerprint": market_packet.get("source_fingerprint"),
+            "quality_status": (market_packet.get("quality") or {}).get("status"),
+            "source_refs": [
+                {"table": "market.news_items", "id": item.get("id"), "source_url": item.get("source_url")}
+                for item in market_packet.get("news") or []
+            ],
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+            "broker_write_allowed": False,
+        })
+    kronos_forecast = context.get("kronos_forecast")
+    if isinstance(kronos_forecast, dict):
+        evidence.extend(kronos_forecast.get("evidence") or [])
+        evidence.append(
+            {
+                "source": "strategy.kronos_forecast_runs",
+                "forecast_run_id": kronos_forecast.get("forecast_run_id"),
+                "source_hash": kronos_forecast.get("source_hash"),
+                "output_hash": kronos_forecast.get("output_hash"),
+            }
+        )
     input_snapshot = {
         "job": job,
         "agent": profile,
         "skill": skill,
         "context_counts": context,
     }
+    message = context.get("agent_message") if isinstance(context.get("agent_message"), dict) else {}
+    message_metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    graph_managed = str(message_metadata.get("graph_node_run_id") or "").isdigit()
+    task_completion_status = "completed" if graph_managed else "needs_review"
+    inbox_completion_status = "completed" if graph_managed else "needs_review"
+    inbox_recommendation = (
+        "Graph node evidence captured; Graph Control Plane owns downstream review and approval."
+        if graph_managed
+        else "Review the completed agent worker output note, then decide whether to close, rerun, or escalate."
+    )
     sql = f"""
     WITH inserted_run AS (
         INSERT INTO agent.worker_runs (
@@ -774,7 +1902,7 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     ),
     updated_task AS (
         UPDATE agent.tasks
-        SET status = 'needs_review',
+        SET status = {sql_literal(task_completion_status)},
             output_note_path = {sql_literal(relative_note)},
             evidence = coalesce(evidence, '[]'::jsonb) || {sql_jsonb(evidence)},
             updated_at = now()
@@ -791,18 +1919,34 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
     ),
     updated_inbox AS (
         UPDATE agent.inbox_items
-        SET status = 'needs_review',
-            recommended_action = 'Review the completed agent worker output note, then decide whether to close, rerun, or escalate.',
+        SET status = {sql_literal(inbox_completion_status)},
+            recommended_action = {sql_literal(inbox_recommendation)},
             evidence = coalesce(evidence, '[]'::jsonb) || {sql_jsonb(evidence)},
             updated_at = now()
         WHERE id = {int(job.get('inbox_item_id')) if job.get('inbox_item_id') is not None else -1}
         RETURNING id, status, updated_at
+    ),
+    updated_message AS (
+        UPDATE agent.agent_messages
+        SET status = 'read',
+            read_at = coalesce(read_at, now()),
+            processing_status = 'processed',
+            processed_at = now(),
+            error_message = NULL,
+            metadata = coalesce(metadata, '{{}}'::jsonb) || jsonb_build_object(
+                'completed_worker_run_id', (SELECT id FROM inserted_run),
+                'completed_output_note_path', {sql_literal(relative_note)},
+                'completed_at', now()
+            )
+        WHERE generated_task_id = {int(job.get('task_id'))}
+        RETURNING id,status,processing_status,processed_at
     )
     SELECT json_build_object(
         'worker_run', (SELECT row_to_json(inserted_run) FROM inserted_run),
         'task', (SELECT row_to_json(updated_task) FROM updated_task),
         'widget', (SELECT row_to_json(updated_widget) FROM updated_widget),
-        'inbox', (SELECT row_to_json(updated_inbox) FROM updated_inbox)
+        'inbox', (SELECT row_to_json(updated_inbox) FROM updated_inbox),
+        'message', (SELECT row_to_json(updated_message) FROM updated_message)
     )::text;
     """
     return json.loads(psql_text(sql))
@@ -812,11 +1956,24 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
     message = str(error)[:1200]
     task_id = int(job.get("task_id"))
     inbox_id = int(job.get("inbox_item_id")) if job.get("inbox_item_id") is not None else -1
+    graph_message = psql_one(
+        f"""
+        SELECT metadata
+        FROM agent.agent_messages
+        WHERE generated_task_id={task_id}
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1
+        """
+    )
+    graph_metadata = graph_message.get("metadata") if isinstance(graph_message.get("metadata"), dict) else {}
+    graph_managed = str(graph_metadata.get("graph_node_run_id") or "").isdigit()
+    failure_status = "failed" if graph_managed else "needs_review"
+    inbox_failure_status = "blocked" if graph_managed else "needs_review"
     evidence = [
         {"source": "run_agent_worker_once", "task_id": task_id, "status": "failed"},
         {"error": message},
     ]
-    return psql_one(
+    failure_payload = psql_text(
         f"""
         WITH inserted_run AS (
             INSERT INTO agent.worker_runs (
@@ -834,7 +1991,7 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
         ),
         updated_task AS (
             UPDATE agent.tasks
-            SET status='needs_review',
+            SET status={sql_literal(failure_status)},
                 evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
                 updated_at=now()
             WHERE id={task_id}
@@ -842,17 +1999,27 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
         ),
         updated_inbox AS (
             UPDATE agent.inbox_items
-            SET status='needs_review',
+            SET status={sql_literal(inbox_failure_status)},
                 recommended_action='Worker failed. Review the recorded error, fix the bounded cause, then requeue.',
                 evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
                 updated_at=now()
             WHERE id={inbox_id}
             RETURNING id
         )
-        SELECT inserted_run.*,updated_task.status AS task_status
-        FROM inserted_run CROSS JOIN updated_task
+        SELECT json_build_object(
+            'id',inserted_run.id,
+            'task_id',inserted_run.task_id,
+            'agent_name',inserted_run.agent_name,
+            'skill_key',inserted_run.skill_key,
+            'status',inserted_run.status,
+            'output_summary',inserted_run.output_summary,
+            'finished_at',inserted_run.finished_at,
+            'task_status',updated_task.status
+        )::text
+        FROM inserted_run CROSS JOIN updated_task;
         """
     )
+    return json.loads(failure_payload)
 
 
 def run_once(limit: int, include_completed: bool, task_id: int | None = None) -> dict[str, Any]:
@@ -889,13 +2056,38 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             )
             continue
         try:
-            if job.get("source_kind") == "committee_packet_position":
+            if job.get("source_kind") == "employee_activation":
+                gate_result = {
+                    "overall_status": "passed",
+                    "next_task_status": "in_progress",
+                    "gate_ids": [],
+                    "reason": "bounded deterministic employee acceptance; model judgment and provider spend are explicitly deferred",
+                }
+            elif job.get("source_kind") == "committee_packet_position":
                 gate_result = {
                     "overall_status": "passed",
                     "next_task_status": "in_progress",
                     "gate_ids": [],
                     "reason": "deterministic sealed position; no model or external provider invocation",
                 }
+            elif skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
+                gate_result = {
+                    "overall_status": "passed",
+                    "next_task_status": "in_progress",
+                    "gate_ids": [],
+                    "reason": "pinned local model adapter with independent tool readiness and no provider spend",
+                }
+            elif skill_key == "quant_data_science_review" and job.get("source_kind") == "agent_message":
+                message_metadata = (context_for(skill_key, job.get("widget_key"), job).get("agent_message") or {}).get("metadata") or {}
+                if message_metadata.get("graph_key") == "kronos_forecast_research":
+                    gate_result = {
+                        "overall_status": "passed",
+                        "next_task_status": "in_progress",
+                        "gate_ids": [],
+                        "reason": "deterministic realized calibration with no provider spend or execution authority",
+                    }
+                else:
+                    gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             else:
                 gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             if gate_result.get("overall_status") != "passed":
@@ -915,6 +2107,22 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                 continue
             context = context_for(skill_key, job.get("widget_key"), job)
             context["execution_envelope"] = execution_envelope_for(profile, skill)
+            market_packet = context.get("market_research_packet") or {}
+            if (
+                skill_key == "research_evidence_curation"
+                and market_packet
+                and (market_packet.get("quality") or {}).get("status") == "blocked"
+            ):
+                missing = "; ".join(str(value) for value in (market_packet.get("quality") or {}).get("missing_evidence") or [])
+                raise RuntimeError("public market evidence gate blocked: " + (missing or "source evidence unavailable"))
+            if skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
+                run_kronos_adapter(job, context)
+            if (
+                skill_key == "quant_data_science_review"
+                and job.get("source_kind") == "agent_message"
+                and ((context.get("agent_message") or {}).get("metadata") or {}).get("graph_key") == "kronos_forecast_research"
+            ):
+                run_kronos_calibration(job, context)
             summary, next_actions = summary_for(job, profile, skill, context)
             note_path = write_note(job, profile, skill, context, summary, next_actions)
             completed = complete_job(job, profile, skill, context, summary, note_path)

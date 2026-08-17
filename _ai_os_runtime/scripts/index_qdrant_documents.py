@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import math
 import re
 import subprocess
@@ -15,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).resolve().parents[1])
 QDRANT_BASE_URL = "http://127.0.0.1:6333"
 OLLAMA_EMBED_URL = "http://127.0.0.1:11434/api/embed"
 OLLAMA_MODEL = "qwen3-embedding:0.6b"
@@ -247,23 +249,38 @@ def source_obsidian_notes() -> list[SourceDocument]:
 def source_research_reports() -> list[SourceDocument]:
     rows = fetch_json_rows(
         """
-        SELECT id, artifact_type, title, source_url, local_path, content_hash, mime_type, sensitivity, captured_at, metadata
-        FROM core.raw_artifacts
-        WHERE artifact_type LIKE 'ai_%'
-           OR artifact_type LIKE 'external_%'
-        ORDER BY id
+        SELECT artifact.id, artifact.artifact_type, artifact.title, artifact.source_url,
+               artifact.local_path, artifact.content_hash, artifact.mime_type,
+               artifact.sensitivity, artifact.captured_at, artifact.metadata,
+               ingestion.extracted_text_path, ingestion.source_path AS ingestion_source_path,
+               ingestion.table_profiles, ingestion.status AS ingestion_status,
+               ingestion.promotion_status
+        FROM core.raw_artifacts artifact
+        LEFT JOIN core.local_artifact_ingestions ingestion
+          ON ingestion.raw_artifact_id = artifact.id
+        WHERE artifact.artifact_type LIKE 'ai_%'
+           OR artifact.artifact_type LIKE 'external_%'
+           OR (
+                artifact.artifact_type IN ('operator_document', 'operator_tabular_file')
+                AND artifact.metadata->>'original_path' LIKE 'first_party_research:%'
+              )
+        ORDER BY artifact.id
         """
     )
     docs: list[SourceDocument] = []
     for row in rows:
         metadata = row.get("metadata") or {}
-        local_text = read_text_file(Path(row["local_path"])) if row.get("local_path") else ""
+        extracted_path = row.get("extracted_text_path")
+        local_text = read_text_file(Path(extracted_path)) if extracted_path else ""
+        if not local_text and row.get("local_path"):
+            local_text = read_text_file(Path(row["local_path"]))
         text_parts = [
             row.get("title") or "",
             row.get("artifact_type") or "",
             metadata.get("summary") if isinstance(metadata, dict) else "",
             local_text,
             json.dumps(metadata, sort_keys=True, default=str) if metadata else "",
+            json.dumps(row.get("table_profiles") or [], sort_keys=True, default=str),
         ]
         docs.append(
             SourceDocument(
@@ -280,6 +297,11 @@ def source_research_reports() -> list[SourceDocument]:
                     "mime_type": row.get("mime_type"),
                     "captured_at": row.get("captured_at"),
                     "artifact_family": metadata.get("artifact_family") if isinstance(metadata, dict) else None,
+                    "provenance": "user_supplied_first_party" if str(metadata.get("original_path", "")).startswith("first_party_research:") else None,
+                    "extracted_text_path": extracted_path,
+                    "ingestion_status": row.get("ingestion_status"),
+                    "promotion_status": row.get("promotion_status"),
+                    "source_scope": "personal_research" if str(row.get("ingestion_source_path") or "").startswith("first_party_research:") else None,
                 },
             )
         )
@@ -499,6 +521,190 @@ ON CONFLICT (collection_name, qdrant_point_id) DO UPDATE SET
     run_psql("\n".join(statements))
 
 
+def existing_research_registry() -> list[dict[str, Any]]:
+    return fetch_json_rows(
+        """
+        SELECT qdrant_point_id, source_table, source_id, chunk_index, text_hash
+        FROM knowledge.vector_documents
+        WHERE collection_name = 'research_reports_qwen3_embedding_0_6b'
+        ORDER BY source_table, source_id, chunk_index
+        """
+    )
+
+
+def write_incremental_research_registry(
+    rows: list[dict[str, Any]],
+    stale_point_ids: list[str],
+) -> None:
+    statements = ["BEGIN;"]
+    if stale_point_ids:
+        statements.append(
+            "DELETE FROM knowledge.vector_documents "
+            "WHERE collection_name = 'research_reports_qwen3_embedding_0_6b' "
+            "AND qdrant_point_id IN ("
+            + ",".join(sql_literal(point_id) for point_id in stale_point_ids)
+            + ");"
+        )
+    for row in rows:
+        statements.append(
+            f"""
+INSERT INTO knowledge.vector_documents (
+    collection_name, qdrant_point_id, source_table, source_id, title,
+    text_hash, embedding_model, chunk_index, chunk_text_preview, metadata, indexed_at
+)
+VALUES (
+    {sql_literal(row["collection_name"])},
+    {sql_literal(row["qdrant_point_id"])},
+    {sql_literal(row["source_table"])},
+    {sql_literal(row["source_id"])},
+    {sql_literal(row["title"])},
+    {sql_literal(row["text_hash"])},
+    {sql_literal(row["embedding_model"])},
+    {row["chunk_index"]},
+    {sql_literal(row["chunk_text_preview"])},
+    {sql_jsonb(row["metadata"])},
+    now()
+)
+ON CONFLICT (collection_name, qdrant_point_id) DO UPDATE SET
+    source_table = EXCLUDED.source_table,
+    source_id = EXCLUDED.source_id,
+    title = EXCLUDED.title,
+    text_hash = EXCLUDED.text_hash,
+    embedding_model = EXCLUDED.embedding_model,
+    chunk_index = EXCLUDED.chunk_index,
+    chunk_text_preview = EXCLUDED.chunk_text_preview,
+    metadata = EXCLUDED.metadata,
+    indexed_at = now();
+"""
+        )
+    statements.append("COMMIT;")
+    run_psql("\n".join(statements))
+
+
+def delete_qdrant_points(collection: str, point_ids: list[str]) -> None:
+    for start in range(0, len(point_ids), 128):
+        batch = point_ids[start : start + 128]
+        if batch:
+            qdrant_request(
+                "POST",
+                f"/collections/{collection}/points/delete?wait=true",
+                {"points": batch},
+                timeout=60,
+            )
+
+
+def index_research_reports_incremental() -> dict[str, Any]:
+    collection = "research_reports_qwen3_embedding_0_6b"
+    ensure_collections(recreate=False)
+    documents = source_research_reports()
+    existing_rows = existing_research_registry()
+    existing_point_ids = {
+        str(row["qdrant_point_id"])
+        for row in existing_rows
+        if row.get("qdrant_point_id")
+    }
+
+    expected_records: list[dict[str, Any]] = []
+    skipped_empty = 0
+    for document in documents:
+        chunks = chunk_text(document.text)
+        if not chunks:
+            skipped_empty += 1
+            continue
+        for chunk_index, chunk in enumerate(chunks):
+            text_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+            point_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"{collection}:{document.source_table}:{document.source_id}:{chunk_index}:{text_hash}",
+                )
+            )
+            expected_records.append(
+                {
+                    "doc": document,
+                    "chunk_index": chunk_index,
+                    "chunk": chunk,
+                    "text_hash": text_hash,
+                    "point_id": point_id,
+                }
+            )
+
+    expected_point_ids = {record["point_id"] for record in expected_records}
+    stale_point_ids = sorted(existing_point_ids - expected_point_ids)
+    pending_records = [
+        record for record in expected_records
+        if record["point_id"] not in existing_point_ids
+    ]
+    indexed_count = 0
+    embedder: Embedder | None = None
+
+    if pending_records:
+        embedder = Embedder()
+        for start in range(0, len(pending_records), 16):
+            batch_records = pending_records[start : start + 16]
+            embedded = embedder.embed_many([record["chunk"] for record in batch_records])
+            batch_points: list[dict[str, Any]] = []
+            batch_registry: list[dict[str, Any]] = []
+            for record, (vector, embedding_model) in zip(batch_records, embedded, strict=True):
+                document = record["doc"]
+                chunk = record["chunk"]
+                payload = {
+                    "title": document.title,
+                    "source_table": document.source_table,
+                    "source_id": document.source_id,
+                    "chunk_index": record["chunk_index"],
+                    "text_hash": record["text_hash"],
+                    "text_preview": chunk[:600],
+                    "metadata": document.metadata,
+                }
+                batch_points.append({"id": record["point_id"], "vector": vector, "payload": payload})
+                batch_registry.append(
+                    {
+                        "collection_name": collection,
+                        "qdrant_point_id": record["point_id"],
+                        "source_table": document.source_table,
+                        "source_id": document.source_id,
+                        "title": document.title,
+                        "text_hash": record["text_hash"],
+                        "embedding_model": embedding_model,
+                        "chunk_index": record["chunk_index"],
+                        "chunk_text_preview": chunk[:500],
+                        "metadata": document.metadata,
+                    }
+                )
+            qdrant_request(
+                "PUT",
+                f"/collections/{collection}/points?wait=true",
+                {"points": batch_points},
+                timeout=60,
+            )
+            write_incremental_research_registry(batch_registry, [])
+            indexed_count += len(batch_registry)
+            print(json.dumps({
+                "mode": "incremental_research_checkpoint",
+                "indexed": indexed_count,
+                "pending_total": len(pending_records),
+                "last_batch": len(batch_registry),
+            }), flush=True)
+
+    # Delete stale points only after every expected point has been durably upserted.
+    delete_qdrant_points(collection, stale_point_ids)
+    write_incremental_research_registry([], stale_point_ids)
+
+    return {
+        "mode": "incremental_research_reports",
+        "status": "success",
+        "documents_seen": len(documents),
+        "documents_skipped_empty": skipped_empty,
+        "existing_points": len(existing_point_ids),
+        "unchanged_points": len(expected_point_ids & existing_point_ids),
+        "points_indexed": indexed_count,
+        "points_deleted": len(stale_point_ids),
+        "embedding_model": OLLAMA_MODEL,
+        "collection": collection,
+    }
+
+
 def index_documents() -> dict[str, Any]:
     embedder = Embedder()
     ensure_collections()
@@ -578,9 +784,20 @@ def index_documents() -> dict[str, Any]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Build governed Qdrant indexes.")
+    parser.add_argument(
+        "--incremental-research",
+        action="store_true",
+        help="Update only changed research-report chunks without recreating collections.",
+    )
+    args = parser.parse_args()
     try:
-        summary = index_documents()
-    except urllib.error.URLError as exc:
+        summary = (
+            index_research_reports_incremental()
+            if args.incremental_research
+            else index_documents()
+        )
+    except (RuntimeError, urllib.error.URLError) as exc:
         print(f"Qdrant index failed: {exc}", file=sys.stderr)
         return 1
     output_path = RUNTIME_ROOT / "imports" / "qdrant_index_summary.json"

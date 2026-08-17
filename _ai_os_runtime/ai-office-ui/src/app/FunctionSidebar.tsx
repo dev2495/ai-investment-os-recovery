@@ -9,14 +9,14 @@
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
-import { FUNCTION_GROUPS, functionsForGroup, functionForPath } from "./destinations";
+import { FUNCTION_GROUPS, dailyFunctionsForGroup, functionForPath } from "./destinations";
 
 export function FunctionSidebar() {
   const location = useLocation();
   const activeFn = functionForPath(location.pathname);
 
   // Collapse state per group (persisted in memory)
-  const [collapsed, setCollapsed] = React.useState<Set<string>>(React.useMemo(() => new Set(["macro", "research", "risk"]), []));
+  const [collapsed, setCollapsed] = React.useState<Set<string>>(React.useMemo(() => new Set(["macro", "risk"]), []));
 
   function toggle(group: string) {
     setCollapsed((prev) => {
@@ -31,7 +31,7 @@ export function FunctionSidebar() {
     <aside className="aios-sidebar" aria-label="Terminal functions">
       <div className="aios-sidebar__scroll">
         {FUNCTION_GROUPS.map((group) => {
-          const fns = functionsForGroup(group.key);
+          const fns = dailyFunctionsForGroup(group.key);
           if (fns.length === 0) return null;
           const isCollapsed = collapsed.has(group.key);
           return (
@@ -72,6 +72,9 @@ export function FunctionSidebar() {
             </div>
           );
         })}
+        <div className="aios-sidebar__coverage-note">
+          Advanced surfaces remain available through Cmd-K while their real data contracts are completed.
+        </div>
       </div>
     </aside>
   );

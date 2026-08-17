@@ -21,8 +21,9 @@ import {
 import { useStrategyArsenal, useTradingQuantRisk } from "../../data/queries";
 import {
   useCreateStrategyIntake, useRunBacktest, useRunOptimization,
-  useRunUserOptimizer, useRunDiscovery, useRunJournalMining,
-  useRunModelValidation, useStartPaperMonitor,
+  useRunDiscovery, useResolveDiscoveryTriage, useRunJournalMining, useRunModelValidation,
+  useRunQuantAnalytics, useRunStrategyPortfolioAllocation,
+  useRunStrategyRetirementReview, useRunUserOptimizer, useStartPaperMonitor,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -30,7 +31,7 @@ import {
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select,
 } from "../../system/primitives";
 import { AreaSeriesChart, Sparkline } from "../../system/charts";
-import { text, num, timestamp, formatRelative, formatPercent } from "../../data/liveRow";
+import { text, num, value, formatRelative, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -215,9 +216,9 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
             <option>daily</option><option>weekly</option><option>intraday</option><option>monthly</option>
           </Select></Field>
         </div>
-        <Field label="DSL (Pine-style)" hint="Optional — define entry/exit rules. Backtest Engineer will parse this.">
+        <Field label="Strategy rules" hint="Validated local DSL. Use Entry, Exit, Risk, Symbols and Timeframe sections. Unsupported Pine code is rejected.">
           <TextArea value={form.dsl} onChange={(e) => setForm({ ...form, dsl: e.target.value })} rows={6}
-            placeholder="// entry: rsi < 30 and close > ema(close, 200)&#10;// exit: rsi > 70" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} />
+            placeholder={"Entry: rsi(close, 14) < 30 and close > ema(close, 200)\nExit: rsi(close, 14) > 70 or holding_bars >= 10\nRisk: stop_loss_pct <= 2"} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} />
         </Field>
         <Field label="Constraints"><TextArea value={form.constraints} onChange={(e) => setForm({ ...form, constraints: e.target.value })} rows={2} placeholder="Liquidity, costs, position limits, excluded dates…" /></Field>
         <Field label="Risk Notes"><TextArea value={form.risk_notes} onChange={(e) => setForm({ ...form, risk_notes: e.target.value })} rows={2} placeholder="Known failure modes and invalidation criteria…" /></Field>
@@ -232,10 +233,19 @@ function StrategyIntakeDrawer({ open, onClose }: { open: boolean; onClose: () =>
 function FactorAnalysisView() {
   const risk = useTradingQuantRisk();
   const arsenal = useStrategyArsenal();
+  const analyticsMut = useRunQuantAnalytics();
+  const pushToast = useUIStore((s) => s.pushToast);
   const portfolioFactors = risk.data?.institutional_factors ?? [];
   const strategyFactors = arsenal.data?.strategy_factor_attribution ?? [];
   const analyticsRuns = arsenal.data?.quant_analytics_runs ?? [];
   const loading = risk.isLoading || arsenal.isLoading;
+  function runAnalytics() {
+    analyticsMut.mutate({ actor: "Devarsh", timeframe: "5m" }, {
+      onSuccess: () => pushToast({ title: "Quant analytics completed", message: "Regimes, factors, capacity, correlations, and portfolio optimization were persisted.", tone: "ok", duration: 4500 }),
+      onError: (error) => pushToast({ title: "Quant analytics failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+
 
   return (
     <>
@@ -248,7 +258,9 @@ function FactorAnalysisView() {
         </MetricTile>
       </div>
 
-      <Panel icon={Target} title="Portfolio & Book Factor Exposure">
+      <Panel icon={Target} title="Portfolio & Book Factor Exposure"
+        actions={<Button size="sm" variant="primary" icon={Activity} onClick={runAnalytics} disabled={analyticsMut.isPending}>
+          {analyticsMut.isPending ? "Running…" : "Run strategy analytics"}</Button>}>
         {loading ? <SkeletonGrid rows={5} /> : portfolioFactors.length === 0 ? (
           <Empty icon={Target} title="No factor run available" description="Run Institutional Risk to calculate portfolio and book factor exposure from warehouse positions and OHLCV." />
         ) : (
@@ -299,8 +311,8 @@ function BacktestsView() {
   const runs = data?.quant_lab ?? [];
   const [selected, setSelected] = React.useState<LiveRow | null>(null);
 
-  function runBacktest(intakeId: number) {
-    backtestMut.mutate({ intake_id: intakeId, actor: "Devarsh" }, {
+  function runBacktest(candidateId: number) {
+    backtestMut.mutate({ candidate_id: candidateId, actor: "Devarsh" }, {
       onSuccess: () => pushToast({ title: "Backtest started", tone: "ok", duration: 3000 }),
       onError: (e) => pushToast({ title: "Backtest failed", message: e.message, tone: "risk", duration: 5000 }),
     });
@@ -317,10 +329,10 @@ function BacktestsView() {
               { key: "name", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
               { key: "period", header: "Period", render: (r) => `${text(r, "start_date", "—")} → ${text(r, "end_date", "—")}` },
               { key: "sharpe", header: "Sharpe", align: "right", render: (r) => num(r, "sharpe", 0).toFixed(2) },
-              { key: "cagr", header: "CAGR", align: "right", render: (r) => formatPercent(num(r, "cagr", 0), { alreadyPercent: true }) },
+              { key: "return", header: "Total Return", align: "right", render: (r) => formatPercent(num(r, "total_return", 0)) },
               { key: "trades", header: "Trades", align: "right", render: (r) => num(r, "trade_count", 0) },
-              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "run_status", text(r, "status", "complete"))} /> },
-              { key: "actions", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Play} onClick={(e) => { e.stopPropagation(); runBacktest(num(r, "intake_id", num(r, "strategy_id", 0))); }}>Re-run</Button> },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "run_status", "not_run")} /> },
+              { key: "actions", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Play} onClick={(e) => { e.stopPropagation(); runBacktest(num(r, "strategy_id", 0)); }}>Run</Button> },
             ]}
             rows={runs}
             rowKey={(r, i) => String(text(r, "backtest_id", text(r, "id", i)))}
@@ -335,38 +347,30 @@ function BacktestsView() {
 }
 
 function BacktestDrawer({ run, onClose }: { run: LiveRow | null; onClose: () => void }) {
+  const equityCurve = value<LiveRow[]>(run, "equity_curve", [])
+    .map((point) => ({ label: text(point, "ts"), value: num(point, "equity", Number.NaN) }))
+    .filter((point) => point.label && Number.isFinite(point.value));
   if (!run) return null;
-  // Synthesize an equity curve from available metrics (heuristic)
-  const equityCurve = React.useMemo(() => {
-    const cagr = num(run, "cagr", 10);
-    const maxDd = num(run, "max_drawdown", 15);
-    const points = 60;
-    return Array.from({ length: points }, (_, i) => {
-      const t = i / (points - 1);
-      const trend = 100 * Math.pow(1 + cagr / 100, t * 3);
-      const noise = Math.sin(i * 0.7) * maxDd * 0.3 + Math.sin(i * 0.3) * maxDd * 0.2;
-      return { label: `T${i}`, value: Math.max(50, trend + noise) };
-    });
-  }, [run]);
 
   return (
-    <Drawer open={Boolean(run)} onClose={onClose} title={text(run, "strategy_name", text(run, "name", "Backtest"))} subtitle="Backtest detail + equity curve" icon={LineChart} width={620}>
+    <Drawer open={Boolean(run)} onClose={onClose} title={text(run, "strategy_name", text(run, "name", "Backtest"))} subtitle="Persisted backtest evidence" icon={LineChart} width={620}>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "var(--space-2)" }}>
           <MetricTile><Metric label="Sharpe" value={num(run, "sharpe", 0).toFixed(2)} size="sm" /></MetricTile>
-          <MetricTile><Metric label="CAGR" value={formatPercent(num(run, "cagr", 0), { alreadyPercent: true })} size="sm" /></MetricTile>
-          <MetricTile><Metric label="Max DD" value={formatPercent(num(run, "max_drawdown", 0), { alreadyPercent: true })} size="sm" /></MetricTile>
-          <MetricTile><Metric label="Win Rate" value={formatPercent(num(run, "win_rate", 0), { alreadyPercent: true })} size="sm" /></MetricTile>
+          <MetricTile><Metric label="Total Return" value={formatPercent(num(run, "total_return", 0))} size="sm" /></MetricTile>
+          <MetricTile><Metric label="Max DD" value={formatPercent(num(run, "max_drawdown", 0))} size="sm" /></MetricTile>
+          <MetricTile><Metric label="Win Rate" value={formatPercent(num(run, "win_rate", 0))} size="sm" /></MetricTile>
         </div>
         <Panel variant="soft" title="Equity Curve">
-          <AreaSeriesChart data={equityCurve} series={[{ key: "value", name: "Equity" }]} xKey="label" height={220} />
+          {equityCurve.length > 0 ? <AreaSeriesChart data={equityCurve} series={[{ key: "value", name: "Equity" }]} xKey="label" height={220} /> : <Empty icon={LineChart} title="No persisted equity curve" description="Rerun this backtest with the current engine to store a source-backed equal-weight curve." />}
         </Panel>
         <Panel variant="soft" title="Data Lineage">
           <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
-            <div><span className="micro">Source</span> {text(run, "data_source", "Local OHLCV warehouse")}</div>
+            <div><span className="micro">Source</span> {text(run, "data_source", "—")}</div>
             <div style={{ marginTop: 4 }}><span className="micro">Universe</span> {text(run, "universe", "—")}</div>
             <div style={{ marginTop: 4 }}><span className="micro">Window</span> {text(run, "start_date")} → {text(run, "end_date")}</div>
-            <div style={{ marginTop: 4 }}><span className="micro">Reproducible</span> {text(run, "commit_hash", text(run, "artifact_hash", "yes"))}</div>
+            <div style={{ marginTop: 4 }}><span className="micro">Curve method</span> {text(run, "equity_curve_method", "—")}</div>
+            <div style={{ marginTop: 4 }}><span className="micro">Artifact</span> {text(run, "artifact_path", "missing")}</div>
           </div>
         </Panel>
       </div>
@@ -379,17 +383,69 @@ function BacktestDrawer({ run, onClose }: { run: LiveRow | null; onClose: () => 
  * ============================================================ */
 function OptimizerView() {
   const { data, isLoading } = useTradingQuantRisk();
-  const optMut = useRunUserOptimizer();
+  const arsenal = useStrategyArsenal();
+  const optMut = useRunOptimization();
+  const workflowMut = useRunUserOptimizer();
   const pushToast = useUIStore((s) => s.pushToast);
   const runs = data?.quant_lab ?? [];
+  const workflowRuns = arsenal.data?.user_optimizer_runs ?? [];
   const [selected, setSelected] = React.useState("");
   const [walkForward, setWalkForward] = React.useState(true);
+  const [showWorkflow, setShowWorkflow] = React.useState(false);
+  const [workflow, setWorkflow] = React.useState({
+    strategy_name: "",
+    intake_text: "",
+    template: "momentum",
+    symbols: "",
+    universe: "NSE",
+    timeframe: "5m",
+    dsl_text: "",
+    constraints_text: "Paper-first research only. No live execution.",
+    risk_notes: "Requires data quality, backtest, optimizer, model validation, and committee approval.",
+    cost_bps: "3",
+    slippage_bps: "2",
+  });
 
   function optimize() {
     if (!selected) { pushToast({ title: "Pick a strategy", tone: "warn", duration: 2500 }); return; }
-    optMut.mutate({ intake_id: Number(selected), parameters: { walk_forward: walkForward }, actor: "Devarsh" }, {
+    optMut.mutate({ candidate_id: Number(selected), walk_forward: walkForward, actor: "Devarsh" }, {
       onSuccess: () => pushToast({ title: "Optimization started", tone: "ok", duration: 3000 }),
       onError: (e) => pushToast({ title: "Optimization failed", message: e.message, tone: "risk", duration: 5000 }),
+    });
+  }
+
+  function runWorkflow() {
+    if (!workflow.strategy_name.trim() || !workflow.intake_text.trim()) {
+      pushToast({ title: "Name and hypothesis are required", tone: "warn", duration: 3000 });
+      return;
+    }
+    workflowMut.mutate({
+      strategy_name: workflow.strategy_name.trim(),
+      intake_text: workflow.intake_text.trim(),
+      template: workflow.template,
+      symbols: workflow.symbols.split(",").map((symbol) => symbol.trim().toUpperCase()).filter(Boolean),
+      universe: workflow.universe.trim() || "NSE",
+      timeframe: workflow.timeframe,
+      dsl_text: workflow.dsl_text.trim() || undefined,
+      constraints_text: workflow.constraints_text.trim(),
+      risk_notes: workflow.risk_notes.trim(),
+      cost_bps: Number(workflow.cost_bps),
+      slippage_bps: Number(workflow.slippage_bps),
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        setShowWorkflow(false);
+        const status = text(result, "status", "completed");
+        pushToast({
+          title: status === "needs_parameter_space" ? "Exact backtest complete; parameters required" : "Strategy research pipeline completed",
+          message: status === "needs_parameter_space"
+            ? "Custom rules were compiled and tested. Define an explicit parameter space before optimization."
+            : "Review its persisted backtest, optimization, and validation evidence before promotion.",
+          tone: status === "needs_parameter_space" ? "warn" : "ok",
+          duration: 6000,
+        });
+      },
+      onError: (error) => pushToast({ title: "Strategy pipeline failed", message: error.message, tone: "risk", duration: 6000 }),
     });
   }
 
@@ -400,9 +456,10 @@ function OptimizerView() {
           <>
             <Select value={selected} onChange={(e) => setSelected(e.target.value)} style={{ width: 220 }}>
               <option value="">Pick a strategy…</option>
-              {runs.map((r, i) => <option key={i} value={text(r, "intake_id", text(r, "strategy_id", i))}>{text(r, "strategy_name", text(r, "name"))}</option>)}
+              {runs.map((r, i) => <option key={i} value={text(r, "strategy_id", i)}>{text(r, "strategy_name", text(r, "name"))}</option>)}
             </Select>
             <Button size="sm" variant="primary" icon={Zap} onClick={optimize} disabled={optMut.isPending}>Run</Button>
+            <Button size="sm" icon={Sparkles} onClick={() => setShowWorkflow(true)}>Define & validate</Button>
           </>
         }
       >
@@ -435,6 +492,47 @@ function OptimizerView() {
           />
         )}
       </Panel>
+      <Panel icon={GitBranch} title="End-to-End Strategy Pipeline">
+        {arsenal.isLoading ? <SkeletonGrid rows={3} /> : workflowRuns.length === 0 ? (
+          <Empty icon={GitBranch} title="No full pipeline runs" description="Define a strategy to run intake, DSL parsing, warehouse data quality, backtest, optimization, and validation in one governed workflow." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name")}</strong> },
+              { key: "template", header: "Template", render: (r) => text(r, "requested_template", "—") },
+              { key: "timeframe", header: "Timeframe", render: (r) => text(r, "requested_timeframe", "—") },
+              { key: "stage", header: "Stage", render: (r) => text(r, "current_stage", "—") },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "unknown")} /> },
+              { key: "created", header: "Created", render: (r) => formatRelative(text(r, "created_at")) },
+              { key: "artifact", header: "Evidence", render: (r) => text(r, "artifact_path", "—") },
+            ]}
+            rows={workflowRuns}
+            rowKey={(r, i) => String(text(r, "run_key", i))}
+          />
+        )}
+      </Panel>
+
+      <Drawer open={showWorkflow} onClose={() => setShowWorkflow(false)} title="Define and validate a strategy" subtitle="Runs only on the research and paper path" icon={Sparkles} width={680}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <Field label="Strategy name" required><TextInput value={workflow.strategy_name} onChange={(e) => setWorkflow({ ...workflow, strategy_name: e.target.value })} placeholder="Nifty opening-range continuation" /></Field>
+          <Field label="Hypothesis and rules" required><TextArea value={workflow.intake_text} onChange={(e) => setWorkflow({ ...workflow, intake_text: e.target.value })} rows={4} placeholder="State the edge, entry, exit, holding period, market regime, and why it should persist." /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+            <Field label="Template"><Select value={workflow.template} onChange={(e) => setWorkflow({ ...workflow, template: e.target.value })}><option value="momentum">Momentum</option><option value="mean_reversion">Mean reversion</option><option value="breakout">Breakout</option><option value="low_volatility">Low volatility</option></Select></Field>
+            <Field label="Universe"><TextInput value={workflow.universe} onChange={(e) => setWorkflow({ ...workflow, universe: e.target.value })} /></Field>
+            <Field label="Timeframe"><Select value={workflow.timeframe} onChange={(e) => setWorkflow({ ...workflow, timeframe: e.target.value })}><option value="5m">5 minute</option><option value="15m">15 minute</option><option value="1h">1 hour</option><option value="1d">Daily</option></Select></Field>
+          </div>
+          <Field label="Symbols"><TextInput value={workflow.symbols} onChange={(e) => setWorkflow({ ...workflow, symbols: e.target.value })} placeholder="RELIANCE, HDFCBANK, NIFTY 50" /></Field>
+          <Field label="Validated strategy rules (optional)" hint="Exact bounded rules are compiled and hashed; unsupported syntax is rejected."><TextArea value={workflow.dsl_text} onChange={(e) => setWorkflow({ ...workflow, dsl_text: e.target.value })} rows={5} placeholder={"Entry: close > sma(close, 20)\nExit: close < sma(close, 20) or holding_bars >= 10\nRisk: stop_loss_pct <= 2"} style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }} /></Field>
+          <Field label="Constraints"><TextArea value={workflow.constraints_text} onChange={(e) => setWorkflow({ ...workflow, constraints_text: e.target.value })} rows={2} /></Field>
+          <Field label="Risk and invalidation"><TextArea value={workflow.risk_notes} onChange={(e) => setWorkflow({ ...workflow, risk_notes: e.target.value })} rows={2} /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+            <Field label="Cost (bps)"><TextInput type="number" min="0" step="0.5" value={workflow.cost_bps} onChange={(e) => setWorkflow({ ...workflow, cost_bps: e.target.value })} /></Field>
+            <Field label="Slippage (bps)"><TextInput type="number" min="0" step="0.5" value={workflow.slippage_bps} onChange={(e) => setWorkflow({ ...workflow, slippage_bps: e.target.value })} /></Field>
+          </div>
+          <div style={{ padding: "var(--space-3)", border: "1px solid var(--status-warn)", color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>This creates research evidence and paper-monitor candidates only. It cannot place a broker order or activate autonomous live execution.</div>
+          <Button variant="primary" icon={Play} onClick={runWorkflow} disabled={workflowMut.isPending}>{workflowMut.isPending ? "Running full pipeline…" : "Run full research pipeline"}</Button>
+        </div>
+      </Drawer>
     </>
   );
 }
@@ -447,34 +545,53 @@ function ValidationView() {
   const valMut = useRunModelValidation();
   const pushToast = useUIStore((s) => s.pushToast);
   const reviews = data?.model_validation ?? [];
+  const eligibleBacktests = (data?.quant_lab ?? []).filter((row) => num(row, "backtest_id", num(row, "latest_backtest_run_id", 0)) > 0);
 
   function runValidation(btId: number) {
     valMut.mutate({ backtest_id: btId, actor: "Devarsh" }, {
-      onSuccess: () => pushToast({ title: "Validation sweep started", tone: "ok", duration: 3000 }),
+      onSuccess: () => pushToast({ title: "Validation sweep completed", message: "Leakage, overfit, walk-forward, and robustness evidence was persisted.", tone: "ok", duration: 4500 }),
       onError: (e) => pushToast({ title: "Validation failed", message: e.message, tone: "risk", duration: 5000 }),
     });
   }
 
   return (
-    <Panel icon={Brain} title="Model Validation — adversarial review">
-      {isLoading ? <SkeletonGrid rows={3} /> : reviews.length === 0 ? (
-        <Empty icon={Brain} title="No validation reviews"
-          description="The Model Validation Agent adversarially reviews backtests for data leakage, overfit, walk-forward degradation, and robustness. Run one from a backtest."
-          action={<Button size="sm" icon={Brain} onClick={() => pushToast({ title: "Open a backtest first", tone: "info", duration: 2500 })}>How to validate</Button>} />
-      ) : (
-        <DataTable
-          columns={[
-            { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
-            { key: "leakage", header: "Leakage", render: (r) => <StatusPill status={text(r, "leakage_risk", "none")} /> },
-            { key: "overfit", header: "Overfit", render: (r) => <StatusPill status={text(r, "overfit_risk", "none")} /> },
-            { key: "wf", header: "Walk-Fwd", render: (r) => <StatusPill status={text(r, "walk_forward_status", "ok")} /> },
-            { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "review"))} /> },
-          ]}
-          rows={reviews}
-          rowKey={(r, i) => String(text(r, "validation_id", text(r, "id", i)))}
-        />
-      )}
-    </Panel>
+    <>
+      <Panel icon={Brain} title="Backtests Ready for Adversarial Validation">
+        {isLoading ? <SkeletonGrid rows={3} /> : eligibleBacktests.length === 0 ? (
+          <Empty icon={Brain} title="No persisted backtest is ready" description="Run a source-backed backtest first; it will appear here with its database run identity." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
+              { key: "backtest", header: "Backtest", render: (r) => `#${num(r, "backtest_id", num(r, "latest_backtest_run_id", 0))}` },
+              { key: "window", header: "Window", render: (r) => `${text(r, "start_date", "—")} → ${text(r, "end_date", "—")}` },
+              { key: "source", header: "Source", render: (r) => text(r, "data_source", "warehouse OHLCV") },
+              { key: "action", header: "", render: (r) => <Button size="sm" icon={Brain} disabled={valMut.isPending} onClick={(event) => { event.stopPropagation(); runValidation(num(r, "backtest_id", num(r, "latest_backtest_run_id", 0))); }}>Validate</Button> },
+            ]}
+            rows={eligibleBacktests}
+            rowKey={(r, i) => String(text(r, "backtest_id", text(r, "latest_backtest_run_id", i)))}
+          />
+        )}
+      </Panel>
+
+      <Panel icon={AlertTriangle} title="Validation Reviews">
+        {isLoading ? <SkeletonGrid rows={3} /> : reviews.length === 0 ? (
+          <Empty icon={AlertTriangle} title="No validation reviews" description="Select a persisted backtest above to create the first adversarial review." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
+              { key: "leakage", header: "Leakage", render: (r) => <StatusPill status={text(r, "leakage_risk", "none")} /> },
+              { key: "overfit", header: "Overfit", render: (r) => <StatusPill status={text(r, "overfit_risk", "none")} /> },
+              { key: "wf", header: "Walk-Fwd", render: (r) => <StatusPill status={text(r, "walk_forward_status", "ok")} /> },
+              { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "review"))} /> },
+            ]}
+            rows={reviews}
+            rowKey={(r, i) => String(text(r, "validation_id", text(r, "id", i)))}
+          />
+        )}
+      </Panel>
+    </>
   );
 }
 
@@ -483,13 +600,17 @@ function ValidationView() {
  * ============================================================ */
 function IdeasView() {
   const { data } = useTradingQuantRisk();
-  const paperMut = useStartPaperMonitor();
+  const intakeMut = useCreateStrategyIntake();
+  const mineMut = useRunJournalMining();
   const pushToast = useUIStore((s) => s.pushToast);
   const ideas = data?.signals ?? [];
 
   return (
     <Panel icon={Lightbulb} title="Quant Idea Generator"
-      actions={<Button size="sm" variant="ghost" icon={Sparkles} onClick={() => pushToast({ title: "Ask Charlie to mine your journal", tone: "info", duration: 3000 })}>Mine ideas</Button>}
+      actions={<Button size="sm" variant="primary" icon={Sparkles} disabled={mineMut.isPending} onClick={() => mineMut.mutate({ actor: "Devarsh" }, {
+        onSuccess: () => pushToast({ title: "Trade-journal ideas refreshed", tone: "ok", duration: 3500 }),
+        onError: (error) => pushToast({ title: "Idea mining failed", message: error.message, tone: "risk", duration: 6000 }),
+      })}>{mineMut.isPending ? "Mining…" : "Mine ideas"}</Button>}
     >
       <div style={{ padding: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--text-muted)", marginBottom: "var(--space-3)" }}>
         Strategy candidates mined from your trade journal, market regime, and the discovery pipeline.
@@ -508,7 +629,21 @@ function IdeasView() {
               <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", minHeight: 32, marginBottom: "var(--space-2)" }}>
                 {text(idea, "description", text(idea, "thesis", text(idea, "rule", "—")))}
               </div>
-              <Button size="sm" variant="ghost" icon={Activity} onClick={() => paperMut.mutate({ strategy_id: num(idea, "strategy_id", 0), actor: "Devarsh" })}>Paper trade</Button>
+                <Button size="sm" variant="ghost" icon={FileText} disabled={intakeMut.isPending} onClick={() => {
+                  const strategyName = text(idea, "name", text(idea, "symbol", "Signal " + i));
+                  const hypothesis = text(idea, "description", text(idea, "thesis", text(idea, "rule", "")));
+                  intakeMut.mutate({
+                    strategy_name: strategyName,
+                    intake_text: "Hypothesis: " + (hypothesis || "Evidence-backed rules must be defined before testing."),
+                    strategy_family: "quant",
+                    asset_class: "equity",
+                    symbols: [text(idea, "symbol")].filter(Boolean),
+                    timeframe: text(idea, "timeframe", "daily"),
+                    source_kind: text(idea, "source", "signal"),
+                    source_ref: text(idea, "signal_id", text(idea, "id")),
+                    actor: "Devarsh",
+                  }, { onSuccess: () => pushToast({ title: "Strategy intake created", message: "Define rules and validate evidence before any paper monitor.", tone: "ok", duration: 4500 }), onError: (error) => pushToast({ title: "Intake failed", message: error.message, tone: "risk", duration: 6000 }) });
+                }}>Create intake</Button>
             </div>
           ))}
         </div>
@@ -562,26 +697,82 @@ function MiningView() {
  * PROMOTION BOARD — paper → live-ready → retired
  * ============================================================ */
 function PromotionView() {
-  const { data, isLoading } = useTradingQuantRisk();
-  const board = data?.promotion_board ?? [];
+  const risk = useTradingQuantRisk();
+  const arsenal = useStrategyArsenal();
+  const allocationMut = useRunStrategyPortfolioAllocation();
+  const retirementMut = useRunStrategyRetirementReview();
+  const paperMut = useStartPaperMonitor();
+  const pushToast = useUIStore((s) => s.pushToast);
+  const board = risk.data?.promotion_board ?? [];
+  const allocations = arsenal.data?.strategy_portfolio_allocations ?? [];
+  const allocationRuns = arsenal.data?.strategy_portfolio_allocation_runs ?? [];
+  const retirement = arsenal.data?.strategy_retirement_queue ?? [];
+  const isLoading = risk.isLoading || arsenal.isLoading;
+  const latestAnalyticsKey = text(arsenal.data?.quant_analytics_runs?.[0], "run_key", "");
+
   return (
-    <Panel icon={TrendingUp} title="Promotion Board">
-      {isLoading ? <SkeletonGrid rows={3} /> : board.length === 0 ? (
-        <Empty icon={TrendingUp} title="No strategies in promotion" description="Strategies that pass validation move here for paper monitoring, then live-readiness review." />
-      ) : (
-        <DataTable
-          columns={[
-            { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
-            { key: "stage", header: "Stage", render: (r) => <StatusPill status={text(r, "stage", "paper")} /> },
-            { key: "monitor_days", header: "Days Monitored", align: "right", render: (r) => num(r, "days_monitored", 0) },
-            { key: "drift", header: "Drift", align: "right", render: (r) => formatPercent(num(r, "drift_pct", 0), { alreadyPercent: true }) },
-            { key: "verdict", header: "Verdict", render: (r) => <StatusPill status={text(r, "verdict", text(r, "status", "monitoring"))} /> },
-          ]}
-          rows={board}
-          rowKey={(r, i) => String(text(r, "promotion_id", text(r, "id", i)))}
-        />
-      )}
-    </Panel>
+    <>
+      <Panel icon={TrendingUp} title="Promotion Board"
+        actions={
+          <>
+            <Button size="sm" icon={Target} disabled={allocationMut.isPending} onClick={() => allocationMut.mutate(
+              { actor: "Devarsh", analytics_run_key: latestAnalyticsKey || undefined },
+              {
+                onSuccess: () => pushToast({ title: "Strategy allocation completed", tone: "ok", duration: 4000 }),
+                onError: (error) => pushToast({ title: "Allocation failed", message: error.message, tone: "risk", duration: 6000 }),
+              }
+            )}>Allocate paper capital</Button>
+            <Button size="sm" variant="ghost" icon={AlertTriangle} disabled={retirementMut.isPending} onClick={() => retirementMut.mutate(
+              { actor: "Devarsh", analytics_run_key: latestAnalyticsKey || undefined },
+              {
+                onSuccess: () => pushToast({ title: "Retirement review completed", tone: "ok", duration: 4000 }),
+                onError: (error) => pushToast({ title: "Retirement review failed", message: error.message, tone: "risk", duration: 6000 }),
+              }
+            )}>Review retirement</Button>
+          </>
+        }>
+        {isLoading ? <SkeletonGrid rows={3} /> : board.length === 0 ? (
+          <Empty icon={TrendingUp} title="No strategies in promotion" description="Strategies that pass validation move here for paper monitoring, then live-readiness review." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name", text(r, "name"))}</strong> },
+              { key: "stage", header: "Stage", render: (r) => <StatusPill status={text(r, "promotion_stage", "research_or_retest")} /> },
+              { key: "gate", header: "Validation Gate", render: (r) => <StatusPill status={text(r, "validation_gate_status", "unknown")} /> },
+              { key: "monitor", header: "Paper Monitor", render: (r) => <StatusPill status={text(r, "paper_monitor_status", "not_started")} /> },
+              { key: "next", header: "Next Required Action", render: (r) => <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>{text(r, "next_required_action", "Review current strategy state.")}</span> },
+              { key: "action", header: "", render: (r) => text(r, "promotion_stage") === "paper_monitor_ready" && num(r, "committee_review_id", 0) > 0 ? <Button size="sm" variant="ghost" icon={Activity} disabled={paperMut.isPending} onClick={() => paperMut.mutate({ committee_review_id: num(r, "committee_review_id", 0), actor: "Devarsh" }, { onSuccess: () => pushToast({ title: "Paper monitor started", tone: "ok", duration: 3500 }), onError: (error) => pushToast({ title: "Paper monitor failed", message: error.message, tone: "risk", duration: 6000 }) })}>Start monitor</Button> : null },
+            ]}
+            rows={board}
+            rowKey={(r, i) => String(text(r, "promotion_id", text(r, "id", i)))}
+          />
+        )}
+      </Panel>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Target} title={allocationRuns.length ? `Latest Strategy Allocation · ${text(allocationRuns[0], "allocation_key", "")}` : "Latest Strategy Allocation"}>
+          {allocations.length === 0 ? <Empty icon={Target} title="No allocation run" description="Run quant analytics, then allocate paper capital across validated strategies with concentration and ruin constraints." /> : (
+            <DataTable columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name")}</strong> },
+              { key: "weight", header: "Weight", align: "right", render: (r) => formatPercent(num(r, "target_weight", 0) * 100, { alreadyPercent: true }) },
+              { key: "notional", header: "Paper Notional", align: "right", render: (r) => num(r, "target_notional", 0).toLocaleString("en-IN", { maximumFractionDigits: 0 }) },
+              { key: "risk", header: "Risk Contribution", align: "right", render: (r) => formatPercent(num(r, "risk_contribution", 0) * 100, { alreadyPercent: true }) },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "allocation_status", "review")} /> },
+            ]} rows={allocations} rowKey={(r, i) => String(text(r, "id", i))} />
+          )}
+        </Panel>
+        <Panel icon={AlertTriangle} title="Retirement Reviews">
+          {retirement.length === 0 ? <Empty icon={AlertTriangle} title="No retirement candidates" description="Run a retirement review to flag drift, decay, capacity, correlation, and validation failures." /> : (
+            <DataTable columns={[
+              { key: "strategy", header: "Strategy", render: (r) => <strong>{text(r, "strategy_name")}</strong> },
+              { key: "severity", header: "Severity", render: (r) => <StatusPill status={text(r, "severity", "review")} /> },
+              { key: "action", header: "Action", render: (r) => text(r, "recommended_action", "review") },
+              { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "review_status", "pending")} /> },
+            ]} rows={retirement} rowKey={(r, i) => String(text(r, "review_key", i))} />
+          )}
+        </Panel>
+      </div>
+    </>
   );
 }
 
@@ -594,6 +785,28 @@ function DiscoveryView() {
   const pushToast = useUIStore((s) => s.pushToast);
   const runs = data?.discovery_runs ?? [];
   const triage = data?.discovery_triage ?? [];
+  const triageMut = useResolveDiscoveryTriage();
+  const [selected, setSelected] = React.useState<LiveRow | null>(null);
+  const [decision, setDecision] = React.useState<"reject" | "request_more_evidence" | "route_quant_lab" | "route_special_situation" | "open_committee_review">("request_more_evidence");
+  const [notes, setNotes] = React.useState("");
+
+  const reviewCandidate = (candidate: LiveRow) => {
+    setSelected(candidate);
+    setDecision("request_more_evidence");
+    setNotes("");
+  };
+
+  const submitTriage = () => {
+    const candidateId = num(selected, "id", 0);
+    if (!candidateId || !notes.trim()) {
+      pushToast({ title: "Triage rationale is required", tone: "warn", duration: 3000 });
+      return;
+    }
+    triageMut.mutate({ discovery_candidate_id: candidateId, decision, notes: notes.trim(), actor: "Devarsh" }, {
+      onSuccess: () => { pushToast({ title: "Discovery decision recorded", tone: "ok", duration: 4000 }); setSelected(null); },
+      onError: (error) => pushToast({ title: "Triage failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  };
 
   return (
     <>
@@ -624,16 +837,32 @@ function DiscoveryView() {
           {isLoading ? <SkeletonGrid rows={3} /> : triage.length === 0 ? <Empty icon={Target} title="Triage empty" /> : (
             <DataTable
               columns={[
-                { key: "candidate", header: "Candidate", render: (r) => <strong>{text(r, "candidate_name", text(r, "name"))}</strong> },
-                { key: "score", header: "Score", align: "right", render: (r) => num(r, "score", 0).toFixed(1) },
-                { key: "decision", header: "Decision", render: (r) => <StatusPill status={text(r, "triage_decision", text(r, "status", "pending"))} /> },
+                { key: "candidate", header: "Candidate", render: (r) => <strong>{text(r, "title", "Untitled candidate")}</strong> },
+                { key: "score", header: "Priority", align: "right", render: (r) => num(r, "priority_score", 0).toFixed(1) },
+                { key: "decision", header: "Decision", render: (r) => <StatusPill status={text(r, "triage_decision", text(r, "triage_status", "unreviewed"))} /> },
+                { key: "action", header: "", render: (r) => <Button size="sm" variant="ghost" icon={Target} onClick={() => reviewCandidate(r)} disabled={text(r, "triage_status", "pending") === "final"}>Review</Button> },
               ]}
               rows={triage}
-              rowKey={(r, i) => String(text(r, "triage_id", text(r, "id", i)))}
+              rowKey={(r, i) => String(text(r, "id", i))}
             />
           )}
         </Panel>
       </div>
+
+      <Drawer open={selected !== null} onClose={() => setSelected(null)} title={selected ? text(selected, "title", "Discovery triage") : "Discovery triage"} subtitle="Human evidence gate before research routing" icon={Target} width={560}
+        footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => setSelected(null)}>Cancel</Button><Button variant="primary" icon={Target} onClick={submitTriage} disabled={triageMut.isPending || !notes.trim()}>Record triage</Button></div>}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Field label="Decision"><Select value={decision} onChange={(event) => setDecision(event.target.value as typeof decision)}>
+            <option value="request_more_evidence">Request more evidence</option>
+            <option value="route_quant_lab">Route to Quant Lab</option>
+            <option value="route_special_situation">Route to Special Situations</option>
+            <option value="open_committee_review">Open committee review</option>
+            <option value="reject">Reject</option>
+          </Select></Field>
+          <Field label="Rationale" required><TextArea value={notes} onChange={(event) => setNotes(event.target.value)} rows={6} placeholder="State the evidence, missing data, falsification test, and why this route is appropriate." /></Field>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>This records a research routing decision only. It cannot start live trading or place a broker order.</div>
+        </div>
+      </Drawer>
     </>
   );
 }

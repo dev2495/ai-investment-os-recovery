@@ -1,62 +1,169 @@
-/**
- * 3D Live Office — React Three Fiber scene (robust rewrite)
- *
- * Design priorities for this rewrite, in order:
- *   1. NEVER crashes. No network fetches, no fragile transmission materials.
- *   2. Actually visible — bright warm lighting, clear camera framing.
- *   3. Interactive — click rooms to fly in, hover for labels, risk rooms glow.
- *   4. Beautiful — oak floors, warm daylight, glass-ish walls, live agents.
- *
- * The previous version crashed silently because Environment preset="apartment"
- * fetches an HDR from a CDN (fails offline) and MeshPhysicalMaterial
- * transmission needs special setup. Both removed. Lighting is hand-tuned.
- */
-
 import React from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { OrbitControls, Html, AdaptiveDpr } from "@react-three/drei";
+import { AdaptiveDpr, Html, Line, OrbitControls } from "@react-three/drei";
+import { useNavigate } from "react-router-dom";
 import * as THREE from "three";
-import { ROOMS, floorY, roomByKey, type RoomDef, type DeskDef } from "./officeLayout";
+import { ROOMS, floorY, roomByKey, type RoomDef } from "./officeLayout";
 import { useOfficeSnapshot } from "../data/queries";
+import { useDelegateAgentTask } from "../data/actions";
 import { useUIStore } from "../store";
-import { text } from "../data/liveRow";
+import { formatRelative, num, text } from "../data/liveRow";
+import type { LiveRow } from "../data/liveRow";
 import { LiveOfficeCss } from "./LiveOffice.css";
 
-/* ============================================================
- * ROOM — a glass-ish box with a floor, desks, agents, and a label
- * ============================================================ */
+const ACTIVE_STATES = ["active", "working", "running", "executing", "in_progress", "processing"];
+const BLOCKED_STATES = ["blocked", "error", "failed", "critical"];
+
+function normalizeDepartment(raw: string): string {
+  const value = raw.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_");
+  const aliases: Record<string, string> = {
+    knowledge_and_memory: "knowledge",
+    knowledge_memory: "knowledge",
+    risk_and_compliance: "risk",
+    risk_compliance: "risk",
+    quant_lab: "quant",
+    quantitative_strategies_office: "quant",
+    research_desk: "research",
+    research_factory: "research",
+    trading_desk: "trading",
+    active_trading_desk: "trading",
+    portfolio_office: "portfolio",
+    client_office: "client",
+    software_engineering: "software",
+    automation_engineering: "automation",
+    treasury_hedges_and_macro: "treasury",
+    tactical_investing_office: "tactical",
+    executive_office: "executive",
+    runtime_operations: "runtime",
+    data_engineering: "data",
+    news_intelligence: "news",
+  };
+  return aliases[value] ?? value;
+}
+
+function agentDepartment(agent: LiveRow): string {
+  return normalizeDepartment(text(agent, "department_key", text(agent, "department", text(agent, "department_name"))));
+}
+
+function agentRoomKey(agent: LiveRow): string {
+  const department = agentDepartment(agent);
+  return roomByKey(department) ? department : "lobby";
+}
+
+function liveState(agent: LiveRow): string {
+  return text(
+    agent,
+    "presence_state",
+    text(
+      agent,
+      "live_state",
+      text(agent, "current_task_status", text(agent, "latest_worker_status", "idle")),
+    ),
+  ).toLowerCase();
+}
+
+function isBusy(agent: LiveRow): boolean {
+  const state = liveState(agent);
+  return ACTIVE_STATES.some((candidate) => state.includes(candidate));
+}
+
+function isBlocked(agent: LiveRow): boolean {
+  const state = liveState(agent);
+  return BLOCKED_STATES.some((candidate) => state.includes(candidate)) || num(agent, "blocked_task_count") > 0;
+}
+
+function mergeAgents(data: ReturnType<typeof useOfficeSnapshot>["data"]): LiveRow[] {
+  if (!data) return [];
+  const profiles = new Map((data.agents ?? []).map((row) => [text(row, "agent_name"), row]));
+  const activity = data.live_office_agent_activity ?? [];
+  const merged = activity.map((row) => ({
+    ...(profiles.get(text(row, "agent_name")) ?? {}),
+    ...row,
+  }));
+  const activeNames = new Set(merged.map((row) => text(row, "agent_name")));
+  for (const profile of data.agents ?? []) {
+    if (!activeNames.has(text(profile, "agent_name"))) merged.push(profile);
+  }
+  return merged;
+}
+
+function agentPlacements(room: RoomDef, agents: LiveRow[]) {
+  if (agents.length === 0) return [];
+  const [width, depth] = room.size;
+  const ratio = Math.max(0.8, width / depth);
+  const columns = Math.max(1, Math.ceil(Math.sqrt(agents.length * ratio)));
+  const rows = Math.max(1, Math.ceil(agents.length / columns));
+  const usableWidth = width - 1.0;
+  const usableDepth = depth - 1.25;
+  const spacingX = usableWidth / columns;
+  const spacingZ = usableDepth / rows;
+  const scale = Math.max(0.34, Math.min(0.58, Math.min(spacingX / 1.75, spacingZ / 1.35)));
+  return agents.map((agent, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return {
+      agent,
+      position: [
+        -usableWidth / 2 + spacingX * (column + 0.5),
+        -usableDepth / 2 + spacingZ * (row + 0.5),
+      ] as [number, number],
+      scale,
+    };
+  });
+}
+
+function hashName(name: string): number {
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) hash = ((hash << 5) - hash + name.charCodeAt(index)) | 0;
+  return Math.abs(hash);
+}
+
 interface RoomProps {
   room: RoomDef;
+  agents: LiveRow[];
+  stats?: LiveRow;
   hasRisk: boolean;
   isFocused: boolean;
   isHovered: boolean;
-  onHover: (h: boolean) => void;
+  committeeItems: number;
+  activeGraphRuns: number;
+  selectedAgentName: string;
+  onHover: (hovered: boolean) => void;
   onClick: () => void;
+  onSelectAgent: (agent: LiveRow) => void;
 }
 
-const ROOM_COLORS: Record<string, string> = {
-  lobby: "#0f766e", research: "#2d7a4f", quant: "#6d4a8a", portfolio: "#0f766e",
-  trading: "#d4a028", news: "#5b6b7a", executive: "#0f766e", committee: "#6d4a8a",
-  risk: "#c0392b", runtime: "#5b6b7a", data: "#5b6b7a", library: "#2d7a4f",
-};
-
-function Room({ room, hasRisk, isFocused, isHovered, onHover, onClick }: RoomProps) {
+function Room({
+  room,
+  agents,
+  stats,
+  hasRisk,
+  isFocused,
+  isHovered,
+  committeeItems,
+  activeGraphRuns,
+  selectedAgentName,
+  onHover,
+  onClick,
+  onSelectAgent,
+}: RoomProps) {
   const y = floorY(room.floor);
-  const [w, d] = room.size;
-  const [cx, cz] = room.center;
-  const wallH = 2.6;
-  const accent = ROOM_COLORS[room.key] ?? "#0f766e";
+  const [width, depth] = room.size;
+  const [centerX, centerZ] = room.center;
+  const wallHeight = 2.8;
+  const placements = React.useMemo(() => agentPlacements(room, agents), [agents, room]);
+  const workingCount = stats ? num(stats, "executing_agent_count") : agents.filter(isBusy).length;
+  const queuedCount = stats ? num(stats, "queued_agent_count") : agents.filter((agent) => liveState(agent) === "queued").length;
+  const blockedCount = stats ? num(stats, "blocked_task_count") : agents.filter(isBlocked).length;
   const groupRef = React.useRef<THREE.Group>(null);
 
-  // Risk pulse
   useFrame((state) => {
     if (!groupRef.current || !hasRisk) return;
-    const pulse = 0.4 + 0.3 * Math.sin(state.clock.elapsedTime * 2.5);
+    const pulse = 0.35 + 0.25 * Math.sin(state.clock.elapsedTime * 2.4);
     groupRef.current.traverse((child) => {
       const mesh = child as THREE.Mesh;
-      if (mesh.material && (mesh.userData as { riskGlow?: boolean }).riskGlow) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        mat.emissiveIntensity = pulse;
+      if (mesh.material && child.userData.riskGlow) {
+        (mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse;
       }
     });
   });
@@ -64,421 +171,1007 @@ function Room({ room, hasRisk, isFocused, isHovered, onHover, onClick }: RoomPro
   return (
     <group
       ref={groupRef}
-      position={[cx, y, cz]}
-      onPointerOver={(e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onHover(true); document.body.style.cursor = "pointer"; }}
-      onPointerOut={() => { onHover(false); document.body.style.cursor = "default"; }}
-      onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onClick(); }}
+      position={[centerX, y, centerZ]}
+      onPointerOver={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation();
+        onHover(true);
+        document.body.style.cursor = "pointer";
+      }}
+      onPointerOut={() => {
+        onHover(false);
+        document.body.style.cursor = "default";
+      }}
+      onClick={(event: ThreeEvent<MouseEvent>) => {
+        event.stopPropagation();
+        onClick();
+      }}
     >
-      {/* Floor tile — warm oak, accent-tinted rug */}
       <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[w - 0.1, d - 0.1]} />
-        <meshStandardMaterial color="#b88a5a" roughness={0.6} />
+        <planeGeometry args={[width - 0.1, depth - 0.1]} />
+        <meshStandardMaterial color="#ae8259" roughness={0.66} />
       </mesh>
-      <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[w - 1.4, d - 1.4]} />
-        <meshStandardMaterial color={accent} roughness={0.9} transparent opacity={0.16} />
-      </mesh>
-
-      {/* Glass-ish walls — semi-transparent standard material (no transmission) */}
-      <mesh position={[0, wallH / 2, -d / 2]}>
-        <boxGeometry args={[w, wallH, 0.06]} />
-        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.18} roughness={0.1} metalness={0.05} />
-      </mesh>
-      <mesh position={[0, wallH / 2, d / 2]}>
-        <boxGeometry args={[w - 2.4, wallH, 0.06]} />
-        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.18} roughness={0.1} metalness={0.05} />
-      </mesh>
-      <mesh position={[-w / 2, wallH / 2, 0]}>
-        <boxGeometry args={[0.06, wallH, d]} />
-        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.18} roughness={0.1} metalness={0.05} />
-      </mesh>
-      <mesh position={[w / 2, wallH / 2, 0]}>
-        <boxGeometry args={[0.06, wallH, d]} />
-        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.18} roughness={0.1} metalness={0.05} />
+      <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[Math.max(1, width - 1.1), Math.max(1, depth - 1.1)]} />
+        <meshStandardMaterial color={room.color} roughness={0.9} transparent opacity={0.17} />
       </mesh>
 
-      {/* Brass top rail */}
-      <mesh position={[0, wallH, -d / 2]}>
-        <boxGeometry args={[w + 0.08, 0.08, 0.08]} />
-        <meshStandardMaterial color="#b08d57" metalness={0.85} roughness={0.3} />
+      <mesh position={[0, wallHeight / 2, -depth / 2]}>
+        <boxGeometry args={[width, wallHeight, 0.07]} />
+        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.2} roughness={0.18} />
+      </mesh>
+      <mesh position={[0, wallHeight / 2, depth / 2]}>
+        <boxGeometry args={[Math.max(1, width - 2.2), wallHeight, 0.07]} />
+        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.16} roughness={0.18} />
+      </mesh>
+      <mesh position={[-width / 2, wallHeight / 2, 0]}>
+        <boxGeometry args={[0.07, wallHeight, depth]} />
+        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.18} roughness={0.18} />
+      </mesh>
+      <mesh position={[width / 2, wallHeight / 2, 0]}>
+        <boxGeometry args={[0.07, wallHeight, depth]} />
+        <meshStandardMaterial color="#d8e4ec" transparent opacity={0.18} roughness={0.18} />
+      </mesh>
+      <mesh position={[0, wallHeight, -depth / 2]}>
+        <boxGeometry args={[width + 0.08, 0.08, 0.08]} />
+        <meshStandardMaterial color="#aa8758" metalness={0.78} roughness={0.34} />
       </mesh>
 
-      {/* Risk glow ring on floor */}
       {hasRisk && (
-        <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]} userData={{ riskGlow: true }}>
-          <ringGeometry args={[Math.max(w, d) / 2.3, Math.max(w, d) / 2, 48]} />
-          <meshStandardMaterial color="#c0392b" emissive="#c0392b" emissiveIntensity={0.5} transparent opacity={0.7} side={THREE.DoubleSide} />
+        <mesh position={[0, 0.055, 0]} rotation={[-Math.PI / 2, 0, 0]} userData={{ riskGlow: true }}>
+          <ringGeometry args={[Math.max(width, depth) / 2.35, Math.max(width, depth) / 2.08, 48]} />
+          <meshStandardMaterial color="#b53c32" emissive="#b53c32" emissiveIntensity={0.45} transparent opacity={0.74} side={THREE.DoubleSide} />
         </mesh>
       )}
 
-      {/* Desks + agents */}
-      {room.desks.map((desk, i) => (
-        <DeskAndAgent key={i} desk={desk} accent={accent} />
+      {room.key === "committee" && <CommitteeTable itemCount={committeeItems} />}
+      {room.key === "lobby" && <LobbyConsole activeGraphRuns={activeGraphRuns} />}
+
+      {placements.map((placement) => (
+        <DeskAndAgent
+          key={text(placement.agent, "agent_name")}
+          agent={placement.agent}
+          position={placement.position}
+          scale={placement.scale}
+          accent={room.color}
+          selected={selectedAgentName === text(placement.agent, "agent_name")}
+          onSelect={() => onSelectAgent(placement.agent)}
+        />
       ))}
 
-      {/* Floating label */}
-      <Html position={[0, wallH + 0.5, 0]} center distanceFactor={11} occlude={false} zIndexRange={[20, 0]}>
+      <Html position={[0, wallHeight + 0.55, 0]} center distanceFactor={12} occlude={false} zIndexRange={[20, 0]}>
         <div className={`office-room-label ${hasRisk ? "office-room-label--risk" : ""} ${isFocused ? "office-room-label--active" : ""}`}>
           <span className="office-room-label__name">{room.label}</span>
           <div className="office-room-label__meta">
             <span className={`office-room-label__dot office-room-label__dot--${hasRisk ? "risk" : "ok"}`} />
-            <span>{room.desks.length} {room.desks.length === 1 ? "agent" : "agents"}</span>
+            <span>{agents.length} employees · {workingCount} working{queuedCount ? ` · ${queuedCount} queued` : ""}</span>
+            {blockedCount > 0 && <span className="office-room-label__pending">{blockedCount} blocked</span>}
           </div>
+          {room.workspaceState === "hidden" && <span className="office-room-label__gated">workspace gated</span>}
         </div>
       </Html>
 
-      {/* Hover/focus wireframe highlight */}
       {(isHovered || isFocused) && (
-        <mesh position={[0, wallH / 2, 0]}>
-          <boxGeometry args={[w + 0.5, wallH + 0.5, d + 0.5]} />
-          <meshBasicMaterial color={accent} wireframe transparent opacity={isFocused ? 0.45 : 0.22} />
+        <mesh position={[0, wallHeight / 2, 0]}>
+          <boxGeometry args={[width + 0.35, wallHeight + 0.35, depth + 0.35]} />
+          <meshBasicMaterial color={room.color} wireframe transparent opacity={isFocused ? 0.42 : 0.2} />
         </mesh>
       )}
     </group>
   );
 }
 
-/* ============================================================
- * DESK + AGENT FIGURE
- * ============================================================ */
-function DeskAndAgent({ desk, accent }: { desk: DeskDef; accent: string }) {
-  const { data } = useOfficeSnapshot();
-  const agentKey = desk.agentKey;
-  const agentRow = React.useMemo(() => {
-    if (!data || !agentKey) return null;
-    return data.agents.find((a) => {
-      const k = text(a, "agent_key", "").toLowerCase();
-      const name = text(a, "agent_name", "").toLowerCase();
-      return k.includes(agentKey.toLowerCase()) || name.includes(agentKey.toLowerCase().replace(/_/g, " "));
-    }) ?? null;
-  }, [data, agentKey]);
-
-  const status = agentRow ? text(agentRow, "status", "active").toLowerCase() : "active";
-  const isBusy = status.includes("active") || status.includes("running") || status.includes("working");
-  const isBlocked = status.includes("block") || status.includes("error") || status.includes("fail");
-  const ringColor = isBlocked ? "#c0392b" : isBusy ? "#3d9a6f" : "#8a7f72";
-
+function DeskAndAgent({
+  agent,
+  position,
+  scale,
+  accent,
+  selected,
+  onSelect,
+}: {
+  agent: LiveRow;
+  position: [number, number];
+  scale: number;
+  accent: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const [hovered, setHovered] = React.useState(false);
+  const state = liveState(agent);
+  const busy = isBusy(agent);
+  const blocked = isBlocked(agent);
+  const name = text(agent, "agent_name", "Employee");
+  const currentWork = text(agent, "current_work_title", text(agent, "current_task_title", "No active assignment"));
+  const title = text(agent, "display_title", text(agent, "role_scope", agentDepartment(agent)));
+  const seed = hashName(name);
+  const skinColors = ["#e8d0b0", "#c8956c", "#8f6046", "#f0c9a5", "#ad7657"];
+  const bodyColors = ["#294f70", "#3f6255", "#5b4d79", "#71503e", "#354a61", "#6b5b35"];
+  const skin = skinColors[seed % skinColors.length];
+  const body = blocked ? "#8f261d" : bodyColors[seed % bodyColors.length];
+  const statusColor = blocked ? "#d9564c" : busy ? "#48a879" : state.includes("wait") ? "#d7a536" : "#8b8278";
   const figureRef = React.useRef<THREE.Group>(null);
-  useFrame((state) => {
-    if (!figureRef.current || !isBusy) return;
-    figureRef.current.position.y = 1.0 + Math.sin(state.clock.elapsedTime * 1.4 + desk.position[0]) * 0.02;
+  const leftArmRef = React.useRef<THREE.Group>(null);
+  const rightArmRef = React.useRef<THREE.Group>(null);
+  const leftLegRef = React.useRef<THREE.Group>(null);
+  const rightLegRef = React.useRef<THREE.Group>(null);
+
+  useFrame((frame) => {
+    if (!figureRef.current) return;
+    const elapsed = frame.clock.elapsedTime;
+    const cycle = (elapsed + (seed % 13)) % 16;
+    let progress = 0;
+    let direction = 1;
+    let moving = false;
+    if (busy && !blocked) {
+      if (cycle >= 2 && cycle < 4) {
+        progress = THREE.MathUtils.smoothstep((cycle - 2) / 2, 0, 1);
+        moving = true;
+      } else if (cycle >= 4 && cycle < 10) {
+        progress = 1;
+      } else if (cycle >= 10 && cycle < 12) {
+        progress = 1 - THREE.MathUtils.smoothstep((cycle - 10) / 2, 0, 1);
+        direction = -1;
+        moving = true;
+      }
+    }
+    const laneX = ((seed % 5) - 2) * 0.2;
+    const laneZ = (((seed >> 3) % 5) - 2) * 0.16;
+    const targetX = (-position[0] * 0.55 + laneX) / scale;
+    const targetZ = (-position[1] * 0.55 + laneZ) / scale;
+    const gait = moving ? Math.sin(elapsed * 9 + seed) * 0.58 : 0;
+    figureRef.current.position.set(
+      targetX * progress,
+      1.02 + Math.abs(Math.sin(elapsed * 9 + seed)) * (moving ? 0.035 : 0.01),
+      0.12 + targetZ * progress,
+    );
+    figureRef.current.rotation.y = moving
+      ? Math.atan2(targetX * direction, targetZ * direction)
+      : Math.sin(elapsed * 0.35 + seed) * (busy ? 0.05 : 0.02);
+    if (leftArmRef.current) leftArmRef.current.rotation.x = gait;
+    if (rightArmRef.current) rightArmRef.current.rotation.x = -gait;
+    if (leftLegRef.current) leftLegRef.current.rotation.x = -gait;
+    if (rightLegRef.current) rightLegRef.current.rotation.x = gait;
   });
 
   return (
-    <group position={[desk.position[0], 0, desk.position[1]]} rotation={[0, desk.rotation ?? 0, 0]}>
-      {/* Desk surface + pedestal */}
-      <mesh position={[0, 0.75, -0.35]} castShadow>
-        <boxGeometry args={[1.6, 0.06, 0.7]} />
-        <meshStandardMaterial color="#5a3a20" roughness={0.55} metalness={0.08} />
+    <group
+      position={[position[0], 0, position[1]]}
+      scale={scale}
+      onPointerOver={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation();
+        setHovered(true);
+        document.body.style.cursor = "pointer";
+      }}
+      onPointerOut={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation();
+        setHovered(false);
+        document.body.style.cursor = "default";
+      }}
+      onClick={(event: ThreeEvent<MouseEvent>) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <mesh position={[0, 0.72, -0.32]} castShadow>
+        <boxGeometry args={[1.55, 0.08, 0.68]} />
+        <meshStandardMaterial color="#553922" roughness={0.58} />
       </mesh>
-      <mesh position={[-0.65, 0.37, -0.55]}>
-        <boxGeometry args={[0.08, 0.74, 0.08]} />
-        <meshStandardMaterial color="#b08d57" metalness={0.8} roughness={0.3} />
+      <mesh position={[-0.62, 0.34, -0.5]}>
+        <boxGeometry args={[0.09, 0.7, 0.09]} />
+        <meshStandardMaterial color="#a88355" metalness={0.7} roughness={0.34} />
       </mesh>
-      <mesh position={[0.65, 0.37, -0.55]}>
-        <boxGeometry args={[0.08, 0.74, 0.08]} />
-        <meshStandardMaterial color="#b08d57" metalness={0.8} roughness={0.3} />
+      <mesh position={[0.62, 0.34, -0.5]}>
+        <boxGeometry args={[0.09, 0.7, 0.09]} />
+        <meshStandardMaterial color="#a88355" metalness={0.7} roughness={0.34} />
       </mesh>
-      {/* Monitor (glowing accent) */}
-      <mesh position={[0, 1.05, -0.55]} castShadow>
-        <boxGeometry args={[0.95, 0.52, 0.04]} />
-        <meshStandardMaterial color="#0a0d10" emissive={accent} emissiveIntensity={0.5} roughness={0.3} />
+      <mesh position={[0, 1.0, -0.51]} castShadow>
+        <boxGeometry args={[0.88, 0.48, 0.05]} />
+        <meshStandardMaterial color="#090c0f" emissive={blocked ? "#b53c32" : accent} emissiveIntensity={busy ? 0.72 : 0.28} roughness={0.3} />
       </mesh>
-      <mesh position={[0, 0.82, -0.55]}>
-        <boxGeometry args={[0.1, 0.16, 0.1]} />
-        <meshStandardMaterial color="#b08d57" metalness={0.8} roughness={0.3} />
+      <mesh position={[0, 0.78, -0.5]}>
+        <boxGeometry args={[0.1, 0.14, 0.1]} />
+        <meshStandardMaterial color="#a88355" metalness={0.72} roughness={0.32} />
       </mesh>
 
-      {/* Agent figure */}
-      <group ref={figureRef} position={[0, 1.0, 0.15]}>
-        {/* Head */}
-        <mesh position={[0, 0.35, 0]} castShadow>
-          <sphereGeometry args={[0.17, 20, 20]} />
-          <meshStandardMaterial color="#e8d0b0" roughness={0.7} />
+      <group ref={figureRef} position={[0, 1.02, 0.12]}>
+        <mesh position={[0, 0.34, 0]} castShadow>
+          <sphereGeometry args={[0.18, 18, 18]} />
+          <meshStandardMaterial color={skin} roughness={0.72} />
         </mesh>
-        {/* Body */}
-        <mesh position={[0, -0.1, 0]} castShadow>
-          <capsuleGeometry args={[0.21, 0.45, 6, 14]} />
-          <meshStandardMaterial color={isBlocked ? "#8f1d14" : "#2a4f7a"} roughness={0.6} />
+        <mesh position={[0, -0.08, 0]} castShadow>
+          <capsuleGeometry args={[0.22, 0.44, 6, 12]} />
+          <meshStandardMaterial color={body} roughness={0.62} />
         </mesh>
+        <group ref={leftArmRef} position={[-0.27, 0.05, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.065, 0.3, 5, 8]} />
+            <meshStandardMaterial color={body} roughness={0.62} />
+          </mesh>
+        </group>
+        <group ref={rightArmRef} position={[0.27, 0.05, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.065, 0.3, 5, 8]} />
+            <meshStandardMaterial color={body} roughness={0.62} />
+          </mesh>
+        </group>
+        <group ref={leftLegRef} position={[-0.11, -0.43, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.07, 0.3, 5, 8]} />
+            <meshStandardMaterial color="#242b32" roughness={0.72} />
+          </mesh>
+        </group>
+        <group ref={rightLegRef} position={[0.11, -0.43, 0]}>
+          <mesh position={[0, -0.2, 0]} castShadow>
+            <capsuleGeometry args={[0.07, 0.3, 5, 8]} />
+            <meshStandardMaterial color="#242b32" roughness={0.72} />
+          </mesh>
+        </group>
       </group>
 
-      {/* Status ring on floor */}
-      <mesh position={[0, 0.04, 0.45]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.26, 0.32, 24]} />
-        <meshBasicMaterial color={ringColor} transparent opacity={0.85} side={THREE.DoubleSide} />
+      <mesh position={[0, 0.045, 0.43]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[selected ? 0.3 : 0.25, selected ? 0.39 : 0.32, 24]} />
+        <meshBasicMaterial color={selected ? "#f4d48d" : statusColor} transparent opacity={0.94} side={THREE.DoubleSide} />
+      </mesh>
+
+      {(hovered || selected) && (
+        <Html position={[0, 2.1, 0]} center distanceFactor={8} occlude={false} zIndexRange={[30, 0]}>
+          <div className={`office-agent-popover ${blocked ? "office-agent-popover--blocked" : ""}`}>
+            <div className="office-agent-popover__head">
+              <strong>{name}</strong>
+              <span>{state.replace(/_/g, " ")}</span>
+            </div>
+            <div className="office-agent-popover__title">{title}</div>
+            <div className="office-agent-popover__work">{currentWork}</div>
+          </div>
+        </Html>
+      )}
+    </group>
+  );
+}
+
+function CommitteeTable({ itemCount }: { itemCount: number }) {
+  const markers = Math.min(12, itemCount);
+  return (
+    <group position={[0, 0, 0]}>
+      <mesh position={[0, 0.7, 0]} castShadow>
+        <cylinderGeometry args={[1.45, 1.45, 0.12, 32]} />
+        <meshStandardMaterial color="#503828" roughness={0.54} />
+      </mesh>
+      <mesh position={[0, 0.35, 0]}>
+        <cylinderGeometry args={[0.16, 0.28, 0.65, 16]} />
+        <meshStandardMaterial color="#a88355" metalness={0.7} roughness={0.32} />
+      </mesh>
+      {Array.from({ length: markers }).map((_, index) => {
+        const angle = (index / Math.max(1, markers)) * Math.PI * 2;
+        return (
+          <mesh key={index} position={[Math.cos(angle) * 1.1, 0.86, Math.sin(angle) * 1.1]}>
+            <sphereGeometry args={[0.07, 10, 10]} />
+            <meshBasicMaterial color="#d9b85b" />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+function LobbyConsole({ activeGraphRuns }: { activeGraphRuns: number }) {
+  return (
+    <group position={[0, 0, 0]}>
+      <mesh position={[0, 0.85, 0]} castShadow>
+        <cylinderGeometry args={[1.1, 1.28, 0.18, 8]} />
+        <meshStandardMaterial color="#3e3024" metalness={0.28} roughness={0.48} />
+      </mesh>
+      <mesh position={[0, 1.18, 0]}>
+        <sphereGeometry args={[0.55, 24, 24]} />
+        <meshStandardMaterial color="#0f766e" emissive="#0f766e" emissiveIntensity={activeGraphRuns ? 0.85 : 0.28} transparent opacity={0.55} wireframe />
       </mesh>
     </group>
   );
 }
 
-/* ============================================================
- * DATA FLOW PARTICLES — warm light dots between connected rooms
- * ============================================================ */
-function DataFlows({ activity }: { activity: number }) {
-  const connections: Array<[string, string]> = React.useMemo(() => [
-    ["research", "committee"], ["committee", "portfolio"], ["portfolio", "risk"],
-    ["risk", "trading"], ["news", "research"], ["quant", "committee"], ["executive", "committee"],
-  ], []);
+type FlowConnection = {
+  from: string;
+  to: string;
+  count: number;
+  kind: "message" | "graph";
+};
 
+function buildConnections(data: ReturnType<typeof useOfficeSnapshot>["data"], agents: LiveRow[]): FlowConnection[] {
+  if (!data) return [];
+  const agentRooms = new Map(agents.map((agent) => [text(agent, "agent_name"), agentRoomKey(agent)]));
+  const grouped = new Map<string, FlowConnection>();
+  const add = (from: string, to: string, kind: FlowConnection["kind"]) => {
+    if (!from || !to || from === to || !roomByKey(from) || !roomByKey(to)) return;
+    const key = `${kind}:${from}:${to}`;
+    const current = grouped.get(key);
+    grouped.set(key, current ? { ...current, count: current.count + 1 } : { from, to, count: 1, kind });
+  };
+
+  for (const message of data.agent_messages ?? []) {
+    add(agentRooms.get(text(message, "from_agent")) ?? "", agentRooms.get(text(message, "to_agent")) ?? "", "message");
+  }
+  for (const node of data.graph_node_runs ?? []) {
+    const ownerRoom = agentRooms.get(text(node, "owner_agent")) ?? "";
+    add("runtime", ownerRoom, "graph");
+  }
+  return [...grouped.values()].sort((left, right) => right.count - left.count).slice(0, 22);
+}
+
+function DataFlows({ connections }: { connections: FlowConnection[] }) {
   return (
     <>
-      {connections.map(([from, to], i) => (
-        <FlowDot key={i} fromKey={from} toKey={to} active={activity > 0} delay={i * 0.4} />
+      {connections.map((connection, index) => (
+        <FlowPath key={`${connection.kind}-${connection.from}-${connection.to}`} connection={connection} delay={index * 0.31} />
       ))}
     </>
   );
 }
 
-function FlowDot({ fromKey, toKey, active, delay }: { fromKey: string; toKey: string; active: boolean; delay: number }) {
-  const from = roomByKey(fromKey);
-  const to = roomByKey(toKey);
+function FlowPath({ connection, delay }: { connection: FlowConnection; delay: number }) {
+  const from = roomByKey(connection.from);
+  const to = roomByKey(connection.to);
   const dotRef = React.useRef<THREE.Mesh>(null);
-  useFrame((state) => {
-    if (!dotRef.current || !from || !to || !active) return;
-    const t = ((state.clock.elapsedTime + delay) * 0.25) % 1;
-    dotRef.current.position.x = THREE.MathUtils.lerp(from.center[0], to.center[0], t);
-    dotRef.current.position.z = THREE.MathUtils.lerp(from.center[1], to.center[1], t);
-    dotRef.current.position.y = floorY(from.floor) + 1.6;
-    (dotRef.current.material as THREE.MeshBasicMaterial).opacity = Math.sin(t * Math.PI);
-  });
   if (!from || !to) return null;
+  const fromPoint = new THREE.Vector3(from.center[0], floorY(from.floor) + 2.1, from.center[1]);
+  const toPoint = new THREE.Vector3(to.center[0], floorY(to.floor) + 2.1, to.center[1]);
+  const middle = new THREE.Vector3(
+    (fromPoint.x + toPoint.x) / 2,
+    Math.max(fromPoint.y, toPoint.y) + 1.4,
+    (fromPoint.z + toPoint.z) / 2,
+  );
+  const curve = new THREE.QuadraticBezierCurve3(fromPoint, middle, toPoint);
+  const points = curve.getPoints(30);
+  const color = connection.kind === "graph" ? "#a986c8" : "#f2cf86";
+
+  useFrame((state) => {
+    if (!dotRef.current) return;
+    const speed = 0.12 + Math.min(0.1, connection.count * 0.012);
+    const progress = ((state.clock.elapsedTime + delay) * speed) % 1;
+    dotRef.current.position.copy(curve.getPoint(progress));
+    const material = dotRef.current.material as THREE.MeshBasicMaterial;
+    material.opacity = Math.max(0.22, Math.sin(progress * Math.PI));
+  });
+
   return (
-    <mesh ref={dotRef} visible={active}>
-      <sphereGeometry args={[0.07, 10, 10]} />
-      <meshBasicMaterial color="#ffd9a0" transparent opacity={0.9} />
-    </mesh>
+    <>
+      <Line points={points} color={color} lineWidth={0.7} transparent opacity={0.2} />
+      <mesh ref={dotRef}>
+        <sphereGeometry args={[0.07 + Math.min(0.05, connection.count * 0.005), 10, 10]} />
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
+      </mesh>
+    </>
   );
 }
 
-/* ============================================================
- * CAMERA CONTROLLER — smooth fly-to focused room
- * ============================================================ */
 function CameraController({ focusTarget }: { focusTarget: string | null }) {
   const { camera } = useThree();
-  const targetPos = React.useRef(new THREE.Vector3(0, 11, 17));
-  const targetLook = React.useRef(new THREE.Vector3(0, 0, -1));
+  const targetPosition = React.useRef(new THREE.Vector3(0, 17, 29));
+  const targetLook = React.useRef(new THREE.Vector3(0, 1, 0));
 
   React.useEffect(() => {
-    if (focusTarget) {
-      const room = roomByKey(focusTarget);
-      if (room) {
-        const ry = floorY(room.floor);
-        targetPos.current.set(room.center[0] + room.size[0] * 0.55, ry + 4.5, room.center[1] + room.size[1] + 4.5);
-        targetLook.current.set(room.center[0], ry + 0.8, room.center[1]);
-      }
+    const room = focusTarget ? roomByKey(focusTarget) : undefined;
+    if (room) {
+      const roomY = floorY(room.floor);
+      targetPosition.current.set(
+        room.center[0] + room.size[0] * 0.55,
+        roomY + 4.8,
+        room.center[1] + room.size[1] + 4.8,
+      );
+      targetLook.current.set(room.center[0], roomY + 0.9, room.center[1]);
     } else {
-      targetPos.current.set(0, 11, 17);
-      targetLook.current.set(0, 0.5, -2);
+      targetPosition.current.set(0, 17, 29);
+      targetLook.current.set(0, 1, 0);
     }
   }, [focusTarget]);
 
   useFrame(() => {
-    camera.position.lerp(targetPos.current, 0.06);
+    camera.position.lerp(targetPosition.current, 0.055);
     camera.lookAt(targetLook.current);
   });
   return null;
 }
 
-/* ============================================================
- * SCENE
- * ============================================================ */
 export interface LiveOfficeProps {
   height?: number | string;
 }
 
-export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
-  const { data } = useOfficeSnapshot();
-  const cameraTarget = useUIStore((s) => s.cameraTarget);
-  const focusRoom = useUIStore((s) => s.focusRoom);
-  const [hovered, setHovered] = React.useState<string | null>(null);
-  const [errored, setErrored] = React.useState(false);
+type OfficeRenderMode = "animated" | "static";
 
-  // WebGL support check
+function initialOfficeRenderMode(): OfficeRenderMode {
+  if (typeof window === "undefined") return "static";
+  try {
+    const saved = window.localStorage.getItem("aios-office-render-mode");
+    if (saved === "animated" || saved === "static") return saved;
+  } catch {
+    // Local preference is optional.
+  }
+  return window.matchMedia("(max-width: 850px)").matches ? "static" : "animated";
+}
+
+function isOfficeRedacted(row: LiveRow | null | undefined): boolean {
+  return text(row ?? {}, "office_visibility") === "redacted";
+}
+
+export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
+  const officeQuery = useOfficeSnapshot();
+  const { data, isLoading, error } = officeQuery;
+  const navigate = useNavigate();
+  const cameraTarget = useUIStore((state) => state.cameraTarget);
+  const focusRoom = useUIStore((state) => state.focusRoom);
+  const setAssistantScope = useUIStore((state) => state.setAssistantScope);
+  const openEvidence = useUIStore((state) => state.openEvidence);
+  const [hoveredRoom, setHoveredRoom] = React.useState<string | null>(null);
+  const [selectedAgent, setSelectedAgent] = React.useState<LiveRow | null>(null);
+  const [errored, setErrored] = React.useState(false);
   const [webglOk, setWebglOk] = React.useState<boolean | null>(null);
+  const [renderMode, setRenderMode] = React.useState<OfficeRenderMode>(initialOfficeRenderMode);
+  const [reducedMotion, setReducedMotion] = React.useState(false);
+
   React.useEffect(() => {
     try {
-      const c = document.createElement("canvas");
-      const gl = c.getContext("webgl2") || c.getContext("webgl");
-      setWebglOk(Boolean(gl));
+      const canvas = document.createElement("canvas");
+      setWebglOk(Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl")));
     } catch {
       setWebglOk(false);
     }
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updateMotion = () => setReducedMotion(preference.matches);
+    updateMotion();
+    preference.addEventListener?.("change", updateMotion);
+    return () => preference.removeEventListener?.("change", updateMotion);
   }, []);
 
-  const prefersReducedMotion = typeof window !== "undefined" &&
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-
-  // Compute risk rooms
-  const riskRooms = React.useMemo(() => {
-    const set = new Set<string>();
-    if (data?.risk_events?.length) {
-      set.add("risk");
-      if (data.risk_events.some((r) => text(r, "department", "").includes("portfolio") || text(r, "book"))) set.add("portfolio");
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem("aios-office-render-mode", renderMode);
+    } catch {
+      // The Office remains usable when storage is unavailable.
     }
-    return set;
-  }, [data?.risk_events]);
+  }, [renderMode]);
 
-  if (webglOk === false || prefersReducedMotion || errored) {
-    return <OfficeFallback height={height} />;
+  const agents = React.useMemo(() => mergeAgents(data), [data]);
+  const roomAgents = React.useMemo(() => {
+    const map = new Map<string, LiveRow[]>();
+    for (const room of ROOMS) map.set(room.key, []);
+    for (const agent of agents) {
+      const key = agentRoomKey(agent);
+      const bucket = map.get(key);
+      if (bucket) bucket.push(agent);
+    }
+    return map;
+  }, [agents]);
+  const roomStats = React.useMemo(() => new Map(
+    (data?.live_office_rooms ?? []).map((row) => [normalizeDepartment(text(row, "room_key")), row]),
+  ), [data?.live_office_rooms]);
+  const connections = React.useMemo(() => buildConnections(data, agents), [data, agents]);
+  const riskRooms = React.useMemo(() => {
+    const rooms = new Set<string>();
+    for (const [key, stats] of roomStats) {
+      const state = text(stats, "room_state").toLowerCase();
+      if (state.includes("risk") || state.includes("block") || num(stats, "blocked_task_count") > 0) rooms.add(key);
+    }
+    if ((data?.risk_events?.length ?? 0) > 0) rooms.add("risk");
+    return rooms;
+  }, [data?.risk_events, roomStats]);
+  const projectionMeta = (data?.projection_meta ?? {}) as LiveRow;
+  const activeGraphRuns = data?.graph_runs?.length ?? 0;
+  const workingAgents = agents.filter(isBusy).length;
+  const alertCount = (data?.graph_attention?.length ?? 0) + (data?.risk_events?.length ?? 0) + (data?.issues?.length ?? 0);
+  const forceStatic = webglOk !== true || reducedMotion || errored;
+  const showStatic = forceStatic || renderMode === "static";
+
+  function selectAgent(agent: LiveRow) {
+    setSelectedAgent(agent);
+    focusRoom(agentRoomKey(agent));
   }
+
+  function talkToAgent(agent: LiveRow) {
+    const name = text(agent, "agent_name");
+    setAssistantScope({ agentKey: name, agentName: name });
+  }
+
+  function delegateToAgent(agent: LiveRow) {
+    const name = text(agent, "agent_name");
+    setAssistantScope("charlie");
+    window.dispatchEvent(new CustomEvent("aios:assistant-prefill", {
+      detail: `Delegate a task to ${name}: `,
+    }));
+  }
+
+  function inspectAgentTask(agent: LiveRow) {
+    if (isOfficeRedacted(agent)) {
+      navigate("/portfolio/imports");
+      return;
+    }
+    const taskId = num(agent, "current_task_id");
+    if (!taskId) return;
+    openEvidence({
+      kind: "task",
+      key: String(taskId),
+      title: text(agent, "current_task_title", `Task ${taskId}`),
+      subtitle: `${text(agent, "agent_name")} · current assignment`,
+    });
+  }
+
+  function inspectMessage(message: LiveRow) {
+    if (isOfficeRedacted(message)) return;
+    const messageId = num(message, "id");
+    if (!messageId) return;
+    openEvidence({
+      kind: "agent-message",
+      key: String(messageId),
+      title: text(message, "subject", "Agent handoff"),
+      subtitle: `${text(message, "from_agent", "Agent")} → ${text(message, "to_agent", "Agent")}`,
+    });
+  }
+
+  function focusFloor(floor: number) {
+    const first = ROOMS.find((room) => room.floor === floor);
+    if (!first) return;
+    setSelectedAgent(null);
+    focusRoom(first.key);
+  }
+
+  function handleKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, a")) return;
+    if (event.key === "Escape" || event.key === "Home") {
+      event.preventDefault();
+      setSelectedAgent(null);
+      focusRoom(null);
+      return;
+    }
+    if (event.key === "1" || event.key === "2" || event.key === "3") {
+      event.preventDefault();
+      focusFloor(event.key === "1" ? -1 : event.key === "2" ? 0 : 1);
+      return;
+    }
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    const current = Math.max(0, ROOMS.findIndex((room) => room.key === cameraTarget.roomKey));
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+    const next = (current + step + ROOMS.length) % ROOMS.length;
+    setSelectedAgent(null);
+    focusRoom(ROOMS[next].key);
+  }
+
+  const common = {
+    height: "100%",
+    agents,
+    roomAgents,
+    selectedRoom: cameraTarget.roomKey,
+    selectedAgent,
+    onFocusRoom: focusRoom,
+    onSelectAgent: selectAgent,
+    onTalk: talkToAgent,
+    onDelegate: delegateToAgent,
+    onInspectTask: inspectAgentTask,
+    onNavigate: (path: string) => navigate(path),
+  };
 
   return (
     <>
       <style>{LiveOfficeCss}</style>
-      <div className="office-canvas-wrap" style={{ height }}>
-        <Canvas
-          shadows
-          dpr={[1, 1.8]}
-          camera={{ position: [0, 11, 17], fov: 42 }}
-          gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}
-          onError={() => setErrored(true)}
-        >
-          <React.Suspense fallback={null}>
-            <AdaptiveDpr pixelated />
+      <section
+        className="office-spatial-shell"
+        style={{ height }}
+        tabIndex={0}
+        onKeyDown={handleKeyboard}
+        aria-label="Live spatial Office. Use arrow keys to move between rooms, number keys one to three for floors, and Home for the full firm view."
+      >
+        <header className="office-spatial-toolbar">
+          <div className="office-spatial-toolbar__identity">
+            <strong>Operational floor</strong>
+            <span>
+              Snapshot {formatRelative(data?.generated_at ?? "")}
+              {" · "}records {formatRelative(text(projectionMeta, "latest_record_at"))}
+            </span>
+          </div>
+          <div className="office-spatial-toolbar__status" role="status" aria-live="polite">
+            <span className={`office-signal office-signal--${text(projectionMeta, "source_status", error ? "error" : "loading")}`}>
+              {error ? "Source error" : text(projectionMeta, "source_status", isLoading ? "loading" : "no activity").replace(/_/g, " ")}
+            </span>
+            <span>{alertCount} alerts</span>
+            <span>{num(projectionMeta, "redacted_record_count")} private records hidden</span>
+            <span className="office-safety-lock">Broker writes locked</span>
+          </div>
+          <div className="office-spatial-toolbar__controls" aria-label="Office view controls">
+            <button type="button" onClick={() => { setSelectedAgent(null); focusRoom(null); }}>Overview</button>
+            <button type="button" onClick={() => focusFloor(-1)}>Infrastructure</button>
+            <button type="button" onClick={() => focusFloor(0)}>Dealing floor</button>
+            <button type="button" onClick={() => focusFloor(1)}>Mezzanine</button>
+            <button
+              type="button"
+              aria-label={showStatic ? "Use animated office" : "Use static office"}
+              aria-pressed={showStatic}
+              disabled={forceStatic}
+              title={reducedMotion ? "Static view is required by your reduced-motion preference." : webglOk === false ? "Static view is required because WebGL is unavailable." : undefined}
+              onClick={() => setRenderMode(showStatic ? "animated" : "static")}
+            >
+              {showStatic ? "Animated view" : "Static view"}
+            </button>
+          </div>
+        </header>
 
-            {/* === LIGHTING — bright, warm, hand-tuned (no HDR fetch) === */}
-            <ambientLight intensity={0.75} color="#fff2dc" />
-            <hemisphereLight args={["#fff4e0", "#3a2f25", 0.7]} />
-            <directionalLight
-              position={[12, 20, 10]}
-              intensity={1.6}
-              color="#ffe8c4"
-              castShadow
-              shadow-mapSize={[2048, 2048]}
-              shadow-camera-left={-30}
-              shadow-camera-right={30}
-              shadow-camera-top={30}
-              shadow-camera-bottom={-30}
-              shadow-camera-near={0.5}
-              shadow-camera-far={60}
-              shadow-bias={-0.0004}
+        {error ? (
+          <div className="office-projection-state office-projection-state--error" role="alert">
+            <strong>Office source unavailable</strong>
+            <span>{error.message}</span>
+            <button type="button" onClick={() => officeQuery.refetch()}>Retry Office snapshot</button>
+          </div>
+        ) : isLoading && !data ? (
+          <div className="office-projection-state" role="status">
+            <strong>Loading source-backed Office state…</strong>
+            <span>No employee activity is shown until the warehouse snapshot arrives.</span>
+          </div>
+        ) : agents.length === 0 ? (
+          <div className="office-projection-state">
+            <strong>No employees or agents are configured</strong>
+            <span>The Office is intentionally empty; no activity has been fabricated.</span>
+          </div>
+        ) : showStatic ? (
+          <OfficeFallback {...common} />
+        ) : (
+          <div className="office-canvas-wrap">
+            <Canvas
+              shadows
+              dpr={[1, 1.65]}
+              camera={{ position: [0, 17, 29], fov: 43 }}
+              gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.12 }}
+              onError={() => setErrored(true)}
+            >
+              <React.Suspense fallback={null}>
+                <AdaptiveDpr pixelated />
+                <ambientLight intensity={0.7} color="#fff2dc" />
+                <hemisphereLight args={["#fff4e0", "#332a23", 0.65]} />
+                <directionalLight
+                  position={[14, 23, 12]}
+                  intensity={1.55}
+                  color="#ffe8c4"
+                  castShadow
+                  shadow-mapSize={[2048, 2048]}
+                  shadow-camera-left={-34}
+                  shadow-camera-right={34}
+                  shadow-camera-top={28}
+                  shadow-camera-bottom={-28}
+                  shadow-camera-near={0.5}
+                  shadow-camera-far={70}
+                  shadow-bias={-0.0004}
+                />
+                <pointLight position={[-13, 6, -8]} intensity={26} color="#ffd9a0" distance={28} decay={2} />
+                <pointLight position={[13, 6, 8]} intensity={22} color="#ffd9a0" distance={28} decay={2} />
+                <pointLight position={[0, 10, 0]} intensity={18} color="#fff4e0" distance={34} decay={2} />
+
+                <Floor floor={0} />
+                <Floor floor={1} />
+                <Floor floor={-1} />
+                <mesh position={[20.5, 2.2, 0]}>
+                  <boxGeometry args={[0.45, 4.6, 6]} />
+                  <meshStandardMaterial color="#82603f" roughness={0.72} />
+                </mesh>
+
+                {ROOMS.map((room) => (
+                  <Room
+                    key={room.key}
+                    room={room}
+                    agents={roomAgents.get(room.key) ?? []}
+                    stats={roomStats.get(room.key)}
+                    hasRisk={riskRooms.has(room.key)}
+                    isFocused={cameraTarget.roomKey === room.key}
+                    isHovered={hoveredRoom === room.key}
+                    committeeItems={data?.committee_room_items?.length ?? 0}
+                    activeGraphRuns={activeGraphRuns}
+                    selectedAgentName={text(selectedAgent, "agent_name")}
+                    onHover={(hovered) => setHoveredRoom(hovered ? room.key : null)}
+                    onClick={() => {
+                      setSelectedAgent(null);
+                      focusRoom(room.key);
+                    }}
+                    onSelectAgent={selectAgent}
+                  />
+                ))}
+
+                <DataFlows connections={connections} />
+                <CameraController focusTarget={cameraTarget.roomKey} />
+                <OrbitControls
+                  enablePan
+                  screenSpacePanning
+                  minDistance={7}
+                  maxDistance={42}
+                  minPolarAngle={0.12}
+                  maxPolarAngle={Math.PI / 2.04}
+                  target={[0, 1, 0]}
+                  makeDefault
+                />
+              </React.Suspense>
+            </Canvas>
+            <OfficeHud
+              focusedRoom={cameraTarget.roomKey}
+              selectedAgent={selectedAgent}
+              roomAgents={cameraTarget.roomKey ? roomAgents.get(cameraTarget.roomKey) ?? [] : []}
+              workingAgents={workingAgents}
+              totalAgents={agents.length}
+              activeGraphRuns={activeGraphRuns}
+              generatedAt={data?.generated_at ?? ""}
+              activity={data?.agent_messages ?? []}
+              onBack={() => {
+                setSelectedAgent(null);
+                focusRoom(null);
+              }}
+              onClearAgent={() => setSelectedAgent(null)}
+              onTalk={talkToAgent}
+              onDelegate={delegateToAgent}
+              onInspectTask={inspectAgentTask}
+              onInspectMessage={inspectMessage}
+              onNavigate={(path) => navigate(path)}
             />
-            {/* Warm fill lights */}
-            <pointLight position={[-10, 5, -8]} intensity={28} color="#ffd9a0" distance={24} decay={2} />
-            <pointLight position={[10, 5, 8]} intensity={20} color="#ffd9a0" distance={24} decay={2} />
-            <pointLight position={[0, 8, 0]} intensity={15} color="#fff4e0" distance={30} decay={2} />
-
-            {/* === FLOORS — three slabs === */}
-            <Floor floor={0} />
-            <Floor floor={1} />
-            <Floor floor={-1} />
-
-            {/* Stair tower connecting floors */}
-            <mesh position={[14.5, 2, 0]}>
-              <boxGeometry args={[0.4, 4, 5]} />
-              <meshStandardMaterial color="#8a6440" roughness={0.7} />
-            </mesh>
-
-            {/* === ROOMS === */}
-            {ROOMS.map((room) => (
-              <Room
-                key={room.key}
-                room={room}
-                hasRisk={riskRooms.has(room.key)}
-                isFocused={cameraTarget.roomKey === room.key}
-                isHovered={hovered === room.key}
-                onHover={(h) => setHovered(h ? room.key : null)}
-                onClick={() => focusRoom(room.key)}
-              />
-            ))}
-
-            {/* === DATA FLOWS === */}
-            <DataFlows activity={data?.agent_messages?.length ?? 0} />
-
-            {/* === CAMERA + CONTROLS === */}
-            <CameraController focusTarget={cameraTarget.roomKey} />
-            <OrbitControls
-              enablePan={false}
-              minDistance={7}
-              maxDistance={30}
-              minPolarAngle={0.15}
-              maxPolarAngle={Math.PI / 2.05}
-              target={[0, 1, -1]}
-              makeDefault
-            />
-          </React.Suspense>
-        </Canvas>
-
-        <OfficeHud focusedRoom={cameraTarget.roomKey} />
-      </div>
+          </div>
+        )}
+        <p className="office-spatial-help">
+          Drag to rotate, scroll or pinch to zoom, shift-drag to pan. Keyboard: arrows move rooms, 1–3 select a floor, Home returns to overview.
+        </p>
+      </section>
     </>
   );
 }
 
-/* ============================================================
- * FLOOR SLAB
- * ============================================================ */
 function Floor({ floor }: { floor: number }) {
   const y = floorY(floor);
-  const color = floor === 0 ? "#b88a5a" : floor === 1 ? "#c4a07a" : "#3a322c";
+  const color = floor === 0 ? "#a77b52" : floor === 1 ? "#b28c66" : "#332d28";
   return (
     <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[64, 44]} />
-      <meshStandardMaterial color={color} roughness={floor === -1 ? 0.95 : 0.6} metalness={0.02} />
+      <planeGeometry args={[52, 34]} />
+      <meshStandardMaterial color={color} roughness={floor === -1 ? 0.95 : 0.67} metalness={0.02} />
     </mesh>
   );
 }
 
-/* ============================================================
- * HUD overlay
- * ============================================================ */
-function OfficeHud({ focusedRoom }: { focusedRoom: string | null }) {
-  const focusRoom = useUIStore((s) => s.focusRoom);
+function OfficeHud({
+  focusedRoom,
+  selectedAgent,
+  roomAgents,
+  workingAgents,
+  totalAgents,
+  activeGraphRuns,
+  generatedAt,
+  activity,
+  onBack,
+  onClearAgent,
+  onTalk,
+  onDelegate,
+  onInspectTask,
+  onInspectMessage,
+  onNavigate,
+}: {
+  focusedRoom: string | null;
+  selectedAgent: LiveRow | null;
+  roomAgents: LiveRow[];
+  workingAgents: number;
+  totalAgents: number;
+  activeGraphRuns: number;
+  generatedAt: string;
+  activity: LiveRow[];
+  onBack: () => void;
+  onClearAgent: () => void;
+  onTalk: (agent: LiveRow) => void;
+  onDelegate: (agent: LiveRow) => void;
+  onInspectTask: (agent: LiveRow) => void;
+  onInspectMessage: (message: LiveRow) => void;
+  onNavigate: (path: string) => void;
+}) {
+  const delegateTask = useDelegateAgentTask();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [showDelegate, setShowDelegate] = React.useState(false);
+  const [delegateObjective, setDelegateObjective] = React.useState("");
   const room = focusedRoom ? roomByKey(focusedRoom) : null;
+  React.useEffect(() => {
+    setShowDelegate(false);
+    setDelegateObjective("");
+  }, [selectedAgent]);
+
+  function submitDelegation() {
+    if (!selectedAgent || !delegateObjective.trim()) return;
+    const agentName = text(selectedAgent, "agent_name");
+    delegateTask.mutate({
+      to_agent: agentName,
+      objective: delegateObjective.trim(),
+      priority: "high",
+      workspace: agentRoomKey(selectedAgent),
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        pushToast({
+          title: `Task queued to ${agentName}`,
+          message: `Task #${num(result, "task_id")} is durable and visible in the office.`,
+          tone: "ok",
+          duration: 5000,
+        });
+        setShowDelegate(false);
+        setDelegateObjective("");
+      },
+      onError: (error) => pushToast({ title: "Delegation failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
   return (
     <div className="office-hud">
       <div className="office-hud__top">
-        <div className="office-hud__title">AI Investment Firm — Live</div>
-        <div className="office-hud__hint">Click a room to fly in · Scroll to zoom · Drag to orbit</div>
+        <div>
+          <div className="office-hud__title">AI Investment Firm · Live</div>
+          <div className="office-hud__hint">{totalAgents} employees · {workingAgents} working · {activeGraphRuns} graph runs · {formatRelative(generatedAt)}</div>
+          {activity.length > 0 && (
+            <div className="office-hud__activity" aria-label="Latest inter-agent handoffs">
+              {activity.slice(0, 3).map((item, index) => {
+                const redacted = isOfficeRedacted(item);
+                return (
+                  <button
+                    type="button"
+                    key={String(num(item, "id", index))}
+                    disabled={redacted}
+                    onClick={() => onInspectMessage(item)}
+                    aria-label={redacted ? "Private handoff details hidden" : `Inspect handoff: ${text(item, "subject", "Work handoff")}`}
+                  >
+                    <span>{text(item, "from_agent", "Agent")} → {text(item, "to_agent", "Agent")}</span>
+                    <b>{text(item, "subject", "Work handoff")}</b>
+                    <time>{formatRelative(text(item, "created_at"))}</time>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="office-hud__legend">
+          <span><i className="is-working" />Working</span>
+          <span><i className="is-waiting" />Waiting</span>
+          <span><i className="is-blocked" />Blocked</span>
+        </div>
       </div>
       <div className="office-hud__bottom">
-        {room ? (
+        {selectedAgent ? (
+          <div className="office-hud__agent-card">
+            <div className="office-hud__agent-head">
+              <div>
+                <strong>{text(selectedAgent, "agent_name")}</strong>
+                <span>{text(selectedAgent, "display_title", text(selectedAgent, "role_scope"))}</span>
+              </div>
+              <span className={`office-hud__state ${isBlocked(selectedAgent) ? "is-blocked" : isBusy(selectedAgent) ? "is-working" : "is-idle"}`}>
+                {liveState(selectedAgent).replace(/_/g, " ")}
+              </span>
+            </div>
+            <div className="office-hud__work">
+              <b>{text(selectedAgent, "presence_title", "Available for assignment")}</b>
+              <span>{text(selectedAgent, "presence_detail", text(selectedAgent, "presence_reason", "No fresh assignment."))}</span>
+            </div>
+            <div className="office-hud__agent-facts">
+              <span>Tasks <b>{num(selectedAgent, "open_task_count")}</b></span>
+              <span>Inbox <b>{num(selectedAgent, "open_inbox_count")}</b></span>
+              <span>Model <b>{text(selectedAgent, "latest_worker_skill_name", text(selectedAgent, "default_model_route", "route-managed"))}</b></span>
+            </div>
+            <div className="office-hud__room-actions">
+              <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
+              <button className="office-hud__btn" onClick={() => setShowDelegate((open) => !open)}>Delegate task</button>
+              {isOfficeRedacted(selectedAgent) ? (
+                room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open private workspace</button>
+              ) : num(selectedAgent, "current_task_id") > 0 ? (
+                <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>
+              ) : null}
+              {room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open department</button>}
+              <button className="office-hud__btn" onClick={onClearAgent}>Close employee</button>
+            </div>
+            {showDelegate && (
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                <textarea
+                  aria-label={`Assignment for ${text(selectedAgent, "agent_name")}`}
+                  value={delegateObjective}
+                  onChange={(event) => setDelegateObjective(event.target.value)}
+                  placeholder="State the exact deliverable, evidence required, deadline or review gate."
+                  rows={3}
+                  style={{ width: "100%", resize: "vertical", background: "rgba(5,10,12,.88)", color: "#f5f7f6", border: "1px solid rgba(255,255,255,.2)", padding: 10, font: "inherit" }}
+                />
+                <div className="office-hud__room-actions">
+                  <button className="office-hud__btn office-hud__btn--primary" disabled={!delegateObjective.trim() || delegateTask.isPending} onClick={submitDelegation}>
+                    {delegateTask.isPending ? "Queuing…" : "Queue assignment"}
+                  </button>
+                  <button className="office-hud__btn" onClick={() => setShowDelegate(false)}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : room ? (
           <div className="office-hud__room-card">
             <div className="office-hud__room-name">{room.label}</div>
-            <div className="office-hud__room-dept">{room.department}</div>
+            <div className="office-hud__room-dept">{room.department} · {roomAgents.length} employees · {roomAgents.filter(isBusy).length} working</div>
+            <div className="office-hud__room-work">
+              {roomAgents.filter(isBusy).slice(0, 3).map((agent) => (
+                <span key={text(agent, "agent_name")}><b>{text(agent, "agent_name")}</b>{text(agent, "current_work_title", text(agent, "current_task_title", "Working"))}</span>
+              ))}
+            </div>
+            {room.workspaceState === "hidden" && (
+              <div className="office-hud__workspace-gate">{room.workspaceReason ?? "Workspace hidden until its real-source acceptance gate passes."}</div>
+            )}
             <div className="office-hud__room-actions">
-              {room.link && (
-                <button className="office-hud__btn office-hud__btn--primary" onClick={() => { window.history.pushState({}, "", room.link!); window.dispatchEvent(new PopStateEvent("popstate")); }}>
-                  Open in 2D →
-                </button>
-              )}
-              <button className="office-hud__btn" onClick={() => focusRoom(null)}>Back to lobby</button>
+              {room.link && <button className="office-hud__btn office-hud__btn--primary" onClick={() => onNavigate(room.link!)}>Open accepted workspace</button>}
+              <button className="office-hud__btn" onClick={onBack}>Firm overview</button>
             </div>
           </div>
         ) : (
-          <div className="office-hud__lobby-hint">You're at the lobby overview. Pick a room to explore.</div>
+          <div className="office-hud__lobby-hint">All departments · live assignments · governed handoffs</div>
         )}
       </div>
     </div>
   );
 }
 
-/* ============================================================
- * FALLBACK — static floor plan when WebGL unavailable
- * ============================================================ */
-function OfficeFallback({ height }: { height: number | string }) {
-  const focusRoom = useUIStore((s) => s.focusRoom);
-  const cameraTarget = useUIStore((s) => s.cameraTarget);
+function OfficeFallback({
+  height,
+  agents,
+  roomAgents,
+  selectedRoom,
+  selectedAgent,
+  onFocusRoom,
+  onSelectAgent,
+  onTalk,
+  onDelegate,
+  onInspectTask,
+  onNavigate,
+}: {
+  height: number | string;
+  agents: LiveRow[];
+  roomAgents: Map<string, LiveRow[]>;
+  selectedRoom: string | null;
+  selectedAgent: LiveRow | null;
+  onFocusRoom: (key: string | null) => void;
+  onSelectAgent: (agent: LiveRow) => void;
+  onTalk: (agent: LiveRow) => void;
+  onDelegate: (agent: LiveRow) => void;
+  onInspectTask: (agent: LiveRow) => void;
+  onNavigate: (path: string) => void;
+}) {
+  const selectedRoomDefinition = selectedAgent ? roomByKey(agentRoomKey(selectedAgent)) : undefined;
   return (
     <div className="office-fallback" style={{ height }}>
+      <style>{LiveOfficeCss}</style>
       <div className="office-fallback__inner">
-        <div className="office-fallback__title">Live Office (floor plan view)</div>
-        <div className="office-fallback__sub">3D rendering is unavailable on this device. Here's the interactive floor plan:</div>
+        <div className="office-fallback__title">AI Investment Firm · Live Floor Plan</div>
+        <div className="office-fallback__sub">{agents.length} employees across {ROOMS.filter((room) => room.key !== "lobby" && room.key !== "committee").length} departments</div>
+        {selectedAgent && (
+          <section className="office-fallback__selected">
+            <div>
+              <strong>{text(selectedAgent, "agent_name")}</strong>
+              <span>{text(selectedAgent, "display_title", text(selectedAgent, "role_scope"))}</span>
+              <b>{text(selectedAgent, "current_work_title", text(selectedAgent, "current_task_title", "No active assignment"))}</b>
+              <small>{text(selectedAgent, "current_work_detail", text(selectedAgent, "latest_worker_summary", "No worker output recorded."))}</small>
+            </div>
+            <div className="office-hud__room-actions">
+              <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
+              <button className="office-hud__btn" onClick={() => onDelegate(selectedAgent)}>Delegate task</button>
+              {isOfficeRedacted(selectedAgent)
+                ? selectedRoomDefinition?.link && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open private workspace</button>
+                : num(selectedAgent, "current_task_id") > 0 && <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>}
+              {selectedRoomDefinition?.link && !isOfficeRedacted(selectedAgent) && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open accepted workspace</button>}
+            </div>
+          </section>
+        )}
         <div className="office-fallback__grid">
-          {ROOMS.map((room) => (
-            <button
-              key={room.key}
-              className={`office-fallback__room ${cameraTarget.roomKey === room.key ? "office-fallback__room--active" : ""}`}
-              onClick={() => focusRoom(room.key)}
-            >
-              <div className="office-fallback__room-name">{room.label}</div>
-              <div className="office-fallback__room-dept">{room.department}</div>
-              <div className="office-fallback__room-floor">
-                {room.floor === 1 ? "Mezzanine" : room.floor === -1 ? "Basement" : "Ground"}
-              </div>
-            </button>
-          ))}
+          {ROOMS.map((room) => {
+            const occupants = roomAgents.get(room.key) ?? [];
+            return (
+              <section key={room.key} className={`office-fallback__room ${selectedRoom === room.key ? "office-fallback__room--active" : ""}`}>
+                <button className="office-fallback__room-button" onClick={() => onFocusRoom(room.key)}>
+                  <span className="office-fallback__room-name">{room.label}</span>
+                  <span className="office-fallback__room-dept">{occupants.length} employees · {occupants.filter(isBusy).length} working</span>
+                  <span className="office-fallback__room-floor">
+                    {room.floor === 1 ? "Mezzanine" : room.floor === -1 ? "Infrastructure" : "Dealing floor"}
+                    {" · "}{room.workspaceState === "ready" ? "workspace accepted" : "workspace gated"}
+                  </span>
+                </button>
+                {selectedRoom === room.key && occupants.slice(0, 12).map((agent) => (
+                  <button key={text(agent, "agent_name")} className="office-fallback__agent" onClick={() => onSelectAgent(agent)}>
+                    <span>{text(agent, "agent_name")}</span>
+                    <small>{isOfficeRedacted(agent) ? "Private scoped work" : text(agent, "current_work_title", liveState(agent))}</small>
+                  </button>
+                ))}
+              </section>
+            );
+          })}
         </div>
       </div>
     </div>

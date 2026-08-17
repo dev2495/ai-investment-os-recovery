@@ -51,15 +51,17 @@ export function CommandPalette() {
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
   const setAssistantOpen = useUIStore((s) => s.setAssistantOpen);
+  const queueAssistantMessage = useUIStore((s) => s.queueAssistantMessage);
   const setAssistantScope = useUIStore((s) => s.setAssistantScope);
   const focusRoom = useUIStore((s) => s.focusRoom);
   const pushToast = useUIStore((s) => s.pushToast);
   const navigate = useNavigate();
 
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = React.useState("");
 
   React.useEffect(() => {
-    if (open) requestAnimationFrame(() => inputRef.current?.focus());
+    if (open) { setQuery(""); requestAnimationFrame(() => inputRef.current?.focus()); }
   }, [open]);
 
   React.useEffect(() => {
@@ -79,8 +81,7 @@ export function CommandPalette() {
   function askCharlie(question: string) {
     if (!question.trim()) return;
     setAssistantScope("charlie");
-    setAssistantOpen(true);
-    sessionStorage.setItem("aios:pending-charlie-question", question);
+    queueAssistantMessage(question);
     setOpen(false);
     pushToast({ title: "Asked Charlie", message: question.length > 60 ? `${question.slice(0, 60)}…` : question, tone: "info", duration: 2500 });
   }
@@ -97,7 +98,7 @@ export function CommandPalette() {
       <Command.Dialog className="aios-palette" open={open} onOpenChange={setOpen} label="Command Palette">
         <div className="aios-palette__input-wrap">
           <Search size={16} className="aios-palette__input-icon" />
-          <Command.Input ref={inputRef} placeholder="Jump to function (<PORT>), search, or ask Charlie…" className="aios-palette__input" />
+          <Command.Input ref={inputRef} value={query} onValueChange={setQuery} placeholder="Jump to function (<PORT>), search, or ask Charlie…" className="aios-palette__input" />
           <kbd className="aios-palette__esc">ESC</kbd>
         </div>
         <Command.List className="aios-palette__list">
@@ -160,12 +161,12 @@ export function CommandPalette() {
           {/* Ask Charlie */}
           <Command.Group heading="Ask Charlie" className="aios-palette__group">
             <Command.Item
-              value="ask charlie question"
-              onSelect={(val) => askCharlie(val.replace(/^ask\s+charlie\s*/i, ""))}
+              value={"ask charlie "+query}
+              onSelect={() => askCharlie(query)}
               className="aios-palette__item aios-palette__item--charlie"
             >
               <Sparkles size={15} />
-              <span className="aios-palette__item-label">Ask Charlie a question</span>
+              <span className="aios-palette__item-label">{query.trim() ? "Ask Charlie: “"+query.trim()+"”" : "Ask Charlie a question"}</span>
             </Command.Item>
           </Command.Group>
         </Command.List>

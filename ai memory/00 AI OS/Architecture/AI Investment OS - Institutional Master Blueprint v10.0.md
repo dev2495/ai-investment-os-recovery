@@ -1793,3 +1793,44 @@ The Data & Model Gateway now resolves all 95 active employees to explicit model-
 The tick-to-OHLCV bounded integration job was corrected to report its actual 2,131 rows upserted. A source freshness evaluation moved the connector from stale to fresh without changing the age or scope of the underlying historical ticks. This proves scheduler health, not live-market coverage; the intraday dataset remains historically narrow and cannot be represented as execution-ready.
 
 Release evidence passed idempotent migrations `133` and `134`, Python compilation, production frontend build, six Strategy Arsenal browser tests, six Data & Model Gateway browser tests, a 174-tool broad MCP smoke, a strategy lifecycle MCP smoke, live provider readiness, full assignment completeness, and the global execution lock. Deferred local Qwen installation, broker credentials, crypto/commodity activation, authenticated X access, full live market coverage, and 3D office refinement remain open by design. Evidence: [[2026-07-15-alpha-factory-and-plugin-readiness-v1]].
+## 45. Institutional Research, Sector, And Options Completion Contract
+
+The Investment OS is not a complete autonomous hedge fund merely because an agent, table, workflow, or frontend panel exists. Completion requires source-backed data, deterministic calculations, durable agent work, independent challenge, human decision gates, and retained acceptance evidence. The following three programs are mandatory completion scope.
+
+### 45.1 Fundamental Research Factory And Long-Term Investment Committee
+
+The atomic object is a versioned company underwrite linked to securities, client exposures, books, theses, source documents, assumptions, specialist opinions, committee decisions, and monitoring triggers.
+
+Required data includes standardized 10-15 year statements and schedules; restatement, unit, period, source, and as-of semantics; product, segment, geography, customer, operational KPI, unit-economics, market-share, capacity, and peer histories; annual reports, filings, concalls, transcripts, annual letters, presentations, rating rationales, and material news; management claims and later outcomes; and reproducible DCF, reverse DCF, multiples, scenario, and Monte Carlo inputs.
+
+The independent lanes are Business Model, Moat, Industry And Value Chain, Management, Governance, Capital Allocation, Financial Quality, Forensic Accounting, Valuation, Bear Case And Thesis Killers, Portfolio Fit And Opportunity Cost, and Independent Risk. Financial Quality appears exactly once. Portfolio Fit is mandatory.
+
+Every researched company produces a versioned 15-section dossier: conclusion; industry/value chain; business model/unit economics; products/segments/geography/customers; market size/share/competition; moat; management/governance/capital allocation; long financial teardown; forensics; peers; scenarios; valuation and Monte Carlo; catalysts/killers/monitoring; portfolio fit/sizing/opportunity cost; and specialist opinions, dissent, committee synthesis, and Devarsh's final decision.
+
+Results, filings, concalls, annual reports, rating changes, capital actions, governance events, material news, valuation thresholds, and operator requests create bounded refresh graphs. Acceptance requires one real company to pass primary-source intake, normalized history, all specialists, valuation/scenarios, independent risk, sealed committee positions, dissent, human decision, dossier writeback, Qdrant indexing, and monitoring. Missing evidence blocks conclusions rather than being invented.
+
+### 45.2 Sector Intelligence, Custom Indices, And Flow Engine
+
+Sector Intelligence is a first-class department serving Research, Portfolio, Quant, Risk, Macro, and Trading. It owns effective-dated Indian sector/industry/sub-industry taxonomy and constituent membership; financial aggregates and valuation bands; market-share, KPI, capacity, value-chain, raw-material, and macro histories; reproducible leader/challenger/improver/deteriorator and factor classifications; equal-weight, market-cap/free-float, quality, momentum, and operator-defined indices with versions, rebalances, and point-in-time history; price, volume, delivery, breadth, futures OI, options flow, volatility, and relative-strength monitors; and FII/DII, fund, promoter, insider, bulk/block, pledge, and shareholding observations.
+
+The department includes a Sector Portfolio Manager, Sector Research Lead, Flow Analyst, Industry Analysts, Data Steward, Independent Risk member, and Sector Committee. Licensed/manual exports may supplement primary NSE/BSE evidence; unsupported scraping of services without an API is not a production dependency.
+
+TradingView Desktop remains a user-managed chart workspace. The deterministic engine owns taxonomy, weights, levels, history, and rebalance records, and may generate formula/spread expressions, Pine scripts, chart packs, and four/eight-pane handoffs. TradingView is not the warehouse, canonical market-data source, or execution engine.
+
+Acceptance requires one real Indian sector with effective-dated constituents, two point-in-time weighting methods, reconciled index history, financial/valuation breadth, relative strength, flows, source lineage, a sector dossier, committee discussion, portfolio fit, and generated native Desktop handoff artifacts.
+
+Verified milestone on 2026-08-04: the warehouse imported 11 official current Nifty sector baskets from Nifty Indices, retaining 151 source rows as 24 taxonomy nodes and 302 effective-dated index/industry memberships as of 2026-07-31. The Nifty IT acceptance run passed current constituent evidence and blocked the other nine institutional gates; this is intentionally not a completed sector office. Evidence: [[2026-08-04-sector-taxonomy-and-bse-filing-intake-v1]].
+
+### 45.3 Institutional Options Analytics And Monitoring Desk
+
+Every displayed analytical value must be a validated deterministic calculation or an identified provider field. Missing IV or Greeks remain unavailable and are never rendered as zero.
+
+Required capabilities are minute chain snapshots with provider/exchange timestamps, bid/ask, volume, OI, spot/forward inputs, liquidity and staleness; validated Black-Scholes or Black-76 IV and Greeks with convergence, assumptions, model version, and quality; ATM straddle/strangle history, buildup, OI heatmaps, strike migration, replay, IV percentile/rank, skew, and term structure; expected move and probability bands; GEX, DEX, vanna, charm, and gamma-flip estimates with sign conventions; participant/futures positioning and feed-quality diagnostics; and alerts, specialist observations, strategy inputs, paper-trade lineage, position Greeks, PnL attribution, and review.
+
+The desk includes Options Specialist, Volatility Analyst, Flow Analyst, Strategy Structurer, Data Quality Agent, and Independent Risk. It may create observations, alerts, hypotheses, paper trades, and approval requests, but never a live broker order.
+
+Acceptance requires one live Zerodha index-options session captured over multiple minutes, reconciled IV/Greeks on liquid contracts, stale/illiquid exclusions, straddle/OI history, surface/skew/term structure, exposure estimates with assumptions, replay, an evidence-backed brief, paper attribution, and zero broker writes.
+
+### 45.4 Completion Gates
+
+Production contains no seed/demo company, sector, chain, trade, committee, or acceptance rows. Facts, provider fields, calculations, model claims, agent judgment, assumptions, conflicts, and missing evidence are distinguishable. Calculations retain input identity, source/as-of, version, quality flags, and reproducible output. Specialists submit sealed views before discussion and dissent remains visible. Devarsh's capital and live-execution decisions remain separate. UI/API contracts render unavailable data with reasons. Reports are versioned, cited, written to durable knowledge, indexed, and linked to structured records. Acceptance evidence includes database, API, calculation, agent, artifact, desktop/mobile, freshness, runtime, and broker-lock proof.

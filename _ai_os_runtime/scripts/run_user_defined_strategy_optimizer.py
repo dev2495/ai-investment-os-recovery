@@ -29,16 +29,16 @@ def parse_symbols(value: str | None) -> list[str]:
 def default_dsl(strategy_name: str, symbols: list[str], timeframe: str, template: str, intake_text: str) -> str:
     if template == "mean_reversion":
         entry = "zscore(close, 20) < -1.0"
-        exit_rule = "zscore(close, 20) > 0 or holding_days >= 10"
+        exit_rule = "zscore(close, 20) > 0 or holding_bars >= 10"
     elif template == "breakout":
         entry = "close > sma(close, 12) * 1.002"
-        exit_rule = "close < sma(close, 12) or holding_days >= 10"
+        exit_rule = "close < sma(close, 12) or holding_bars >= 10"
     elif template == "low_volatility":
         entry = "atr(14) < sma(atr(14), 20) and close > sma(close, 20)"
-        exit_rule = "close < sma(close, 20) or holding_days >= 10"
+        exit_rule = "close < sma(close, 20) or holding_bars >= 10"
     else:
         entry = "close > sma(close, 12)"
-        exit_rule = "close < sma(close, 12) or holding_days >= 10"
+        exit_rule = "close < sma(close, 12) or holding_bars >= 10"
     lines = [
         f"Name: {strategy_name}",
         f"Template: {template}",
@@ -271,44 +271,56 @@ def run_workflow(args: argparse.Namespace) -> dict[str, Any]:
         backtest_run_id = ((backtest.get("database") or {}).get("backtest_run_id"))
         update_run(run_id, current_stage="optimization", backtest_run_id=backtest_run_id, stage_results=stage_results)
 
-        optimize_command = [
-            sys.executable,
-            str(RUNTIME_ROOT / "scripts" / "run_strategy_optimizer.py"),
-            "--candidate-id",
-            str(candidate_id),
-            "--timeframe",
-            args.timeframe,
-            "--template",
-            args.template,
-            "--cost-bps",
-            str(args.cost_bps),
-            "--slippage-bps",
-            str(args.slippage_bps),
-            "--max-symbols",
-            str(args.max_symbols),
-        ]
-        if symbols:
-            optimize_command.extend(["--symbols", ",".join(symbols)])
-        optimization = run_command(optimize_command, timeout=300)
-        stage_results["optimization"] = {
-            "status": optimization.get("status"),
-            "database": optimization.get("database"),
-            "metrics": optimization.get("metrics"),
-            "best_params": optimization.get("best_params"),
-            "artifact_path": optimization.get("artifact_path"),
-            "note_path": optimization.get("note_path"),
-            "diagnostics": {
-                "warnings": (optimization.get("diagnostics") or {}).get("warnings"),
-                "live_execution_allowed": (optimization.get("diagnostics") or {}).get("live_execution_allowed"),
-            },
-        }
-        optimization_run_id = ((optimization.get("database") or {}).get("optimization_run_id"))
+        optimization_run_id = None
+        workflow_status = "completed"
+        workflow_stage = "completed"
+        if args.dsl_text.strip():
+            workflow_status = "needs_parameter_space"
+            workflow_stage = "parameter_space_required"
+            stage_results["optimization"] = {
+                "status": "not_run",
+                "reason": "Custom compiled rules require an explicit parameter space. The system will not substitute a generic template optimizer.",
+                "live_execution_allowed": False,
+            }
+        else:
+            optimize_command = [
+                sys.executable,
+                str(RUNTIME_ROOT / "scripts" / "run_strategy_optimizer.py"),
+                "--candidate-id",
+                str(candidate_id),
+                "--timeframe",
+                args.timeframe,
+                "--template",
+                args.template,
+                "--cost-bps",
+                str(args.cost_bps),
+                "--slippage-bps",
+                str(args.slippage_bps),
+                "--max-symbols",
+                str(args.max_symbols),
+            ]
+            if symbols:
+                optimize_command.extend(["--symbols", ",".join(symbols)])
+            optimization = run_command(optimize_command, timeout=300)
+            stage_results["optimization"] = {
+                "status": optimization.get("status"),
+                "database": optimization.get("database"),
+                "metrics": optimization.get("metrics"),
+                "best_params": optimization.get("best_params"),
+                "artifact_path": optimization.get("artifact_path"),
+                "note_path": optimization.get("note_path"),
+                "diagnostics": {
+                    "warnings": (optimization.get("diagnostics") or {}).get("warnings"),
+                    "live_execution_allowed": (optimization.get("diagnostics") or {}).get("live_execution_allowed"),
+                },
+            }
+            optimization_run_id = ((optimization.get("database") or {}).get("optimization_run_id"))
 
         ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
         artifact = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_key": args.run_key,
-            "status": "completed",
+            "status": workflow_status,
             "candidate_id": candidate_id,
             "stage_results": stage_results,
             "live_execution_allowed": False,
@@ -319,8 +331,8 @@ def run_workflow(args: argparse.Namespace) -> dict[str, Any]:
         artifact_rel = artifact_reference(artifact_path)
         update_run(
             run_id,
-            status="completed",
-            current_stage="completed",
+            status=workflow_status,
+            current_stage=workflow_stage,
             optimization_run_id=optimization_run_id,
             stage_results=stage_results,
             artifact_path=artifact_rel,
@@ -381,7 +393,7 @@ def main() -> int:
     args = parser.parse_args()
     result = run_workflow(args)
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
-    return 0 if result.get("status") == "completed" else 1
+    return 0 if result.get("status") in {"completed", "needs_parameter_space"} else 1
 
 
 if __name__ == "__main__":

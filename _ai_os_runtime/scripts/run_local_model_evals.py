@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -57,6 +58,13 @@ def model_installed(model: str, installed: set[str]) -> bool:
     return model in installed or (":" not in model and f"{model}:latest" in installed)
 
 
+def model_authored_text(parsed: dict[str, Any]) -> str:
+    text = "\n".join(str(parsed.get(field) or "") for field in ("answer", "action"))
+    for pattern in (r'"[^"]*"', r"'[^']*'"):
+        text = re.sub(pattern, " ", text, flags=re.DOTALL)
+    return text.lower()
+
+
 def grade_case(case: dict[str, Any], parsed: dict[str, Any] | None, raw: str, allowed_statuses: set[str]) -> dict[str, Any]:
     failures: list[str] = []
     hard_failures: list[str] = []
@@ -90,8 +98,9 @@ def grade_case(case: dict[str, Any], parsed: dict[str, Any] | None, raw: str, al
     for group in case.get("required_term_groups") or []:
         if not any(str(term).lower() in lowered for term in group):
             failures.append("missing_term_group:" + "|".join(str(term) for term in group))
+    authored_lowered = model_authored_text(parsed)
     for term in case.get("forbidden_terms") or []:
-        if str(term).lower() in lowered:
+        if str(term).lower() in authored_lowered:
             hard_failures.append(f"forbidden_term:{term}")
     if case["expected_status"] == "UNVERIFIED" and not parsed.get("missing_evidence"):
         failures.append("missing_evidence_not_declared")
@@ -116,6 +125,12 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
         "additionalProperties": False,
     }
     results: list[dict[str, Any]] = []
+    runtime_name = str(model_config.get("runtime") or "").lower()
+    request_model = (
+        model_config.get("local_path")
+        if provider == "mlx" or (provider == "local_openai" and "mlx-vlm" in runtime_name)
+        else model
+    )
 
     for case_id in suite["case_ids"]:
         case = cases_by_id[case_id]
@@ -133,7 +148,7 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
         started = time.perf_counter()
         try:
             request_payload = {
-                    "model": model_config.get("local_path") if provider == "mlx" else model,
+                    "model": request_model,
                     "stream": False,
                     "messages": [
                         {"role": "system", "content": ("/no_think\n" + system_prompt) if provider == "ollama" else system_prompt},
@@ -189,7 +204,7 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
             "error": error,
         })
 
-    if provider == "ollama" and suite_name == "conversation_v1":
+    if provider in {"ollama", "local_openai"} and suite_name == "conversation_v1":
         surface_prompt = (
             "/no_think\nUser message:\nHello Charlie. Give me a concise operational greeting and state that "
             "broker execution remains locked.\n\nVerified office draft from governed SQL and tools:\n"
@@ -198,39 +213,58 @@ def run_generative_suite(base_url: str, model: str, model_config: dict[str, Any]
         )
         started = time.perf_counter()
         try:
-            payload = http_json(
-                "POST",
-                f"{base_url}/api/chat",
+            messages = [
                 {
-                    "model": model,
-                    "stream": False,
-                    "think": False,
-                    "keep_alive": "10m",
-                    "options": {
-                        "num_ctx": int(model_config.get("context_tokens") or 8192),
-                        "num_predict": 220,
+                    "role": "system",
+                    "content": (
+                        "/no_think\nYou are Charlie Munger, the concise natural-language chief of staff for a "
+                        "private investment office. Use only supplied facts. Return only the final answer and "
+                        "never expose analysis or restate instructions."
+                    ),
+                },
+                {"role": "user", "content": surface_prompt},
+            ]
+            if provider == "ollama":
+                payload = http_json(
+                    "POST",
+                    f"{base_url}/api/chat",
+                    {
+                        "model": model,
+                        "stream": False,
+                        "think": False,
+                        "keep_alive": "10m",
+                        "options": {
+                            "num_ctx": int(model_config.get("context_tokens") or 8192),
+                            "num_predict": 220,
+                            "temperature": 0.0,
+                            "top_p": 0.9,
+                            "top_k": 20,
+                            "presence_penalty": 0.0,
+                            "repeat_penalty": 1.0,
+                            "seed": 20260722,
+                        },
+                        "messages": messages,
+                    },
+                    timeout=180,
+                )
+                raw = str((payload.get("message") or {}).get("content") or "").strip()
+            else:
+                payload = http_json(
+                    "POST",
+                    f"{base_url}/chat/completions",
+                    {
+                        "model": request_model,
+                        "stream": False,
                         "temperature": 0.0,
                         "top_p": 0.9,
-                        "top_k": 20,
-                        "presence_penalty": 0.0,
-                        "repeat_penalty": 1.0,
+                        "max_tokens": 220,
                         "seed": 20260722,
+                        "messages": messages,
                     },
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "/no_think\nYou are Charlie Munger, the concise natural-language chief of staff for a "
-                                "private investment office. Use only supplied facts. Return only the final answer and "
-                                "never expose analysis or restate instructions."
-                            ),
-                        },
-                        {"role": "user", "content": surface_prompt},
-                    ],
-                },
-                timeout=180,
-            )
-            raw = str((payload.get("message") or {}).get("content") or "").strip()
+                    timeout=180,
+                )
+                choices = payload.get("choices") or []
+                raw = str(((choices[0] if choices else {}).get("message") or {}).get("content") or "").strip()
             error = None
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raw = ""
@@ -492,7 +526,8 @@ def persist_result(result: dict[str, Any], promote: bool) -> None:
         sql += f"""
         UPDATE agent.local_model_registry
         SET promotion_status='approved', last_eval_run_key={sql_literal(run_key)},
-            last_eval_score={summary['score']}, last_eval_at=now(), updated_at=now()
+            last_eval_score={summary['score']}, eval_suite={sql_literal(result['suite'])},
+            last_eval_at=now(), updated_at=now()
         WHERE model_name={sql_literal(result['model'])};
         """
     elif promote:
@@ -527,6 +562,7 @@ def main() -> int:
     parser.add_argument("--model", action="append", help="Exact Ollama model tag. Repeat for multiple models.")
     parser.add_argument("--provider", choices=("ollama", "mlx", "local_openai"), default="ollama")
     parser.add_argument("--base-url")
+    parser.add_argument("--suite", help="Override the registered suite for a scoped qualification run.")
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--promote", action="store_true")
@@ -557,7 +593,7 @@ def main() -> int:
             print(json.dumps({"model": model, "status": "not_registered"}, sort_keys=True))
             overall_passed = False
             continue
-        suite_name = str(model_config["eval_suite"])
+        suite_name = str(args.suite or model_config["eval_suite"])
         started_at = datetime.now(timezone.utc)
         if suite_name == "retrieval_v1":
             summary = run_retrieval_suite(args.base_url, model, config)

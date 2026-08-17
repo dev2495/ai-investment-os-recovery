@@ -26,6 +26,8 @@ ON CONFLICT (model_name) DO UPDATE SET
         WHEN agent.local_model_registry.last_eval_score >= 0.8
          AND agent.local_model_registry.eval_suite='conversation_v1'
         THEN agent.local_model_registry.promotion_status
+        WHEN agent.local_model_registry.last_eval_score IS NOT NULL
+        THEN 'rejected'
         ELSE 'candidate'
     END,
     updated_at=now();
@@ -69,7 +71,11 @@ ON CONFLICT (endpoint_key) DO UPDATE SET
     route_name=EXCLUDED.route_name,
     base_url=EXCLUDED.base_url,
     deployment_target=EXCLUDED.deployment_target,
-    status=EXCLUDED.status,
+    status=CASE
+        WHEN agent.model_endpoints.health_status IN ('healthy','eval_failed','failed','model_unavailable')
+        THEN agent.model_endpoints.status
+        ELSE EXCLUDED.status
+    END,
     context_window=EXCLUDED.context_window,
     estimated_disk_gb=EXCLUDED.estimated_disk_gb,
     capabilities=EXCLUDED.capabilities,
@@ -81,5 +87,18 @@ UPDATE agent.agent_model_assignments
 SET fallback_route='imac_basic_assistant',
     updated_at=now()
 WHERE agent_name='Charlie Munger';
+
+UPDATE agent.model_endpoints endpoint
+SET status='disabled',
+    health_status='eval_failed',
+    last_checked_at=coalesce(endpoint.last_checked_at, registry.last_eval_at),
+    last_error='The exact installed model did not pass the governed conversation_v1 promotion gate.',
+    updated_at=now()
+FROM agent.local_model_registry registry
+WHERE endpoint.endpoint_key='ollama_granite4_3b_imac'
+  AND registry.model_name='granite4:3b'
+  AND registry.eval_suite='conversation_v1'
+  AND registry.last_eval_score IS NOT NULL
+  AND registry.last_eval_score < 0.8;
 
 COMMIT;

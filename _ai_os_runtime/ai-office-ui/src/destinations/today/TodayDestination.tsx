@@ -14,13 +14,16 @@
 
 import React from "react";
 import {
-  Sparkles, Gavel, Send, Newspaper, AlertTriangle, Clock, CheckCircle2, Inbox,
-  Star, Lightbulb, BookOpen, FileText, TrendingUp, ChevronRight, Activity,
+  Sparkles, Gavel, Send, Newspaper, AlertTriangle, Clock, CheckCircle2, Inbox, ExternalLink,
+  Star, Lightbulb, BookOpen, FileText, ChevronRight, Activity, ListTodo,
+  UserRoundCog, ShieldCheck, RotateCcw,
 } from "lucide-react";
 import { useMissionControl, useResearchIdeas } from "../../data/queries";
+import { useDelegateAgentTask, useUpdateInboxItem } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, Badge, StatusPill, ScrollList, Empty, Skeleton, Button,
+  Field, Select, TextArea,
 } from "../../system/primitives";
 import { text, num, bool, timestamp, formatRelative, formatCompact, formatPercent } from "../../data/liveRow";
 import { TodayCss } from "./Today.css";
@@ -32,7 +35,7 @@ const QUICK_COMMANDS = [
   "Show me options opportunities in NIFTY",
   "Scan for momentum setups today",
   "What research is ready for me to review?",
-  "Add RELIANCE to my watchlist",
+  "Start research on USHAMART",
 ];
 
 export default function TodayDestination() {
@@ -40,12 +43,11 @@ export default function TodayDestination() {
   const { data: research } = useResearchIdeas();
   const openEvidence = useUIStore((s) => s.openEvidence);
   const setAssistantScope = useUIStore((s) => s.setAssistantScope);
-  const setAssistantOpen = useUIStore((s) => s.setAssistantOpen);
+  const queueAssistantMessage = useUIStore((s) => s.queueAssistantMessage);
 
   function askCharlie(q: string) {
     setAssistantScope("charlie");
-    setAssistantOpen(true);
-    sessionStorage.setItem("aios:pending-charlie-question", q);
+    queueAssistantMessage(q);
   }
 
   if (error) {
@@ -87,7 +89,7 @@ export default function TodayDestination() {
           <div className="aios-today__charlie-bar">
             <input
               className="aios-today__charlie-input"
-              placeholder="Ask anything, or tell Charlie to build a dashboard, run a scan, or brief you…"
+              placeholder="Ask Charlie, or say: Start research on <company / ticker / idea>…"
               onKeyDown={(e) => { if (e.key === "Enter") { const v = (e.target as HTMLInputElement).value.trim(); if (v) askCharlie(v); (e.target as HTMLInputElement).value = ""; } }}
             />
             <button className="aios-today__charlie-send" onClick={() => { const el = document.querySelector<HTMLInputElement>(".aios-today__charlie-input"); const v = el?.value.trim(); if (v) { askCharlie(v); if (el) el.value = ""; } }}>
@@ -101,23 +103,119 @@ export default function TodayDestination() {
           </div>
         </Panel>
 
+        <CompanyResearch mission={mission} loading={isLoading} onAsk={askCharlie} />
+
+        <ThesisMaterialFeed mission={mission} loading={isLoading} />
+
+        <DelegationPanel mission={mission} loading={isLoading} />
+
         <div className="aios-today__grid">
-          {/* Left column: decisions + watchlist */}
           <div className="aios-today__col">
+            <WorkQueue mission={mission} loading={isLoading} onOpenEvidence={openEvidence} />
             <NeedsDecision mission={mission} loading={isLoading} onOpenEvidence={openEvidence} />
             <Watchlist mission={mission} research={research} loading={isLoading} onOpenEvidence={openEvidence} onAsk={askCharlie} />
           </div>
 
-          {/* Right column: ideas + research-ready + news + freshness */}
           <div className="aios-today__col">
+            <AutonomousResearchRuns mission={mission} loading={isLoading} />
+            <AgentActivity mission={mission} loading={isLoading} onOpenEvidence={openEvidence} />
+            <FreshnessAlerts mission={mission} loading={isLoading} />
             <IdeasToReview research={research} loading={isLoading} onOpenEvidence={openEvidence} onAsk={askCharlie} />
             <ResearchReady research={research} loading={isLoading} onOpenEvidence={openEvidence} />
             <WhatMattersNow mission={mission} loading={isLoading} onOpenEvidence={openEvidence} />
-            <FreshnessAlerts mission={mission} loading={isLoading} />
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+
+function CompanyResearch({ mission, loading, onAsk }: {
+  mission: ReturnType<typeof useMissionControl>["data"];
+  loading: boolean;
+  onAsk: (q: string) => void;
+}) {
+  const cases = mission?.research_cases ?? [];
+  const attention = cases.filter((row) => ["proposed", "review", "blocked"].includes(text(row, "status"))).length;
+  return (
+    <Panel
+      icon={BookOpen}
+      title="Company research"
+      actions={<div className="aios-today__research-actions"><Button size="sm" variant="ghost" icon={Sparkles} onClick={() => onAsk("Start long-term research on ")}>New research</Button><a href="/research/cases">View all <ChevronRight size={14}/></a></div>}
+    >
+      {loading ? <SkeletonRows n={3} /> : cases.length === 0 ? (
+        <Empty icon={BookOpen} title="No company research in progress" description="Ask Charlie to start a source-governed company underwrite." />
+      ) : <div className="aios-today__case-board">
+        <div className="aios-today__case-summary"><strong>{cases.length}</strong><span>open cases</span><i/>{attention ? <><strong>{attention}</strong><span>need your attention</span></> : <span>No case needs a decision</span>}</div>
+        <div className="aios-today__case-list">{cases.slice(0, 6).map((row) => {
+          const id = num(row, "id"); const total = num(row, "agent_total"); const done = num(row, "agent_done");
+          const status = text(row, "status");
+          const displayStatus = status === "active" && num(row, "source_count") === 0 ? "awaiting_sources" : status;
+          const progress = total ? Math.round((done / total) * 100) : 0;
+          return <a href={text(row, "href", `/research/cases?case_id=${id}`)} key={id} className="aios-today__case-row">
+            <div className="aios-today__case-company"><span>{text(row, "exchange")}:{text(row, "ticker")}</span><strong>{text(row, "company_name")}</strong></div>
+            <div className="aios-today__case-progress"><div><i style={{width: `${progress}%`}}/></div><span>{total ? `${done}/${total} workstreams` : text(row,"status") === "proposed" ? "awaiting explicit start" : `${num(row,"source_count")} sources`}</span></div>
+            <div className="aios-today__case-action"><StatusPill status={displayStatus}/><span>{text(row, "next_action")}</span></div>
+            <ChevronRight size={16}/>
+          </a>;
+        })}</div>
+      </div>}
+    </Panel>
+  );
+}
+
+function ThesisMaterialFeed({ mission, loading }: {
+  mission: ReturnType<typeof useMissionControl>["data"];
+  loading: boolean;
+}) {
+  const items = mission?.thesis_material_feed ?? [];
+  return (
+    <Panel
+      icon={ShieldCheck}
+      title="Sourced thesis changes & decisions"
+      actions={items.length ? <Badge tone="warn">{items.length} material</Badge> : <Badge tone="ok">clear</Badge>}
+    >
+      {loading ? <SkeletonRows n={3} /> : items.length === 0 ? (
+        <Empty icon={ShieldCheck} title="No material governed change" description="Generic news and unproven summaries are excluded from this feed." />
+      ) : (
+        <div className="aios-today__thesis-feed">
+          {items.map((row, index) => {
+            const origin = text(row, "origin_kind", "source");
+            const href = text(row, "href", "/fundamental/theses");
+            const sourceUrl = text(row, "source_url", "");
+            const confidence = row.confidence_pct === null || row.confidence_pct === undefined
+              ? "" : num(row, "confidence_pct").toFixed(0) + "% confidence";
+            return (
+              <article className={"aios-today__thesis-change aios-today__thesis-change--" + origin} key={text(row, "item_key", String(index))}>
+                <div className="aios-today__thesis-origin">
+                  <Badge tone={origin === "source" ? "accent" : origin === "agent_draft" ? "warn" : "default"}>
+                    {origin === "source" ? "source-driven" : origin.replace(/_/g, " ")}
+                  </Badge>
+                  <StatusPill status={text(row, "severity", text(row, "status", "review"))} />
+                </div>
+                <a className="aios-today__thesis-main" href={href}>
+                  <div className="aios-today__thesis-title">
+                    <strong>{text(row, "symbol", "—")}</strong>
+                    <span>{text(row, "title", "Research item")}</span>
+                    <ChevronRight size={14} />
+                  </div>
+                  <p>{text(row, "summary", "Exact evidence review required.")}</p>
+                  <div className="aios-today__thesis-meta">
+                    <span>{text(row, "company_name")}</span>
+                    <span>{text(row, "source_name", "governed record")}</span>
+                    <span>{text(row, "source_time") ? formatRelative(text(row, "source_time")) : "event-driven"}</span>
+                    <span>{text(row, "freshness_status", "unknown freshness")}</span>
+                    {confidence ? <span>{confidence}</span> : null}
+                  </div>
+                </a>
+                {sourceUrl ? <a className="aios-today__thesis-source" href={sourceUrl} rel="noreferrer" target="_blank" aria-label={"Open source for " + text(row, "title")}><ExternalLink size={14} />Evidence</a> : null}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -132,26 +230,240 @@ function HeroStrip({ mission, loading }: { mission: ReturnType<typeof useMission
       </div>
     );
   }
-  const approvals = mission.approvals?.length ?? 0;
-  const breaches = mission.execution_control?.filter((r) => text(r, "kind") === "risk_event").length ?? 0;
-  const staleSources = mission.source_freshness?.filter((r) => text(r, "status").includes("stale")).length ?? 0;
-  const navRow = mission.metrics?.find((r) => text(r, "metric_key", "").includes("nav") || text(r, "label", "").toLowerCase().includes("nav"));
+  const approvals = mission.approvals?.filter((row) =>
+    ["pending", "requested", "needs_review"].includes(text(row, "status").toLowerCase())
+  ).length ?? 0;
+  const breaches = mission.risk_events?.length ?? 0;
+  const staleSources = mission.source_freshness?.filter((row) => {
+    const status = text(row, "status", text(row, "freshness_status", "")).toLowerCase();
+    return ["stale", "aging", "overdue", "error", "missing"].some((flag) => status.includes(flag));
+  }).length ?? 0;
+  const openWork = mission.inbox?.filter((row) =>
+    !["done", "resolved", "closed", "cancelled"].includes(text(row, "status").toLowerCase())
+  ).length ?? 0;
+  const navRow = mission.metrics?.find((row) => {
+    const key = text(row, "metric_key", text(row, "metric", "")).toLowerCase();
+    const label = text(row, "label", "").toLowerCase();
+    return key.includes("nav") || label.includes("nav");
+  });
   const navValue = navRow ? num(navRow, "value") : 0;
 
   return (
     <div className="aios-today__hero">
-      <MetricTile><Metric label="Net Asset Value" value={navValue > 0 ? formatCompact(navValue, "INR") : "—"} size="lg" sub="across all clients" /></MetricTile>
+      <MetricTile><Metric label="Confirmed NAV" value={navValue > 0 ? formatCompact(navValue, "INR") : "—"} size="lg" sub={navValue > 0 ? "source-backed total" : "awaiting sufficient inputs"} /></MetricTile>
       <MetricTile tone={breaches > 0 ? "risk" : "ok"}>
-        <Metric label="Risk Breaches" value={breaches} size="lg" sub={breaches > 0 ? "needs attention" : "within limits"} />
+        <Metric label="Open Risk Events" value={breaches} size="lg" sub={breaches > 0 ? "needs attention" : "no open event"} />
       </MetricTile>
       <MetricTile tone={approvals > 0 ? "warn" : "ok"}>
         <Metric label="Pending Decisions" value={approvals} size="lg" sub={approvals > 0 ? "awaiting you" : "all clear"} />
       </MetricTile>
-      <MetricTile tone={staleSources > 0 ? "warn" : "ok"}>
-        <Metric label="Stale Sources" value={staleSources} size="lg" sub={staleSources > 0 ? "need refresh" : "fresh"} />
+      <MetricTile tone={openWork > 0 ? "warn" : "ok"}>
+        <Metric label="Open Work" value={openWork} size="lg" sub={openWork > 0 ? "tracked in the real inbox" : "queue clear"} />
       </MetricTile>
-      <MetricTile><Metric label="Watchlist" value={mission.watchlist?.length ?? 0} size="lg" sub="tracked symbols" /></MetricTile>
+      <MetricTile tone={staleSources > 0 ? "warn" : "ok"}>
+        <Metric label="Feed Attention" value={staleSources} size="lg" sub={staleSources > 0 ? "stale, missing, or failed" : "checks healthy"} />
+      </MetricTile>
     </div>
+  );
+}
+
+const DELEGATION_SCOPES = {
+  personal: { label: "Personal workspace", workspace: "command", dataBoundary: "personal_private_local_only" },
+  client: { label: "Client portfolio - private", workspace: "portfolio", dataBoundary: "client_private_local_only" },
+  market: { label: "Market monitoring", workspace: "market", dataBoundary: "public_or_approved_internal" },
+  research: { label: "Research and sources", workspace: "research", dataBoundary: "public_or_approved_internal" },
+  strategy: { label: "Strategy design", workspace: "strategy", dataBoundary: "personal_private_local_only" },
+  options: { label: "Options analysis - private", workspace: "options", dataBoundary: "trading_private_local_only" },
+} as const;
+
+type DelegationScope = keyof typeof DELEGATION_SCOPES;
+
+function DelegationPanel({ mission, loading }: {
+  mission: ReturnType<typeof useMissionControl>["data"];
+  loading: boolean;
+}) {
+  const delegate = useDelegateAgentTask();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [agent, setAgent] = React.useState("");
+  const [scope, setScope] = React.useState<DelegationScope>("personal");
+  const [priority, setPriority] = React.useState<"low" | "medium" | "high" | "critical">("high");
+  const [objective, setObjective] = React.useState("");
+  const targets = mission?.agent_targets ?? [];
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const assignment = DELEGATION_SCOPES[scope];
+    if (!agent || !objective.trim()) return;
+    delegate.mutate({
+      to_agent: agent,
+      objective: objective.trim(),
+      priority,
+      workspace: assignment.workspace,
+      data_boundary: assignment.dataBoundary,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        const taskId = num(result, "task_id", 0);
+        pushToast({
+          title: "Real task queued",
+          message: taskId ? `Task ${taskId} is visible in the work queue and audit trail.` : "The assignment is visible in the governed work queue.",
+          tone: "ok",
+          duration: 4500,
+        });
+        setObjective("");
+      },
+      onError: (mutationError) => pushToast({
+        title: "Delegation failed",
+        message: mutationError.message,
+        tone: "risk",
+        duration: 6000,
+      }),
+    });
+  }
+
+  return (
+    <Panel icon={UserRoundCog} title="Delegate Real Work" actions={<Badge tone="info">governed queue</Badge>}>
+      {loading ? <Skeleton style={{ height: 132 }} /> : targets.length === 0 ? (
+        <Empty icon={UserRoundCog} title="No active specialists available" description="The employee registry returned no role-scoped agents." />
+      ) : (
+        <form className="aios-today__delegate-form" onSubmit={submit}>
+          <div className="aios-today__delegate-fields">
+            <Field label="Specialist" required>
+              <Select value={agent} onChange={(event) => setAgent(event.target.value)} aria-label="Specialist agent">
+                <option value="">Choose an accountable specialist...</option>
+                {targets.map((row, index) => {
+                  const agentName = text(row, "agent_name");
+                  const title = text(row, "display_title", agentName);
+                  const department = text(row, "department_name", "");
+                  return <option key={agentName || index} value={agentName}>{title}{department ? ` - ${department}` : ""}</option>;
+                })}
+              </Select>
+            </Field>
+            <Field label="Private scope" required>
+              <Select value={scope} onChange={(event) => setScope(event.target.value as DelegationScope)} aria-label="Assignment scope">
+                {Object.entries(DELEGATION_SCOPES).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="Priority" required>
+              <Select value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)} aria-label="Assignment priority">
+                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Objective" hint="State the outcome, evidence expected, and any deadline." required>
+            <TextArea value={objective} onChange={(event) => setObjective(event.target.value)} rows={3} maxLength={4000} placeholder="Example: review today's source failures and prepare a cited recovery brief. Do not change client records or place trades." />
+          </Field>
+          <div className="aios-today__delegate-footer">
+            <div className="aios-today__safety-note"><ShieldCheck size={14} /> Role-scoped and audited. Broker writes and client-record changes remain locked.</div>
+            <Button type="submit" variant="primary" icon={Send} disabled={!agent || !objective.trim() || delegate.isPending}>{delegate.isPending ? "Queuing..." : "Delegate"}</Button>
+          </div>
+        </form>
+      )}
+    </Panel>
+  );
+}
+
+function WorkQueue({ mission, loading, onOpenEvidence }: {
+  mission: ReturnType<typeof useMissionControl>["data"];
+  loading: boolean;
+  onOpenEvidence: (target: { kind: string; key: string; title: string }) => void;
+}) {
+  const updateInbox = useUpdateInboxItem();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const items = (mission?.inbox ?? []).slice(0, 12);
+  const openCount = items.filter((row) => !["done", "resolved", "closed", "cancelled"].includes(text(row, "status").toLowerCase())).length;
+
+  function update(row: LiveRow, action: "claim" | "resolve" | "block" | "reopen") {
+    const inboxId = num(row, "id");
+    if (!inboxId) return;
+    updateInbox.mutate({
+      inbox_id: inboxId,
+      action,
+      actor: "Devarsh",
+      resolution_note: action === "resolve" ? "Resolved from the Today command center after human review." : action === "block" ? "Blocked from the Today command center pending evidence or dependency." : undefined,
+    }, {
+      onSuccess: () => pushToast({ title: `Work item ${action}ed`, tone: "ok", duration: 3000 }),
+      onError: (mutationError) => pushToast({ title: "Queue update failed", message: mutationError.message, tone: "risk", duration: 5000 }),
+    });
+  }
+
+  return (
+    <Panel icon={ListTodo} title="Work Queue" actions={openCount ? <Badge tone="warn" dot>{openCount} open</Badge> : <Badge tone="ok">clear</Badge>}>
+      {loading ? <SkeletonRows n={4} /> : items.length === 0 ? (
+        <Empty icon={Inbox} title="No tracked work" description="Delegate a bounded assignment above; it will appear here with accountable ownership." />
+      ) : (
+        <ScrollList>
+          {items.map((row, index) => {
+            const status = text(row, "status", "queued").toLowerCase();
+            const title = text(row, "title", `Work item ${index + 1}`);
+            const taskId = text(row, "task_id", "");
+            const inboxId = num(row, "id");
+            const isClosed = ["done", "resolved", "closed", "completed"].includes(status);
+            return (
+              <div key={inboxId || index} className="aios-today__work-record">
+                <button type="button" className="aios-today__work-main" onClick={() => onOpenEvidence({ kind: "task", key: taskId || String(inboxId), title })} disabled={!taskId && !inboxId}>
+                  <div className="aios-today__work-title">{title}</div>
+                  <div className="aios-today__work-meta">
+                    <StatusPill status={status} /><span>{text(row, "owner_agent", "unassigned")}</span><span>{text(row, "target_workspace", "command")}</span><span>{formatRelative(text(row, "updated_at", text(row, "created_at")))}</span>
+                  </div>
+                </button>
+                <div className="aios-today__work-actions">
+                  {status === "queued" && <Button size="sm" variant="ghost" onClick={() => update(row, "claim")} disabled={updateInbox.isPending}>Claim</Button>}
+                  {isClosed || status === "blocked" ? <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => update(row, "reopen")} disabled={updateInbox.isPending}>Reopen</Button> : status !== "queued" ? (
+                    <><Button size="sm" variant="ghost" onClick={() => update(row, "resolve")} disabled={updateInbox.isPending}>Resolve</Button><Button size="sm" variant="ghost" onClick={() => update(row, "block")} disabled={updateInbox.isPending}>Block</Button></>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </ScrollList>
+      )}
+    </Panel>
+  );
+}
+
+function AgentActivity({ mission, loading, onOpenEvidence }: {
+  mission: ReturnType<typeof useMissionControl>["data"];
+  loading: boolean;
+  onOpenEvidence: (target: { kind: string; key: string; title: string }) => void;
+}) {
+  const activity = [
+    ...(mission?.agent_worker_runs ?? []).map((row) => ({ row, kind: "run" as const })),
+    ...(mission?.agent_messages ?? []).map((row) => ({ row, kind: "message" as const })),
+  ].sort((left, right) => {
+    const leftAt = Date.parse(text(left.row, "updated_at", text(left.row, "created_at", text(left.row, "started_at", "")))) || 0;
+    const rightAt = Date.parse(text(right.row, "updated_at", text(right.row, "created_at", text(right.row, "started_at", "")))) || 0;
+    return rightAt - leftAt;
+  }).slice(0, 10);
+  const failures = activity.filter(({ row }) => {
+    const status = text(row, "status", text(row, "run_status", text(row, "processing_status", ""))).toLowerCase();
+    return status.includes("fail") || status.includes("error") || Boolean(text(row, "error_message", ""));
+  }).length;
+
+  return (
+    <Panel icon={Activity} title="Agent Activity" actions={failures ? <Badge tone="risk">{failures} failed</Badge> : <Badge tone="ok">audited</Badge>}>
+      {loading ? <SkeletonRows n={4} /> : activity.length === 0 ? (
+        <Empty icon={Activity} title="No recorded activity" description="Only real worker runs and agent messages appear here." />
+      ) : (
+        <ScrollList>
+          {activity.map(({ row, kind }, index) => {
+            const status = text(row, "run_status", text(row, "processing_status", text(row, "status", "recorded")));
+            const title = kind === "message" ? text(row, "subject", "Agent message") : text(row, "task_title", text(row, "workflow_key", "Worker run"));
+            const from = text(row, "from_title", text(row, "from_agent", text(row, "agent_name", text(row, "agent_key", "worker"))));
+            const to = text(row, "to_title", text(row, "to_agent", ""));
+            const evidenceKey = kind === "message" ? text(row, "thread_key", "") : text(row, "task_id", text(row, "id", ""));
+            const errorMessage = text(row, "error_message", "");
+            return (
+              <button type="button" key={`${kind}-${evidenceKey || index}`} className="aios-today__activity-record" onClick={() => evidenceKey && onOpenEvidence({ kind: kind === "message" ? "message_thread" : "task", key: evidenceKey, title })} disabled={!evidenceKey}>
+                <div className="aios-today__activity-head"><span>{title}</span><StatusPill status={status} /></div>
+                <div className="aios-today__activity-meta">{from}{to ? ` -> ${to}` : ""} · {formatRelative(text(row, "updated_at", text(row, "created_at", text(row, "started_at"))))}</div>
+                {errorMessage && <div className="aios-today__activity-error">{errorMessage}</div>}
+              </button>
+            );
+          })}
+        </ScrollList>
+      )}
+    </Panel>
   );
 }
 
@@ -163,7 +475,9 @@ function NeedsDecision({ mission, loading, onOpenEvidence }: {
   loading: boolean;
   onOpenEvidence: (t: { kind: string; key: string; title: string }) => void;
 }) {
-  const approvals = mission?.approvals ?? [];
+  const approvals = mission?.approvals?.filter((row) =>
+    ["pending", "requested", "needs_review"].includes(text(row, "status").toLowerCase())
+  ) ?? [];
   return (
     <Panel icon={Gavel} title="Needs Your Decision"
       actions={approvals.length > 0 ? <Badge tone="warn" dot pulse>{approvals.length}</Badge> : undefined}
@@ -319,6 +633,59 @@ function ResearchReady({ research, loading, onOpenEvidence }: {
 }
 
 /* ============================================================
+ * AUTONOMOUS RESEARCH — bounded heartbeat audit trail
+ * ============================================================ */
+function AutonomousResearchRuns({ mission, loading }: {
+  mission: ReturnType<typeof useMissionControl>["data"];
+  loading: boolean;
+}) {
+  const runs = mission?.market_research_heartbeats ?? [];
+  return (
+    <Panel icon={Activity} title="Autonomous Research Runs">
+      {loading ? <SkeletonRows n={3} /> : runs.length === 0 ? (
+        <Empty icon={Activity} title="No heartbeat runs yet" />
+      ) : (
+        <ScrollList>
+          {runs.slice(0, 6).map((row, i) => {
+            const graphId = num(row, "graph_run_id", 0);
+            const status = text(row, "status", "unknown");
+            const title = text(row, "selected_title", text(row, "skip_reason", "Public-market heartbeat"));
+            const source = text(row, "source_name", "governed public sources");
+            const startedAt = text(row, "started_at", text(row, "created_at"));
+            return (
+              <div
+                key={text(row, "run_key", String(i))}
+                className="aios-today__research"
+                role={graphId ? "link" : undefined}
+                tabIndex={graphId ? 0 : undefined}
+                onClick={graphId ? () => window.location.assign(`/firm/graphs?run=${graphId}`) : undefined}
+                onKeyDown={graphId ? (event) => { if (event.key === "Enter") window.location.assign(`/firm/graphs?run=${graphId}`); } : undefined}
+              >
+                <Activity size={14} style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)" }}>
+                    <div style={{ fontWeight: 500, fontSize: "var(--text-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+                    <StatusPill status={status} />
+                  </div>
+                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 3 }}>
+                    {source} · {num(row, "material_candidate_count")} material / {num(row, "candidate_count")} checked
+                    {graphId ? ` · graph #${graphId}` : ""}
+                    {startedAt ? ` · ${formatRelative(startedAt)}` : ""}
+                  </div>
+                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: 2 }}>
+                    Read-only evidence; duplicate cooldown active; broker and capital writes locked.
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </ScrollList>
+      )}
+    </Panel>
+  );
+}
+
+/* ============================================================
  * WHAT MATTERS NOW — news/events
  * ============================================================ */
 function WhatMattersNow({ mission, loading, onOpenEvidence }: {
@@ -359,7 +726,7 @@ function WhatMattersNow({ mission, loading, onOpenEvidence }: {
 function FreshnessAlerts({ mission, loading }: { mission: ReturnType<typeof useMissionControl>["data"]; loading: boolean }) {
   const stale = mission?.source_freshness?.filter((r) => {
     const status = text(r, "status", text(r, "freshness_status", ""));
-    return status.toLowerCase().includes("stale") || status.toLowerCase().includes("aging") || status.toLowerCase().includes("overdue");
+    return ["stale", "aging", "overdue", "error", "missing"].some((flag) => status.toLowerCase().includes(flag));
   }) ?? [];
   const fresh = mission?.source_freshness?.filter((r) => !stale.includes(r)).slice(0, 4) ?? [];
   return (

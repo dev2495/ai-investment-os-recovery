@@ -7,50 +7,63 @@
  */
 
 /* ============================================================
- * LIGHT THEME (default) — warm ivory, institutional, calm
+ * LIGHT THEME (default) — paper, slate and brass; institutional and calm
  * ============================================================ */
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
 
   /* Surfaces */
-  --bg: #f3f6f5;
-  --bg-sunken: #e9eeec;
-  --surface: #ffffff;
-  --surface-soft: #f7f9f8;
+  --bg: #f4f0e8;
+  --bg-sunken: #ebe5da;
+  --surface: #fffdf8;
+  --surface-soft: #f8f4ec;
   --surface-elevated: #ffffff;
-  --surface-overlay: rgba(255, 255, 255, 0.92);
+  --surface-overlay: rgba(255, 253, 248, 0.94);
 
   /* Text */
-  --text: #17201e;
-  --text-secondary: #33413d;
-  --text-muted: #66736f;
-  --text-faint: #89928f;
-  --text-on-accent: #ffffff;
+  --text: #253044;
+  --text-secondary: #4c5667;
+  --text-muted: #6f756f;
+  --text-faint: #858780;
+  --text-on-accent: #fffaf0;
   --text-on-status: #ffffff;
 
   /* Borders */
-  --border: #d4dcda;
-  --border-strong: #b9c5c1;
-  --border-subtle: rgba(35, 55, 49, 0.10);
+  --border: rgba(48, 55, 66, 0.16);
+  --border-strong: rgba(48, 55, 66, 0.28);
+  --border-subtle: rgba(48, 55, 66, 0.09);
 
   /* Brand */
-  --accent: var(--raw-teal);
-  --accent-hover: var(--raw-teal-deep);
-  --accent-soft: rgba(15, 118, 110, 0.10);
-  --accent-soft-strong: rgba(15, 118, 110, 0.18);
+  --accent: var(--raw-ledger-navy);
+  --accent-hover: #30445f;
+  --accent-soft: #e3e8ee;
+  --accent-soft-strong: #c7d2de;
 
   /* Status */
-  --status-ok: var(--raw-forest);
-  --status-ok-soft: rgba(45, 122, 79, 0.12);
-  --status-risk: var(--raw-terracotta);
-  --status-risk-soft: rgba(192, 57, 43, 0.10);
-  --status-warn: var(--raw-brass);
-  --status-warn-soft: rgba(212, 160, 40, 0.14);
-  --status-info: var(--raw-slate);
-  --status-info-soft: rgba(91, 107, 122, 0.12);
+  --status-ok: #315d78;
+  --status-ok-soft: #e0eaf0;
+  --status-risk: var(--raw-ledger-oxblood);
+  --status-risk-soft: #f3e5e8;
+  --status-warn: var(--raw-ledger-brass);
+  --status-warn-soft: #f4e9d3;
+  --status-info: #5f6f83;
+  --status-info-soft: #e5e9ef;
   --status-special: var(--raw-violet);
   --status-special-soft: rgba(109, 74, 138, 0.12);
+
+  /* Persistent OS shell: the same slate ledger on every destination. */
+  --shell-bg: #263449;
+  --shell-soft: #314159;
+  --shell-elevated: #3b4c65;
+  --shell-text: #fffaf0;
+  --shell-text-secondary: #dde3eb;
+  --shell-text-muted: #bac5d2;
+  --shell-text-faint: #9facba;
+  --shell-border: rgba(231, 219, 199, 0.18);
+  --shell-accent: #d2a76d;
+  --shell-accent-soft: rgba(210, 167, 109, 0.17);
+  --shell-accent-strong: rgba(210, 167, 109, 0.3);
 
   /* Shadows */
   --shadow-1: var(--shadow-xs);
@@ -64,50 +77,62 @@
 }
 
 /* ============================================================
- * DARK THEME — warm espresso, never cold black
+ * DUSK THEME — slate-blue, never black or green
  * ============================================================ */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #090d0f;
-  --bg-sunken: #0d1316;
-  --surface: #11181b;
-  --surface-soft: #172024;
-  --surface-elevated: #1b2529;
-  --surface-overlay: rgba(10, 15, 17, 0.95);
+  --bg: #1f2c3e;
+  --bg-sunken: #182333;
+  --surface: #263449;
+  --surface-soft: #314159;
+  --surface-elevated: #3b4c65;
+  --surface-overlay: rgba(31, 44, 62, 0.95);
 
-  --text: #edf3f1;
-  --text-secondary: #c4cfcc;
-  --text-muted: #8f9d99;
-  --text-faint: #697773;
-  --text-on-accent: #ffffff;
+  --text: #fffaf0;
+  --text-secondary: #dde3eb;
+  --text-muted: #bac5d2;
+  --text-faint: #9facba;
+  --text-on-accent: #253044;
   --text-on-status: #ffffff;
 
-  --border: #273338;
-  --border-strong: #3b4a4f;
-  --border-subtle: rgba(185, 205, 198, 0.10);
+  --border: rgba(231, 219, 199, 0.2);
+  --border-strong: rgba(231, 219, 199, 0.32);
+  --border-subtle: rgba(231, 219, 199, 0.12);
 
-  --accent: var(--raw-teal-soft);
-  --accent-hover: var(--raw-teal);
-  --accent-soft: rgba(20, 184, 166, 0.14);
-  --accent-soft-strong: rgba(20, 184, 166, 0.24);
+  --accent: #d2a76d;
+  --accent-hover: #e4be87;
+  --accent-soft: rgba(210, 167, 109, 0.17);
+  --accent-soft-strong: rgba(210, 167, 109, 0.3);
 
-  --status-ok: var(--raw-forest-dark);
-  --status-ok-soft: rgba(61, 154, 111, 0.16);
-  --status-risk: var(--raw-terracotta-dark);
-  --status-risk-soft: rgba(229, 86, 78, 0.14);
-  --status-warn: var(--raw-brass-dark);
-  --status-warn-soft: rgba(232, 181, 71, 0.16);
-  --status-info: var(--raw-slate-dark);
-  --status-info-soft: rgba(122, 138, 153, 0.14);
+  --status-ok: #8fb3c9;
+  --status-ok-soft: rgba(143, 179, 201, 0.18);
+  --status-risk: #d7909f;
+  --status-risk-soft: rgba(215, 144, 159, 0.17);
+  --status-warn: #d2a76d;
+  --status-warn-soft: rgba(210, 167, 109, 0.18);
+  --status-info: #aab9ca;
+  --status-info-soft: rgba(170, 185, 202, 0.16);
   --status-special: var(--raw-violet-dark);
   --status-special-soft: rgba(155, 122, 184, 0.16);
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-3: 0 4px 12px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.3);
-  --shadow-4: 0 12px 28px rgba(0, 0, 0, 0.55), 0 4px 8px rgba(0, 0, 0, 0.35);
-  --shadow-5: 0 24px 56px rgba(0, 0, 0, 0.65), 0 8px 16px rgba(0, 0, 0, 0.4);
+  --shell-bg: #1f2c3e;
+  --shell-soft: #2a394e;
+  --shell-elevated: #34465f;
+  --shell-text: #fffaf0;
+  --shell-text-secondary: #dde3eb;
+  --shell-text-muted: #bac5d2;
+  --shell-text-faint: #9facba;
+  --shell-border: rgba(231, 219, 199, 0.18);
+  --shell-accent: #d2a76d;
+  --shell-accent-soft: rgba(210, 167, 109, 0.17);
+  --shell-accent-strong: rgba(210, 167, 109, 0.3);
+
+  --shadow-1: 0 1px 2px rgba(20, 30, 45, 0.28);
+  --shadow-2: 0 1px 3px rgba(20, 30, 45, 0.34), 0 1px 2px rgba(20, 30, 45, 0.24);
+  --shadow-3: 0 4px 12px rgba(20, 30, 45, 0.38), 0 2px 4px rgba(20, 30, 45, 0.24);
+  --shadow-4: 0 12px 28px rgba(20, 30, 45, 0.44), 0 4px 8px rgba(20, 30, 45, 0.28);
+  --shadow-5: 0 24px 56px rgba(20, 30, 45, 0.5), 0 8px 16px rgba(20, 30, 45, 0.32);
 
   --office-ambient: 0.55;
 }

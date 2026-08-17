@@ -7,6 +7,7 @@ import hmac
 import ipaddress
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -19,15 +20,87 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from . import graph_control_plane
+except ImportError:  # Direct script execution on the iMac.
+    import graph_control_plane  # type: ignore
+
+try:
+    from .market_research_workflow import build_public_market_evidence_packet
+except ImportError:  # Direct script execution on the iMac.
+    from market_research_workflow import build_public_market_evidence_packet  # type: ignore
+
+try:
+    from .tradingview_desktop_bridge import open_link_in_desktop, probe_desktop
+except ImportError:  # Direct script execution on the iMac.
+    from tradingview_desktop_bridge import open_link_in_desktop, probe_desktop  # type: ignore
+
+try:
+    from .long_term_thesis_workspace import build_long_term_thesis_workspace
+except ImportError:  # Direct script execution on the iMac.
+    from long_term_thesis_workspace import build_long_term_thesis_workspace  # type: ignore
+
+try:
+    from .research_case_helpers import extract_research_entity, propose_research_case as propose_research_case_helper, start_research_case as start_research_case_helper
+except ImportError:  # Direct script execution on the iMac.
+    from research_case_helpers import extract_research_entity, propose_research_case as propose_research_case_helper, start_research_case as start_research_case_helper  # type: ignore
+
+try:
+    from .report_delivery import select_thesis_report_delivery
+except ImportError:  # Direct script execution on the iMac.
+    from report_delivery import select_thesis_report_delivery  # type: ignore
+
+try:
+    from .research_model_runtime import (
+        approve_model_run_preflight as approve_model_run_preflight_helper,
+        configure_public_model_canary as configure_public_model_canary_helper,
+        create_model_run_preflight as create_model_run_preflight_helper,
+        run_public_model_canary as run_public_model_canary_helper,
+    )
+except ImportError:  # Direct script execution on the iMac.
+    from research_model_runtime import (  # type: ignore
+        approve_model_run_preflight as approve_model_run_preflight_helper,
+        configure_public_model_canary as configure_public_model_canary_helper,
+        create_model_run_preflight as create_model_run_preflight_helper,
+        run_public_model_canary as run_public_model_canary_helper,
+    )
+
+try:
+    from .research_case_agent_runtime import (
+        ensure_research_case_preflight,
+        prepare_research_case_runtime,
+    )
+except ImportError:  # Direct script execution on the iMac.
+    from research_case_agent_runtime import (  # type: ignore
+        ensure_research_case_preflight,
+        prepare_research_case_runtime,
+    )
+
+try:
+    from .research_case_source_runtime import queue_case_sources
+except ImportError:  # Direct script execution on the iMac.
+    from research_case_source_runtime import queue_case_sources  # type: ignore
+
+try:
+    from .research_monitor_runtime import run_company_research_monitor_once
+except ImportError:  # Direct script execution on the iMac.
+    from research_monitor_runtime import run_company_research_monitor_once  # type: ignore
+
+try:
+    from .reporting_helpers import generate_thesis_report as generate_thesis_report_helper
+except ImportError:  # Direct script execution on the iMac.
+    from reporting_helpers import generate_thesis_report as generate_thesis_report_helper  # type: ignore
+
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
+INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
 API_HOST = os.environ.get("AI_OS_API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("AI_OS_API_PORT", "8765"))
 PSQL_BIN = os.environ.get("AI_OS_PSQL_BIN", "/opt/homebrew/opt/postgresql@15/bin/psql")
-DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/usr/local/bin/docker")
+DOCKER_BIN = os.environ.get("AI_OS_DOCKER_BIN", "/opt/homebrew/bin/docker")
 QDRANT_BASE_URL = os.environ.get("AI_OS_QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
 OLLAMA_BASE_URL = os.environ.get("AI_OS_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 MLX_BASE_URL = os.environ.get("AI_OS_MLX_URL", "http://127.0.0.1:11435/v1").rstrip("/")
@@ -35,14 +108,20 @@ MLX_REQUEST_MODEL = os.environ.get(
     "AI_OS_MLX_REQUEST_MODEL",
     "default_model",
 )
-LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11435/v1").rstrip("/")
-LOCAL_OPENAI_REQUEST_MODEL = os.environ.get("AI_OS_LOCAL_OPENAI_REQUEST_MODEL", "default_model")
-LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "450"))
-LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "180"))
+LOCAL_OPENAI_BASE_URL = os.environ.get("AI_OS_LOCAL_OPENAI_URL", "http://100.75.156.32:11436/v1").rstrip("/")
+LOCAL_OPENAI_REQUEST_MODEL = os.environ.get(
+    "AI_OS_LOCAL_OPENAI_REQUEST_MODEL",
+    "/Users/devarshthakkar/Library/Application Support/AIOS/models/qwen3.5-9b-4bit-8b2b98c",
+)
+LOCAL_OPENAI_MAX_TOKENS = int(os.environ.get("AI_OS_LOCAL_OPENAI_MAX_TOKENS", "1200"))
+LOCAL_OPENAI_TIMEOUT_SECONDS = int(os.environ.get("AI_OS_LOCAL_OPENAI_TIMEOUT_SECONDS", "240"))
 OPENROUTER_BASE_URL = os.environ.get("AI_OS_OPENROUTER_URL", "https://openrouter.ai/api/v1").rstrip("/")
 OPENROUTER_API_KEY = os.environ.get("AI_OS_OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MAX_COMPLETION_TOKENS = int(os.environ.get("AI_OS_OPENROUTER_MAX_COMPLETION_TOKENS", "1200"))
-TRADINGVIEW_CDP_PORT = int(os.environ.get("AI_OS_TRADINGVIEW_CDP_PORT", "9333"))
+OPENAI_BASE_URL = os.environ.get("AI_OS_OPENAI_URL", "https://api.openai.com/v1").rstrip("/")
+OPENAI_API_KEY = os.environ.get("AI_OS_OPENAI_API_KEY", "").strip()
+OPENAI_MAX_OUTPUT_TOKENS = int(os.environ.get("AI_OS_OPENAI_MAX_OUTPUT_TOKENS", "1200"))
+CLOUD_CHAT_PROVIDERS = {"openai", "openrouter"}
 EMBEDDING_MODEL = os.environ.get("AI_OS_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 CHAT_MODEL_ROUTE = os.environ.get("AI_OS_CHAT_MODEL_ROUTE", "charlie_munger_orchestration")
 ALLOWED_ORIGINS = {
@@ -55,8 +134,13 @@ ALLOWED_ORIGINS = {
 }
 OPERATOR_TOKEN = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
 ALLOW_TOKENLESS_LOOPBACK = os.environ.get("AI_OS_ALLOW_TOKENLESS_LOOPBACK", "1").strip().lower() in {"1", "true", "yes"}
+ZERODHA_AUTH_CHALLENGE_TTL_SECONDS = max(60, min(900, int(os.environ.get("AI_OS_ZERODHA_AUTH_CHALLENGE_TTL_SECONDS", "300"))))
 DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
+NODE_PDF_PYTHON = Path.home() / "AI_OS_NODE/runtime/python/bin/python3"
+PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or next(
+    (str(candidate) for candidate in (NODE_PDF_PYTHON, DEFAULT_PDF_PYTHON) if candidate.exists()),
+    sys.executable,
+)
 
 CHARLIE_TRUTH_SYSTEM_PROMPT = (
     "You are Charlie Munger, the evidence-bound orchestrator for a private AI portfolio office. "
@@ -82,7 +166,8 @@ CHARLIE_LOCAL_CONVERSATION_PROMPT = (
     "status, caveat, and source; never invent actions, trades, approvals, calculations, or facts. "
     "Never add a buy, sell, hold, sizing, order, or execution recommendation that is absent from the "
     "verified draft. State what is missing plainly. Answer every category the user requested. "
-    "Be direct, conversational, and concise. Broker writes are locked."
+    "Be direct, conversational, and concise. Use at most four short sentences and 90 words unless the user explicitly asks for detail. "
+    "Broker writes are locked."
 )
 
 QDRANT_COLLECTIONS = [
@@ -164,7 +249,11 @@ def load_key_value_manifest(path: Path) -> dict[str, str]:
 
 
 def build_recovery_status() -> dict[str, Any]:
-    backup_root = Path(os.environ.get("AI_OS_CRITICAL_BACKUP_ROOT", Path.home() / "AI_OS_CRITICAL_BACKUP"))
+    backup_root = Path(
+        os.environ.get("AI_OS_CRITICAL_BACKUP_ROOT")
+        or os.environ.get("AI_OS_OFFSITE_BACKUP_ROOT")
+        or Path.home() / "AI_OS_BACKUPS/critical"
+    )
     current = backup_root / "current"
     manifest = load_key_value_manifest(current / "manifest.txt")
     postgres_dump = current / str(manifest.get("postgres_archive", "postgres/ai_os.dump"))
@@ -204,58 +293,45 @@ def build_recovery_status() -> dict[str, Any]:
         "previous_exists": (backup_root / "previous").is_dir(),
         "created_at": manifest.get("created_at"),
         "format_version": manifest.get("format_version"),
-        "repo_commit": manifest.get("repo_commit"),
+        "backup_profile": manifest.get("backup_profile"),
+        "repo_commit": manifest.get("repo_commit") or manifest.get("source_commit"),
+        "postgres_image": manifest.get("postgres_image"),
+        "timescaledb_extension_version": manifest.get("timescaledb_extension_version"),
+        "timescaledb_catalog_version": manifest.get("timescaledb_catalog_version"),
         "postgres_dump_exists": postgres_dump.is_file(),
         "postgres_dump_bytes": postgres_dump.stat().st_size if postgres_dump.is_file() else 0,
         "qdrant_snapshot_exists": qdrant_snapshot.is_file(),
         "qdrant_snapshot_bytes": qdrant_snapshot.stat().st_size if qdrant_snapshot.is_file() else 0,
         "qdrant_snapshot_name": qdrant_snapshot.name if qdrant_snapshot.is_file() else None,
+        "qdrant_rebuildable": manifest.get("qdrant_rebuildable", "false").lower() == "true",
         "vault_copy_exists": vault_copy.is_dir(),
         "vault_file_count": vault_file_count,
         "checksums_exist": checksum_manifest.is_file(),
         "latest_restore_drill": latest_drill,
-        "backup_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.critical-backup.plist").is_file(),
-        "report_schedule_installed": (Path.home() / "Library/LaunchAgents/com.devarsh.aios.scheduled-reports.plist").is_file(),
+        "backup_schedule_installed": any(
+            (Path.home() / "Library/LaunchAgents" / name).is_file()
+            for name in ("com.devarsh.aios.imac.backup.plist", "com.devarsh.aios.critical-backup.plist")
+        ),
+        "report_schedule_installed": any(
+            (Path.home() / "Library/LaunchAgents" / name).is_file()
+            for name in ("com.devarsh.aios.imac.scheduled-reports.plist", "com.devarsh.aios.scheduled-reports.plist")
+        ),
         "vault_bookmark_exists": (Path.home() / "Library/Application Support/AIOS/backup-vault.bookmark").is_file(),
     }
 
 
 def psql_command_candidates() -> list[list[str]]:
-    return [
-        [
-            PSQL_BIN,
-            "-h",
-            "127.0.0.1",
-            "-p",
-            POSTGRES_PORT,
-            "-q",
-            "-t",
-            "-A",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-U",
-            "ai_os",
-            "-d",
-            "ai_os",
-        ],
-        [
-            DOCKER_BIN,
-            "exec",
-            "-i",
-            "ai_os_postgres",
-            "psql",
-            "-q",
-            "-t",
-            "-A",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-U",
-            "ai_os",
-            "-d",
-            "ai_os",
-        ],
+    host_command = [
+        PSQL_BIN, "-h", "127.0.0.1", "-p", POSTGRES_PORT, "-q", "-t", "-A",
+        "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os",
     ]
-
+    docker_command = [
+        DOCKER_BIN, "exec", "-i", "ai_os_postgres", "psql", "-q", "-t", "-A",
+        "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os",
+    ]
+    # The iMac supervisor has one local database container. Docker-local access
+    # avoids a host-port recovery delay on every bounded API query.
+    return [docker_command, host_command]
 
 def run_psql_text(sql: str) -> str:
     errors: list[tuple[str, str]] = []
@@ -276,40 +352,280 @@ def run_psql_json(query: str) -> list[dict]:
     return json.loads(output or "[]")
 
 
-def run_psql_json_object(queries: dict[str, str], *, row_limit: int | None = None) -> dict[str, list[dict]]:
-    ctes: list[str] = []
-    rows: list[str] = []
-    for index, (name, query) in enumerate(queries.items()):
-        alias = f"q_{index}"
-        limit_clause = f" LIMIT {row_limit}" if row_limit is not None else ""
-        ctes.append(
-            f"""
-            {alias} AS (
-                SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
-                FROM (
-                    SELECT *
-                    FROM ({query}) source_rows{limit_clause}
-                ) result_rows
-            )
-            """
-        )
-        rows.append(f"SELECT {sql_literal(name)} AS key, (SELECT payload::jsonb FROM {alias}) AS value")
-    sql = f"""
-    WITH {','.join(ctes)},
-    payload_rows AS (
-        {' UNION ALL '.join(rows)}
-    )
-    SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb)::text
-    FROM payload_rows;
-    """
-    output = run_psql_text(sql)
-    payload = json.loads(output or "{}")
-    return {key: (value if isinstance(value, list) else []) for key, value in payload.items()}
+SNAPSHOT_SQL_BATCH_SIZE = max(
+    1, int(os.environ.get("AI_OS_SNAPSHOT_SQL_BATCH_SIZE") or 2)
+)
+SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS = max(
+    1000, int(os.environ.get("AI_OS_SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS") or 30000)
+)
 
+
+def run_psql_json_object(
+    queries: dict[str, str],
+    *,
+    row_limit: int | None = 500,
+    batch_size: int | None = None,
+    error_collector: list[dict] | None = None,
+) -> dict[str, list[dict]]:
+    """Execute snapshot sections in bounded SQL batches to cap PostgreSQL memory."""
+    query_items = list(queries.items())
+    if not query_items:
+        return {}
+
+    effective_batch_size = max(1, int(batch_size or SNAPSHOT_SQL_BATCH_SIZE))
+    data: dict[str, list[dict]] = {}
+    for offset in range(0, len(query_items), effective_batch_size):
+        batch_items = query_items[offset:offset + effective_batch_size]
+        ctes: list[str] = []
+        rows: list[str] = []
+        for index, (name, query) in enumerate(batch_items):
+            alias = f"q_{index}"
+            limit_clause = f" LIMIT {row_limit}" if row_limit is not None else ""
+            ctes.append(
+                f"""
+                {alias} AS (
+                    SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json) AS payload
+                    FROM (
+                        SELECT *
+                        FROM ({query}) source_rows{limit_clause}
+                    ) result_rows
+                )
+                """
+            )
+            rows.append(
+                f"SELECT {sql_literal(name)} AS key, "
+                f"(SELECT payload::jsonb FROM {alias}) AS value"
+            )
+        sql = f"""
+        SET statement_timeout = '{SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS}ms';
+        SET work_mem = '4MB';
+        SET hash_mem_multiplier = 1.0;
+        WITH {','.join(ctes)},
+        payload_rows AS (
+            {' UNION ALL '.join(rows)}
+        )
+        SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb)::text
+        FROM payload_rows;
+        """
+        batch_names = [name for name, _query in batch_items]
+        try:
+            output = run_psql_text(sql)
+            payload = json.loads(output or "{}")
+            data.update({
+                key: (value if isinstance(value, list) else [])
+                for key, value in payload.items()
+            })
+            for name in batch_names:
+                data.setdefault(name, [])
+        except Exception as exc:  # noqa: BLE001
+            if error_collector is None:
+                raise
+            error_collector.append({
+                "section": "snapshot_query_batch",
+                "batch_offset": offset,
+                "query_keys": batch_names,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            data.update({name: [] for name in batch_names})
+    return data
 
 def run_psql_json_statement(sql: str) -> list[dict]:
     output = run_psql_text(sql)
     return json.loads(output or "[]")
+
+
+_OFFICE_PRIVATE_FIELDS = {
+    "account_id",
+    "broker_account_id",
+    "client_account_id",
+    "client_id",
+    "client_ref",
+    "household_id",
+    "portfolio_account_id",
+    "portfolio_id",
+}
+_OFFICE_SCOPE_FIELDS = {
+    "committee_scope",
+    "data_boundary",
+    "privacy_scope",
+    "scope",
+    "scope_type",
+    "source_kind",
+    "subject_type",
+    "target_workspace",
+    "workspace",
+    "workspace_scope",
+}
+_OFFICE_PRIVATE_SCOPE_TOKENS = ("client", "confidential", "private", "restricted")
+_OFFICE_PRIVATE_SOURCE_TOKENS = (
+    "account",
+    "capital gain",
+    "capital_gain",
+    "client",
+    "holding",
+    "portfolio",
+    "transaction",
+)
+
+
+def _office_has_value(value: object) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _office_record_is_private(value: object, *, depth: int = 0) -> bool:
+    """Classify records for the shared Office projection without logging their values."""
+    if depth > 5:
+        return False
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            key = str(raw_key).strip().lower()
+            if key in _OFFICE_PRIVATE_FIELDS and _office_has_value(child):
+                return True
+            if key in _OFFICE_SCOPE_FIELDS and isinstance(child, str):
+                scope = child.strip().lower()
+                if any(token in scope for token in _OFFICE_PRIVATE_SCOPE_TOKENS):
+                    return True
+            if _office_record_is_private(child, depth=depth + 1):
+                return True
+        return False
+    if isinstance(value, (list, tuple, set)):
+        return any(_office_record_is_private(child, depth=depth + 1) for child in value)
+    return False
+
+
+def _office_department_requires_redaction(record: dict) -> bool:
+    department = str(
+        record.get("department_key")
+        or record.get("department_name")
+        or record.get("department")
+        or ""
+    ).strip().lower()
+    return department in {"client", "client office", "portfolio", "portfolio office"}
+
+
+def _office_source_requires_redaction(record: dict) -> bool:
+    label = " ".join(str(record.get(key) or "") for key in ("source_key", "source_name")).strip().lower()
+    return any(token in label for token in _OFFICE_PRIVATE_SOURCE_TOKENS)
+
+
+def _office_redacted_record(record: dict, collection: str) -> tuple[dict, bool]:
+    private = _office_record_is_private(record)
+    if collection in {"agents", "live_office_agent_activity"}:
+        private = private or _office_department_requires_redaction(record)
+    if collection == "source_freshness":
+        private = private or _office_source_requires_redaction(record)
+    if not private:
+        return dict(record), False
+
+    safe = dict(record)
+    safe["office_visibility"] = "redacted"
+    safe["office_redaction_reason"] = "private_workspace"
+    replacements = {
+        "body": "Private scoped handoff — open the authorized workspace to review details.",
+        "current_task_title": "Private scoped assignment",
+        "current_work_detail": "Details are hidden on the shared Office surface.",
+        "current_work_title": "Private scoped work",
+        "detail": "Details are hidden on the shared Office surface.",
+        "error_message": None,
+        "evidence": {"office_redacted": True},
+        "latest_message_subject": "Private scoped handoff",
+        "latest_worker_output_note_path": None,
+        "latest_worker_summary": "Private worker output — open the authorized workspace.",
+        "memo_note_path": None,
+        "message": "Details are hidden on the shared Office surface.",
+        "metadata": {"office_redacted": True},
+        "objective": "Private scoped objective — open the authorized workspace.",
+        "open_tasks": [],
+        "output_note_path": None,
+        "presence_detail": "Details are hidden on the shared Office surface.",
+        "presence_reason": "Private workspace activity is redacted here.",
+        "presence_source_id": None,
+        "presence_title": "Private scoped work",
+        "recommended_action": "Open the authorized private workspace.",
+        "scope_ref": "private-workspace",
+        "source_name": "Restricted source",
+        "source_ref": "private-workspace",
+        "subject": "Private scoped handoff",
+        "subject_name": "Private subject",
+        "subject_ref": "private-workspace",
+        "symbol": None,
+        "title": "Private scoped item",
+    }
+    for key, replacement in replacements.items():
+        if key in safe:
+            safe[key] = replacement
+    for key in _OFFICE_PRIVATE_FIELDS:
+        if key in safe:
+            safe[key] = None
+    return safe, True
+
+
+def _office_projection(data: dict[str, list[dict]], issues: list[dict]) -> tuple[dict[str, list[dict]], dict]:
+    redacted_count = 0
+    projected: dict[str, list[dict]] = {}
+    for collection, rows in data.items():
+        projected_rows: list[dict] = []
+        for row in rows:
+            safe_row, redacted = _office_redacted_record(row, collection)
+            projected_rows.append(safe_row)
+            redacted_count += int(redacted)
+        projected[collection] = projected_rows
+
+    activity_fields = (
+        "latest_activity_at",
+        "updated_at",
+        "created_at",
+        "latest_message_at",
+        "latest_worker_finished_at",
+        "started_at",
+    )
+    latest_activity: datetime | None = None
+    for rows in projected.values():
+        for row in rows:
+            for field in activity_fields:
+                raw = row.get(field)
+                if not isinstance(raw, str) or not raw.strip():
+                    continue
+                try:
+                    candidate = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if candidate.tzinfo is None:
+                    candidate = candidate.replace(tzinfo=timezone.utc)
+                candidate = candidate.astimezone(timezone.utc)
+                if latest_activity is None or candidate > latest_activity:
+                    latest_activity = candidate
+
+    now = datetime.now(timezone.utc)
+    age_seconds = max(0, int((now - latest_activity).total_seconds())) if latest_activity else None
+    if issues:
+        freshness_status = "partial"
+    elif age_seconds is None:
+        freshness_status = "no_activity"
+    elif age_seconds > 1800:
+        freshness_status = "stale"
+    else:
+        freshness_status = "fresh"
+
+    return projected, {
+        "projection": "shared_office_v1",
+        "privacy_mode": "shared_safe",
+        "client_detail_exposed": False,
+        "redacted_record_count": redacted_count,
+        "source_status": freshness_status,
+        "latest_record_at": latest_activity.isoformat() if latest_activity else None,
+        "latest_record_age_seconds": age_seconds,
+        "query_issue_count": len(issues),
+        "broker_write_allowed": False,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+    }
 
 
 def build_office_snapshot() -> dict:
@@ -317,22 +633,38 @@ def build_office_snapshot() -> dict:
     issues: list[dict] = []
     queries = {
         "agents": """
-            SELECT agent_name, department, department_name, display_title, role_scope,
-                   persona, operating_style, mental_models, default_model_route,
-                   default_tools, permission_level, output_targets, guardrails,
-                   escalation_rules, daily_cadence, cost_policy, human_interface,
-                   skill_count, primary_skills, latest_worker_finished_at,
-                   latest_worker_status
-            FROM agent.v_active_agents
-            ORDER BY CASE agent_name WHEN 'Charlie Munger' THEN 1 WHEN 'Jarvis' THEN 2 ELSE 3 END,
-                     department, agent_name
+            SELECT employee.agent_name,employee.department,employee.department_name,
+                   employee.display_title,employee.role_scope,employee.persona,
+                   employee.default_model_route,employee.permission_level,
+                   employee.reports_to_agent,employee.role_rank,employee.hierarchy_level,
+                   employee.character_name,employee.avatar_role,employee.office_location,
+                   employee.color_token,employee.icon_hint,employee.mailbox_address,
+                   employee.primary_route,employee.assigned_provider,employee.assigned_model,
+                   employee.model_status,employee.fallback_route,employee.escalation_route,
+                   employee.active_skill_count,employee.enabled_tool_count,
+                   employee.open_task_count,employee.blocked_task_count,
+                   employee.open_inbox_count,employee.unread_received_count,
+                   employee.worker_run_count,employee.completed_worker_run_count,
+                   employee.output_artifact_count,employee.pending_approval_count,
+                   employee.live_state,employee.current_work_title,
+                   employee.current_work_detail,employee.latest_activity_at,
+                   readiness.operating_readiness_score,readiness.reliability_score,
+                   readiness.reliability_confidence,readiness.readiness_status,
+                   readiness.operating_mode,readiness.model_reasoning_ready,
+                   readiness.tools_ready,readiness.requested_tool_count,
+                   readiness.resolved_tool_count,readiness.missing_tool_count,
+                   readiness.missing_tools
+            FROM agent.v_employee_profiles_v1 employee
+            LEFT JOIN agent.v_agent_operating_readiness readiness USING(agent_name)
+            ORDER BY employee.role_rank,employee.agent_name
         """,
         "live_office_rooms": """
             SELECT room_key, room_name, room_rank, agent_count,
-                   active_agent_count, open_task_count, blocked_task_count,
+                   active_agent_count, executing_agent_count, queued_agent_count,
+                   open_task_count, blocked_task_count,
                    unread_message_count, open_inbox_count, open_risk_event_count,
                    room_workload_score, latest_activity_at, room_state, agents
-            FROM agent.v_live_office_rooms
+            FROM agent.v_live_office_rooms_v2
             ORDER BY room_rank, room_name
         """,
         "live_office_agent_activity": """
@@ -353,9 +685,19 @@ def build_office_snapshot() -> dict:
                    latest_worker_skill_name, latest_worker_status,
                    latest_worker_summary, latest_worker_output_note_path,
                    latest_worker_finished_at, open_tasks, workload_score,
-                   live_state, latest_activity_at
-            FROM agent.v_live_office_agent_activity
+                   live_state, latest_activity_at, presence_state, presence_reason,
+                   presence_source_kind, presence_source_id, presence_started_at,
+                   presence_expires_at, presence_is_fresh, presence_title,presence_detail
+            FROM agent.v_live_office_presence_v2
             ORDER BY role_rank, agent_name
+        """,
+        "office_operability_acceptance": """
+            SELECT id,run_key,status,active_agent_count,active_department_count,
+                   gate_count,passed_count,blocked_count,gates,started_by,
+                   started_at,finished_at,broker_write_allowed
+            FROM agent.v_office_operability_acceptance
+            ORDER BY started_at DESC,id DESC
+            LIMIT 10
         """,
         "agent_messages": """
             SELECT id, thread_key, from_agent, from_title, to_agent, to_title,
@@ -366,6 +708,35 @@ def build_office_snapshot() -> dict:
             FROM agent.v_agent_message_threads
             ORDER BY created_at DESC NULLS LAST, id DESC
             LIMIT 50
+        """,
+        "graph_runs": """
+            SELECT graph_run_id,graph_key,graph_name,run_status,triggered_by,
+                   subject_type,subject_ref,pending_decision,completed_node_count,
+                   active_node_count,waiting_node_count,failed_node_count,
+                   started_at,updated_at
+            FROM agent.v_graph_run_status
+            WHERE run_status IN ('queued','running','waiting_approval','waiting_input','paused')
+            ORDER BY updated_at DESC,graph_run_id DESC
+            LIMIT 24
+        """,
+        "graph_node_runs": """
+            SELECT graph_node_run_id,graph_run_id,graph_key,node_key,node_name,
+                   node_type,owner_agent,skill_key,status,task_id,task_title,
+                   worker_status,output_summary AS worker_summary,
+                   approval_id,approval_status,
+                   committee_packet_id,committee_packet_status,
+                   committee_session_status,updated_at
+            FROM agent.v_graph_node_run_detail
+            WHERE status IN ('ready','queued','running','waiting_approval','waiting_input','failed')
+            ORDER BY updated_at DESC,graph_node_run_id DESC
+            LIMIT 80
+        """,
+        "graph_attention": """
+            SELECT attention_kind,id,graph_run_id,graph_node_run_id,category,
+                   title,detail,status,owner_agent,due_at,created_at,updated_at,context
+            FROM agent.v_graph_attention_queue
+            ORDER BY created_at DESC
+            LIMIT 40
         """,
         "committee_room_items": """
             SELECT committee_item_key, committee_lane, committee_scope,
@@ -425,22 +796,26 @@ def build_office_snapshot() -> dict:
             LIMIT 1
         """,
     }
-    try:
-        data = run_psql_json_object(queries, row_limit=160)
-    except Exception as exc:  # noqa: BLE001
-        issues.append({"section": "office_snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
-        data = {name: [] for name in queries}
+    data = run_psql_json_object(
+        queries,
+        row_limit=160,
+        batch_size=4,
+        error_collector=issues,
+    )
 
+    projected, projection_meta = _office_projection(data, issues)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
+        "projection_meta": projection_meta,
         "data_mode": {
             "seed_data_allowed": False,
             "display_policy": "Show warehouse-backed rows only; empty states mean the source is not connected or has no records yet.",
+            "privacy_policy": "Shared Office is client-redacted; private details require an authorized workspace.",
         },
         "issues": issues,
-        **data,
+        **projected,
     }
 
 
@@ -988,24 +1363,105 @@ def safe_query(name: str, query: str, issues: list[dict]) -> list[dict]:
         return []
 
 
-def probe_tradingview_cdp(port: int | None = None) -> dict:
-    resolved_port = int(port or TRADINGVIEW_CDP_PORT)
+
+def probe_tradingview_desktop() -> dict:
+    return probe_desktop()
+
+
+def open_tradingview_desktop_chart(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Devarsh via Charlie").strip()
+    symbol = str(payload.get("symbol") or "").strip()
+    if not symbol:
+        symbols = payload.get("symbols") or []
+        symbol = str(symbols[0]).strip() if isinstance(symbols, list) and symbols else ""
+    if not symbol:
+        raise ValueError("symbol is required")
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    timeframe = str(payload.get("timeframe") or "D").strip().upper()
+    normalized_symbol = normalize_tradingview_symbol(symbol, exchange)
+    target_url = str(payload.get("target_url") or tradingview_chart_url(normalized_symbol, timeframe)).strip()
+    if not target_url.startswith("https://www.tradingview.com/"):
+        raise ValueError("target_url must be an https://www.tradingview.com/ link")
+
+    task = create_tradingview_task({
+        "task_title": payload.get("task_title") or f"Open TradingView Desktop: {normalized_symbol}",
+        "task_type": "desktop_open_chart",
+        "requested_by": actor,
+        "owner_agent": payload.get("owner_agent") or "Trading Desk Agent",
+        "priority": payload.get("priority") or "medium",
+        "symbols": [normalized_symbol],
+        "exchange": exchange,
+        "timeframe": timeframe,
+        "instruction": payload.get("instruction") or "Open the requested chart in the user-managed TradingView Desktop session.",
+        "source_ref": payload.get("source_ref") or "ai_os_tradingview_desktop_bridge",
+        "evidence": [{"source": "TradingView Desktop bridge", "target_url": target_url}],
+        "metadata": {"target_url": target_url, "action_kind": "desktop_open_chart"},
+    })
+    task_id = int(task.get("id"))
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{resolved_port}/json/version", timeout=1.5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return {
-            "available": True,
-            "port": resolved_port,
-            "browser": payload.get("Browser"),
-            "user_agent": payload.get("User-Agent"),
-        }
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        return {
-            "available": False,
-            "port": resolved_port,
-            "error": str(exc),
-            "next_action": f"Start the managed TradingView browser service on CDP port {resolved_port}.",
-        }
+        bridge = open_link_in_desktop(target_url)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        run_psql_text(f"""
+            UPDATE ops.tradingview_tasks
+            SET status='failed', result_summary={sql_literal(error)},
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "desktop_error": error})},
+                updated_at=now(), completed_at=now()
+            WHERE id={task_id}
+        """)
+        raise
+
+    bridge_status = str(bridge.get("status") or "failed")
+    bridge_handoff = str(bridge.get("handoff") or "desktop_handoff")
+    handoff_accepted = bridge_status in {"opened", "handoff_requested"}
+    task_status = "done" if handoff_accepted else "waiting_input"
+    summary = (
+        f"Opened {normalized_symbol} ({timeframe}) in the user-managed TradingView Desktop session."
+        if bridge_status == "opened"
+        else f"Submitted {normalized_symbol} ({timeframe}) to the user-managed TradingView Desktop session."
+        if bridge_status == "handoff_requested"
+        else (
+            "TradingView Desktop is running, but macOS Accessibility permission is required for the official clipboard-menu handoff."
+            if bridge_status == "permission_required"
+            else "TradingView Desktop is not installed on this node."
+        )
+    )
+    rows = run_psql_json_statement(f"""
+        WITH updated AS (
+            UPDATE ops.tradingview_tasks
+            SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
+                evidence=evidence || jsonb_build_array({sql_jsonb({"source": f"TradingView Desktop {bridge_handoff}", "target_url": target_url, "status": bridge_status})}),
+                metadata=metadata || {sql_jsonb({"target_url": target_url, "handoff": bridge_handoff, "launch_pid": bridge.get("launch_pid"), "clipboard_prepared": bridge.get("clipboard_prepared", False), "next_action": bridge.get("next_action"), "desktop": bridge.get("desktop") or {}})},
+                updated_at=now(),
+                completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
+            WHERE id={task_id}
+            RETURNING id, task_title, task_type, status, symbols, exchange, timeframe,
+                      result_summary, evidence, metadata, created_at, updated_at, completed_at
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
+    """)
+    response = {
+        "status": bridge_status,
+        "task": rows[0] if rows else task,
+        "target_url": target_url,
+        "desktop": bridge.get("desktop") or {},
+        "next_action": bridge.get("next_action"),
+        "fallback": (
+            None
+            if handoff_accepted
+            else bridge.get("next_action")
+            or "Open the prepared link from the clipboard in TradingView Desktop."
+        ),
+    }
+    audit_api_write(
+        "ai_os_api_open_tradingview_desktop",
+        "open_tradingview_desktop_chart",
+        actor,
+        "ops.tradingview_tasks",
+        response,
+        payload,
+    )
+    return response
 
 
 def http_json(method: str, url: str, payload: object | None = None, timeout: float = 10) -> dict:
@@ -1045,12 +1501,68 @@ def mlx_model_available(model_name: str) -> bool:
         return False
 
 
-def local_openai_model_available(model_name: str) -> bool:
+def local_openai_endpoint(model_name: str) -> dict:
+    """Resolve a private OpenAI-compatible runtime without sharing one global URL."""
+    fallback = {
+        "base_url": "",
+        "request_model": "",
+        "max_output_tokens": LOCAL_OPENAI_MAX_TOKENS,
+        "config": {},
+        "resolved": False,
+    }
     try:
-        with urllib.request.urlopen(f"{LOCAL_OPENAI_BASE_URL}/models", timeout=3.0) as response:
-            return int(response.status) == 200
-    except (OSError, urllib.error.URLError, TimeoutError):
+        rows = run_psql_json(
+            f"""
+            SELECT base_url,
+                   coalesce(nullif(config->>'request_model',''), model_name) AS request_model,
+                   coalesce((config->>'max_output_tokens')::INTEGER, {LOCAL_OPENAI_MAX_TOKENS}) AS max_output_tokens,
+                   endpoint_key, status, health_status, config
+            FROM agent.model_endpoints
+            WHERE provider='local_openai'
+              AND model_name={sql_literal(model_name)}
+              AND status NOT IN ('disabled','blocked')
+              AND nullif(base_url,'') IS NOT NULL
+            ORDER BY (status='active') DESC, (health_status='healthy') DESC, updated_at DESC
+            LIMIT 1
+            """
+        )
+    except Exception:  # noqa: BLE001 - runtime fallback must survive DB startup ordering
+        rows = []
+    if not rows:
+        return fallback
+    row = rows[0]
+    try:
+        max_output_tokens = int(row.get("max_output_tokens") or LOCAL_OPENAI_MAX_TOKENS)
+    except (TypeError, ValueError):
+        max_output_tokens = LOCAL_OPENAI_MAX_TOKENS
+    return {
+        **fallback,
+        **row,
+        "base_url": str(row.get("base_url") or "").rstrip("/"),
+        "request_model": str(row.get("request_model") or model_name),
+        "max_output_tokens": max(32, min(max_output_tokens, 1200)),
+        "config": row.get("config") if isinstance(row.get("config"), dict) else {},
+        "resolved": True,
+    }
+
+
+def local_openai_model_available(model_name: str) -> bool:
+    endpoint = local_openai_endpoint(model_name)
+    base_url = str(endpoint.get("base_url") or "").rstrip("/")
+    request_model = str(endpoint.get("request_model") or "").strip()
+    if not endpoint.get("resolved") or not base_url or not request_model:
         return False
+    try:
+        payload = http_json("GET", f"{base_url}/models", timeout=3.0)
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return False
+    models = payload.get("data") if isinstance(payload, dict) else None
+    available_ids = {
+        str(item.get("id") or "").strip()
+        for item in models or []
+        if isinstance(item, dict)
+    }
+    return request_model in available_ids
 
 
 def local_model_governance(model_name: str) -> dict:
@@ -1087,8 +1599,7 @@ def model_runtime_options(model_name: str) -> dict[str, int | float]:
 
 
 def ollama_embed(text: str) -> list[float] | None:
-    if not ollama_model_available(EMBEDDING_MODEL):
-        return None
+    # The embed endpoint is authoritative; /api/tags can time out while another model is loading.
     if not local_model_governance(EMBEDDING_MODEL).get("assignable"):
         return None
     try:
@@ -1111,7 +1622,7 @@ def ollama_embed(text: str) -> list[float] | None:
     return None
 
 
-def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+def ollama_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str]:
     if not ollama_model_available(model_name):
         return None, "model_unavailable"
     governance = local_model_governance(model_name)
@@ -1130,7 +1641,7 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "messages": [
                     {
                         "role": "system",
-                        "content": CHARLIE_OLLAMA_SYSTEM_PROMPT,
+                        "content": system_prompt or CHARLIE_OLLAMA_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -1144,7 +1655,7 @@ def ollama_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+def mlx_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str]:
     if not mlx_model_available(model_name):
         return None, "model_unavailable"
     governance = local_model_governance(model_name)
@@ -1165,7 +1676,7 @@ def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
                 "messages": [
                     {
                         "role": "system",
-                        "content": CHARLIE_TRUTH_SYSTEM_PROMPT,
+                        "content": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -1180,43 +1691,153 @@ def mlx_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def local_openai_chat(model_name: str, prompt: str) -> tuple[str | None, str]:
+def local_openai_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str]:
     if not local_openai_model_available(model_name):
         return None, "model_unavailable"
     governance = local_model_governance(model_name)
     if not governance.get("assignable"):
         return None, str(governance.get("reason") or "model_not_promoted")
+    endpoint = local_openai_endpoint(model_name)
+    endpoint_config = endpoint.get("config") if isinstance(endpoint.get("config"), dict) else {}
+    runtime_name = str(endpoint_config.get("runtime") or "").lower()
+    request_payload = {
+        "model": endpoint["request_model"],
+        "stream": False,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": endpoint["max_output_tokens"],
+        "messages": [
+            {"role": "system", "content": system_prompt or CHARLIE_LOCAL_CONVERSATION_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if "mlx-vlm" in runtime_name:
+        request_payload["enable_thinking"] = bool(endpoint_config.get("enable_thinking", False))
+    else:
+        request_payload.update({
+            "top_k": 20,
+            "cache_prompt": True,
+            "chat_template_kwargs": {"enable_thinking": False},
+        })
     try:
         payload = http_json(
             "POST",
-            f"{LOCAL_OPENAI_BASE_URL}/chat/completions",
-            {
-                "model": LOCAL_OPENAI_REQUEST_MODEL,
-                "stream": False,
-                "temperature": 0.7,
-                "top_p": 0.95,
-                "top_k": 20,
-                "max_tokens": LOCAL_OPENAI_MAX_TOKENS,
-                "messages": [
-                    {"role": "system", "content": CHARLIE_LOCAL_CONVERSATION_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-            },
+            f"{endpoint['base_url']}/chat/completions",
+            request_payload,
             timeout=LOCAL_OPENAI_TIMEOUT_SECONDS,
         )
         choices = payload.get("choices") if isinstance(payload, dict) else None
-        message = choices[0].get("message") if isinstance(choices, list) and choices else None
+        choice = choices[0] if isinstance(choices, list) and choices else None
+        message = choice.get("message") if isinstance(choice, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(choice, dict) and choice.get("finish_reason") == "length":
+            return None, "model_output_truncated"
         return str(content).strip() if content else None, "called"
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         return None, f"call_failed:{type(exc).__name__}"
 
 
-def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict]:
+def cloud_reasoning_effort(model_name: str) -> str:
+    normalized = model_name.lower()
+    if "sol" in normalized:
+        return "high"
+    if "terra" in normalized:
+        return "medium"
+    if "gemini-3.6-flash" in normalized:
+        return "medium"
+    return "none"
+
+
+def openai_responses_chat(model_name: str, prompt: str, system_prompt: str | None = None) -> tuple[str | None, str, dict]:
+    """Call OpenAI Responses with stateless storage and normalized token usage."""
+    if not OPENAI_API_KEY:
+        return None, "openai_key_unavailable", {}
+    try:
+        request = urllib.request.Request(
+            f"{OPENAI_BASE_URL}/responses",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(
+                {
+                    "model": model_name,
+                    "store": False,
+                    "reasoning": {"effort": cloud_reasoning_effort(model_name)},
+                    "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
+                    "instructions": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT,
+                    "input": prompt,
+                    "text": {"verbosity": "medium" if cloud_reasoning_effort(model_name) != "none" else "low"},
+                }
+            ).encode("utf-8"),
+        )
+        with urllib.request.urlopen(request, timeout=240) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        content = payload.get("output_text") if isinstance(payload, dict) else None
+        if not content and isinstance(payload, dict):
+            parts: list[str] = []
+            for output_item in payload.get("output") or []:
+                if not isinstance(output_item, dict):
+                    continue
+                for content_item in output_item.get("content") or []:
+                    if isinstance(content_item, dict) and content_item.get("type") == "output_text":
+                        value = content_item.get("text")
+                        if value:
+                            parts.append(str(value))
+            content = "\n".join(parts)
+        raw_usage = payload.get("usage") if isinstance(payload, dict) and isinstance(payload.get("usage"), dict) else {}
+        usage = {
+            **raw_usage,
+            "prompt_tokens": int(raw_usage.get("input_tokens") or 0),
+            "completion_tokens": int(raw_usage.get("output_tokens") or 0),
+            "total_tokens": int(raw_usage.get("total_tokens") or 0),
+        }
+        return (str(content).strip() if content else None), "called", usage
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        return None, f"call_failed:HTTPError:{exc.code}:{detail}", {}
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return None, f"call_failed:{type(exc).__name__}", {}
+
+
+def openrouter_chat(
+    model_name: str,
+    prompt: str,
+    system_prompt: str | None = None,
+    *,
+    max_completion_tokens: int | None = None,
+    json_object: bool = False,
+) -> tuple[str | None, str, dict]:
     """Call an explicitly selected public/internal cloud route with ZDR enforced."""
     if not OPENROUTER_API_KEY:
         return None, "openrouter_key_unavailable", {}
     try:
+        request_payload = {
+            "model": model_name,
+            "stream": False,
+            "max_tokens": max(
+                1,
+                min(int(max_completion_tokens or OPENROUTER_MAX_COMPLETION_TOKENS), 3200),
+            ),
+            "reasoning": {"effort": cloud_reasoning_effort(model_name), "exclude": True},
+            "provider": {
+                "zdr": True,
+                "data_collection": "deny",
+                "sort": "price",
+                "allow_fallbacks": True,
+            },
+            "messages": [
+                {"role": "system", "content": system_prompt or CHARLIE_TRUTH_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        # Gemini 3.6 deprecated sampling parameters. Omitting them also keeps
+        # this request portable to a future direct Google endpoint.
+        if "gemini-3.6-flash" not in model_name.lower():
+            request_payload["temperature"] = 0.2
+        if json_object:
+            request_payload["response_format"] = {"type": "json_object"}
         request = urllib.request.Request(
             f"{OPENROUTER_BASE_URL}/chat/completions",
             method="POST",
@@ -1226,25 +1847,7 @@ def openrouter_chat(model_name: str, prompt: str) -> tuple[str | None, str, dict
                 "HTTP-Referer": "https://devarshs-imac.tail8dd383.ts.net",
                 "X-Title": "AI Investment OS",
             },
-            data=json.dumps(
-                {
-                    "model": model_name,
-                    "stream": False,
-                    "temperature": 0.2,
-                    "max_tokens": OPENROUTER_MAX_COMPLETION_TOKENS,
-                    "reasoning": {"effort": "none", "exclude": True},
-                    "provider": {
-                        "zdr": True,
-                        "data_collection": "deny",
-                        "sort": "price",
-                        "allow_fallbacks": True,
-                    },
-                    "messages": [
-                        {"role": "system", "content": CHARLIE_TRUTH_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                }
-            ).encode("utf-8"),
+            data=json.dumps(request_payload).encode("utf-8"),
         )
         with urllib.request.urlopen(request, timeout=240) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -1265,24 +1868,18 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
     normalized = " ".join(response.lower().split())
     violations: list[str] = []
     reasoning_markers = (
-        "we are given",
-        "the task:",
-        "steps:",
-        "constraints from the",
-        "important constraints",
-        "let me re-read",
-        "how to interpret",
-        "key points from the evidence",
-        "first, the user",
-        "user wants me",
-        "verified office draft",
-        "the user message",
-        "the instruction says",
-        "i need to",
         "<think>",
         "</think>",
+        "chain of thought",
+        "hidden reasoning",
+        "system prompt",
+        "developer message",
+        "internal instructions",
+        "verified office draft:",
+        "current user message:",
+        "the instruction says",
     )
-    if len(response) > 1800 or any(marker in normalized for marker in reasoning_markers):
+    if len(response) > 8000 or any(marker in normalized for marker in reasoning_markers):
         violations.append("reasoning_or_prompt_leak")
     try:
         model_rows = run_psql_json(
@@ -1330,18 +1927,58 @@ def validate_charlie_model_response(response: str, context: dict | None = None) 
                 )
                 if not explicitly_blocked:
                     violations.append("execution_lock_contradiction")
-            if re.search(
-                r"(?:recommend|should|decide|consider|execute|place).{0,40}"
-                r"\b(?:buy|sell|short|cover|order|trade)\b|"
-                r"\b(?:buy|sell|short|cover)\b.{0,24}\b(?:now|today|immediately)\b",
-                normalized,
-            ):
-                violations.append("unsupported_capital_recommendation")
+            capital_action_pattern = re.compile(
+                r"\b(?:i\s+)?(?:recommend|advise|instruct)\s+"
+                r"(?:that\s+you\s+|you\s+to\s+)?(?:buy|sell|short|cover|place|execute)\b|"
+                r"\byou\s+should\s+(?:buy|sell|short|cover|place|execute)\b|"
+                r"\b(?:buy|sell|short|cover)\s+(?:now|today|immediately)\b|"
+                r"\b(?:place|execute)\s+(?:the\s+|an?\s+)?(?:order|trade)\b"
+            )
+            for capital_action in capital_action_pattern.finditer(normalized):
+                prefix = normalized[max(0, capital_action.start() - 56):capital_action.start()]
+                negated = re.search(
+                    r"\b(?:not|never|cannot|can't|do not|don't|would not|wouldn't|against)\b.{0,40}$",
+                    prefix,
+                )
+                if not negated:
+                    violations.append("unsupported_capital_recommendation")
+                    break
     except Exception as exc:  # noqa: BLE001
         violations.append(f"guardrail_state_unavailable:{type(exc).__name__}")
     filing_count = int((((context or {}).get("filing_summary") or [{}])[0]).get("filing_count") or 0)
     if filing_count > 0 and re.search(r"\b(?:zero|no)\s+(?:corporate\s+)?filings?\b|\bno\s+filing\s+data\b", normalized):
         violations.append("filing_context_contradiction")
+    scoped_rows = (context or {}).get("scoped_employee") or []
+    if scoped_rows:
+        scoped_employee = scoped_rows[0]
+        scoped_task_status = str(scoped_employee.get("current_task_status") or "").lower()
+        scoped_live_state = str(scoped_employee.get("live_state") or "").lower()
+        scoped_is_executing = (
+            scoped_task_status == "in_progress"
+            or scoped_live_state in {"executing", "running", "working", "processing"}
+        )
+        idle_claim = re.search(
+            r"\b(?:idle|not\s+(?:working|backtesting|running)\s+(?:on\s+)?anything|"
+            r"no\s+active\s+(?:task|assignment|work)|"
+            r"nothing\s+(?:is\s+)?(?:running|active)\s+right\s+now)\b",
+            normalized,
+        )
+        if scoped_is_executing and idle_claim and not re.search(r"\bnot\s+idle\b", normalized):
+            violations.append("scoped_employee_activity_contradiction")
+    for operation in (context or {}).get("tool_results") or []:
+        if str(operation.get("tool") or "") != "delegate_agent_work":
+            continue
+        result = operation.get("result") if isinstance(operation.get("result"), dict) else {}
+        message_id = result.get("id")
+        generated_task_id = result.get("generated_task_id")
+        if not str(message_id or "").isdigit() or str(generated_task_id or "").isdigit():
+            continue
+        task_id_claim = re.search(
+            rf"\btask\s+(?:id\s*)?#?{int(message_id)}\b|\btask\s*#{int(message_id)}\b",
+            normalized,
+        )
+        if task_id_claim:
+            violations.append("agent_message_id_mislabelled_as_task_id")
     if (context or {}).get("broad_office_request"):
         if not re.search(r"\bportfolio\b.{0,180}\b(?:inr|exposure|market value|holding|nav)\b", normalized):
             violations.append("office_brief_portfolio_missing")
@@ -1540,7 +2177,7 @@ def build_system_health_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         "storage": {
             "vault_mounted": VAULT_ROOT.exists(),
             "ollama_models_external": Path("/Volumes/Devarsh SSD/AI OS Data/ollama/models").is_dir(),
@@ -1582,11 +2219,25 @@ def build_mission_control_snapshot() -> dict:
                    recommended_action, target_workspace, claimed_by, claimed_at,
                    resolved_by, resolved_at, resolution_note, created_at, updated_at
             FROM agent.inbox_items
-            WHERE target_workspace IN ('command', 'system') OR target_workspace IS NULL
+            WHERE target_workspace IN ('command','system','office','portfolio','research','strategy','options','market')
+               OR target_workspace IS NULL
             ORDER BY
                 CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
                 updated_at DESC
             LIMIT 30
+        """,
+        "agent_targets": """
+            SELECT agent_name,display_title,department_name,role_scope,live_state
+            FROM agent.v_employee_profiles_v1
+            ORDER BY role_rank,agent_name
+            LIMIT 160
+        """,
+        "risk_events": """
+            SELECT id,ts,scope_type,scope_ref,severity,status,title,message,approval_id
+            FROM risk.events
+            WHERE status IN ('new','acknowledged')
+            ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,ts DESC
+            LIMIT 20
         """,
         "approvals": """
             SELECT id, task_id, approval_type, title, owner_agent, risk_level,
@@ -1677,6 +2328,19 @@ def build_mission_control_snapshot() -> dict:
             ORDER BY latest_provider_gate_at DESC NULLS LAST, task_id DESC
             LIMIT 20
         """,
+        "market_research_heartbeats": """
+            SELECT id, run_key, status, lookback_minutes, cooldown_minutes,
+                   candidate_count, material_candidate_count, selected_news_id,
+                   source_name, source_url, selected_title, source_published_at,
+                   source_captured_at, source_fingerprint, graph_run_id,
+                   graph_created, skip_reason, retry_count, next_retry_at,
+                   cooldown_until, error_message, broker_write_allowed,
+                   live_execution_allowed, capital_action_allowed, created_by,
+                   started_at, finished_at, created_at, updated_at
+            FROM research.v_market_research_heartbeat_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 8
+        """,
         "source_freshness": """
             SELECT source_key, source_name, staleness_minutes, status, severity,
                    rows_seen, risk_event_status, created_at
@@ -1732,6 +2396,14 @@ def build_mission_control_snapshot() -> dict:
             WHERE event_date <= current_date + 45
             LIMIT 20
         """,
+        "market_quotes": """
+            SELECT id, source_key, provider, provider_symbol, symbol, exchange,
+                   description, currency, price, change_percent, quote_ts
+            FROM market.v_latest_price_quotes
+            WHERE lower(provider) NOT LIKE 'tradingview%'
+            ORDER BY quote_ts DESC, symbol
+            LIMIT 100
+        """,
         "market_holidays": """
             SELECT exchange, segment, holiday_date, holiday_name,
                    session_status, source_url, notes, days_away
@@ -1766,7 +2438,7 @@ def build_mission_control_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_mission_control_read_model"},
         "payload_profile": {
             "query_count": len(queries),
@@ -1774,6 +2446,961 @@ def build_mission_control_snapshot() -> dict:
         },
         **data,
     }
+
+
+def _daily_snapshot_payload(source: str, queries: dict[str, str], *, row_limit: int = 24) -> dict:
+    """Run a compact, interactive read model without historical fan-out."""
+    issues: list[dict] = []
+    started = time.monotonic()
+    data = run_psql_json_object(
+        queries,
+        row_limit=row_limit,
+        batch_size=3,
+        error_collector=issues,
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "data_mode": {"seed_data_allowed": False, "source": source},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+            "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            "progressive_detail": True,
+        },
+        "issues": issues,
+        **data,
+    }
+
+
+
+def build_company_research_updates(query: dict[str, list[str]]) -> dict:
+    try:
+        page = max(1, int(query.get("page", ["1"])[0]))
+        page_size = max(1, min(50, int(query.get("page_size", ["20"])[0])))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("page and page_size must be integers") from exc
+    status = str(query.get("status", ["new"])[0]).strip().lower()
+    materiality = str(query.get("materiality", [""])[0]).strip().lower()
+    symbol = str(query.get("symbol", [""])[0]).strip().upper()
+    scope = str(query.get("scope", ["decision_required"])[0]).strip().lower()
+    allowed_status = {"new", "reviewed", "dismissed", "superseded", "all"}
+    allowed_materiality = {"", "low", "medium", "high", "critical"}
+    if status not in allowed_status or materiality not in allowed_materiality:
+        raise ValueError("status or materiality is not supported")
+    if scope not in {"followed", "decision_required", "all"}:
+        raise ValueError("scope must be followed, decision_required or all")
+    filters = []
+    if status != "all":
+        filters.append(f"feed.status={sql_literal(status)}")
+    if materiality:
+        filters.append(f"feed.materiality={sql_literal(materiality)}")
+    if symbol:
+        filters.append(f"upper(feed.symbol)={sql_literal(symbol)}")
+    if scope == "decision_required":
+        filters.append("feed.decision_impact IN ('review','reunderwrite')")
+    where_sql = "WHERE " + " AND ".join(filters) if filters else ""
+    offset = (page-1)*page_size
+    count_rows = run_psql_json(f"SELECT count(*)::integer total FROM research.v_company_research_update_feed feed {where_sql}")
+    total = int((count_rows[0] if count_rows else {}).get("total") or 0)
+    items = run_psql_json(f"""
+      SELECT feed.* FROM research.v_company_research_update_feed feed {where_sql}
+      ORDER BY CASE feed.materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+               feed.effective_at DESC,feed.id DESC LIMIT {page_size} OFFSET {offset}
+    """)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scope": scope,
+        "role_scope": "local_operator",
+        "pagination": {"page":page,"page_size":page_size,"total":total,"pages":(total+page_size-1)//page_size},
+        "items": items,
+        "source_posture": "authorized warehouse sources only",
+        "private_data_egress_allowed": False,
+        "external_write_allowed": False,
+        "broker_write_allowed": False,
+    }
+
+
+def build_company_research_monitoring(query: dict[str, list[str]]) -> dict:
+    try:
+        page = max(1, int(query.get("page", ["1"])[0]))
+        requested_size = query.get("page_size", query.get("limit", ["20"]))[0]
+        page_size = max(1, min(100, int(requested_size)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("page and page_size must be integers") from exc
+    offset = (page - 1) * page_size
+    count_rows = run_psql_json("SELECT count(*)::integer total FROM research.v_company_research_monitoring")
+    total = int((count_rows[0] if count_rows else {}).get("total") or 0)
+    rows = run_psql_json(f"""
+      SELECT monitoring.*,
+        latest_update.id latest_update_id,latest_update.update_type,latest_update.title latest_update_title,
+        latest_update.summary latest_update_summary,latest_update.materiality latest_update_materiality,
+        latest_update.decision_impact latest_update_decision_impact,
+        latest_update.effective_at latest_update_at,latest_update.source_url latest_update_source_url,
+        latest_update.case_href,latest_update.thesis_href,
+        coalesce(update_count.new_count,0)::integer new_update_count
+      FROM research.v_company_research_monitoring monitoring
+      LEFT JOIN LATERAL (SELECT * FROM research.v_company_research_update_feed feed
+        WHERE upper(feed.exchange)=upper(monitoring.exchange) AND upper(feed.symbol)=upper(monitoring.symbol)
+        ORDER BY feed.effective_at DESC,feed.id DESC LIMIT 1) latest_update ON true
+      LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE feed.status='new') new_count
+        FROM research.v_company_research_update_feed feed
+        WHERE upper(feed.exchange)=upper(monitoring.exchange) AND upper(feed.symbol)=upper(monitoring.symbol)) update_count ON true
+      ORDER BY CASE monitoring.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+               coalesce(latest_update.effective_at,monitoring.last_progress_at,monitoring.followed_since) DESC
+      LIMIT {page_size} OFFSET {offset}
+    """)
+    run_rows = run_psql_json("""SELECT * FROM research.company_research_monitor_runs ORDER BY id DESC LIMIT 5""")
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pagination": {"page": page, "page_size": page_size, "total": total,
+                       "pages": (total + page_size - 1) // page_size},
+        "companies": rows,
+        "monitor_runs": run_rows,
+        "private_data_egress_allowed": False,
+        "external_write_allowed": False,
+        "broker_write_allowed": False,
+    }
+
+def run_company_research_monitor(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    result = run_company_research_monitor_once(
+        run_rows=run_psql_json,run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,sql_jsonb=sql_jsonb,limit=int(payload.get("limit") or 80),min_interval_minutes=int(payload.get("min_interval_minutes") or 15),
+        force=payload.get("operator_confirmed") is True,
+    )
+    audit_api_write("ai_os_api_company_research_monitor", "run_company_research_monitor", actor,
+                    "research.company_research_updates", result, {"limit":payload.get("limit") or 80})
+    return result
+
+
+def review_company_research_update(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before changing an update review state")
+    update_id = int(payload.get("update_id") or payload.get("updateId") or 0)
+    decision = str(payload.get("decision") or "").strip().lower()
+    if not update_id or decision not in {"reviewed","dismissed"}:
+        raise ValueError("update_id and decision reviewed or dismissed are required")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    rows = run_psql_json_statement(f"""
+      UPDATE research.company_research_updates SET status={sql_literal(decision)},reviewed_by={sql_literal(actor)},
+        reviewed_at=now(),updated_at=now(),metadata=metadata||jsonb_build_object('review_note',{sql_literal(str(payload.get('note') or ''))})
+      WHERE id={update_id} AND status='new' RETURNING *
+    """)
+    if not rows:
+        raise ValueError("update was not found or already decided")
+    audit_api_write("ai_os_api_company_research_update_review", "review_company_research_update", actor,
+                    "research.company_research_updates", rows[0], payload)
+    return rows[0]
+
+
+def propose_research_runtime_repair(payload: dict) -> dict:
+    issue_type = str(payload.get("issue_type") or payload.get("issueType") or "other").strip().lower()
+    allowed_issue_types = {"source_collection","extraction","model_contract","valuation","report_render","monitoring","chat_context","other"}
+    if issue_type not in allowed_issue_types:
+        raise ValueError("unsupported issue_type")
+    title = str(payload.get("title") or "").strip()
+    observed = str(payload.get("observed_failure") or payload.get("observedFailure") or "").strip()
+    diagnosis = str(payload.get("diagnosis") or "").strip()
+    rollback = str(payload.get("rollback_plan") or payload.get("rollbackPlan") or "").strip()
+    allowed_paths = payload.get("allowed_paths") or payload.get("allowedPaths") or []
+    proposed_change = payload.get("proposed_change") or payload.get("proposedChange") or {}
+    test_plan = payload.get("test_plan") or payload.get("testPlan") or []
+    if not title or not observed or not diagnosis or not rollback or not isinstance(allowed_paths,list) or not allowed_paths:
+        raise ValueError("title, observed_failure, diagnosis, rollback_plan and allowed_paths are required")
+    if any(not str(path).startswith("_ai_os_runtime/") or ".." in str(path) for path in allowed_paths):
+        raise ValueError("allowed_paths must be bounded _ai_os_runtime repository paths")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    estimate = max(0,float(payload.get("estimated_cost_usd") or payload.get("estimatedCostUsd") or 0))
+    hard_max = max(estimate,float(payload.get("hard_max_cost_usd") or payload.get("hardMaxCostUsd") or estimate))
+    request_key = "research-repair-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    rows = run_psql_json_statement(f"""
+      WITH approval AS (
+        INSERT INTO agent.approvals (approval_type,title,owner_agent,risk_level,status,requested_action,rationale,created_at)
+        VALUES ('research_runtime_code_repair',{sql_literal(title)},'Coding Lead Agent','high','pending',
+          {sql_jsonb({'request_key':request_key,'allowed_paths':allowed_paths,'estimated_cost_usd':estimate,'hard_max_cost_usd':hard_max,
+                      'auto_deploy_allowed':False,'external_write_allowed':False,'broker_write_allowed':False,'client_write_allowed':False})},
+          {sql_literal('A scoped coding repair can run only after explicit human approval; no scope expansion or deployment is authorized.')},now())
+        RETURNING id
+      ), request AS (
+        INSERT INTO research.research_runtime_repair_requests
+          (request_key,research_case_id,issue_type,title,observed_failure,diagnosis,proposed_change,allowed_paths,
+           test_plan,rollback_plan,estimated_cost_usd,hard_max_cost_usd,approval_id,requested_by)
+        SELECT {sql_literal(request_key)},{case_id or 'NULL'},{sql_literal(issue_type)},{sql_literal(title)},
+          {sql_literal(observed)},{sql_literal(diagnosis)},{sql_jsonb(proposed_change)},{sql_jsonb(allowed_paths)},
+          {sql_jsonb(test_plan)},{sql_literal(rollback)},{estimate},{hard_max},approval.id,{sql_literal(actor)} FROM approval
+        RETURNING *
+      ) SELECT coalesce(json_agg(row_to_json(request)),'[]'::json)::text FROM request
+    """)
+    if not rows:
+        raise RuntimeError("repair proposal was not created")
+    result=rows[0]
+    result["code_change_applied"]=False
+    result["deployment_allowed"]=False
+    audit_api_write("ai_os_api_research_runtime_repair_propose","propose_research_runtime_repair",actor,
+                    "research.research_runtime_repair_requests",result,payload)
+    return result
+
+
+def build_research_runtime_repairs(query: dict[str, list[str]]) -> dict:
+    try:
+        limit=max(1,min(50,int(query.get("limit",["20"])[0])))
+    except (TypeError,ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    status=str(query.get("status",[""])[0]).strip().lower()
+    allowed={"","awaiting_approval","approved","queued","running","completed","failed","rejected","cancelled"}
+    if status not in allowed:
+        raise ValueError("unsupported repair status")
+    where=f"WHERE request.status={sql_literal(status)}" if status else ""
+    items=run_psql_json(f"""SELECT request.*,approval.status approval_status,approval.decided_by,approval.decided_at
+      FROM research.research_runtime_repair_requests request JOIN agent.approvals approval ON approval.id=request.approval_id
+      {where} ORDER BY request.updated_at DESC,request.id DESC LIMIT {limit}""")
+    return {"generated_at":datetime.now(timezone.utc).isoformat(),"items":items,
+            "proposal_only":True,"code_change_applied":False,"auto_deploy_allowed":False,
+            "private_data_egress_allowed":False,"external_write_allowed":False,"broker_write_allowed":False}
+
+
+def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
+    """Bounded global Research Case tracker, independent of thesis creation."""
+    try:
+        page = max(1, int(query.get("page", ["1"])[0]))
+        page_size = max(1, min(24, int(query.get("page_size", ["12"])[0])))
+        case_id = max(0, int(query.get("case_id", ["0"])[0]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("page, page_size and case_id must be integers") from exc
+    requested_status = str(query.get("status", [""])[0]).strip().lower()
+    allowed_statuses = {"proposed", "collecting", "active", "review", "blocked", "completed", "cancelled"}
+    if requested_status and requested_status not in allowed_statuses:
+        raise ValueError("status is not supported")
+    filters = []
+    if case_id:
+        filters.append(f"case_row.id={case_id}")
+    if requested_status:
+        filters.append(f"case_row.status={sql_literal(requested_status)}")
+    where_sql = "WHERE " + " AND ".join(filters) if filters else ""
+    offset = (page - 1) * page_size
+    count_rows = run_psql_json(f"SELECT count(*)::int total FROM research.research_cases case_row {where_sql}")
+    total = int((count_rows[0] if count_rows else {}).get("total") or 0)
+    cases = run_psql_json(f"""
+        SELECT case_row.id,case_row.case_key,case_row.ticker,case_row.exchange,
+          case_row.company_name,case_row.company_id,case_row.holding_thesis_id,
+          case_row.owner_agent,case_row.priority,case_row.horizon,case_row.mandate,
+          case_row.status,case_row.lead_status,case_row.current_goal,
+          case_row.decision_readiness,case_row.exception_count,case_row.graph_run_id,
+          case_row.iteration_count,case_row.workspace_path,case_row.created_at,
+          case_row.updated_at,case_row.started_at,case_row.completed_at,
+          coalesce(agent_stats.total,0)::int agent_total,
+          coalesce(agent_stats.done,0)::int agent_done,
+          coalesce(agent_stats.running,0)::int agent_running,
+          coalesce(agent_stats.blocked,0)::int agent_blocked,
+          coalesce(work_stats.total,0)::int work_total,
+          coalesce(work_stats.done,0)::int work_done,
+          coalesce(evidence_stats.total,0)::int source_count,
+          coalesce(evidence_stats.validated,0)::int validated_source_count,
+          coalesce(fact_stats.validated,0)::int validated_fact_count,
+          coalesce(model_stats.total,0)::int model_run_count,
+          coalesce(model_stats.done,0)::int model_run_done,
+          coalesce(model_stats.failed,0)::int model_run_failed,
+          coalesce(model_stats.actual_cost_usd,0)::numeric actual_cost_usd,
+          coalesce(source_job_stats.total,0)::int source_job_total,
+          coalesce(source_job_stats.pending,0)::int source_job_pending,
+          coalesce(source_job_stats.blocked,0)::int source_job_blocked,
+          coalesce(blocker_stats.open_count,0)::int open_blocker_count,
+          coalesce(section_stats.total,0)::int section_total,
+          coalesce(section_stats.ready,0)::int section_ready,
+          latest_report.id report_id,latest_report.report_version,latest_report.report_status,
+          latest_report.html_path report_html_path,latest_report.pdf_path report_pdf_path,
+          preflight.id preflight_id,preflight.status preflight_status,
+          preflight.source_count preflight_source_count,
+          preflight.estimated_cost_usd,preflight.hard_max_cost_usd,
+          preflight.exchange_rate_inr_per_usd,preflight.public_only,
+          preflight.private_data_egress_allowed,preflight.external_write_allowed,
+          preflight.broker_write_allowed,latest_event.event_type latest_event_type,
+          latest_event.event_summary latest_event_summary,latest_event.occurred_at latest_event_at,
+          (monitor_item.id IS NOT NULL) is_followed,coalesce((monitor_item.metadata->>'monitoring_enabled')::boolean,(monitor_item.metadata->>'automatic_collection')::boolean,false) monitoring_enabled,
+          latest_update.effective_at latest_material_update_at,latest_update.summary latest_material_update_summary,
+          coalesce(latest_update.update_count,0)::int latest_material_update_count,
+          latest_update.case_href latest_material_update_href,
+          CASE WHEN case_row.status='proposed' THEN 'Review cost and explicitly start'
+            WHEN case_row.status='collecting' THEN 'The stack is collecting and extracting official sources'
+            WHEN case_row.status='active' AND coalesce(evidence_stats.total,0)=0 THEN 'Collect qualified public sources before agent analysis'
+            WHEN case_row.status='active' AND coalesce(agent_stats.blocked,0)>0 THEN 'Review blocked workstreams'
+            WHEN case_row.status='active' THEN 'Agents are working; review progress when updated'
+            WHEN case_row.status='review' THEN 'Review the lead pack and committee challenge'
+            WHEN case_row.status='blocked' THEN 'Repair and resume the exact failed stage'
+            WHEN case_row.status='completed' THEN 'Open the completed research pack'
+            ELSE 'Inspect case history' END next_action
+        FROM research.research_cases case_row
+        LEFT JOIN LATERAL (SELECT count(*) total,
+          count(*) FILTER (WHERE status IN ('completed','done','accepted')) done,
+          count(*) FILTER (WHERE status IN ('active','running','queued')) running,
+          count(*) FILTER (WHERE status IN ('blocked','failed','needs_validation','needs_review')) blocked
+          FROM research.research_case_agent_runs WHERE research_case_id=case_row.id) agent_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) total,
+          count(*) FILTER (WHERE status IN ('completed','done','accepted')) done
+          FROM research.research_case_work_items WHERE research_case_id=case_row.id) work_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) total,
+          count(*) FILTER (WHERE validation_status IN ('validated','human_reviewed')) validated
+          FROM research.research_case_evidence WHERE research_case_id=case_row.id) evidence_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE fact.extraction_status IN ('validated','human_reviewed')) validated
+          FROM research.financial_source_facts fact WHERE fact.company_id=case_row.company_id) fact_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) total,count(*) FILTER (WHERE status='completed') done,
+          count(*) FILTER (WHERE status IN ('failed','blocked')) failed,
+          coalesce(sum(actual_cost_usd),0) actual_cost_usd
+          FROM research.research_case_model_runs WHERE research_case_id=case_row.id) model_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) total,
+          count(*) FILTER (WHERE status IN ('queued','running','retry_wait')) pending,
+          count(*) FILTER (WHERE status='blocked') blocked
+          FROM research.research_case_source_jobs WHERE research_case_id=case_row.id) source_job_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE status IN ('open','retrying')) open_count
+          FROM research.research_case_blockers WHERE research_case_id=case_row.id) blocker_stats ON true
+        LEFT JOIN LATERAL (SELECT count(*) total,
+          count(*) FILTER (WHERE status IN ('reviewed','complete')) ready
+          FROM research.research_pack_sections WHERE research_case_id=case_row.id AND version=1) section_stats ON true
+        LEFT JOIN LATERAL (SELECT id,report_version,report_status,html_path,pdf_path
+          FROM research.research_case_reports WHERE research_case_id=case_row.id
+          ORDER BY report_version DESC,id DESC LIMIT 1) latest_report ON true
+        LEFT JOIN LATERAL (SELECT id,status,source_count,estimated_cost_usd,hard_max_cost_usd,
+          exchange_rate_inr_per_usd,public_only,private_data_egress_allowed,
+          external_write_allowed,broker_write_allowed FROM research.model_run_preflights
+          WHERE research_case_id=case_row.id AND request_kind='research_case'
+          ORDER BY id DESC LIMIT 1) preflight ON true
+        LEFT JOIN LATERAL (SELECT event_type,event_summary,occurred_at
+          FROM research.research_case_events WHERE research_case_id=case_row.id
+          ORDER BY occurred_at DESC,id DESC LIMIT 1) latest_event ON true
+        LEFT JOIN LATERAL (SELECT item.id,item.metadata FROM research.watchlist_items item
+          JOIN research.watchlists list_row ON list_row.id=item.watchlist_id AND list_row.watchlist_key='company_research_following'
+          WHERE upper(item.exchange)=upper(case_row.exchange) AND upper(item.symbol)=upper(case_row.ticker) AND item.status='active'
+          ORDER BY item.updated_at DESC,item.id DESC LIMIT 1) monitor_item ON true
+        LEFT JOIN LATERAL (SELECT feed.effective_at,feed.summary,feed.case_href,
+          count(*) OVER () update_count FROM research.v_company_research_update_feed feed
+          WHERE feed.research_case_id=case_row.id AND feed.status='new'
+          ORDER BY CASE feed.materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,feed.effective_at DESC,feed.id DESC LIMIT 1) latest_update ON true
+        {where_sql}
+        ORDER BY CASE case_row.status WHEN 'review' THEN 1 WHEN 'active' THEN 2
+          WHEN 'collecting' THEN 3 WHEN 'proposed' THEN 4 WHEN 'blocked' THEN 5
+          WHEN 'completed' THEN 6 ELSE 7 END,case_row.updated_at DESC,case_row.id DESC
+        LIMIT {page_size} OFFSET {offset}
+    """)
+    selected_id = case_id or (int(cases[0]["id"]) if cases else 0)
+    detail_filter = f"WHERE research_case_id={selected_id}" if selected_id else "WHERE false"
+    agents = run_psql_json(f"""SELECT id,research_case_id,role_key,agent_name,skill_key,status,evidence,
+      artifacts,disagreements,exceptions,updated_at FROM research.research_case_agent_runs
+      {detail_filter} ORDER BY id LIMIT 40""")
+    work_items = run_psql_json(f"""SELECT id,research_case_id,work_key,work_type,owner_agent,title,objective,
+      status,priority,iteration,evidence_refs,artifact_refs,exception_refs,updated_at
+      FROM research.research_case_work_items {detail_filter}
+      ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,id LIMIT 60""")
+    events = run_psql_json(f"""SELECT id,research_case_id,event_type,event_status,event_summary,actor,occurred_at
+      FROM research.research_case_events {detail_filter} ORDER BY occurred_at DESC,id DESC LIMIT 30""")
+    evidence = run_psql_json(f"""SELECT id,research_case_id,source_kind,source_identifier,source_url,
+      publication_date,effective_date,captured_at,parser_status,validation_status,citation_locator,created_by
+      FROM research.research_case_evidence {detail_filter} ORDER BY captured_at DESC,id DESC LIMIT 40""")
+    model_runs = run_psql_json(f"""SELECT id,research_case_id,role_key,agent_name,status,route_name,provider,
+      model_name,iteration,attempt,artifact_path,artifact_hash,output_summary,validation_result,cited_source_ids,
+      actual_cost_usd,latency_ms,exception_detail,started_at,finished_at
+      FROM research.research_case_model_runs {detail_filter} ORDER BY iteration DESC,attempt DESC,id DESC LIMIT 60""")
+    source_jobs = run_psql_json(f"""SELECT job.id,job.research_case_id,job.job_kind,job.status,job.priority,job.attempt,job.max_attempts,
+      job.next_retry_at,job.source_url,job.artifact_path,job.error_detail,job.result,job.started_at,job.finished_at,job.updated_at,
+      filing.title source_title,filing.filing_type,filing.filed_at,filing.extraction_status
+      FROM research.research_case_source_jobs job LEFT JOIN research.corporate_filings filing ON filing.id=job.corporate_filing_id
+      {detail_filter.replace('research_case_id','job.research_case_id')} ORDER BY job.priority,job.id LIMIT 40""")
+    blockers = run_psql_json(f"""SELECT id,research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,
+      retry_count,next_retry_at,resolution,metadata,created_at,updated_at FROM research.research_case_blockers
+      {detail_filter} AND status<>'resolved' ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,updated_at DESC LIMIT 30""")
+    sections = run_psql_json(f"""SELECT id,research_case_id,section_key,title,owner_role,status,summary,citation_ids,coverage_gaps,
+      artifact_path,artifact_hash,version,updated_at FROM research.research_pack_sections {detail_filter} AND version=1
+      ORDER BY CASE section_key WHEN 'investment_conclusion' THEN 1 WHEN 'business_segments' THEN 2 WHEN 'industry_structure' THEN 3
+        WHEN 'tam_value_chain' THEN 4 WHEN 'moat_quality' THEN 5 WHEN 'management_governance' THEN 6 WHEN 'financial_history' THEN 7
+        WHEN 'forecasts_valuation' THEN 8 WHEN 'catalysts_risks' THEN 9 ELSE 10 END""") if selected_id else []
+    imported_research = run_psql_json(f"""SELECT id,company_id,company_label,symbol_hint,artifact_kind,original_filename,local_artifact_path,
+      source_collection,source_posture,entity_match_status,parser_status,review_status,title,report_as_of,imported_at
+      FROM research.imported_company_research_artifacts WHERE company_id=(SELECT company_id FROM research.research_cases WHERE id={selected_id})
+      ORDER BY imported_at DESC,id DESC LIMIT 30""") if selected_id else []
+    library_rows = run_psql_json("""SELECT count(*)::integer total_artifacts,
+      count(*) FILTER (WHERE company_id IS NOT NULL)::integer company_linked,
+      count(*) FILTER (WHERE entity_match_status='pending')::integer awaiting_entity_review,
+      count(DISTINCT company_id) FILTER (WHERE company_id IS NOT NULL)::integer linked_companies
+      FROM research.imported_company_research_artifacts""")
+    library_summary = library_rows[0] if library_rows else {}
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),"runtime_root": str(RUNTIME_ROOT),
+        "storage_policy": {"transaction_truth": "Postgres on mounted Devarsh SSD",
+          "artifact_root": "/Volumes/Devarsh SSD/AI OS Data","private_data_egress_allowed": False,
+          "broker_write_allowed": False,"external_write_allowed": False},
+        "pagination": {"page": page,"page_size": page_size,"total": total,
+          "pages": (total + page_size - 1) // page_size},
+        "cases": cases,"selected_case_id": selected_id,"agents": agents,"work_items": work_items,
+        "events": events,"evidence": evidence,"model_runs": model_runs,
+        "source_jobs": source_jobs,"blockers": blockers,"sections": sections,"imported_research": imported_research,
+        "library_summary": library_summary,
+    }
+
+def build_daily_command_snapshot() -> dict:
+    """The visible Today/Charlie command spine: bounded work, decisions and freshness."""
+    queries = {
+        "metrics": """
+            SELECT metric, value FROM core.v_control_plane_snapshot ORDER BY metric
+        """,
+        "inbox": """
+            SELECT id,task_id,title,owner_agent,status,priority,recommended_action,
+                   target_workspace,claimed_by,claimed_at,resolved_by,resolved_at,
+                   resolution_note,created_at,updated_at
+            FROM agent.inbox_items
+            WHERE target_workspace IN ('command','system','office','portfolio','research','strategy','options','market')
+               OR target_workspace IS NULL
+            ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                     updated_at DESC
+            LIMIT 16
+        """,
+        "approvals": """
+            SELECT id,task_id,approval_type,title,owner_agent,risk_level,status,
+                   requested_action,rationale,decided_by,decided_at,created_at
+            FROM agent.approvals
+            ORDER BY CASE status WHEN 'pending' THEN 1 ELSE 2 END,created_at DESC
+            LIMIT 12
+        """,
+        "risk_events": """
+            SELECT id,ts,scope_type,scope_ref,severity,status,title,message,approval_id
+            FROM risk.events
+            WHERE status IN ('new','acknowledged')
+            ORDER BY ts DESC LIMIT 10
+        """,
+        "agent_targets": """
+            SELECT agent_name,display_title,department_name,role_scope,live_state
+            FROM agent.v_employee_profiles_v1
+            ORDER BY role_rank,agent_name LIMIT 48
+        """,
+        "agent_messages": """
+            SELECT id,thread_key,from_agent,from_title,to_agent,to_title,subject,body,
+                   priority,status,related_task_id,processing_status,generated_task_id,
+                   generated_inbox_id,error_message,created_at,processed_at
+            FROM agent.v_agent_message_threads
+            ORDER BY created_at DESC NULLS LAST,id DESC LIMIT 10
+        """,
+        "agent_worker_runs": """
+            SELECT id,task_id,task_title,agent_name,display_title,department,
+                   skill_key,skill_name,run_mode,status,output_summary,
+                   output_note_path,started_at,finished_at,updated_at
+            FROM agent.v_recent_worker_runs
+            ORDER BY finished_at DESC NULLS LAST,id DESC LIMIT 10
+        """,
+        "market_research_heartbeats": """
+            SELECT id,run_key,status,candidate_count,material_candidate_count,
+                   selected_news_id,source_name,source_url,selected_title,
+                   source_published_at,source_captured_at,graph_run_id,graph_created,
+                   skip_reason,retry_count,next_retry_at,cooldown_until,error_message,
+                   broker_write_allowed,live_execution_allowed,capital_action_allowed,
+                   started_at,finished_at,created_at,updated_at
+            FROM research.v_market_research_heartbeat_runs
+            ORDER BY started_at DESC,id DESC LIMIT 8
+        """,
+        "research_cases": """
+            SELECT case_row.id,case_row.case_key,case_row.ticker,case_row.exchange,
+              case_row.company_name,case_row.priority,case_row.horizon,case_row.status,
+              case_row.lead_status,case_row.decision_readiness,case_row.graph_run_id,
+              case_row.created_at,case_row.updated_at,
+              coalesce(stats.agent_total,0)::int agent_total,
+              coalesce(stats.agent_done,0)::int agent_done,
+              coalesce(stats.agent_blocked,0)::int agent_blocked,
+              coalesce(source_stats.source_count,0)::int source_count,
+              preflight.estimated_cost_usd,preflight.hard_max_cost_usd,
+              preflight.exchange_rate_inr_per_usd,
+              CASE WHEN case_row.status='proposed' THEN 'Review cost and explicitly start'
+                WHEN case_row.status='collecting' THEN 'Collect qualified public sources'
+                WHEN case_row.status='active' AND coalesce(source_stats.source_count,0)=0 THEN 'Collect qualified public sources'
+                WHEN case_row.status='active' THEN 'Open live workstreams'
+                WHEN case_row.status='review' THEN 'Review the company pack'
+                WHEN case_row.status='blocked' THEN 'Open blocker and repair'
+                ELSE 'Open case history' END next_action,
+              '/research/cases?case_id='||case_row.id href
+            FROM research.research_cases case_row
+            LEFT JOIN LATERAL (SELECT count(*) agent_total,
+              count(*) FILTER (WHERE status IN ('completed','done','accepted')) agent_done,
+              count(*) FILTER (WHERE status IN ('blocked','failed','needs_validation','needs_review')) agent_blocked
+              FROM research.research_case_agent_runs WHERE research_case_id=case_row.id) stats ON true
+            LEFT JOIN LATERAL (SELECT count(*) source_count FROM research.research_case_evidence
+              WHERE research_case_id=case_row.id) source_stats ON true
+            LEFT JOIN LATERAL (SELECT estimated_cost_usd,hard_max_cost_usd,exchange_rate_inr_per_usd
+              FROM research.model_run_preflights WHERE research_case_id=case_row.id
+              ORDER BY id DESC LIMIT 1) preflight ON true
+            WHERE case_row.status IN ('proposed','collecting','active','review','blocked')
+            ORDER BY CASE case_row.status WHEN 'review' THEN 1 WHEN 'active' THEN 2
+              WHEN 'collecting' THEN 3 WHEN 'proposed' THEN 4 ELSE 5 END,
+              case_row.updated_at DESC,case_row.id DESC LIMIT 12
+        """,
+        "source_freshness": """
+            SELECT source_key,source_name,staleness_minutes,status,severity,
+                   rows_seen,risk_event_status,created_at
+            FROM core.v_latest_data_source_freshness
+            ORDER BY CASE status WHEN 'stale' THEN 1 WHEN 'error' THEN 2 WHEN 'missing_check' THEN 3 ELSE 4 END,
+                     created_at DESC LIMIT 12
+        """,
+        "thesis_material_feed": """
+            SELECT * FROM (
+              SELECT 'change:'||change.source_item_id item_key,'source' origin_kind,
+                'material_change' item_type,change.company_name,change.symbol,
+                change.source_title title,change.change_summary summary,
+                change.source_kind source_name,change.source_url,change.captured_at source_time,
+                CASE WHEN change.freshness_expires_at IS NULL THEN 'event_driven'
+                  WHEN change.freshness_expires_at>=now() THEN 'fresh' ELSE 'stale' END freshness_status,
+                change.materiality severity,NULL::numeric confidence_pct,change.change_kind status,
+                coalesce(change.section_hint,'evidence') section_key,
+                thesis.id thesis_id,'/fundamental/theses?thesis_id='||thesis.id||
+                  '#'||coalesce(change.section_hint,'evidence') href
+              FROM research.v_thesis_material_source_changes change
+              JOIN LATERAL (
+                SELECT id FROM portfolio.holding_theses
+                WHERE upper(symbol)=upper(change.symbol) ORDER BY updated_at DESC,id DESC LIMIT 1
+              ) thesis ON true
+              WHERE change.visibility_scope='personal'
+
+              UNION ALL
+              SELECT 'review:'||queue.source_item_id,'source','source_review',queue.company_name,
+                queue.symbol,queue.source_title,
+                'Governed source is at '||replace(queue.next_gate,'_',' ')||
+                  '; proposed links '||queue.proposed_link_count||', validated links '||queue.validated_link_count,
+                queue.source_kind,queue.source_url,queue.captured_at,
+                CASE WHEN item.freshness_expires_at IS NULL THEN 'event_driven'
+                  WHEN item.freshness_expires_at>=now() THEN 'fresh' ELSE 'stale' END,
+                CASE queue.next_gate WHEN 'parser_exception' THEN 'critical'
+                  WHEN 'source_review' THEN 'high' WHEN 'validate' THEN 'high' ELSE 'medium' END,
+                NULL::numeric,queue.next_gate,coalesce(queue.section_hint,'evidence'),
+                thesis.id,'/fundamental/theses?thesis_id='||thesis.id||'#evidence'
+              FROM research.v_thesis_source_pipeline_queue queue
+              JOIN research.thesis_source_items item ON item.id=queue.source_item_id
+              JOIN LATERAL (
+                SELECT id FROM portfolio.holding_theses
+                WHERE upper(symbol)=upper(queue.symbol) ORDER BY updated_at DESC,id DESC LIMIT 1
+              ) thesis ON true
+              WHERE queue.next_gate<>'ready' AND item.visibility_scope='personal'
+
+              UNION ALL
+              SELECT 'coverage:'||matrix.company_id,'source','coverage_debt',matrix.company_name,
+                matrix.symbol,'Thesis research coverage needs attention',
+                count(*) FILTER(WHERE matrix.coverage_status='pending_review')||' pending review, '||
+                  count(*) FILTER(WHERE matrix.coverage_status='missing')||' missing, '||
+                  sum(matrix.coverage_debt)||' source-count debt',
+                'source-to-section matrix',NULL,max(matrix.latest_captured_at),
+                'coverage_debt',
+                CASE WHEN count(*) FILTER(WHERE matrix.coverage_status='missing')>10 THEN 'high' ELSE 'medium' END,
+                NULL::numeric,'review_required','evidence',thesis.id,
+                '/fundamental/theses?thesis_id='||thesis.id||'#evidence'
+              FROM research.v_thesis_source_matrix matrix
+              JOIN LATERAL (
+                SELECT id FROM portfolio.holding_theses
+                WHERE upper(symbol)=upper(matrix.symbol) ORDER BY updated_at DESC,id DESC LIMIT 1
+              ) thesis ON true
+              WHERE matrix.is_required
+              GROUP BY matrix.company_id,matrix.company_name,matrix.symbol,thesis.id
+              HAVING count(*) FILTER(WHERE matrix.coverage_status<>'covered')>0
+
+              UNION ALL
+              SELECT 'event:'||event.id,'source','upcoming_event',event.company_name,event.symbol,
+                coalesce(event.purpose,event.event_type) title,event.description,
+                event.exchange||' event calendar',event.source_url,event.event_date::timestamptz,
+                'upcoming','medium',NULL::numeric,'scheduled','catalysts',thesis.id,
+                '/fundamental/theses?thesis_id='||thesis.id||'#catalysts'
+              FROM market.v_upcoming_corporate_events event
+              JOIN LATERAL (
+                SELECT id FROM portfolio.holding_theses
+                WHERE upper(symbol)=upper(event.symbol) ORDER BY updated_at DESC,id DESC LIMIT 1
+              ) thesis ON true
+              WHERE event.event_date BETWEEN current_date AND current_date+45
+
+              UNION ALL
+              SELECT 'opinion:'||opinion.id,'agent_draft','agent_disagreement',
+                coalesce(company.display_name,company.legal_name),company.primary_symbol,
+                opinion.agent_name||' dissent',opinion.conclusion,evidence.source_title,
+                evidence.source_url,opinion.opinion_as_of,'fresh','medium',opinion.confidence_pct,
+                opinion.opinion_status,'agents',thesis.id,
+                '/fundamental/theses?thesis_id='||thesis.id||'#agents'
+              FROM (
+                SELECT DISTINCT ON (company_id,specialist_key) *
+                FROM research.fundamental_specialist_opinions
+                WHERE opinion_status='dissent'
+                ORDER BY company_id,specialist_key,opinion_as_of DESC,id DESC
+              ) opinion
+              JOIN research.companies company ON company.id=opinion.company_id
+              JOIN research.fundamental_evidence evidence ON evidence.id=opinion.evidence_id
+              JOIN LATERAL (
+                SELECT id FROM portfolio.holding_theses
+                WHERE upper(symbol)=upper(company.primary_symbol) ORDER BY updated_at DESC,id DESC LIMIT 1
+              ) thesis ON true
+              UNION ALL
+              SELECT 'decision:'||decision.id,'human_decision','pending_decision',
+                decision.company_name,decision.symbol,'Human thesis decision pending',
+                coalesce(decision.decision_notes,decision.recommended_decision,'Committee review needs a decision'),
+                'committee record',NULL,decision.updated_at,'event_driven',
+                coalesce(decision.approval_risk_level,'high'),NULL::numeric,decision.decision_status,
+                'decision',decision.holding_thesis_id,
+                '/fundamental/theses?thesis_id='||decision.holding_thesis_id||'#decision'
+              FROM portfolio.v_long_term_committee_queue decision
+              WHERE decision.final_decision IS NULL
+                AND decision.decision_status NOT IN ('final','decided','closed')
+              UNION ALL
+              SELECT 'research-case:'||case_row.id,'user_request','research_case',
+                case_row.company_name,case_row.ticker,
+                CASE case_row.status WHEN 'proposed' THEN 'Research plan awaits explicit start'
+                  WHEN 'blocked' THEN 'Research blocked - action required'
+                  WHEN 'review' THEN 'Research pack ready for review'
+                  WHEN 'collecting' THEN 'Research collecting official sources'
+                  ELSE 'Research case in progress' END,
+                case_row.mandate,'Research Case',NULL,case_row.updated_at,'event_driven',
+                CASE case_row.priority WHEN 'critical' THEN 'critical' WHEN 'high' THEN 'high' ELSE 'medium' END,
+                NULL::numeric,case_row.status,'research',case_row.holding_thesis_id,
+                '/research/cases?case_id='||case_row.id
+              FROM research.research_cases case_row
+              WHERE case_row.status IN ('proposed','active','collecting','review','blocked')
+            ) feed
+            ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3 ELSE 4 END,source_time DESC NULLS LAST,item_key
+            LIMIT 16
+        """,
+        "watchlist": """
+            SELECT id,watchlist_name,symbol,exchange,company_name,item_type,status,
+                   priority,thesis,catalyst,invalidation,review_on,owner_agent,updated_at
+            FROM research.v_watchlist_board LIMIT 12
+        """,
+        "latest_news": """
+            SELECT id,source_name,source_url,title,publisher,published_at,captured_at,
+                   symbols,topics,relevance_score
+            FROM market.v_latest_news_items
+            ORDER BY coalesce(published_at,captured_at) DESC,id DESC LIMIT 12
+        """,
+        "market_events": """
+            SELECT id,exchange,symbol,company_name,event_date,event_type,purpose,
+                   description,source_url,in_portfolio,on_watchlist,relevance_scope
+            FROM market.v_upcoming_corporate_events
+            WHERE event_date <= current_date + 45 LIMIT 12
+        """,
+        "execution_control": """
+            SELECT global_execution_locked,broker_execution_policy,paper_trading_allowed,
+                   limited_live_allowed,live_broker_writes_allowed,lock_reason,updated_at
+            FROM trading.v_execution_control_state LIMIT 1
+        """,
+    }
+    return _daily_snapshot_payload("daily_command_spine_v1", queries, row_limit=48)
+
+
+def build_research_daily_snapshot() -> dict:
+    """Compact research intake, source timeline and investigation workspace."""
+    queries = {
+        "research_papers": """
+            SELECT id,paper_key,source_key,source_name,title,authors,published_date,
+                   source_url,pdf_url,topics,extraction_status,review_status,owner_agent,
+                   research_objective,target_universe,extraction_word_count,intake_status,
+                   hypothesis_count,latest_ingestion_at,evidence,updated_at
+            FROM research.v_research_paper_queue
+            ORDER BY updated_at DESC LIMIT 16
+        """,
+        "paper_strategy_hypotheses": """
+            SELECT id,hypothesis_key,paper_id,paper_key,paper_title,title,
+                   edge_hypothesis,market_scope,asset_classes,timeframe,
+                   data_requirements,invalidation_tests,limitations,status,
+                   owner_agent,updated_at
+            FROM research.v_paper_strategy_hypotheses
+            ORDER BY updated_at DESC LIMIT 16
+        """,
+        "research_cycles": """
+            SELECT id,cycle_key,source_kind,source_ref,objective,as_of,universe,
+                   strategy_spec,status,owner_agent,evidence,broker_write_allowed,
+                   live_execution_allowed,created_at
+            FROM strategy.research_cycles
+            ORDER BY created_at DESC LIMIT 16
+        """,
+        "feed_registry": """
+            SELECT feed_key,feed_name,feed_type,provider,url,geography,symbols,
+                   topics,status,owner_agent,metadata,updated_at
+            FROM research.feed_registry
+            ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'blocked_credentials' THEN 1 ELSE 2 END,
+                     feed_name LIMIT 24
+        """,
+        "news_source_checks": """
+            SELECT DISTINCT ON (source_key) source_key,check_name,check_type,target_url,
+                   status,http_status,latency_ms,rows_seen,error_message,checked_at
+            FROM core.data_source_checks
+            WHERE check_type='rss_http'
+            ORDER BY source_key,checked_at DESC,id DESC LIMIT 24
+        """,
+        "watchlist": """
+            SELECT id,watchlist_key,watchlist_name,purpose,symbol,exchange,company_name,
+                   item_type,status,priority,thesis,catalyst,invalidation,review_on,
+                   owner_agent,source_kind,source_ref,evidence,updated_at
+            FROM research.v_watchlist_board LIMIT 24
+        """,
+        "latest_news": """
+            SELECT id,source_name,source_url,title,publisher,published_at,captured_at,
+                   symbols,topics,geography,sentiment,relevance_score
+            FROM market.v_latest_news_items
+            ORDER BY coalesce(published_at,captured_at) DESC,id DESC LIMIT 24
+        """,
+        "filing_intelligence": """
+            SELECT filing_id,source_name,exchange,symbol,company_name,title,event_type,
+                   filed_at,source_url,attachment_url,extraction_status,
+                   opportunity_score,risk_score,in_portfolio,on_watchlist,
+                   why_it_matters,evidence_state,priority
+            FROM research.v_filing_intelligence_brief LIMIT 24
+        """,
+        "corporate_filings": """
+            SELECT filing_id,source_name,exchange,symbol,company_name,filing_type,
+                   title,filed_at,source_url,attachment_url,extraction_status,
+                   event_type,opportunity_score,risk_score,event_status,event_created_at
+            FROM research.v_corporate_filing_inbox
+            ORDER BY filed_at DESC NULLS LAST,event_created_at DESC LIMIT 16
+        """,
+        "generated_ideas": """
+            SELECT id,idea_key,title,idea_type,symbols,universe,timeframe,thesis,
+                   edge_hypothesis,status,priority_score,risk_score,owner_agent,created_at
+            FROM strategy.v_generated_ideas ORDER BY created_at DESC LIMIT 12
+        """,
+        "discovery_candidates": """
+            SELECT id,run_key,discovery_key,source_kind,source_ref,title,symbols,
+                   universe,timeframe,thesis,catalyst,priority_score,risk_score,
+                   research_gate,next_required_action,status,broker_order_allowed,
+                   autonomous_live_execution_allowed,created_at
+            FROM strategy.v_strategy_discovery_candidates
+            ORDER BY created_at DESC,priority_score DESC NULLS LAST LIMIT 12
+        """,
+        "long_term_theses": """
+            SELECT id,symbol,exchange,company_name,thesis_title,thesis_status,
+                   decision_status,primary_owner_agent,thesis_summary,valuation_status,
+                   thesis_note_path,next_review_due_at,updated_at
+            FROM portfolio.v_long_term_thesis_control
+            ORDER BY updated_at DESC LIMIT 12
+        """,
+        "long_term_research_updates": """
+            SELECT id,holding_thesis_id,symbol,exchange,company_name,update_kind,
+                   checklist_key,model_key,status,score,note_path,created_by,created_at
+            FROM portfolio.v_long_term_research_updates
+            ORDER BY created_at DESC,id DESC LIMIT 12
+        """,
+        "market_quotes": """
+            SELECT id,source_key,provider,provider_symbol,symbol,exchange,
+                   description,currency,price,change_percent,quote_ts
+            FROM market.v_latest_price_quotes
+            WHERE lower(provider) NOT LIKE 'tradingview%'
+            ORDER BY quote_ts DESC,symbol LIMIT 24
+        """,
+        "execution_control": """
+            SELECT global_execution_locked,broker_execution_policy,paper_trading_allowed,
+                   live_broker_writes_allowed,lock_reason,updated_at
+            FROM trading.v_execution_control_state LIMIT 1
+        """,
+    }
+    return _daily_snapshot_payload("research_daily_workspace_v1", queries, row_limit=24)
+
+
+def build_graph_daily_snapshot(query: dict[str, list[str]]) -> dict:
+    """Compact graph/loop engineering sheet with current definitions and recent runs."""
+    raw_run_id = str(query.get("run_id", query.get("graph_run_id", [""]))[0]).strip()
+    selected_run = int(raw_run_id) if raw_run_id else None
+    run_scope = (
+        f"SELECT {selected_run}::bigint AS id"
+        if selected_run is not None
+        else "SELECT id FROM agent.graph_runs ORDER BY created_at DESC,id DESC LIMIT 12"
+    )
+    queries = {
+        "graphs": "SELECT * FROM agent.v_graph_catalog ORDER BY graph_family,graph_name",
+        "nodes": """
+            SELECT node.id AS graph_node_id,version.graph_key,version.version,
+                   node.node_key,node.node_name,node.node_type,node.owner_agent,
+                   node.skill_key,node.autonomy_level,node.approval_required,
+                   node.retry_limit,node.timeout_seconds,node.configuration,
+                   node.output_contract,node.on_error,node.ui_position
+            FROM agent.graph_nodes node
+            JOIN agent.graph_versions version ON version.id=node.graph_version_id
+            JOIN agent.graph_definitions definition ON definition.graph_key=version.graph_key
+                 AND definition.active_version=version.version
+            ORDER BY version.graph_key,node.id
+        """,
+        "edges": """
+            SELECT edge.id AS graph_edge_id,version.graph_key,version.version,
+                   edge.from_node_key,edge.to_node_key,edge.edge_kind,
+                   edge.condition_type,edge.condition,edge.priority,edge.enabled,edge.label
+            FROM agent.graph_edges edge
+            JOIN agent.graph_versions version ON version.id=edge.graph_version_id
+            JOIN agent.graph_definitions definition ON definition.graph_key=version.graph_key
+                 AND definition.active_version=version.version
+            ORDER BY version.graph_key,edge.priority,edge.id
+        """,
+        "runs": f"""
+            SELECT graph_run_id,graph_key,graph_name,graph_version_id,version,
+                   trigger_type,triggered_by,run_status,correlation_key,
+                   subject_type,subject_ref,started_at,finished_at,created_at,
+                   updated_at,node_run_count,completed_node_count,active_node_count,
+                   waiting_node_count,failed_node_count
+            FROM agent.v_graph_run_status
+            WHERE graph_run_id IN ({run_scope})
+            ORDER BY created_at DESC,graph_run_id DESC LIMIT 12
+        """,
+        "node_runs": f"""
+            SELECT graph_node_run_id,graph_run_id,graph_key,node_key,node_name,
+                   node_type,owner_agent,skill_key,autonomy_level,approval_required,
+                   attempt,status,task_id,task_title,task_status,worker_run_id,
+                   worker_status,output_summary,output_note_path,approval_id,
+                   approval_status,created_at,started_at,finished_at,updated_at
+            FROM agent.v_graph_node_run_detail
+            WHERE graph_run_id IN ({run_scope})
+            ORDER BY created_at,graph_node_run_id LIMIT 160
+        """,
+        "edge_runs": f"""
+            SELECT graph_edge_run_id,graph_run_id,graph_edge_id,source_node_run_id,
+                   target_node_run_id,from_node_key,to_node_key,edge_kind,
+                   condition_type,condition_result,traversal,status,created_at
+            FROM agent.v_graph_edge_run_detail
+            WHERE graph_run_id IN ({run_scope})
+            ORDER BY created_at,graph_edge_run_id LIMIT 120
+        """,
+        "attention": """
+            SELECT id,attention_kind,category,title,detail,owner_agent,status,
+                   graph_run_id,graph_node_run_id,due_at,created_at,updated_at
+            FROM agent.v_graph_attention_queue ORDER BY created_at DESC LIMIT 20
+        """,
+        "autonomy": """
+            SELECT policy_key,policy_name,scope_type,scope_key,task_class,
+                   autonomy_level,approval_threshold,status,max_runtime_seconds,
+                   max_cost_inr,total_decisions,latest_decision_at,updated_at
+            FROM agent.v_autonomy_control_board ORDER BY policy_key LIMIT 24
+        """,
+        "corrections": """
+            SELECT id,source_kind,source_ref,graph_run_id,graph_node_run_id,
+                   correction_type,severity,root_cause,corrective_action,status,
+                   owner_agent,verified_by,verified_at,created_at,updated_at
+            FROM agent.correction_ledger ORDER BY created_at DESC,id DESC LIMIT 20
+        """,
+        "waiting": "SELECT * FROM agent.waiting_on_principal ORDER BY created_at DESC,id DESC LIMIT 20",
+        "change_requests": """
+            SELECT request.id,request.graph_key,request.title,request.rationale,
+                   request.status,request.requested_by,request.review_notes,
+                   request.decided_by,request.decided_at,request.created_at,request.updated_at,
+                   base.version AS base_version,applied.version AS applied_version,
+                   approval.status AS approval_status
+            FROM agent.graph_change_requests request
+            LEFT JOIN agent.graph_versions base ON base.id=request.base_version_id
+            LEFT JOIN agent.graph_versions applied ON applied.id=request.applied_version_id
+            LEFT JOIN agent.approvals approval ON approval.id=request.approval_id
+            ORDER BY request.created_at DESC,request.id DESC LIMIT 20
+        """,
+    }
+    payload = _daily_snapshot_payload("graph_loop_engineering_v1", queries, row_limit=200)
+    payload.setdefault("checkpoints", [])
+    payload.setdefault("events", [])
+    payload.setdefault("autonomy_evidence", [])
+    payload.setdefault("kronos_runs", [])
+    payload.setdefault("kronos_adapter", [])
+    payload.setdefault("kronos_scores", [])
+    return payload
+
+
+def build_options_daily_snapshot(query: dict[str, list[str]]) -> dict:
+    """Compact gated Options Desk read model; detail is limited to latest provider batches."""
+    try:
+        page = max(1, int(str(query.get("page", ["1"])[0])))
+        page_size = min(100, max(12, int(str(query.get("page_size", ["48"])[0]))))
+    except ValueError as exc:
+        raise ValueError("page and page_size must be integers") from exc
+    offset = (page - 1) * page_size
+    queries = {
+        "institutional_option_chain": f"""
+            WITH latest AS (
+                SELECT id,batch_key,provider,exchange,underlying,expiry,minute_ts,
+                       source_timestamp,received_at,spot_price,freshness_status,
+                       quality_status
+                FROM trading.option_chain_snapshot_batches
+                WHERE provider='Zerodha'
+                ORDER BY minute_ts DESC,source_timestamp DESC,id DESC
+                LIMIT 6
+            )
+            SELECT batch.batch_key,batch.provider,batch.exchange,batch.underlying,
+                   batch.expiry,batch.minute_ts,batch.source_timestamp,batch.received_at,
+                   batch.spot_price,batch.freshness_status AS batch_freshness_status,
+                   batch.quality_status AS batch_quality_status,contract.id AS contract_snapshot_id,
+                   contract.trading_symbol,contract.strike,contract.option_type,
+                   contract.last_price,contract.bid_price,contract.ask_price,contract.volume,
+                   contract.open_interest,contract.previous_open_interest,
+                   contract.staleness_status,contract.liquidity_status,
+                   greeks.implied_volatility,greeks.delta,greeks.gamma,greeks.theta,
+                   greeks.vega,greeks.rho,greeks.model_name,greeks.model_version,
+                   greeks.solver_version,greeks.quality_status AS calculation_quality_status,
+                   (greeks.calculation_status='validated') AS greeks_validated,
+                   CASE WHEN now()-batch.source_timestamp <= interval '120 seconds' THEN 'fresh'
+                        WHEN now()-batch.source_timestamp <= interval '15 minutes' THEN 'delayed'
+                        ELSE 'stale' END AS current_freshness_status,
+                   false AS broker_write_allowed
+            FROM latest batch
+            JOIN trading.option_chain_contract_snapshots contract ON contract.batch_id=batch.id
+            LEFT JOIN trading.option_iv_greeks_results greeks ON greeks.contract_snapshot_id=contract.id
+            ORDER BY batch.minute_ts DESC,batch.underlying,batch.expiry,contract.strike,contract.option_type
+            LIMIT {page_size} OFFSET {offset}
+        """,
+        "option_analytics_readiness": """
+            SELECT provider,exchange,underlying,expiry,minute_ts,freshness_status,
+                   batch_quality_status,contract_count,policy_key,model_family,
+                   policy_expires_at,analytics_readiness,broker_write_allowed
+            FROM trading.v_option_analytics_readiness
+            ORDER BY minute_ts DESC,underlying LIMIT 8
+        """,
+        "institutional_option_pipeline_runs": """
+            SELECT id,run_key,status,rows_read,rows_written,batches_created,
+                   calculations_completed,calculations_blocked,quality_summary,
+                   error_message,started_at,finished_at,next_run_after,broker_write_allowed
+            FROM ops.institutional_pipeline_runs
+            WHERE workload_key='institutional_options_materializer'
+            ORDER BY started_at DESC LIMIT 5
+        """,
+        "option_acceptance": """
+            SELECT id,run_key,exchange,underlying,expiry,window_start,window_end,status,
+                   gate_count,passed_count,failed_count,blocked_count,
+                   validated_greeks_ratio,liquid_contract_ratio,stale_contract_ratio,
+                   replay_coverage_ratio,paper_attribution_coverage_ratio,gate_version,
+                   started_at,finished_at,broker_write_allowed
+            FROM trading.v_option_acceptance_gate_summary
+            ORDER BY started_at DESC LIMIT 8
+        """,
+        "option_analytics_alerts": """
+            SELECT alert.id,alert.alert_key,batch.underlying,batch.expiry,
+                   alert.observed_at,alert.detected_at,alert.alert_type,alert.severity,
+                   alert.status,alert.title,alert.evidence,alert.quality_status,
+                   alert.paper_only,alert.broker_write_allowed
+            FROM trading.option_analytics_alerts alert
+            LEFT JOIN trading.option_chain_snapshot_batches batch ON batch.id=alert.batch_id
+            ORDER BY alert.observed_at DESC LIMIT 12
+        """,
+        "option_specialist_observations": """
+            SELECT observation.id,observation.observation_key,
+                   observation.specialist_agent,batch.underlying,batch.expiry,
+                   observation.as_of AS as_of_ts,observation.observation_type,
+                   observation.observation_status AS review_status,
+                   observation.headline AS summary,observation.confidence,
+                   observation.quality_status,observation.human_review_required,
+                   observation.capital_action_allowed,observation.broker_write_allowed
+            FROM trading.option_specialist_observations observation
+            LEFT JOIN trading.option_chain_snapshot_batches batch ON batch.id=observation.batch_id
+            ORDER BY observation.as_of DESC LIMIT 12
+        """,
+        "option_replays": """
+            SELECT id,session_key AS replay_key,exchange,underlying,expiry,
+                   replay_start AS window_start,replay_end AS window_end,
+                   replay_clock AS current_frame_ts,status AS replay_status,
+                   point_in_time_enforced AS lookahead_prevention,paper_only,
+                   broker_write_allowed,created_at,updated_at
+            FROM trading.option_replay_sessions ORDER BY created_at DESC LIMIT 8
+        """,
+        "execution_control": """
+            SELECT global_execution_locked,broker_execution_policy,paper_trading_allowed,
+                   limited_live_allowed,live_broker_writes_allowed,lock_reason,updated_at
+            FROM trading.v_execution_control_state LIMIT 1
+        """,
+    }
+    payload = _daily_snapshot_payload("options_daily_gated_v1", queries, row_limit=page_size)
+    payload["pagination"] = {"page": page, "page_size": page_size, "progressive_detail": True}
+    payload.setdefault("option_chain", [])
+    payload.setdefault("option_oi_change", [])
+    payload.setdefault("trade_activity", [])
+    payload.setdefault("option_trade_log", [])
+    return payload
 
 
 def build_portfolio_office_snapshot() -> dict:
@@ -2030,6 +3657,7 @@ def build_portfolio_office_snapshot() -> dict:
 
 def build_research_ideas_snapshot() -> dict:
     """Return the bounded research factory, filing, news, and idea read model."""
+    issues: list[dict] = []
     queries = {
         "research_hub": """
             SELECT root_label, artifact_family, artifact_count,
@@ -2077,7 +3705,7 @@ def build_research_ideas_snapshot() -> dict:
         "long_term_checklists": """
             SELECT id, holding_thesis_id, symbol, exchange, company_name,
                    checklist_key, checklist_name, status, score, findings,
-                   owner_agent, updated_at,
+                   evidence, owner_agent, updated_at,
                    long_term_gross_exposure, client_count, clients
             FROM portfolio.v_long_term_thesis_checklists
             ORDER BY updated_at DESC, long_term_gross_exposure DESC NULLS LAST,
@@ -2088,7 +3716,7 @@ def build_research_ideas_snapshot() -> dict:
             SELECT id, holding_thesis_id, symbol, exchange, company_name,
                    model_key, model_name, model_type, status, fair_value_low,
                    fair_value_base, fair_value_high, expected_cagr_pct,
-                   note_path, owner_agent, updated_at,
+                   assumptions, outputs, note_path, owner_agent, updated_at,
                    long_term_gross_exposure, client_count, clients
             FROM portfolio.v_long_term_valuation_models
             ORDER BY updated_at DESC, long_term_gross_exposure DESC NULLS LAST,
@@ -2099,8 +3727,9 @@ def build_research_ideas_snapshot() -> dict:
             SELECT id, run_key, holding_thesis_id, valuation_model_id,
                    symbol, exchange, company_name, run_status,
                    horizon_years, simulation_count, seed, start_price,
-                   starting_multiple, percentile_summary,
-                   probability_summary, warnings, note_path,
+                   starting_multiple, starting_metric, assumptions,
+                   input_snapshot, outputs, percentile_summary,
+                   probability_summary, warnings, evidence, note_path,
                    created_by, created_at,
                    long_term_gross_exposure, client_count, clients
             FROM portfolio.v_long_term_monte_carlo_runs
@@ -2115,6 +3744,161 @@ def build_research_ideas_snapshot() -> dict:
             FROM portfolio.v_long_term_research_updates
             ORDER BY created_at DESC, id DESC
             LIMIT 80
+        """,
+        "fundamental_coverage": """
+            SELECT company_id, company_key, legal_name, primary_symbol, primary_exchange,
+                   real_company_verified, annual_statement_years, first_statement_year,
+                   latest_statement_year, segment_count, operational_kpi_count,
+                   market_share_series_count, peer_count, management_communication_count,
+                   management_claim_count, claims_with_outcomes,
+                   latest_statement_available_at, latest_evidence_retrieved_at
+            FROM research.v_company_fundamental_coverage
+            ORDER BY real_company_verified DESC, latest_evidence_retrieved_at DESC NULLS LAST
+            LIMIT 100
+        """,
+        "fundamental_intake": """
+            SELECT company_id, company_key, legal_name, primary_symbol,
+                   primary_exchange, identity_verified, linked_position_count,
+                   linked_account_count, gross_market_value, latest_position_at,
+                   filing_evidence_count, latest_evidence_at,
+                   annual_statement_years, segment_count, operational_kpi_count,
+                   market_share_series_count, peer_count,
+                   management_communication_count, next_required_action,
+                   capital_action_allowed, broker_write_allowed
+            FROM research.v_company_intake_status
+            ORDER BY gross_market_value DESC, primary_symbol
+            LIMIT 150
+        """,
+        "fundamental_evidence": """
+            SELECT evidence.id, evidence.company_id, company.company_key,
+                   company.legal_name, company.primary_symbol, company.primary_exchange,
+                   evidence.source_type, evidence.source_name, evidence.source_url,
+                   evidence.source_title, evidence.published_at, evidence.retrieved_at,
+                   evidence.source_as_of_date, evidence.page_start, evidence.page_end,
+                   evidence.section_reference, evidence.extraction_method,
+                   evidence.verification_status, evidence.verified_by,
+                   evidence.verified_at, evidence.source_locator, evidence.metadata
+            FROM research.fundamental_evidence evidence
+            JOIN research.companies company ON company.id = evidence.company_id
+            ORDER BY
+                CASE evidence.verification_status
+                    WHEN 'unverified' THEN 0
+                    WHEN 'machine_extracted' THEN 1
+                    WHEN 'human_verified' THEN 2
+                    ELSE 3
+                END,
+                evidence.retrieved_at DESC,
+                evidence.id DESC
+            LIMIT 200
+        """,
+        "fundamental_specialist_opinions": """
+            SELECT DISTINCT ON (opinion.company_id, opinion.specialist_key)
+                   opinion.id, opinion.company_id, company.company_key,
+                   company.legal_name, company.primary_symbol, company.primary_exchange,
+                   opinion.dossier_version_id,
+                   coalesce(opinion.holding_thesis_id, dossier.holding_thesis_id) AS holding_thesis_id,
+                   opinion.specialist_key, opinion.agent_name, opinion.opinion_status,
+                   opinion.conclusion, opinion.score_low, opinion.score_base,
+                   opinion.score_high, opinion.confidence_pct,
+                   opinion.disconfirming_evidence, opinion.required_followups,
+                   opinion.evidence_id, evidence.source_title, evidence.source_url,
+                   evidence.verification_status AS evidence_verification_status,
+                   opinion.opinion_as_of, opinion.reviewed_by, opinion.reviewed_at,
+                   opinion.review_rationale, opinion.created_at, opinion.updated_at
+            FROM research.fundamental_specialist_opinions opinion
+            JOIN research.companies company ON company.id = opinion.company_id
+            JOIN research.investment_dossier_versions version ON version.id = opinion.dossier_version_id
+            JOIN research.investment_dossiers dossier ON dossier.id = version.dossier_id
+            JOIN research.fundamental_evidence evidence ON evidence.id = opinion.evidence_id
+            ORDER BY opinion.company_id, opinion.specialist_key,
+                     opinion.opinion_as_of DESC, opinion.id DESC
+        """,
+        "governance_forensic_observations": """
+            SELECT observation.id, observation.company_id, company.company_key,
+                   company.legal_name, company.primary_symbol, company.primary_exchange,
+                   observation.observation_key, observation.category,
+                   observation.observation_status, observation.severity,
+                   observation.conclusion, observation.disclosed_value,
+                   observation.disclosed_unit, observation.period_end,
+                   observation.source_page, observation.source_excerpt,
+                   observation.extraction_method, observation.verification_status,
+                   observation.available_at, observation.metadata,
+                   observation.evidence_id, evidence.source_title, evidence.source_url,
+                   observation.created_at, observation.updated_at
+            FROM research.governance_forensic_observations observation
+            JOIN research.companies company ON company.id=observation.company_id
+            JOIN research.fundamental_evidence evidence ON evidence.id=observation.evidence_id
+            WHERE observation.verification_status NOT IN ('rejected','superseded')
+            ORDER BY
+              CASE observation.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
+                   WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,
+              observation.available_at DESC, observation.id DESC
+            LIMIT 300
+        """,
+        "fundamental_remediation_tasks": """
+            SELECT task.id, task.title, task.objective, task.owner_agent,
+                   task.status, task.priority, task.approval_required,
+                   task.source_ref, task.output_format, task.evidence,
+                   task.created_at, task.updated_at,
+                   inbox.id AS inbox_id, inbox.status AS inbox_status,
+                   inbox.target_workspace
+            FROM agent.tasks task
+            LEFT JOIN LATERAL (
+                SELECT item.id, item.status, item.target_workspace
+                FROM agent.inbox_items item
+                WHERE item.task_id = task.id
+                ORDER BY item.updated_at DESC, item.id DESC
+                LIMIT 1
+            ) inbox ON true
+            WHERE task.source_kind = 'fundamental_specialist_remediation'
+            ORDER BY
+                CASE task.status WHEN 'queued' THEN 1 WHEN 'in_progress' THEN 2
+                     WHEN 'needs_review' THEN 3 ELSE 4 END,
+                task.updated_at DESC
+            LIMIT 100
+        """,
+        "investment_dossiers": """
+            SELECT dossier_id, dossier_key, company_id, company_key, legal_name,
+                   primary_symbol, primary_exchange, holding_thesis_id, dossier_status,
+                   dossier_version_id, version_number, version_status, research_as_of,
+                   source_cutoff_at, executive_conclusion, decision_summary,
+                   evidence_coverage, section_count, reviewed_section_count,
+                   specialist_count, has_portfolio_fit, updated_at
+            FROM research.v_latest_investment_dossiers
+            ORDER BY updated_at DESC NULLS LAST, dossier_id DESC
+            LIMIT 100
+        """,
+        "dossier_refresh_queue": """
+            SELECT id, dossier_id, dossier_key, company_id, company_key, legal_name,
+                   primary_symbol, trigger_type, trigger_source_table, trigger_source_id,
+                   materiality, event_at, detected_at, refresh_status, assigned_to,
+                   evidence_id, metadata
+            FROM research.v_dossier_refresh_queue
+            LIMIT 100
+        """,
+        "management_claims": """
+            SELECT company_id, company_key, legal_name, claim_id, claim_key,
+                   communication_type, communication_title, claim_date,
+                   speaker_name, speaker_role, claim_type, claim_text, metric_key,
+                   target_operator, target_value, target_unit, target_period_end,
+                   assessment_due_at, claim_status, outcome_date, outcome_status,
+                   actual_value, actual_unit, assessment, claim_evidence_id,
+                   outcome_evidence_id
+            FROM research.v_management_claim_scorecard
+            ORDER BY claim_date DESC, claim_id DESC
+            LIMIT 100
+        """,
+        "fundamental_acceptance": """
+            SELECT acceptance_run_id AS run_id, run_key, company_id, company_key,
+                   legal_name, primary_symbol, primary_exchange, holding_thesis_id,
+                   dossier_version_id, acceptance_profile, run_status,
+                   real_company_verified, verification_evidence_id, data_as_of,
+                   gate_count, passed_gate_count, failed_gate_count,
+                   blocked_gate_count, gates, started_by, started_at,
+                   completed_at, notes
+            FROM research.v_real_company_acceptance_status
+            ORDER BY started_at DESC, run_id DESC
+            LIMIT 50
         """,
         "committee_queue": """
             SELECT id, review_key, holding_thesis_id, symbol, exchange,
@@ -2160,6 +3944,14 @@ def build_research_ideas_snapshot() -> dict:
                    on_watchlist, relevance_scope
             FROM market.v_upcoming_corporate_events
             WHERE event_date <= current_date + 60
+            LIMIT 100
+        """,
+        "market_quotes": """
+            SELECT id, source_key, provider, provider_symbol, symbol, exchange,
+                   description, currency, price, change_percent, quote_ts
+            FROM market.v_latest_price_quotes
+            WHERE lower(provider) NOT LIKE 'tradingview%'
+            ORDER BY quote_ts DESC, symbol
             LIMIT 100
         """,
         "market_holidays": """
@@ -2273,8 +4065,18 @@ def build_research_ideas_snapshot() -> dict:
                    published_date, doi, source_url, pdf_url, abstract,
                    page_count, topics, asset_classes, markets, methodology_tags,
                    extraction_status, review_status, owner_agent,
+                   source_kind, research_objective, target_universe, desired_outputs,
+                   extraction_word_count, intake_status,
                    hypothesis_count, latest_ingestion_at, evidence, updated_at
             FROM research.v_research_paper_queue
+            LIMIT 80
+        """,
+        "research_cycles": """
+            SELECT id,cycle_key,source_kind,source_ref,objective,as_of,universe,
+                   strategy_spec,status,owner_agent,evidence,
+                   broker_write_allowed,live_execution_allowed,created_at
+            FROM strategy.research_cycles
+            ORDER BY created_at DESC
             LIMIT 80
         """,
         "paper_strategy_hypotheses": """
@@ -2340,12 +4142,222 @@ def build_research_ideas_snapshot() -> dict:
             LIMIT 1
         """,
     }
-    data = run_psql_json_object(queries)
+    data = run_psql_json_object(
+        queries,
+        row_limit=160,
+        batch_size=8,
+        error_collector=issues,
+    )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_research_ideas_read_model"},
+        "payload_profile": {
+            "query_count": len(queries),
+            "row_count": sum(len(rows) for rows in data.values()),
+        },
+        "issues": issues,
+        **data,
+    }
+
+
+def build_sector_intelligence_snapshot() -> dict:
+    """Return the bounded deterministic sector warehouse and control read model."""
+    queries = {
+        "hierarchy": """
+            SELECT sector_id, sector_key, sector_name, industry_id, industry_key,
+                   industry_name, sub_industry_id, sub_industry_key,
+                   sub_industry_name, valid_from, valid_to
+            FROM sector_intelligence.v_sector_hierarchy
+            ORDER BY sector_name, industry_name NULLS FIRST, sub_industry_name NULLS FIRST
+            LIMIT 300
+        """,
+        "custom_indices": """
+            SELECT index_id, index_key, index_name, status, weighting_method,
+                   rebalance_frequency, latest_rebalance_date,
+                   current_constituent_count, latest_calculated_at, latest_index_value
+            FROM sector_intelligence.v_custom_index_control
+            ORDER BY status, index_name
+            LIMIT 100
+        """,
+        "freshness": """
+            SELECT taxonomy_node_id, taxonomy_key, node_name, latest_metric_at,
+                   latest_market_monitor_at, latest_flow_at,
+                   latest_ownership_period_end, latest_research_review_at
+            FROM sector_intelligence.v_sector_data_freshness
+            ORDER BY node_name
+            LIMIT 200
+        """,
+        "committee": """
+            SELECT id, packet_key, taxonomy_node_id, taxonomy_key, sector_name,
+                   packet_type, as_of_date, decision_question, status,
+                   human_final_required, capital_action_allowed,
+                   committee_packet_id, updated_at
+            FROM sector_intelligence.v_sector_committee_control
+            ORDER BY updated_at DESC
+            LIMIT 100
+        """,
+        "portfolio_manager": """
+            SELECT id, mandate_key, manager_agent, mandate_name, objective, status,
+                   human_approval_required, broker_order_allowed, valid_from, valid_to,
+                   benchmark_index_id, benchmark_index_key, open_committee_packets,
+                   latest_committee_activity_at
+            FROM sector_intelligence.v_sector_portfolio_manager_control
+            ORDER BY status, mandate_name
+            LIMIT 50
+        """,
+        "rankings": """
+            SELECT id, taxonomy_node_id, as_of_date, ranking_universe, ranking_type,
+                   horizon, score, rank_value, universe_size, calculation_version,
+                   input_fingerprint, calculated_at
+            FROM sector_intelligence.sector_rankings
+            ORDER BY as_of_date DESC, ranking_type, rank_value
+            LIMIT 200
+        """,
+        "aggregates": """
+            SELECT aggregate.taxonomy_node_id, node.taxonomy_key, node.node_name,
+                   aggregate.metric_definition_id, definition.metric_key,
+                   definition.metric_name, definition.unit, aggregate.as_of_date,
+                   aggregate.horizon, aggregate.value, aggregate.constituent_count,
+                   aggregate.covered_count, aggregate.weighting_method,
+                   aggregate.calculation_version, aggregate.input_fingerprint,
+                   aggregate.quality_status, aggregate.calculated_at
+            FROM sector_intelligence.sector_aggregates aggregate
+            JOIN sector_intelligence.taxonomy_nodes node
+              ON node.id=aggregate.taxonomy_node_id
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=aggregate.metric_definition_id
+            ORDER BY aggregate.as_of_date DESC, aggregate.calculated_at DESC
+            LIMIT 200
+        """,
+        "fundamental_coverage": """
+            SELECT taxonomy_node_id, taxonomy_key, node_name, symbol_id, symbol,
+                   exchange, core_fact_count, core_lineage_complete,
+                   latest_fundamental_at, price_to_earnings, valuation_at
+            FROM sector_intelligence.v_fundamental_constituent_coverage
+            ORDER BY node_name, symbol
+            LIMIT 500
+        """,
+        "valuation_bands": """
+            SELECT taxonomy_node_id, metric_definition_id, as_of_date, lookback_years,
+                   current_value, percentile_rank, minimum_value, p10_value, p25_value,
+                   median_value, p75_value, p90_value, maximum_value, observation_count,
+                   calculation_version, input_fingerprint, calculated_at
+            FROM sector_intelligence.valuation_bands
+            ORDER BY as_of_date DESC, calculated_at DESC
+            LIMIT 200
+        """,
+        "valuation_history": """
+            SELECT history.taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   history.valuation_date,history.price_to_earnings,
+                   history.price_to_book,history.dividend_yield_percent,
+                   source.name AS source_name,history.source_reference,
+                   history.source_artifact_path,history.source_artifact_sha256,
+                   history.request_number,history.input_fingerprint,
+                   history.quality_status,history.ingested_at
+            FROM sector_intelligence.index_valuation_history history
+            JOIN sector_intelligence.taxonomy_nodes node
+              ON node.id=history.taxonomy_node_id
+            JOIN core.source_systems source ON source.id=history.source_system_id
+            ORDER BY history.valuation_date DESC
+            LIMIT 300
+        """,
+        "underwrites": """
+            SELECT taxonomy_node_id,taxonomy_key,node_name,coverage_id,
+                   coverage_status,owner_agent,dossier_version,last_reviewed_at,
+                   next_review_due_at,thesis_summary,evidence_references,data_gaps,
+                   monitoring_indicators,dossier_sections,source_cutoff_at,
+                   dossier_fingerprint,committee_packet_id,packet_key,packet_type,
+                   packet_as_of_date,decision_question,proposed_action,
+                   independent_positions,dissent_summary,risk_challenges,
+                   committee_status,human_final_required,capital_action_allowed,
+                   packet_fingerprint,pe_observation_count,earliest_pe_date,
+                   latest_pe_date,latest_ingested_at
+            FROM sector_intelligence.v_sector_underwrite_control
+            ORDER BY node_name
+            LIMIT 200
+        """,
+        "flows": """
+            SELECT flow.taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   flow.symbol_id,symbol.symbol,symbol.exchange,flow.observed_at,
+                   flow.flow_actor,flow.flow_type,flow.buy_value,flow.sell_value,
+                   flow.net_value,flow.currency,flow.source_system_id,
+                   source.name AS source_name,flow.source_reference,flow.evidence
+            FROM sector_intelligence.flow_observations flow
+            LEFT JOIN sector_intelligence.taxonomy_nodes node ON node.id=flow.taxonomy_node_id
+            LEFT JOIN trading.symbols symbol ON symbol.id=flow.symbol_id
+            LEFT JOIN core.source_systems source ON source.id=flow.source_system_id
+            ORDER BY flow.observed_at DESC
+            LIMIT 200
+        """,
+        "ownership": """
+            SELECT ownership.taxonomy_node_id,node.taxonomy_key,node.node_name,
+                   ownership.symbol_id,symbol.symbol,symbol.exchange,
+                   ownership.period_end,ownership.holder_category,
+                   ownership.holder_name,ownership.holding_percent,
+                   ownership.shares_held,ownership.pledged_percent,
+                   ownership.change_percent_points,ownership.observation_type,
+                   ownership.source_system_id,source.name AS source_name,
+                   ownership.source_reference,ownership.evidence,ownership.created_at
+            FROM sector_intelligence.ownership_observations ownership
+            LEFT JOIN sector_intelligence.taxonomy_nodes node ON node.id=ownership.taxonomy_node_id
+            JOIN trading.symbols symbol ON symbol.id=ownership.symbol_id
+            LEFT JOIN core.source_systems source ON source.id=ownership.source_system_id
+            ORDER BY ownership.period_end DESC,ownership.created_at DESC
+            LIMIT 500
+        """,
+        "ownership_flow_coverage": """
+            SELECT taxonomy_node_id,taxonomy_key,node_name,flow_observation_count,
+                   flow_symbol_count,latest_flow_at,ownership_observation_count,
+                   ownership_symbol_count,latest_ownership_period_end
+            FROM sector_intelligence.v_sector_ownership_flow_coverage
+            ORDER BY node_name
+            LIMIT 200
+        """,
+        "chart_artifacts": """
+            SELECT id, artifact_key, taxonomy_node_id, index_id AS custom_index_id,
+                   artifact_type, target_workspace, generated_expression,
+                   pine_source, chart_layout, source_state_fingerprint,
+                   generation_version, generated_at, expires_at
+            FROM sector_intelligence.generated_chart_artifacts
+            ORDER BY generated_at DESC
+            LIMIT 100
+        """,
+        "source_import_runs": """
+            SELECT id,run_key,package_hash,source_artifact_ref,observed_at,status,
+                   taxonomy_rows,membership_rows,metric_rows,index_rows,
+                   validation_errors,imported_by,imported_at,broker_write_allowed
+            FROM sector_intelligence.source_import_runs
+            ORDER BY imported_at DESC
+            LIMIT 50
+        """,
+        "acceptance_runs": """
+            SELECT acceptance_run_id,run_key,taxonomy_key,node_name,as_of_date,status,
+                   gate_version,gate_count,passed_count,failed_count,blocked_count,
+                   gates,started_by,started_at,finished_at,broker_write_allowed
+            FROM sector_intelligence.v_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 50
+        """,
+        "execution_control": """
+            SELECT global_execution_locked, broker_execution_policy,
+                   paper_trading_allowed, limited_live_allowed,
+                   live_broker_writes_allowed, lock_reason, updated_at
+            FROM trading.v_execution_control_state
+            LIMIT 1
+        """,
+    }
+    data = run_psql_json_object(queries)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "vault_root": str(VAULT_ROOT),
+        "data_mode": {
+            "seed_data_allowed": False,
+            "source": "scoped_sector_intelligence_read_model",
+            "tradingview_role": "artifact_consumer_only",
+        },
         "payload_profile": {
             "query_count": len(queries),
             "row_count": sum(len(rows) for rows in data.values()),
@@ -2358,17 +4370,42 @@ def build_trading_quant_risk_snapshot() -> dict:
     """Return the bounded quant-validation, trading-control, and risk read model."""
     queries = {
         "quant_lab": """
-            SELECT strategy_id, candidate_key, strategy_name, candidate_status,
-                   timeframe, validation_status, activation_gate, parse_status,
-                   data_quality_status, data_quality_reasons, allocation_key,
-                   target_weight, target_notional, expected_return,
-                   expected_volatility, risk_contribution, allocation_status,
-                   ruin_probability, max_drawdown_p95, ruin_quality_flags,
-                   review_key, review_status, recommended_action, severity,
-                   trigger_reasons, assigned_agents, open_assignments,
-                   total_assignments, updated_at
-            FROM strategy.v_quant_lab_dashboard_v2
-            ORDER BY updated_at DESC, strategy_id DESC
+            SELECT dashboard.strategy_id, dashboard.candidate_key,
+                   dashboard.strategy_name, dashboard.candidate_status,
+                   dashboard.timeframe, dashboard.validation_status,
+                   dashboard.activation_gate, dashboard.parse_status,
+                   dashboard.data_quality_status, dashboard.data_quality_reasons,
+                   dashboard.allocation_key, dashboard.target_weight,
+                   dashboard.target_notional, dashboard.expected_return,
+                   dashboard.expected_volatility, dashboard.risk_contribution,
+                   dashboard.allocation_status, dashboard.ruin_probability,
+                   dashboard.max_drawdown_p95, dashboard.ruin_quality_flags,
+                   dashboard.review_key, dashboard.review_status,
+                   dashboard.recommended_action, dashboard.severity,
+                   dashboard.trigger_reasons, dashboard.assigned_agents,
+                   dashboard.open_assignments, dashboard.total_assignments,
+                   backtest.id AS backtest_id, backtest.run_status,
+                   backtest.data_start AS start_date, backtest.data_end AS end_date,
+                   backtest.universe, backtest.timeframe AS backtest_timeframe,
+                   nullif(backtest.metrics->>'sharpe_estimate','')::numeric AS sharpe,
+                   nullif(backtest.metrics->>'total_return','')::numeric AS total_return,
+                   nullif(backtest.metrics->>'max_drawdown','')::numeric AS max_drawdown,
+                   nullif(backtest.metrics->>'win_rate_by_bar','')::numeric AS win_rate,
+                   nullif(backtest.metrics->>'trades_count','')::numeric AS trade_count,
+                   backtest.diagnostics->'equity_curve' AS equity_curve,
+                   backtest.diagnostics->>'equity_curve_method' AS equity_curve_method,
+                   coalesce(backtest.diagnostics->>'equity_curve_source',
+                            backtest.diagnostics->>'data_source') AS data_source,
+                   backtest.artifact_path, backtest.finished_at,
+                   dashboard.updated_at
+            FROM strategy.v_quant_lab_dashboard_v2 dashboard
+            LEFT JOIN LATERAL (
+                SELECT run.* FROM strategy.backtest_runs run
+                WHERE run.strategy_id=dashboard.strategy_id
+                ORDER BY run.finished_at DESC NULLS LAST, run.started_at DESC, run.id DESC
+                LIMIT 1
+            ) backtest ON true
+            ORDER BY dashboard.updated_at DESC, dashboard.strategy_id DESC
             LIMIT 100
         """,
         "model_validation": """
@@ -2448,10 +4485,16 @@ def build_trading_quant_risk_snapshot() -> dict:
             LIMIT 80
         """,
         "signals": """
-            SELECT id, ts, strategy, symbol, exchange, action, price,
-                   quantity, confidence, status, payload
-            FROM trading.v_recent_signals
-            ORDER BY ts DESC
+            SELECT signal.id, signal.id AS signal_id,
+                   signal.ts, signal.ts AS generated_at,
+                   signal.strategy, signal.strategy AS strategy_name,
+                   signal.symbol, signal.exchange, signal.action,
+                   signal.action AS direction,
+                   coalesce(nullif(signal.payload->>'signal_type', ''), signal.action, 'signal') AS signal_type,
+                   signal.price, signal.quantity, signal.confidence,
+                   signal.confidence AS strength, signal.status, signal.payload
+            FROM trading.v_recent_signals signal
+            ORDER BY signal.ts DESC
             LIMIT 100
         """,
         "alerts": """
@@ -2499,8 +4542,17 @@ def build_trading_quant_risk_snapshot() -> dict:
                    client_code, account_code, strategy_key, symbol, exchange,
                    instrument_type, side, quantity, price, trade_ts, status,
                    thesis, setup_type, timeframe, stop_loss, target_price,
-                   realized_pnl, fees, created_by, created_at, updated_at
-            FROM trading.v_trade_activity_ledger
+                   realized_pnl, fees, created_by, created_at, updated_at,
+                   payload->>'option_type' AS option_type,
+                   payload->>'strike' AS strike,
+                   payload->>'expiry_date' AS expiry_date,
+                   payload->>'strategy_name' AS strategy_name,
+                   payload->>'quantity_unit' AS quantity_unit,
+                   payload->>'lot_count' AS lot_count,
+                   payload->>'lot_size' AS lot_size,
+                   payload->>'contract_quantity' AS contract_quantity,
+                   evidence, payload
+            FROM trading.trade_activity_ledger
             ORDER BY trade_ts DESC, created_at DESC
             LIMIT 120
         """,
@@ -2509,6 +4561,27 @@ def build_trading_quant_risk_snapshot() -> dict:
                    last_trade_ts, realized_pnl, average_price, statuses
             FROM trading.v_paper_trade_summary
             ORDER BY last_trade_ts DESC NULLS LAST
+            LIMIT 100
+        """,
+        "paper_positions": """
+            SELECT id, paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, instance_id, symbol, exchange,
+                   timeframe, side, quantity, state, entry_ts, entry_price,
+                   exit_ts, exit_price, latest_mark_ts, latest_mark_price,
+                   unrealized_pnl, realized_pnl, fees, close_reason, metadata,
+                   created_at, updated_at
+            FROM trading.v_paper_positions
+            ORDER BY updated_at DESC
+            LIMIT 200
+        """,
+        "paper_monitor_performance": """
+            SELECT paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, monitor_status, positions_total,
+                   positions_open, positions_closed, unrealized_pnl, realized_pnl,
+                   fees, latest_mark_ts, last_heartbeat_at, heartbeat_status,
+                   live_execution_allowed
+            FROM trading.v_paper_monitor_performance
+            ORDER BY last_heartbeat_at DESC NULLS LAST
             LIMIT 100
         """,
         "risk_summary": """
@@ -2636,6 +4709,7 @@ def build_trading_quant_risk_snapshot() -> dict:
                    spot_price, call_open_interest, put_open_interest, average_iv,
                    broker_write_allowed
             FROM trading.v_options_surface_summary
+            WHERE observed_at <= now() + interval '5 minutes'
             LIMIT 30
         """,
         "option_chain": """
@@ -2644,6 +4718,7 @@ def build_trading_quant_risk_snapshot() -> dict:
                    bid_price, ask_price, volume, open_interest,
                    implied_volatility, delta, gamma, theta, vega
             FROM trading.v_latest_option_chain
+            WHERE observed_at <= now() + interval '5 minutes'
             LIMIT 400
         """,
         "option_oi_change": """
@@ -2665,6 +4740,7 @@ def build_trading_quant_risk_snapshot() -> dict:
                        ) AS recency_rank
                 FROM trading.option_chain_snapshots
                 WHERE provider='Zerodha'
+                  AND observed_at <= now() + interval '5 minutes'
             )
             SELECT provider, exchange, underlying, expiry, observed_at, strike,
                    option_type, trading_symbol, spot_price, last_price,
@@ -2678,6 +4754,155 @@ def build_trading_quant_risk_snapshot() -> dict:
             WHERE recency_rank=1
             ORDER BY underlying, expiry, strike, option_type
             LIMIT 400
+        """,
+        "institutional_option_chain": """
+            WITH qualified AS (
+                SELECT chain.*,
+                       dense_rank() OVER (
+                           PARTITION BY provider, exchange, underlying, expiry
+                           ORDER BY minute_ts DESC, source_timestamp DESC
+                       ) AS batch_recency_rank
+                FROM trading.v_institutional_option_chain chain
+                WHERE source_timestamp <= now() + interval '5 minutes'
+                  AND received_at <= now() + interval '5 minutes'
+            )
+            SELECT batch_key, provider, exchange, underlying, expiry, minute_ts,
+                   source_timestamp, received_at, spot_price, batch_freshness_status,
+                   batch_quality_status, contract_snapshot_id, trading_symbol,
+                   strike, option_type, last_price, bid_price, ask_price, volume,
+                   open_interest, previous_open_interest, staleness_status,
+                   liquidity_status, implied_volatility, delta, gamma, theta,
+                   vega, rho, model_name, model_version, solver_version,
+                   calculation_quality_status, greeks_validated,
+                   CASE
+                     WHEN now() - source_timestamp <= interval '120 seconds' THEN 'fresh'
+                     WHEN now() - source_timestamp <= interval '15 minutes' THEN 'delayed'
+                     ELSE 'stale'
+                   END AS current_freshness_status,
+                   broker_write_allowed
+            FROM qualified
+            WHERE batch_recency_rank=1
+            ORDER BY minute_ts DESC, underlying, expiry, strike, option_type
+            LIMIT 500
+        """,
+        "option_premium_series": """
+            SELECT series.id, batch.underlying, batch.expiry, batch.minute_ts,
+                   series.series_type, series.reference_spot AS spot_price,
+                   series.call_strike, series.put_strike, series.call_premium,
+                   series.put_premium, series.combined_premium,
+                   series.call_contract_snapshot_id, series.put_contract_snapshot_id,
+                   series.batch_id AS source_batch_id, series.selection_method,
+                   series.quality_status, series.quality_flags, series.assumptions,
+                   series.calculation_version, series.broker_write_allowed
+            FROM trading.option_premium_series series
+            JOIN trading.option_chain_snapshot_batches batch ON batch.id=series.batch_id
+            ORDER BY batch.minute_ts DESC
+            LIMIT 300
+        """,
+        "option_volatility_metrics": """
+            SELECT metric.id, batch.underlying, batch.expiry,
+                   batch.minute_ts AS as_of_ts, metric.metric_type,
+                   metric.tenor_label, metric.delta_bucket,
+                   metric.strike_moneyness, metric.metric_value AS value,
+                   metric.observation_count, metric.lookback_days,
+                   metric.valid_from, metric.calculation_version,
+                   metric.source_result_ids, metric.quality_status,
+                   metric.quality_flags, metric.assumptions,
+                   metric.broker_write_allowed
+            FROM trading.option_volatility_metrics metric
+            JOIN trading.option_chain_snapshot_batches batch ON batch.id=metric.batch_id
+            ORDER BY batch.minute_ts DESC
+            LIMIT 300
+        """,
+        "option_exposure_estimates": """
+            SELECT estimate.id, batch.underlying, batch.expiry,
+                   batch.minute_ts AS as_of_ts, estimate.exposure_scope,
+                   estimate.contract_snapshot_id, estimate.strike,
+                   estimate.metric_name AS exposure_type,
+                   estimate.metric_value AS value, estimate.unit AS value_unit,
+                   estimate.dealer_position_assumption,
+                   estimate.open_interest_sign_method AS oi_sign_assumption,
+                   estimate.contract_multiplier, estimate.shock_size,
+                   estimate.coverage_ratio, estimate.calculation_version,
+                   estimate.source_result_ids, estimate.quality_status,
+                   estimate.quality_flags, estimate.assumptions,
+                   estimate.broker_write_allowed
+            FROM trading.option_exposure_estimates estimate
+            JOIN trading.option_chain_snapshot_batches batch ON batch.id=estimate.batch_id
+            ORDER BY batch.minute_ts DESC
+            LIMIT 300
+        """,
+        "option_analytics_alerts": """
+            SELECT alert.id, alert.alert_key, batch.underlying, batch.expiry,
+                   alert.observed_at, alert.detected_at, alert.alert_type,
+                   alert.severity, alert.status, alert.title, alert.evidence,
+                   alert.threshold_definition, alert.calculation_version,
+                   alert.quality_status, alert.batch_id AS source_batch_id,
+                   alert.paper_only, alert.broker_write_allowed,
+                   alert.acknowledged_by, alert.acknowledged_at,
+                   alert.resolved_at, alert.created_at
+            FROM trading.option_analytics_alerts alert
+            LEFT JOIN trading.option_chain_snapshot_batches batch ON batch.id=alert.batch_id
+            ORDER BY alert.observed_at DESC
+            LIMIT 100
+        """,
+        "option_replays": """
+            SELECT id, session_key AS replay_key, exchange, underlying, expiry,
+                   replay_start AS window_start, replay_end AS window_end,
+                   replay_clock AS current_frame_ts, status AS replay_status,
+                   point_in_time_enforced AS lookahead_prevention,
+                   maximum_available_source_timestamp, speed_multiplier,
+                   created_by AS owner_agent, paper_only, broker_write_allowed,
+                   created_at, updated_at
+            FROM trading.option_replay_sessions
+            ORDER BY created_at DESC
+            LIMIT 50
+        """,
+        "option_specialist_observations": """
+            SELECT observation.id, observation.observation_key,
+                   observation.specialist_agent, batch.underlying, batch.expiry,
+                   observation.as_of AS as_of_ts, observation.observation_type,
+                   observation.observation_status AS review_status,
+                   observation.headline AS summary, observation.observation,
+                   observation.confidence, observation.evidence_refs AS evidence,
+                   observation.assumptions, observation.limitations AS missing_evidence,
+                   observation.quality_status, observation.human_review_required,
+                   observation.capital_action_allowed,
+                   observation.broker_write_allowed,
+                   observation.created_at, observation.updated_at
+            FROM trading.option_specialist_observations observation
+            LEFT JOIN trading.option_chain_snapshot_batches batch ON batch.id=observation.batch_id
+            ORDER BY observation.as_of DESC
+            LIMIT 100
+        """,
+        "option_acceptance": """
+            SELECT id, run_key, exchange, underlying, expiry, window_start,
+                   window_end, status, gate_count, passed_count, failed_count,
+                   blocked_count, validated_greeks_ratio, liquid_contract_ratio,
+                   stale_contract_ratio, replay_coverage_ratio,
+                   paper_attribution_coverage_ratio, gate_version,
+                   started_at, finished_at, broker_write_allowed
+            FROM trading.v_option_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 50
+        """,
+        "option_analytics_readiness": """
+            SELECT provider,exchange,underlying,expiry,minute_ts,freshness_status,
+                   batch_quality_status,contract_count,policy_key,model_family,
+                   policy_expires_at,analytics_readiness,broker_write_allowed
+            FROM trading.v_option_analytics_readiness
+            ORDER BY minute_ts DESC,underlying
+            LIMIT 50
+        """,
+        "institutional_option_pipeline_runs": """
+            SELECT id,run_key,status,rows_read,rows_written,batches_created,
+                   calculations_completed,calculations_blocked,quality_summary,
+                   error_message,started_at,finished_at,next_run_after,
+                   broker_write_allowed
+            FROM ops.institutional_pipeline_runs
+            WHERE workload_key='institutional_options_materializer'
+            ORDER BY started_at DESC
+            LIMIT 50
         """,
         "option_trade_log": """
             SELECT id, trade_id, trade_status, trade_type, no_of_trades,
@@ -2715,7 +4940,7 @@ def build_trading_quant_risk_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         "data_mode": {"seed_data_allowed": False, "source": "scoped_trading_quant_risk_read_model"},
         "payload_profile": {
             "query_count": len(queries),
@@ -2872,6 +5097,49 @@ def build_strategy_arsenal_snapshot() -> dict:
             FROM strategy.v_strategy_correlation_matrix
             ORDER BY created_at DESC, strategy_name_a, strategy_name_b
             LIMIT 120
+        """,
+        "strategy_portfolio_optimizer_runs": """
+            SELECT id, analytics_run_id, run_key, optimizer_method,
+                   candidate_count, weights, expected_return,
+                   expected_volatility, sharpe_proxy, constraints,
+                   diagnostics, status, created_by, created_at
+            FROM strategy.v_strategy_portfolio_optimizer_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "strategy_portfolio_allocation_runs": """
+            SELECT id, allocation_key, analytics_run_id, analytics_run_key,
+                   optimizer_run_id, capital_base, timeframe, status,
+                   allocation_method, expected_return, expected_volatility,
+                   expected_max_drawdown, allocation_payload, constraints,
+                   diagnostics, quality_flags, artifact_path, created_by,
+                   created_at, allocation_rows, ruin_metric_rows
+            FROM strategy.v_strategy_portfolio_allocation_runs
+            ORDER BY created_at DESC
+            LIMIT 20
+        """,
+        "strategy_portfolio_allocations": """
+            SELECT id, allocation_run_id, allocation_key, analytics_run_id,
+                   analytics_run_key, strategy_id, candidate_key, strategy_name,
+                   target_weight, target_notional, expected_return,
+                   expected_volatility, risk_contribution, allocation_status,
+                   diagnostics, created_at
+            FROM strategy.v_strategy_portfolio_allocations
+            ORDER BY created_at DESC, target_weight DESC
+            LIMIT 80
+        """,
+        "strategy_retirement_queue": """
+            SELECT id, review_key, strategy_id, candidate_key, strategy_name,
+                   analytics_run_id, analytics_run_key, allocation_run_id,
+                   allocation_key, optimizer_run_id, review_status,
+                   recommended_action, severity, trigger_source,
+                   trigger_reasons, assigned_agents, evidence, decision_notes,
+                   human_decision, decided_by, decided_at, created_by,
+                   created_at, updated_at, open_assignments,
+                   completed_assignments, total_assignments
+            FROM strategy.v_strategy_retirement_queue
+            ORDER BY created_at DESC, severity DESC, review_key
+            LIMIT 80
         """,
         "execution_control": """
             SELECT state_key, global_execution_locked, broker_execution_policy,
@@ -3863,6 +6131,241 @@ def sync_architecture_change(payload: dict) -> dict:
     return result
 
 
+def reconcile_blueprint_evidence(payload: dict) -> dict:
+    """Link completed task/worker artifacts to canonical requirements for human review."""
+    actor = str(payload.get("actor") or "Jarvis").strip() or "Jarvis"
+    run_key = str(payload.get("run_key") or f"blueprint-evidence-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}").strip()
+    rows = run_psql_json_statement(
+        f"""
+        WITH candidates AS (
+            SELECT
+                requirement.requirement_key,
+                task.id AS task_id,
+                task.title AS task_title,
+                task.status AS task_status,
+                task.owner_agent,
+                coalesce(worker.output_note_path, task.output_note_path) AS evidence_note_path,
+                coalesce(nullif(worker.output_summary, ''), task.title) AS evidence_summary,
+                worker.id AS worker_run_id,
+                worker.status AS worker_status,
+                worker.finished_at
+            FROM core.v_os_blueprint_requirements requirement
+            JOIN agent.tasks task
+              ON task.objective LIKE ('%' || requirement.requirement_key || '%')
+            LEFT JOIN LATERAL (
+                SELECT run.id, run.status, run.output_summary, run.output_note_path, run.finished_at
+                FROM agent.worker_runs run
+                WHERE run.task_id = task.id
+                ORDER BY run.created_at DESC, run.id DESC
+                LIMIT 1
+            ) worker ON true
+            WHERE task.source_kind = 'agent_message'
+              AND (
+                  coalesce(worker.output_note_path, task.output_note_path) IS NOT NULL
+                  OR worker.id IS NOT NULL
+              )
+        ), upserted AS (
+            INSERT INTO core.os_blueprint_evidence_links (
+                requirement_key, evidence_type, evidence_key, evidence_note_path,
+                evidence_status, evidence_summary, source_system, source_record, metadata
+            )
+            SELECT
+                requirement_key,
+                'agent_task',
+                task_id::TEXT,
+                evidence_note_path,
+                'candidate',
+                evidence_summary,
+                'agent_worker',
+                jsonb_build_object(
+                    'table', 'agent.tasks',
+                    'task_id', task_id,
+                    'task_title', task_title,
+                    'task_status', task_status,
+                    'owner_agent', owner_agent,
+                    'worker_run_id', worker_run_id,
+                    'worker_status', worker_status,
+                    'worker_finished_at', finished_at
+                ),
+                jsonb_build_object(
+                    'reconciled_by', {sql_literal(actor)},
+                    'run_key', {sql_literal(run_key)},
+                    'broker_write_allowed', false,
+                    'self_verification_allowed', false
+                )
+            FROM candidates
+            ON CONFLICT (requirement_key, evidence_type, evidence_key) DO UPDATE SET
+                evidence_note_path = EXCLUDED.evidence_note_path,
+                evidence_summary = EXCLUDED.evidence_summary,
+                source_record = EXCLUDED.source_record,
+                evidence_status = CASE
+                    WHEN core.os_blueprint_evidence_links.evidence_status IN ('verified', 'rejected')
+                    THEN core.os_blueprint_evidence_links.evidence_status
+                    ELSE 'candidate'
+                END,
+                metadata = core.os_blueprint_evidence_links.metadata || EXCLUDED.metadata,
+                updated_at = now()
+            RETURNING id, requirement_key, evidence_type, evidence_key,
+                      evidence_note_path, evidence_status, evidence_summary,
+                      source_system, source_record, updated_at
+        ), run_record AS (
+            INSERT INTO core.os_blueprint_reconciliation_runs (
+                run_key, status, candidate_count, verified_count, rejected_count,
+                actor, broker_write_allowed, metadata, started_at, finished_at
+            )
+            SELECT
+                {sql_literal(run_key)}, 'completed',
+                count(*) FILTER (WHERE evidence_status = 'candidate')::INTEGER,
+                count(*) FILTER (WHERE evidence_status = 'verified')::INTEGER,
+                count(*) FILTER (WHERE evidence_status = 'rejected')::INTEGER,
+                {sql_literal(actor)}, false,
+                jsonb_build_object('source', 'agent.tasks_and_worker_runs', 'seed_data_allowed', false),
+                now(), now()
+            FROM upserted
+            ON CONFLICT (run_key) DO UPDATE SET
+                status = EXCLUDED.status,
+                candidate_count = EXCLUDED.candidate_count,
+                verified_count = EXCLUDED.verified_count,
+                rejected_count = EXCLUDED.rejected_count,
+                actor = EXCLUDED.actor,
+                broker_write_allowed = false,
+                metadata = EXCLUDED.metadata,
+                finished_at = now()
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(result)), '[]'::json)::text
+        FROM (
+            SELECT
+                run_record.id,
+                run_record.run_key,
+                run_record.status,
+                run_record.candidate_count,
+                run_record.verified_count,
+                run_record.rejected_count,
+                run_record.actor,
+                run_record.broker_write_allowed,
+                run_record.finished_at,
+                coalesce((SELECT json_agg(row_to_json(upserted)) FROM upserted), '[]'::json) AS evidence_links
+            FROM run_record
+        ) result
+        """
+    )
+    if not rows:
+        raise RuntimeError("blueprint evidence reconciliation did not create a run record")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_blueprint_evidence_reconcile",
+        "reconcile_blueprint_evidence",
+        actor,
+        "core.os_blueprint_evidence_links",
+        result,
+        {"run_key": run_key, "broker_write_allowed": False},
+    )
+    return result
+
+
+def review_blueprint_evidence(payload: dict) -> dict:
+    """Record an explicit human evidence decision and update delivery status."""
+    try:
+        evidence_link_id = int(payload.get("evidence_link_id") or payload.get("evidenceLinkId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evidence_link_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"verified", "rejected"}:
+        raise ValueError("decision must be verified or rejected")
+    delivery_status = str(payload.get("delivery_status") or payload.get("deliveryStatus") or "partial").strip().lower()
+    if decision == "verified" and delivery_status not in {"partial", "done"}:
+        raise ValueError("delivery_status must be partial or done for verified evidence")
+    actor = str(payload.get("actor") or payload.get("verified_by") or "Devarsh").strip() or "Devarsh"
+    rationale = str(payload.get("rationale") or "").strip()
+    if not rationale:
+        raise ValueError("rationale is required")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT *
+            FROM core.os_blueprint_evidence_links
+            WHERE id = {evidence_link_id}
+            FOR UPDATE
+        ), evidence_update AS (
+            UPDATE core.os_blueprint_evidence_links evidence
+            SET evidence_status = {sql_literal(decision)},
+                review_rationale = {sql_literal(rationale)},
+                verified_by = {sql_literal(actor)},
+                verified_at = now(),
+                metadata = evidence.metadata || jsonb_build_object(
+                    'human_reviewed', true,
+                    'delivery_status', {sql_literal(delivery_status)},
+                    'broker_write_allowed', false
+                ),
+                updated_at = now()
+            FROM selected
+            WHERE evidence.id = selected.id
+            RETURNING evidence.*
+        ), requirement_update AS (
+            UPDATE core.os_blueprint_requirements requirement
+            SET current_status = CASE
+                    WHEN {sql_literal(decision)} = 'verified' THEN {sql_literal(delivery_status)}
+                    ELSE requirement.current_status
+                END,
+                evidence_note_path = CASE
+                    WHEN {sql_literal(decision)} = 'verified'
+                    THEN coalesce((SELECT evidence_note_path FROM evidence_update), requirement.evidence_note_path)
+                    ELSE requirement.evidence_note_path
+                END,
+                next_action = CASE
+                    WHEN {sql_literal(decision)} = 'verified' AND {sql_literal(delivery_status)} = 'done' THEN NULL
+                    WHEN {sql_literal(decision)} = 'verified' THEN 'Close remaining hardening and attach final evidence.'
+                    ELSE requirement.next_action
+                END,
+                metadata = requirement.metadata || jsonb_build_object(
+                    'last_evidence_review', jsonb_build_object(
+                        'evidence_link_id', {evidence_link_id},
+                        'decision', {sql_literal(decision)},
+                        'delivery_status', {sql_literal(delivery_status)},
+                        'actor', {sql_literal(actor)},
+                        'reviewed_at', now()
+                    )
+                ),
+                updated_at = now()
+            WHERE requirement.requirement_key = (SELECT requirement_key FROM evidence_update)
+            RETURNING requirement.requirement_key, requirement.requirement_name,
+                      requirement.current_status, requirement.evidence_note_path,
+                      requirement.next_action, requirement.updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(result)), '[]'::json)::text
+        FROM (
+            SELECT
+                requirement_update.*,
+                evidence_update.id AS evidence_link_id,
+                evidence_update.evidence_type,
+                evidence_update.evidence_key,
+                evidence_update.evidence_status,
+                evidence_update.evidence_summary,
+                evidence_update.review_rationale,
+                evidence_update.verified_by,
+                evidence_update.verified_at,
+                false AS broker_write_allowed
+            FROM requirement_update
+            JOIN evidence_update ON evidence_update.requirement_key = requirement_update.requirement_key
+        ) result
+        """
+    )
+    if not rows:
+        raise ValueError("blueprint evidence link was not found")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_blueprint_evidence_review",
+        "review_blueprint_evidence",
+        actor,
+        "core.os_blueprint_evidence_links",
+        result,
+        {"evidence_link_id": evidence_link_id, "decision": decision, "delivery_status": delivery_status},
+    )
+    return result
+
+
 def build_blueprint_registry(
     *,
     status: str = "",
@@ -3926,7 +6429,9 @@ def build_blueprint_registry(
                    domain_name, section_number, domain_type, primary_workspace,
                    mapped_object_type, mapped_object_key, mapped_object_status,
                    mapped_object_found, evidence_note_path, acceptance_criteria,
-                   next_action, metadata, updated_at
+                   next_action, metadata, updated_at, candidate_evidence_count,
+                   verified_evidence_count, rejected_evidence_count,
+                   latest_evidence_at, evidence_links, delivery_review_state
             FROM core.v_os_blueprint_requirements
             {where}
             ORDER BY
@@ -4609,10 +7114,11 @@ def build_snapshot() -> dict:
         """,
         "live_office_rooms": """
             SELECT room_key, room_name, room_rank, agent_count,
-                   active_agent_count, open_task_count, blocked_task_count,
+                   active_agent_count, executing_agent_count, queued_agent_count,
+                   open_task_count, blocked_task_count,
                    unread_message_count, open_inbox_count, open_risk_event_count,
                    room_workload_score, latest_activity_at, room_state, agents
-            FROM agent.v_live_office_rooms
+            FROM agent.v_live_office_rooms_v2
             ORDER BY room_rank, room_name
         """,
         "live_office_agent_activity": """
@@ -4633,8 +7139,10 @@ def build_snapshot() -> dict:
                    latest_worker_skill_name, latest_worker_status,
                    latest_worker_summary, latest_worker_output_note_path,
                    latest_worker_finished_at, open_tasks, workload_score,
-                   live_state, latest_activity_at
-            FROM agent.v_live_office_agent_activity
+                   live_state, latest_activity_at, presence_state, presence_reason,
+                   presence_source_kind, presence_source_id, presence_started_at,
+                   presence_expires_at, presence_is_fresh, presence_title,presence_detail
+            FROM agent.v_live_office_presence_v2
             ORDER BY role_rank, agent_name
         """,
         "agent_org_chart": """
@@ -5480,8 +7988,17 @@ def build_snapshot() -> dict:
                    client_code, account_code, strategy_key, symbol, exchange,
                    instrument_type, side, quantity, price, trade_ts, status,
                    thesis, setup_type, timeframe, stop_loss, target_price,
-                   realized_pnl, fees, tags, evidence, created_by, created_at, updated_at
-            FROM trading.v_trade_activity_ledger
+                   realized_pnl, fees, tags, created_by, created_at, updated_at,
+                   payload->>\x27option_type\x27 AS option_type,
+                   payload->>\x27strike\x27 AS strike,
+                   payload->>\x27expiry_date\x27 AS expiry_date,
+                   payload->>\x27strategy_name\x27 AS strategy_name,
+                   payload->>\x27quantity_unit\x27 AS quantity_unit,
+                   payload->>\x27lot_count\x27 AS lot_count,
+                   payload->>\x27lot_size\x27 AS lot_size,
+                   payload->>\x27contract_quantity\x27 AS contract_quantity,
+                   evidence, payload
+            FROM trading.trade_activity_ledger
             ORDER BY trade_ts DESC, created_at DESC
             LIMIT 100
         """,
@@ -5490,6 +8007,27 @@ def build_snapshot() -> dict:
                    realized_pnl, average_price, statuses
             FROM trading.v_paper_trade_summary
             ORDER BY last_trade_ts DESC NULLS LAST
+            LIMIT 100
+        """,
+        "paper_positions": """
+            SELECT id, paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, instance_id, symbol, exchange,
+                   timeframe, side, quantity, state, entry_ts, entry_price,
+                   exit_ts, exit_price, latest_mark_ts, latest_mark_price,
+                   unrealized_pnl, realized_pnl, fees, close_reason, metadata,
+                   created_at, updated_at
+            FROM trading.v_paper_positions
+            ORDER BY updated_at DESC
+            LIMIT 200
+        """,
+        "paper_monitor_performance": """
+            SELECT paper_monitor_session_id, session_key, strategy_id,
+                   candidate_key, strategy_name, monitor_status, positions_total,
+                   positions_open, positions_closed, unrealized_pnl, realized_pnl,
+                   fees, latest_mark_ts, last_heartbeat_at, heartbeat_status,
+                   live_execution_allowed
+            FROM trading.v_paper_monitor_performance
+            ORDER BY last_heartbeat_at DESC NULLS LAST
             LIMIT 100
         """,
         "research_hub": """
@@ -6089,11 +8627,11 @@ def build_snapshot() -> dict:
             ORDER BY record_class, area
         """,
     }
-    try:
-        data = run_psql_json_object(queries, row_limit=160)
-    except Exception as exc:  # noqa: BLE001
-        issues.append({"section": "snapshot_batch", "error": f"{type(exc).__name__}: {exc}"})
-        data = {name: [] for name in queries}
+    data = run_psql_json_object(
+        queries,
+        row_limit=160,
+        error_collector=issues,
+    )
 
     # Preserve the previous snapshot contract while clients migrate to canonical keys.
     data["blueprint_v9_summary"] = data.get("blueprint_summary", [])
@@ -6104,7 +8642,7 @@ def build_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
-        "tradingview_cdp": probe_tradingview_cdp(),
+        "tradingview_desktop": probe_tradingview_desktop(),
         **data,
     }
     snapshot["data_mode"] = {
@@ -6170,8 +8708,13 @@ def create_tradingview_task(payload: dict) -> dict:
     return result
 
 
+
 def execute_tradingview_chart_action(payload: dict) -> dict:
-    actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
+    """Open requested charts in the user's logged-in TradingView Desktop app.
+
+    The route name is retained for MCP/API compatibility. It never starts or
+    connects to a separate browser, and it does not claim screenshot evidence.
+    """
     symbols = payload.get("symbols")
     if isinstance(symbols, str):
         symbols = [item.strip() for item in symbols.split(",") if item.strip()]
@@ -6181,228 +8724,76 @@ def execute_tradingview_chart_action(payload: dict) -> dict:
     if not symbols:
         raise ValueError("symbol or symbols is required")
 
-    task_id = payload.get("task_id")
-    if task_id in (None, ""):
-        task = create_tradingview_task(
-            {
-                "task_title": payload.get("task_title") or f"Open TradingView chart: {', '.join(map(str, symbols[:3]))}",
-                "task_type": payload.get("task_type") or "chart_action",
-                "requested_by": actor,
-                "owner_agent": payload.get("owner_agent") or "Trading Desk Agent",
-                "priority": payload.get("priority") or "high",
-                "symbols": symbols,
-                "exchange": payload.get("exchange"),
-                "timeframe": payload.get("timeframe"),
-                "chart_layout": payload.get("chart_layout"),
-                "instruction": payload.get("instruction") or "Open chart, capture screenshot, and attach evidence.",
-                "source_ref": payload.get("source_ref") or "ai_os_chart_action_api",
-                "evidence": payload.get("evidence") or [{"source": "AI OS chart action API"}],
-                "metadata": {
-                    **(payload.get("metadata") or {}),
-                    "action_kind": payload.get("action") or "open_chart_capture",
-                    "api_route": "/api/tradingview/chart-actions",
-                },
-            }
-        )
-        task_id = task.get("id")
-    try:
-        task_id_int = int(task_id)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("task_id must be an integer when provided") from exc
-
-    script_payload = {
-        "action": payload.get("action") or "open_chart_capture",
-        "port": int(payload.get("port") or TRADINGVIEW_CDP_PORT),
-        "task_id": task_id_int,
+    exchange = str(payload.get("exchange") or "NSE").strip().upper()
+    timeframe = str(payload.get("timeframe") or "D").strip().upper()
+    panes = []
+    for symbol in symbols:
+        normalized = normalize_tradingview_symbol(str(symbol), exchange)
+        panes.append({
+            "symbol": normalized,
+            "url": tradingview_chart_url(normalized, timeframe),
+        })
+    compiled_plan = {
+        "execution_ready": True,
+        "fulfillment": "native_desktop_chart_handoff",
+        "panes": panes,
+        "target_url": panes[0]["url"],
+        "capture_requested": bool(payload.get("capture_screenshot")),
+        "capture_status": "not_performed",
+    }
+    return execute_tradingview_desktop_plan({
+        **payload,
         "symbols": symbols,
-        "exchange": payload.get("exchange") or "NSE",
-        "timeframe": payload.get("timeframe") or "D",
-        "chart_layout": payload.get("chart_layout"),
-        "chart_style": payload.get("chart_style") or payload.get("chartStyle"),
-        "target_url": payload.get("target_url"),
-        "wait_ms": payload.get("wait_ms") or payload.get("waitMs") or 9000,
-        "capture_screenshot": payload.get("capture_screenshot", True),
-        "quality_check": payload.get("quality_check", True),
-        "max_quality_attempts": payload.get("max_quality_attempts") or payload.get("maxQualityAttempts") or 3,
-        "activate_app": payload.get("activate_app", TRADINGVIEW_CDP_PORT == 9222),
-        "studies": (
-            payload.get("studies")
-            or ((payload.get("compiled_plan") or {}).get("studies") if isinstance(payload.get("compiled_plan"), dict) else None)
-            or []
-        ),
-        "panes": (
-            ((payload.get("compiled_plan") or {}).get("panes") if isinstance(payload.get("compiled_plan"), dict) else None)
-            or payload.get("panes")
-            or []
-        ),
-    }
-    action_timeout = max(
-        45,
-        int((int(script_payload["wait_ms"]) / 1000) * int(script_payload["max_quality_attempts"]) + 30),
-    )
-    script_path = RUNTIME_ROOT / "scripts" / "execute_tradingview_chart_action.mjs"
-    completed = subprocess.run(
-        ["node", str(script_path), "--payload-json", json.dumps(script_payload, default=str)],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=action_timeout,
-    )
-    if completed.returncode != 0:
-        error_payload: object
-        try:
-            error_payload = json.loads((completed.stderr or completed.stdout).strip() or "{}")
-        except json.JSONDecodeError:
-            error_payload = {"stderr": completed.stderr, "stdout": completed.stdout}
-        run_psql_text(
-            f"""
-            UPDATE ops.tradingview_tasks
-            SET status = 'failed',
-                result_summary = {sql_literal('TradingView chart action failed.')},
-                evidence = evidence || jsonb_build_array({sql_jsonb({'source': 'execute_tradingview_chart_action', 'status': 'failed', 'error': error_payload})}),
-                metadata = metadata || {sql_jsonb({'last_chart_action_error': error_payload})},
-                updated_at = now(),
-                completed_at = now()
-            WHERE id = {task_id_int}
-            """
-        )
-        audit_api_write("ai_os_api_execute_tradingview_chart_action", "execute_tradingview_chart_action", actor, "ops.tradingview_tasks", error_payload, payload)
-        raise RuntimeError(f"TradingView chart action failed: {error_payload}")
+        "exchange": exchange,
+        "timeframe": timeframe,
+        "compiled_plan": compiled_plan,
+        "metadata": {
+            **(payload.get("metadata") or {}),
+            "execution_surface": "native_desktop",
+            "capture_status": "not_performed",
+        },
+    })
 
-    try:
-        action_result = json.loads(completed.stdout.strip() or "{}")
-    except json.JSONDecodeError as exc:
-        raise ValueError("TradingView chart action returned invalid JSON") from exc
 
-    screenshot_path_value = action_result.get("screenshot_path")
-    screenshot_path = Path(str(screenshot_path_value)) if screenshot_path_value else None
-    if not screenshot_path or not screenshot_path.exists():
-        raise RuntimeError("TradingView chart action did not produce a screenshot artifact")
-    content_hash = sha256_file(screenshot_path)
-    title = f"TradingView chart screenshot: {', '.join(map(str, symbols[:3]))}"
-    quality_status = str(action_result.get("artifact_quality_status") or "not_checked")
-    study_status = str(action_result.get("study_application_status") or "not_requested")
-    dispatch_status = str(action_result.get("action_dispatch_status") or "generic_capture_only")
-    task_status = (
-        "done"
-        if quality_status in {"passed", "skipped", "not_checked"}
-        and study_status in {"passed", "not_requested"}
-        and dispatch_status in {"passed", "generic_capture_only"}
-        else "needs_review"
-    )
-    if action_result.get("layout_mode") == "four_chart_evidence_board":
-        result_summary = (
-            f"Captured a governed four-chart TradingView evidence board for {', '.join(map(str, action_result.get('symbols') or symbols))}; "
-            "interactive pane synchronization remains manual."
-        )
-    else:
-        result_summary = (
-        f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
-        f"({script_payload['exchange']}, {script_payload['timeframe']}) and captured screenshot evidence."
-        if task_status == "done"
-        else (
-            f"Opened TradingView chart for {', '.join(map(str, symbols[:3]))} "
-            f"({script_payload['exchange']}, {script_payload['timeframe']}) but screenshot quality failed; artifact requires review."
-        )
-        )
-    evidence_item = {
-        "source": "TradingView CDP",
-        "action": script_payload["action"],
-        "target_url": action_result.get("target_url"),
-        "page_url": action_result.get("page_url"),
-        "screenshot_path": str(screenshot_path),
-        "content_hash": content_hash,
-        "artifact_quality_status": quality_status,
-        "action_dispatch_status": dispatch_status,
-        "layout_mode": action_result.get("layout_mode"),
-        "pane_count": len(action_result.get("pane_results") or []),
-    }
-    request_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    template_key = request_metadata.get("template_key")
-
-    rows = run_psql_json_statement(
-        f"""
-        WITH artifact AS (
-            INSERT INTO core.raw_artifacts (
-                artifact_type, title, source_url, local_path, content_hash,
-                mime_type, sensitivity, metadata
-            )
-            VALUES (
-                'tradingview_chart_screenshot',
-                {sql_literal(title)},
-                {sql_literal(action_result.get("page_url") or action_result.get("target_url"))},
-                {sql_literal(str(screenshot_path))},
-                {sql_literal(content_hash)},
-                'image/png',
-                'private',
-                {sql_jsonb({**action_result, "task_id": task_id_int, "template_key": template_key, "request_metadata": request_metadata})}
-            )
-            ON CONFLICT (source_system_id, source_url, local_path, content_hash)
-            DO UPDATE SET
-                captured_at = now(),
-                metadata = core.raw_artifacts.metadata || EXCLUDED.metadata
-            RETURNING id, title, local_path, content_hash
-        ),
-        browser_run AS (
-            INSERT INTO ops.browser_runs (
-                run_type, target_url, status, actor, started_at, finished_at,
-                screenshot_path, extracted_artifact_id, notes, metadata,
-                source_kind, source_ref, page_title, extracted_text_preview
-            )
-            SELECT
-                'tradingview_chart_action',
-                {sql_literal(action_result.get("target_url"))},
-                {sql_literal(task_status)},
-                {sql_literal(actor)},
-                {sql_literal(action_result.get("started_at"))}::timestamptz,
-                {sql_literal(action_result.get("finished_at"))}::timestamptz,
-                {sql_literal(str(screenshot_path))},
-                artifact.id,
-                {sql_literal(result_summary)},
-                {sql_jsonb({**action_result, "task_id": task_id_int, "artifact_hash": content_hash, "template_key": template_key, "request_metadata": request_metadata})},
-                'ops.tradingview_tasks',
-                {sql_literal(str(task_id_int))},
-                {sql_literal(action_result.get("page_title"))},
-                {sql_literal(action_result.get("extracted_text_preview"))}
-            FROM artifact
-            RETURNING id, status, screenshot_path, extracted_artifact_id
-        ),
-        updated_task AS (
-            UPDATE ops.tradingview_tasks
-            SET status = {sql_literal(task_status)},
-                browser_run_id = (SELECT id FROM browser_run),
-                extracted_artifact_id = (SELECT id FROM artifact),
-                result_summary = {sql_literal(result_summary)},
-                evidence = evidence || jsonb_build_array({sql_jsonb(evidence_item)}),
-                metadata = metadata || {sql_jsonb({"last_chart_action": action_result})},
-                updated_at = now(),
-                completed_at = now()
-            WHERE id = {task_id_int}
-            RETURNING id, task_title, task_type, owner_agent, status, symbols,
-                      browser_run_id, extracted_artifact_id, result_summary,
-                      evidence, metadata, completed_at
-        ),
-        result_rows AS (
-            SELECT
-                updated_task.*,
-                (SELECT row_to_json(artifact) FROM artifact) AS artifact,
-                (SELECT row_to_json(browser_run) FROM browser_run) AS browser_run
-            FROM updated_task
-        )
-        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
-        FROM result_rows
-        """
-    )
-    result = rows[0] if rows else {"error": "TradingView task not found after chart action", "task_id": task_id_int}
-    audit_api_write("ai_os_api_execute_tradingview_chart_action", "execute_tradingview_chart_action", actor, "ops.tradingview_tasks", result, payload)
-    return result
+TRADINGVIEW_TEMPLATE_PARAMETER_KEYS = {
+    "benchmark",
+    "leg_a",
+    "leg_b",
+    "hedge_ratio",
+    "underlying",
+    "expiry",
+    "strike",
+    "call_symbol",
+    "put_symbol",
+    "indicators",
+    "fields",
+    "filing_cross_check_required",
+    "equity_index",
+    "volatility_index",
+    "bond_yield",
+    "currency",
+    "condition",
+    "secondary_symbols",
+}
 
 
 def tradingview_parameter(payload: dict, key: str, default: object = None) -> object:
     if payload.get(key) not in (None, ""):
         return payload.get(key)
+    parameters = payload.get("parameters") if isinstance(payload.get("parameters"), dict) else {}
+    if parameters.get(key) not in (None, ""):
+        return parameters.get(key)
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     return metadata.get(key, default)
+
+
+def sanitize_tradingview_template_parameters(payload: dict) -> dict[str, object]:
+    parameters = payload.get("parameters") if isinstance(payload.get("parameters"), dict) else {}
+    return {
+        str(key): value
+        for key, value in parameters.items()
+        if str(key) in TRADINGVIEW_TEMPLATE_PARAMETER_KEYS
+    }
 
 
 def normalize_tradingview_symbol(value: object, default_exchange: str) -> str:
@@ -6579,22 +8970,165 @@ def compile_tradingview_template_plan(template: dict, payload: dict, symbols: li
             "validated_parameters": {
                 "requested_fields": fields,
                 "unsupported_fields": unsupported,
-                "filing_cross_check_required": bool(payload.get("filing_cross_check_required", True)),
+                "filing_cross_check_required": bool(tradingview_parameter(payload, "filing_cross_check_required", True)),
             },
         })
     elif template_key == "market_regime_four_pane":
-        plan.update({
-            "required_parameters": ["equity_index", "volatility_index", "bond_yield", "currency"],
-            "remaining_manual_step": "Resolve entitled symbols and synchronize four TradingView panes.",
-        })
+        equity_index = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "equity_index") or primary, exchange
+        )
+        volatility_index = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "volatility_index"), exchange
+        )
+        bond_yield = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "bond_yield"), exchange
+        )
+        currency = normalize_tradingview_symbol(
+            tradingview_parameter(payload, "currency"), exchange
+        )
+        regime_symbols = {
+            "equity_index": equity_index,
+            "volatility_index": volatility_index,
+            "bond_yield": bond_yield,
+            "currency": currency,
+        }
+        missing = [key for key, value in regime_symbols.items() if not value]
+        if missing:
+            plan["required_parameters"] = missing
+        else:
+            panes = [
+                {"label": "Equity index", "symbol": equity_index, "url": tradingview_chart_url(equity_index, timeframe)},
+                {"label": "Volatility", "symbol": volatility_index, "url": tradingview_chart_url(volatility_index, timeframe)},
+                {"label": "Bond yield", "symbol": bond_yield, "url": tradingview_chart_url(bond_yield, timeframe)},
+                {"label": "Currency", "symbol": currency, "url": tradingview_chart_url(currency, timeframe)},
+            ]
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "complete_four_chart_evidence_board",
+                "browser_action": "market_regime_layout_request",
+                "symbol_expression": equity_index,
+                "target_url": tradingview_chart_url(equity_index, timeframe),
+                "panes": panes,
+                "validated_parameters": regime_symbols,
+                "remaining_manual_step": "Interactive pane synchronization remains manual; the approved controller produces a deterministic four-chart evidence board.",
+            })
     elif template_key == "create_alert_request":
-        plan.update({
-            "required_parameters": ["symbol", "condition", "timeframe", "manual TradingView alert confirmation"],
-            "remaining_manual_step": "Use the dedicated alert-request resolver; automatic account-level alert mutation is disabled.",
-        })
+        condition = str(tradingview_parameter(payload, "condition") or "").strip()
+        missing = []
+        if not primary:
+            missing.append("symbol")
+        if not condition:
+            missing.append("condition")
+        if not timeframe:
+            missing.append("timeframe")
+        if missing:
+            plan["required_parameters"] = missing
+        else:
+            plan.update({
+                "execution_ready": True,
+                "fulfillment": "manual_alert_approval",
+                "browser_action": "alert_request",
+                "validated_parameters": {
+                    "symbol": primary,
+                    "condition": condition,
+                    "timeframe": str(timeframe),
+                },
+                "remaining_manual_step": "After approval, the controller opens the chart context. Account-level TradingView alert mutation remains disabled and requires manual confirmation.",
+            })
     else:
         plan.update({"execution_ready": bool(primary), "fulfillment": "single_chart_only"})
     return plan
+
+
+def execute_tradingview_desktop_plan(payload: dict) -> dict:
+    actor = str(payload.get("actor") or payload.get("requested_by") or "Charlie Munger").strip()
+    plan = payload.get("compiled_plan") if isinstance(payload.get("compiled_plan"), dict) else {}
+    pane_rows = plan.get("panes") if isinstance(plan.get("panes"), list) else []
+    urls = [str(row.get("url") or "").strip() for row in pane_rows if isinstance(row, dict)]
+    urls = [url for url in urls if url.startswith("https://www.tradingview.com/")]
+    target_url = str(payload.get("target_url") or plan.get("target_url") or "").strip()
+    if not urls and target_url.startswith("https://www.tradingview.com/"):
+        urls = [target_url]
+    if not urls:
+        raise ValueError("compiled TradingView Desktop plan has no valid chart URL")
+
+    symbols = payload.get("symbols")
+    if isinstance(symbols, str):
+        symbols = [item.strip() for item in symbols.split(",") if item.strip()]
+    if not isinstance(symbols, list):
+        symbols = []
+    if not symbols and payload.get("symbol"):
+        symbols = [str(payload.get("symbol")).strip()]
+
+    task_id = payload.get("task_id")
+    if task_id in (None, ""):
+        task = create_tradingview_task({
+            "task_title": payload.get("task_title") or f"Open TradingView Desktop plan: {', '.join(map(str, symbols[:3]))}",
+            "task_type": "native_desktop_template",
+            "requested_by": actor,
+            "owner_agent": payload.get("owner_agent") or "Trading Desk Agent",
+            "priority": payload.get("priority") or "medium",
+            "symbols": symbols,
+            "exchange": payload.get("exchange"),
+            "timeframe": payload.get("timeframe"),
+            "chart_layout": payload.get("chart_layout"),
+            "instruction": payload.get("instruction") or "Open the compiled plan in the logged-in TradingView Desktop app.",
+            "source_ref": payload.get("source_ref") or "ai_os_tradingview_desktop_plan",
+            "evidence": [{"source": "TradingView Desktop plan", "urls": urls}],
+            "metadata": {**(payload.get("metadata") or {}), "execution_surface": "native_desktop", "compiled_plan": plan},
+        })
+        task_id = task.get("id")
+    try:
+        task_id_int = int(task_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("task_id must be an integer when provided") from exc
+
+    handoffs = []
+    for index, url in enumerate(urls):
+        bridge = open_link_in_desktop(url)
+        handoffs.append({
+            "url": url,
+            "status": bridge.get("status"),
+            "handoff": bridge.get("handoff"),
+            "next_action": bridge.get("next_action"),
+        })
+        if index + 1 < len(urls):
+            time.sleep(0.8)
+
+    accepted = all(item.get("status") in {"opened", "handoff_requested"} for item in handoffs)
+    task_status = "done" if accepted else "waiting_input"
+    summary = (
+        f"Opened {len(handoffs)} chart{'s' if len(handoffs) != 1 else ''} in the logged-in TradingView Desktop app."
+        if accepted
+        else "TradingView Desktop plan is prepared but requires a local app action or Accessibility permission."
+    )
+    next_actions = list(dict.fromkeys(str(item.get("next_action")) for item in handoffs if item.get("next_action")))
+    evidence_item = {
+        "source": "TradingView Desktop native bridge",
+        "execution_surface": "native_desktop",
+        "handoffs": handoffs,
+        "broker_order_allowed": False,
+    }
+    rows = run_psql_json_statement(f"""
+        WITH updated AS (
+            UPDATE ops.tradingview_tasks
+            SET status={sql_literal(task_status)}, result_summary={sql_literal(summary)},
+                evidence=evidence || jsonb_build_array({sql_jsonb(evidence_item)}),
+                metadata=metadata || {sql_jsonb({"execution_surface": "native_desktop", "desktop_handoffs": handoffs, "next_actions": next_actions})},
+                updated_at=now(), completed_at=CASE WHEN {sql_literal(task_status)}='done' THEN now() ELSE NULL END
+            WHERE id={task_id_int}
+            RETURNING id, task_title, task_type, status, symbols, exchange, timeframe,
+                      result_summary, evidence, metadata, created_at, updated_at, completed_at
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
+    """)
+    result = rows[0] if rows else {"task_id": task_id_int, "status": task_status}
+    result["desktop_handoffs"] = handoffs
+    result["next_actions"] = next_actions
+    result["execution_surface"] = "native_desktop"
+    result["broker_order_allowed"] = False
+    audit_api_write("ai_os_api_execute_tradingview_desktop_plan", "execute_tradingview_desktop_plan", actor, "ops.tradingview_tasks", result, payload)
+    return result
 
 
 def execute_tradingview_template_action(payload: dict) -> dict:
@@ -6629,10 +9163,19 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         raise ValueError("symbol or symbols is required for this TradingView template")
 
     default_payload = template.get("default_payload") if isinstance(template.get("default_payload"), dict) else {}
-    compiled_plan = compile_tradingview_template_plan(template, {**default_payload, **payload}, symbols)
+    default_parameters = (
+        default_payload.get("parameters")
+        if isinstance(default_payload.get("parameters"), dict)
+        else {}
+    )
+    requested_parameters = sanitize_tradingview_template_parameters(payload)
+    parameters = {**default_parameters, **requested_parameters}
+    plan_payload = {**default_payload, **payload, "parameters": parameters}
+    compiled_plan = compile_tradingview_template_plan(template, plan_payload, symbols)
     merged_payload = {
         **default_payload,
         **payload,
+        "parameters": parameters,
         "template_key": template_key,
         "symbols": symbols,
         "exchange": payload.get("exchange") or template.get("default_exchange") or "NSE",
@@ -6654,6 +9197,10 @@ def execute_tradingview_template_action(payload: dict) -> dict:
             "compiled_plan": compiled_plan,
         },
     }
+
+    if not compiled_plan.get("execution_ready"):
+        missing = ", ".join(compiled_plan.get("required_parameters") or []) or "deterministic browser capability"
+        raise ValueError(f"TradingView template is not executable yet; required: {missing}")
 
     if template.get("approval_required") or str(template.get("execution_mode")) == "human_gated_request":
         title = str(payload.get("task_title") or f"TradingView gated template: {template.get('template_name')}").strip()
@@ -6737,10 +9284,7 @@ def execute_tradingview_template_action(payload: dict) -> dict:
         audit_api_write("ai_os_api_execute_tradingview_template_action", "create_template_approval_request", actor, "agent.approvals", result, payload)
         return result
 
-    if not compiled_plan.get("execution_ready"):
-        missing = ", ".join(compiled_plan.get("required_parameters") or []) or "deterministic browser capability"
-        raise ValueError(f"TradingView template is not executable yet; required: {missing}")
-    result = execute_tradingview_chart_action(merged_payload)
+    result = execute_tradingview_desktop_plan(merged_payload)
     result["template_key"] = template_key
     result["template_name"] = template.get("template_name")
     result["template_status"] = template.get("status")
@@ -6822,7 +9366,7 @@ def resolve_tradingview_template_approval(payload: dict) -> dict:
     if not claimed:
         raise ValueError("TradingView template approval could not be claimed")
     try:
-        result = execute_tradingview_chart_action({**requested_action, "task_id": int(task_id), "actor": actor})
+        result = execute_tradingview_desktop_plan({**requested_action, "task_id": int(task_id), "actor": actor})
     except Exception:
         run_psql_text(
             f"UPDATE agent.inbox_items SET status='blocked', updated_at=now() WHERE evidence @> jsonb_build_array(jsonb_build_object('table','agent.approvals','id',{approval_id}));"
@@ -7478,6 +10022,69 @@ def triage_agent_message(payload: dict) -> dict:
     return result
 
 
+def delegate_agent_task(payload: dict) -> dict:
+    to_agent = str(payload.get("to_agent") or payload.get("toAgent") or "").strip()
+    objective = str(payload.get("objective") or payload.get("message") or "").strip()
+    if not to_agent:
+        raise ValueError("to_agent is required")
+    if not objective:
+        raise ValueError("objective is required")
+    subject = str(payload.get("subject") or f"Direct assignment: {objective[:80]}").strip()
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    priority = str(payload.get("priority") or "high").strip().lower()
+    workspace = str(payload.get("workspace") or "command").strip().lower()
+    data_boundary = str(payload.get("data_boundary") or "personal_private_local_only").strip().lower()
+    allowed_workspaces = {"command", "office", "portfolio", "research", "strategy", "options", "market"}
+    allowed_boundaries = {
+        "personal_private_local_only", "client_private_local_only", "trading_private_local_only",
+        "public_or_approved_internal", "repository_private_local_only",
+    }
+    if workspace not in allowed_workspaces:
+        raise ValueError("workspace is not an approved Charlie operating scope")
+    if data_boundary not in allowed_boundaries:
+        raise ValueError("data_boundary is not approved")
+    message = create_agent_message({
+        "from_agent": "Charlie Munger",
+        "to_agent": to_agent,
+        "subject": subject,
+        "body": objective,
+        "priority": priority,
+        "actor": actor,
+        "metadata": {
+            "api_route": "/api/agents/delegate",
+            "delegated_by": actor,
+            "workspace": workspace,
+            "data_boundary": data_boundary,
+            "broker_write_allowed": False,
+            "client_record_write_allowed": False,
+        },
+    })
+    task = triage_agent_message({
+        "message_id": message["id"],
+        "action": "create_task",
+        "actor": "Charlie Munger",
+        "task_title": subject,
+        "task_objective": objective,
+        "priority": priority,
+        "target_workspace": workspace,
+        "recommended_action": "Complete the bounded assignment with cited evidence; escalate any capital action for human approval.",
+    })
+    result = {
+        "status": "queued",
+        "to_agent": to_agent,
+        "message_id": message["id"],
+        "task_id": task.get("generated_task_id"),
+        "inbox_id": task.get("generated_inbox_id"),
+        "objective": objective,
+        "workspace": workspace,
+        "data_boundary": data_boundary,
+        "broker_write_allowed": False,
+        "client_record_write_allowed": False,
+    }
+    audit_api_write("ai_os_api_delegate_agent_task", "delegate_agent_task", actor, "agent.tasks", result, payload)
+    return result
+
+
 def refresh_portfolio_risk_events(payload: dict) -> dict:
     actor = str(payload.get("actor") or "Risk Agent").strip()
     rows = run_psql_json_statement(
@@ -7999,6 +10606,152 @@ def upsert_watchlist_item(payload: dict) -> dict:
     return result
 
 
+def register_investor_source(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    feed_name = re.sub(r"\s+", " ", str(payload.get("feed_name") or payload.get("feedName") or "").strip())[:120]
+    provider = re.sub(r"\s+", " ", str(payload.get("provider") or feed_name).strip())[:120]
+    source_url = str(payload.get("url") or "").strip()
+    if len(feed_name) < 3:
+        raise ValueError("feed_name must identify the investor or firm")
+    parsed = urllib.parse.urlsplit(source_url)
+    hostname = (parsed.hostname or "").strip().lower()
+    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password:
+        raise ValueError("investor sources must use a public HTTPS RSS or Atom URL without credentials")
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+        raise ValueError("private or local source hosts are not allowed")
+    try:
+        host_ip = ipaddress.ip_address(hostname.strip("[]"))
+    except ValueError:
+        host_ip = None
+    if host_ip and (host_ip.is_private or host_ip.is_loopback or host_ip.is_link_local or host_ip.is_reserved):
+        raise ValueError("private or local source hosts are not allowed")
+    sensitive_query_keys = {"token", "access_token", "auth", "authorization", "key", "api_key", "session"}
+    if sensitive_query_keys.intersection({key.lower() for key, _ in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)}):
+        raise ValueError("source URLs must not contain credentials or session parameters")
+    topics = [
+        re.sub(r"[^a-z0-9_ -]+", "", str(value).strip().lower()).replace(" ", "_")[:40]
+        for value in (payload.get("topics") or [])
+        if str(value).strip()
+    ][:12]
+    refresh_minutes = int(payload.get("refresh_minutes") or payload.get("refreshMinutes") or 60)
+    if refresh_minutes < 15 or refresh_minutes > 10080:
+        raise ValueError("refresh_minutes must be between 15 and 10080")
+    feed_key = (
+        "followed_"
+        + slug_for_text(feed_name).replace("-", "_")[:36].strip("_")
+        + "_"
+        + hashlib.sha256(source_url.encode("utf-8")).hexdigest()[:8]
+    )
+    metadata = {
+        "adapter": "rss_http",
+        "source_class": "followed_investor",
+        "claim_policy": "corroborate_before_investment_use",
+        "cred_required": False,
+        "user_added": True,
+        "approved_for_fetch": False,
+        "approval_state": "pending_source_review",
+        "refresh_minutes": refresh_minutes,
+        "capital_action_allowed": False,
+        "external_messaging_allowed": False,
+    }
+    rows = run_psql_json_statement(
+        f"""
+        WITH feed AS (
+            INSERT INTO research.feed_registry (
+                feed_key,feed_name,feed_type,provider,url,geography,topics,
+                status,owner_agent,source_system_id,metadata
+            ) VALUES (
+                {sql_literal(feed_key)},{sql_literal(feed_name)},'investor_blog_rss',
+                {sql_literal(provider)},{sql_literal(source_url)},
+                {sql_literal(payload.get('geography') or 'Global')},{sql_text_array(topics)},
+                'planned','Social/Twitter Triage Agent',
+                (SELECT id FROM core.source_systems WHERE name='Global market news basket' LIMIT 1),
+                {sql_jsonb(metadata)}
+            )
+            ON CONFLICT (feed_key) DO UPDATE SET
+                feed_name=EXCLUDED.feed_name,provider=EXCLUDED.provider,
+                geography=EXCLUDED.geography,topics=EXCLUDED.topics,
+                metadata=research.feed_registry.metadata || EXCLUDED.metadata,
+                updated_at=now()
+            RETURNING feed_key,feed_name,feed_type,provider,url,geography,topics,
+                      status,owner_agent,metadata,updated_at
+        )
+        SELECT coalesce(json_agg(row_to_json(feed)),'[]'::json)::text FROM feed
+        """
+    )
+    result = rows[0] if rows else {}
+    result.update({
+        "fetch_approved": False,
+        "broker_write_allowed": False,
+        "capital_action_allowed": False,
+        "external_messaging_allowed": False,
+    })
+    audit_api_write(
+        "ai_os_api_register_investor_source",
+        "register_investor_source",
+        actor,
+        "research.feed_registry",
+        {key: result.get(key) for key in (
+            "feed_key", "feed_type", "status", "fetch_approved",
+            "broker_write_allowed", "capital_action_allowed", "external_messaging_allowed",
+        )},
+        {"operator_confirmed": True, "refresh_minutes": refresh_minutes},
+    )
+    return result
+
+
+def begin_zerodha_auth(payload: dict) -> dict:
+    session = zerodha_auth_status()
+    base_login_url = str(session.get("login_url") or "").strip()
+    if not base_login_url:
+        raise RuntimeError("Zerodha API key is not configured")
+    state = secrets.token_urlsafe(32)
+    challenge_hash = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    actor = str(payload.get("actor") or "Devarsh")
+    rows = run_psql_json_statement(f"""
+        WITH created AS (
+            INSERT INTO ops.zerodha_auth_challenges (challenge_hash, requested_by, expires_at, metadata)
+            VALUES ({sql_literal(challenge_hash)}, {sql_literal(actor)},
+                    now() + make_interval(secs => {ZERODHA_AUTH_CHALLENGE_TTL_SECONDS}),
+                    '{{"broker_write_allowed":false}}'::jsonb)
+            RETURNING id, expires_at
+        )
+        SELECT coalesce(json_agg(row_to_json(created)), '[]'::json)::text FROM created
+    """)
+    if not rows:
+        raise RuntimeError("Zerodha authentication challenge could not be created")
+    redirect_params = urllib.parse.quote(urllib.parse.urlencode({"state": state}), safe="")
+    return {
+        "status": "ready",
+        "login_url": f"{base_login_url}&redirect_params={redirect_params}",
+        "expires_at": rows[0].get("expires_at"),
+        "profile_validation_required": True,
+        "broker_write_allowed": False,
+    }
+
+
+def consume_zerodha_auth_challenge(state: str, callback_status: str) -> dict:
+    normalized = state.strip()
+    if not normalized:
+        raise PermissionError("Zerodha callback state is missing")
+    challenge_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    rows = run_psql_json_statement(f"""
+        WITH consumed AS (
+            UPDATE ops.zerodha_auth_challenges
+            SET consumed_at=now(), callback_status={sql_literal(callback_status)}
+            WHERE challenge_hash={sql_literal(challenge_hash)}
+              AND consumed_at IS NULL AND expires_at > now()
+            RETURNING id, requested_by, expires_at
+        )
+        SELECT coalesce(json_agg(row_to_json(consumed)), '[]'::json)::text FROM consumed
+    """)
+    if not rows:
+        raise PermissionError("Zerodha callback state is invalid, expired, or already used")
+    return rows[0]
+
+
 def _run_zerodha_adapter(arguments: list[str], timeout: int = 150) -> dict:
     completed = subprocess.run([sys.executable,str(RUNTIME_ROOT / "scripts" / "sync_zerodha_read_only.py"),*arguments],
         cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=timeout)
@@ -8015,12 +10768,93 @@ def zerodha_auth_status() -> dict:
     return _run_zerodha_adapter(["--check-config"],30)
 
 
+def restart_zerodha_stream_async() -> dict:
+    if sys.platform != "darwin":
+        return {"status": "not_applicable", "service": "com.devarsh.aios.zerodha-stream"}
+    service = f"gui/{os.getuid()}/com.devarsh.aios.zerodha-stream"
+    try:
+        subprocess.Popen(
+            ["/bin/launchctl", "kickstart", "-k", service],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return {"status": "restart_requested", "service": service}
+    except OSError as exc:
+        return {"status": "restart_failed", "service": service, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def exchange_zerodha_request_token(payload: dict) -> dict:
     token=str(payload.get("request_token") or payload.get("requestToken") or "").strip()
     if not token:
         raise ValueError("request_token is required")
-    result=_run_zerodha_adapter(["--exchange-request-token",token],60)
+    result=dict(_run_zerodha_adapter(["--exchange-request-token",token],60))
+    result["stream_restart"]=restart_zerodha_stream_async()
     audit_api_write("ai_os_api_zerodha_token_exchange","exchange_zerodha_request_token",str(payload.get("actor") or "Devarsh"),"core.connector_health_checks",{"status":result.get("status")},{"request_token_received":True})
+    return result
+
+
+def exchange_zerodha_callback_url(payload: dict) -> dict:
+    callback_url = str(payload.get("callback_url") or payload.get("callbackUrl") or "").strip()
+    parsed = urllib.parse.urlparse(callback_url)
+    if parsed.scheme != "https" or parsed.hostname != "kite.zerodha.com":
+        raise ValueError("Paste the completed https://kite.zerodha.com login URL")
+    query = urllib.parse.parse_qs(parsed.query)
+    status = str((query.get("status") or [""])[0]).strip().lower()
+    action = str((query.get("action") or [""])[0]).strip().lower()
+    request_token = str((query.get("request_token") or [""])[0]).strip().rstrip(".,;:!?)]}>\'\"")
+    if request_token and not re.fullmatch(r"[A-Za-z0-9_-]{10,256}", request_token):
+        raise ValueError("The Zerodha request token contains invalid characters")
+    if status != "success" or action != "login" or not request_token:
+        raise ValueError("The pasted URL is not a successful Zerodha login callback")
+    actor = str(payload.get("actor") or "Devarsh")
+    try:
+        result = exchange_zerodha_request_token({"request_token": request_token, "actor": actor})
+    except RuntimeError as exc:
+        # A request token is single-use. Reconcile a repeated paste only when
+        # the stored access session still passes the bound-account check.
+        if "403" not in str(exc):
+            raise
+        session = zerodha_auth_status()
+        if not (
+            session.get("daily_access_token_available")
+            and session.get("profile_validated")
+            and session.get("account_match")
+        ):
+            raise RuntimeError("This Zerodha login URL has expired or was already used. Start a new login.") from exc
+        result = {
+            "status": "already_connected",
+            "account_match": True,
+            "profile_validated": True,
+            "access_token_stored": True,
+            "access_token_expires": session.get("access_token_expires_at"),
+            "stream_restart": restart_zerodha_stream_async(),
+            "broker_write_allowed": False,
+        }
+    result["post_login_sync"] = start_zerodha_post_login_sync()
+    audit_api_write(
+        "ai_os_api_zerodha_callback_url_exchange",
+        "exchange_zerodha_callback_url",
+        actor,
+        "core.connector_health_checks",
+        {"status": result.get("status"), "account_match": result.get("account_match")},
+        {"callback_url_received": True, "broker_write_allowed": False},
+    )
+    return result
+
+
+def refresh_zerodha_service_session(payload: dict) -> dict:
+    result = dict(_run_zerodha_adapter(["--materialize-service-session"], 30))
+    result["stream_restart"] = restart_zerodha_stream_async()
+    audit_api_write(
+        "ai_os_api_zerodha_service_session_refresh",
+        "refresh_zerodha_service_session",
+        str(payload.get("actor") or "Jarvis"),
+        "core.connector_health_checks",
+        {"status": result.get("status"), "service_session_stored": result.get("service_session_stored")},
+        {"broker_write_allowed": False},
+    )
     return result
 
 
@@ -8030,6 +10864,17 @@ def sync_zerodha_read_only(payload: dict) -> dict:
     if not datasets:
         raise ValueError("at least one valid read-only Zerodha dataset is required")
     result=_run_zerodha_adapter(["--datasets",*datasets],150)
+    if result.get("status") == "completed":
+        try:
+            result["source_freshness"] = check_source_freshness({
+                "source_key": "zerodha_live",
+                "actor": str(payload.get("actor") or "Data Engineering Agent"),
+            })
+        except (RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            result["source_freshness"] = {
+                "status": "check_failed",
+                "error": f"{type(exc).__name__}: {exc}"[:500],
+            }
     audit_api_write("ai_os_api_zerodha_read_sync","sync_zerodha_read_only",str(payload.get("actor") or "Data Engineering Agent"),"trading.broker_read_snapshots",result,{"datasets":datasets,"broker_write_allowed":False})
     return result
 
@@ -8037,19 +10882,33 @@ def sync_zerodha_read_only(payload: dict) -> dict:
 def zerodha_stream_status() -> dict:
     health = run_psql_json("SELECT * FROM market.v_zerodha_stream_health")
     session = zerodha_auth_status()
-    return {
-        "status": health[0] if health else {
-            "health_status": "not_started",
+    current_session = bool(session.get("daily_access_token_available"))
+    effective_status = health[0] if health else {
+        "health_status": "not_started",
+        "connection_state": "disconnected",
+        "quote_count": 0,
+        "live_count": 0,
+        "broker_write_allowed": False,
+    }
+    if not current_session:
+        effective_status = {
+            **effective_status,
+            "status": "paused_for_daily_login",
+            "health_status": "login_required",
             "connection_state": "disconnected",
-            "quote_count": 0,
             "live_count": 0,
-            "broker_write_allowed": False,
-        },
+            "error_message": None,
+        }
+    return {
+        "status": effective_status,
         "session": {
             "status": session.get("status"),
             "api_key_configured": bool(session.get("api_key_configured")),
             "api_secret_configured": bool(session.get("api_secret_configured")),
-            "daily_access_token_available": bool(session.get("daily_access_token_available")),
+            "daily_access_token_available": current_session,
+            "access_token_expiry_known": bool(session.get("access_token_expiry_known")),
+            "access_token_expires_at": session.get("access_token_expires_at"),
+            "stale_access_token_present": bool(session.get("stale_access_token_present")),
             "manual_daily_login_required": True,
             "renewal_mode": "human_login_with_automatic_callback_exchange",
             "login_url": session.get("login_url"),
@@ -8129,41 +10988,53 @@ def live_price_history(query: dict[str, list[str]]) -> dict:
     }
 
 
-def start_zerodha_post_login_sync() -> None:
+def start_zerodha_post_login_sync() -> dict:
     commands = [
-        [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_read_only.py"),
-         "--datasets","holdings","positions","orders","trades","funds"],
-        [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_market_data.py"),
-         "--modes","quotes","options","--underlyings","NIFTY","BANKNIFTY"],
+        ("account", [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_read_only.py"),
+         "--datasets","holdings","positions","orders","trades","funds"]),
+        ("market", [sys.executable,str(RUNTIME_ROOT/"scripts"/"sync_zerodha_market_data.py"),
+         "--modes","quotes","options","--underlyings","NIFTY","BANKNIFTY"]),
     ]
-    for command in commands:
-        subprocess.Popen(
-            command,cwd=RUNTIME_ROOT,stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,
-        )
-    try:
-        subprocess.run(
-            ["/bin/launchctl","kickstart","-k",f"gui/{os.getuid()}/com.devarsh.aios.zerodha-stream"],
-            check=False,capture_output=True,text=True,timeout=15,
-        )
-    except (OSError,subprocess.TimeoutExpired):
-        pass
+    jobs: dict[str, dict[str, object]] = {}
+    for job_name, command in commands:
+        try:
+            process = subprocess.Popen(
+                command,cwd=RUNTIME_ROOT,stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,
+            )
+            jobs[job_name] = {"status": "started", "pid": process.pid}
+        except OSError as exc:
+            jobs[job_name] = {
+                "status": "start_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    return {
+        "status": "started" if any(job.get("status") == "started" for job in jobs.values()) else "start_failed",
+        "jobs": jobs,
+        "broker_write_allowed": False,
+    }
 
 
 def exchange_zerodha_callback(query: dict[str, list[str]]) -> dict:
     request_token = str((query.get("request_token") or [""])[0]).strip()
     status = str((query.get("status") or ["success"])[0]).strip().lower()
+    state = str((query.get("state") or [""])[0]).strip()
+    challenge = consume_zerodha_auth_challenge(state, status)
     if status != "success":
         raise ValueError("Zerodha login was not completed")
     if not request_token:
         raise ValueError("Zerodha callback did not include request_token")
     result = exchange_zerodha_request_token({"request_token":request_token,"actor":"Zerodha OAuth Callback"})
-    start_zerodha_post_login_sync()
+    post_login_sync = start_zerodha_post_login_sync()
     return {
         "status": result.get("status"),
         "access_token_stored": bool(result.get("access_token_stored")),
         "access_token_expires": result.get("access_token_expires"),
         "stream_restart_requested": True,
+        "profile_validated": bool(result.get("profile_validated")),
+        "account_match": bool(result.get("account_match")),
+        "challenge_id": challenge.get("id"),
+        "post_login_sync": post_login_sync,
         "broker_write_allowed": False,
     }
 
@@ -8180,6 +11051,44 @@ def _run_zerodha_market_adapter(arguments: list[str], timeout: int = 300) -> dic
     if completed.returncode not in {0, 2}:
         raise RuntimeError(str(result.get("error") or completed.stderr or "Zerodha market adapter failed"))
     return result
+
+
+def zerodha_market_status() -> dict:
+    status = dict(_run_zerodha_market_adapter(["--check-config"], 30))
+    auth = zerodha_auth_status()
+    current_session = bool(auth.get("daily_access_token_available"))
+    status["daily_access_token_available"] = current_session
+    status["status"] = status.get("status") if current_session else "needs_credentials_or_daily_login"
+    status["auth"] = {
+        "status": auth.get("status"),
+        "profile_validated": bool(auth.get("profile_validated")),
+        "account_binding_configured": bool(auth.get("account_binding_configured")),
+        "account_match": bool(auth.get("account_match")),
+        "access_token_expiry_known": bool(auth.get("access_token_expiry_known")),
+        "access_token_expires_at": auth.get("access_token_expires_at"),
+        "stale_access_token_present": bool(auth.get("stale_access_token_present")),
+        "manual_daily_login_required": True,
+        "login_url": auth.get("login_url"),
+    }
+    status["warehouse"] = run_psql_json(
+        "SELECT (SELECT count(*) FROM market.zerodha_instruments WHERE active) active_instruments,"
+        "(SELECT max(last_seen_at) FROM market.zerodha_instruments) latest_instrument_at,"
+        "(SELECT max(quote_ts) FROM market.price_quotes WHERE provider=\'Zerodha\') latest_quote_at,"
+        "(SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider=\'Zerodha\') latest_option_at,"
+        "false broker_write_allowed"
+    )[0]
+    stream = (run_psql_json("SELECT * FROM market.v_zerodha_stream_health") or [{}])[0]
+    if not current_session:
+        stream = {
+            **stream,
+            "status": "paused_for_daily_login",
+            "health_status": "login_required",
+            "connection_state": "disconnected",
+            "live_count": 0,
+        }
+    status["stream"] = stream
+    status["broker_write_allowed"] = False
+    return status
 
 
 def sync_zerodha_market_data(payload: dict) -> dict:
@@ -8594,15 +11503,15 @@ def check_browser_profile(payload: dict) -> dict:
     if profile_status in {"planned", "disabled", "inactive", "retired"}:
         status = "planned" if profile_status == "planned" else "inactive"
         error_message = f"Browser profile status is {profile_status}."
-    elif port in {9222, 9333} or "tradingview" in browser_name.lower():
-        cdp = probe_tradingview_cdp(int(port or TRADINGVIEW_CDP_PORT))
-        sample_payload["cdp"] = cdp
-        if cdp.get("available"):
-            status = "available"
+    elif "tradingview" in browser_name.lower() or "tradingview" in profile_key.lower():
+        desktop = probe_tradingview_desktop()
+        sample_payload["desktop"] = desktop
+        if desktop.get("installed") and desktop.get("automation_permission"):
+            status = "desktop_ready"
             error_message = None
         else:
-            status = "cdp_unavailable"
-            error_message = str(cdp.get("next_action") or cdp.get("error") or "CDP endpoint unavailable")
+            status = "desktop_attention"
+            error_message = str(desktop.get("next_action") or "TradingView Desktop needs local attention.")
     elif profile.get("profile_path"):
         resolved_path = _resolve_browser_profile_path(str(profile.get("profile_path")))
         sample_payload["resolved_profile_path"] = str(resolved_path)
@@ -8619,7 +11528,7 @@ def check_browser_profile(payload: dict) -> dict:
     result_payload = {
         "profile_key": profile_key,
         "connector_key": connector_key or None,
-        "check_type": "cdp_or_profile",
+        "check_type": "native_desktop_or_profile",
         "status": status,
         "remote_debugging_host": profile.get("remote_debugging_host"),
         "remote_debugging_port": port,
@@ -8641,6 +11550,34 @@ def check_browser_profile(payload: dict) -> dict:
             check_source_connector({"connector_key": connector_key, "actor": actor})
         except Exception:
             pass
+    return result
+
+
+def refresh_research_hub(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Knowledge Librarian").strip() or "Knowledge Librarian"
+    completed = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "inventory_ai_research_outputs.py")],
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=600,
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "research hub refresh failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("research hub refresh returned invalid JSON") from exc
+    audit_api_write(
+        "ai_os_api_refresh_research_hub",
+        "refresh_research_hub",
+        actor,
+        "core.raw_artifacts",
+        result,
+        {"actor": actor},
+    )
     return result
 
 
@@ -8686,6 +11623,258 @@ def run_filing_collector(payload: dict) -> dict:
     return result
 
 
+def run_company_ir_collector(payload: dict) -> dict:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    company_name = str(payload.get("company_name") or payload.get("companyName") or "").strip()
+    source_url = str(payload.get("url") or payload.get("investor_relations_url") or payload.get("investorRelationsUrl") or "").strip()
+    document_url = str(payload.get("document_url") or payload.get("documentUrl") or "").strip()
+    if not symbol or not company_name:
+        raise ValueError("symbol and company_name are required")
+    if bool(source_url) == bool(document_url):
+        raise ValueError("provide exactly one investor_relations_url or document_url")
+    if exchange not in {"NSE", "BSE"}:
+        raise ValueError("exchange must be NSE or BSE")
+    try:
+        limit = max(1, min(int(payload.get("limit") or 15), 25))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    actor = str(payload.get("actor") or "Fundamental Data Steward").strip() or "Fundamental Data Steward"
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "collect_company_ir_reports.py"),
+        "--symbol", symbol,
+        "--exchange", exchange,
+        "--company-name", company_name,
+        "--limit", str(limit),
+        "--actor", actor,
+    ]
+    if document_url:
+        fiscal_year_end = payload.get("fiscal_year_end") or payload.get("fiscalYearEnd")
+        try:
+            fiscal_year_end = int(fiscal_year_end)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fiscal_year_end is required for a direct document URL") from exc
+        command.extend(["--document-url", document_url, "--fiscal-year-end", str(fiscal_year_end)])
+        document_label = str(payload.get("document_label") or payload.get("documentLabel") or "").strip()
+        if document_label:
+            command.extend(["--document-label", document_label])
+    else:
+        command.extend(["--url", source_url])
+    if payload.get("include_subsidiaries") or payload.get("includeSubsidiaries"):
+        command.append("--include-subsidiaries")
+    if payload.get("dry_run") or payload.get("dryRun"):
+        command.append("--dry-run")
+    completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=1800)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "company IR collector failed").strip()
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("company IR collector returned invalid JSON") from exc
+    audit_api_write(
+        "ai_os_api_run_company_ir_collector",
+        "run_company_ir_collector",
+        actor,
+        "research.company_ir_collection_runs",
+        result,
+        {key: value for key, value in payload.items() if key not in {"authorization", "token"}},
+    )
+    return result
+
+
+def company_ir_sources(query: dict[str, list[str]]) -> dict:
+    symbol = str((query.get("symbol") or [""])[0]).strip().upper()
+    status = str((query.get("status") or ["active"])[0]).strip().lower()
+    if symbol and not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("unsupported symbol format")
+    if status not in {"active", "paused", "rejected", "all"}:
+        raise ValueError("status must be active, paused, rejected, or all")
+    filters = ["true"]
+    if symbol:
+        filters.append(f"upper(symbol)={sql_literal(symbol)}")
+    if status != "all":
+        filters.append(f"status={sql_literal(status)}")
+    rows = run_psql_json(
+        "SELECT * FROM research.v_company_ir_source_readiness WHERE "
+        + " AND ".join(filters)
+        + " ORDER BY company_name, fiscal_year_end DESC NULLS FIRST, id"
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(rows),
+        "sources": rows,
+        "broker_write_allowed": False,
+    }
+
+
+def register_company_ir_source(payload: dict) -> dict:
+    if not bool(payload.get("operator_confirmed") or payload.get("operatorConfirmed")):
+        raise PermissionError("operator confirmation is required to register a primary source")
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    company_name = str(payload.get("company_name") or payload.get("companyName") or "").strip()
+    source_kind = str(payload.get("source_kind") or payload.get("sourceKind") or "").strip().lower()
+    source_url = str(payload.get("source_url") or payload.get("sourceUrl") or "").strip()
+    actor = str(payload.get("actor") or "Fundamental Data Steward").strip() or "Fundamental Data Steward"
+    if not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("unsupported symbol format")
+    if exchange not in {"NSE", "BSE"}:
+        raise ValueError("exchange must be NSE or BSE")
+    if not company_name:
+        raise ValueError("company_name is required")
+    if source_kind not in {"ir_page", "annual_report_pdf"}:
+        raise ValueError("source_kind must be ir_page or annual_report_pdf")
+    parsed = urllib.parse.urlsplit(source_url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("source_url must be a public HTTPS URL without credentials")
+    fiscal_year_end = payload.get("fiscal_year_end") or payload.get("fiscalYearEnd")
+    if source_kind == "annual_report_pdf":
+        if not parsed.path.lower().endswith(".pdf"):
+            raise ValueError("annual_report_pdf source_url must identify a PDF")
+        try:
+            fiscal_year_end = int(fiscal_year_end)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fiscal_year_end is required for annual_report_pdf") from exc
+        if not 2001 <= fiscal_year_end <= datetime.now(INDIA_TZ).year + 1:
+            raise ValueError("fiscal_year_end is outside the supported range")
+    elif fiscal_year_end not in (None, ""):
+        raise ValueError("fiscal_year_end is only valid for annual_report_pdf")
+    else:
+        fiscal_year_end = None
+    evidence = payload.get("verification_evidence") or payload.get("verificationEvidence") or {}
+    if not isinstance(evidence, dict):
+        raise ValueError("verification_evidence must be an object")
+    document_label = str(payload.get("document_label") or payload.get("documentLabel") or "").strip() or None
+    output = run_psql_text(f"""
+        WITH source_row AS (
+          INSERT INTO research.company_ir_sources (
+            symbol,exchange,company_name,source_kind,source_url,fiscal_year_end,
+            document_label,status,verified_at,verified_by,verification_evidence,metadata
+          ) VALUES (
+            {sql_literal(symbol)},{sql_literal(exchange)},{sql_literal(company_name)},
+            {sql_literal(source_kind)},{sql_literal(source_url)},
+            {sql_literal(fiscal_year_end)}::integer,{sql_literal(document_label)},'active',now(),
+            {sql_literal(actor)},{sql_jsonb(evidence)},
+            '{{"broker_write_allowed":false,"review_status":"operator_verified_source"}}'::jsonb
+          )
+          ON CONFLICT (exchange,symbol,source_url) DO UPDATE SET
+            company_name=EXCLUDED.company_name,source_kind=EXCLUDED.source_kind,
+            fiscal_year_end=EXCLUDED.fiscal_year_end,document_label=EXCLUDED.document_label,
+            status='active',verified_at=now(),verified_by=EXCLUDED.verified_by,
+            verification_evidence=EXCLUDED.verification_evidence,updated_at=now()
+          RETURNING *
+        ) SELECT coalesce(json_agg(row_to_json(source_row)), '[]'::json)::text FROM source_row;
+    """)
+    rows = json.loads(output or "[]")
+    if not rows:
+        raise RuntimeError("company IR source registration returned no row")
+    run_psql_text(f"""
+        INSERT INTO research.companies (
+          company_key,legal_name,display_name,primary_symbol,primary_exchange,
+          reporting_currency,status,real_company_verified_at,identifiers,metadata,updated_at
+        ) VALUES (
+          {sql_literal(exchange.lower() + ':' + re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-'))},
+          {sql_literal(company_name)},{sql_literal(company_name)},{sql_literal(symbol)},
+          {sql_literal(exchange)},'INR','active',now(),
+          {sql_jsonb({'exchange': exchange, 'symbol': symbol})},
+          {sql_jsonb({
+              'identity_source': 'operator_verified_official_ir',
+              'identity_verified': True,
+              'company_ir_source_id': rows[0]['id'],
+              'official_source_url': source_url,
+              'financial_coverage_inferred': False,
+              'broker_write_allowed': False,
+          })},now()
+        ) ON CONFLICT (primary_exchange,primary_symbol) DO UPDATE SET
+          display_name=coalesce(research.companies.display_name,EXCLUDED.display_name),
+          identifiers=research.companies.identifiers || EXCLUDED.identifiers,
+          real_company_verified_at=coalesce(research.companies.real_company_verified_at,now()),
+          metadata=research.companies.metadata || EXCLUDED.metadata,
+          updated_at=now();
+    """)
+    company_rows = run_psql_json(
+        "SELECT id,company_key,legal_name,primary_symbol,primary_exchange,"
+        "real_company_verified_at FROM research.companies "
+        f"WHERE primary_exchange={sql_literal(exchange)} AND primary_symbol={sql_literal(symbol)} LIMIT 1"
+    )
+    result = {
+        "status": "registered", "source": rows[0], "company": company_rows[0],
+        "capital_action_allowed": False, "broker_write_allowed": False,
+    }
+    audit_api_write(
+        "ai_os_api_company_ir_source_register", "register_company_ir_source", actor,
+        "research.company_ir_sources", result,
+        {"symbol": symbol, "exchange": exchange, "source_kind": source_kind, "source_host": parsed.hostname},
+    )
+    return result
+
+
+def collect_registered_company_ir_source(payload: dict) -> dict:
+    try:
+        source_id = int(payload.get("source_id") or payload.get("sourceId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("source_id is required") from exc
+    if source_id <= 0:
+        raise ValueError("source_id must be positive")
+    rows = run_psql_json(
+        "SELECT * FROM research.company_ir_sources "
+        f"WHERE id={source_id} AND status='active' LIMIT 1"
+    )
+    if not rows:
+        raise ValueError("active company IR source not found")
+    source = rows[0]
+    request: dict[str, object] = {
+        "symbol": source["symbol"], "exchange": source["exchange"],
+        "company_name": source["company_name"],
+        "actor": str(payload.get("actor") or "Fundamental Data Steward"),
+        "limit": payload.get("limit") or 15,
+    }
+    if source["source_kind"] == "annual_report_pdf":
+        request.update({
+            "document_url": source["source_url"],
+            "fiscal_year_end": source["fiscal_year_end"],
+            "document_label": source.get("document_label"),
+        })
+    else:
+        request["investor_relations_url"] = source["source_url"]
+    try:
+        result = run_company_ir_collector(request)
+    except Exception:
+        failed_runs = run_psql_json(
+            "SELECT id FROM research.company_ir_collection_runs "
+            f"WHERE exchange={sql_literal(source['exchange'])} "
+            f"AND symbol={sql_literal(source['symbol'])} "
+            f"AND investor_relations_url={sql_literal(source['source_url'])} "
+            "ORDER BY started_at DESC LIMIT 1"
+        )
+        if failed_runs:
+            run_psql_text(
+                "UPDATE research.company_ir_sources SET last_collected_at=now(),"
+                f"last_collection_run_id={int(failed_runs[0]['id'])},updated_at=now() "
+                f"WHERE id={source_id}"
+            )
+        raise
+    run_id = int(result["run_id"])
+    run_psql_text(
+        "UPDATE research.company_ir_sources SET last_collected_at=now(),"
+        f"last_collection_run_id={run_id},updated_at=now() WHERE id={source_id}"
+    )
+    intake_rows = run_psql_json(
+        "SELECT research.sync_real_company_intake("
+        f"{sql_literal(str(payload.get('actor') or 'Fundamental Data Steward'))},"
+        f"{sql_literal(source['symbol'])}) AS result"
+    )
+    return {
+        "status": "collected",
+        "source_id": source_id,
+        "collection": result,
+        "fundamental_intake": intake_rows[0]["result"] if intake_rows else None,
+        "broker_write_allowed": False,
+    }
+
+
 def run_filing_pdf_extractor(payload: dict) -> dict:
     try:
         limit = int(payload.get("limit") or 5)
@@ -8720,6 +11909,171 @@ def run_filing_pdf_extractor(payload: dict) -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError("filing PDF extractor returned invalid JSON") from exc
     audit_api_write("ai_os_api_extract_filing_pdf_text", "run_filing_pdf_extractor", actor, "research.filing_pdf_extraction_runs", result, payload)
+    return result
+
+
+def ingest_research_source(payload: dict) -> dict:
+    source_url = str(payload.get("source_url") or payload.get("sourceUrl") or "").strip()
+    pasted_text = str(payload.get("pasted_text") or payload.get("pastedText") or "").strip()
+    if not source_url and not pasted_text:
+        raise ValueError("source_url or pasted_text is required")
+    actor = str(payload.get("actor") or "Devarsh via Charlie").strip() or "Devarsh via Charlie"
+    normalized = {
+        **payload,
+        "source_url": source_url,
+        "pasted_text": pasted_text,
+        "actor": actor,
+        "desired_outputs": payload.get("desired_outputs") or payload.get("desiredOutputs") or [
+            "research_note", "hypothesis_review", "backtest_spec"
+        ],
+    }
+    completed = subprocess.run(
+        [PDF_PYTHON, str(RUNTIME_ROOT / "scripts" / "ingest_research_source.py")],
+        input=json.dumps(normalized, default=str),
+        cwd=VAULT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+    if completed.returncode != 0:
+        raise ValueError((completed.stderr or completed.stdout or "research source ingestion failed").strip())
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("research source ingestor returned invalid JSON") from exc
+
+    paper = result.get("paper") or {}
+    paper_id = paper.get("id")
+    if not paper_id:
+        raise ValueError("research source ingestor did not return a paper id")
+    title = str(paper.get("title") or "Research source")
+    objective = str(
+        payload.get("research_objective")
+        or payload.get("researchObjective")
+        or payload.get("objective")
+        or "Extract claims, evidence, risks, and falsifiable investment or strategy hypotheses."
+    ).strip()
+    priority = str(payload.get("priority") or "medium").strip().lower()
+    if priority not in {"low", "medium", "high", "critical"}:
+        priority = "medium"
+
+    active_names = {
+        str(row.get("agent_name"))
+        for row in run_psql_json("SELECT agent_name FROM agent.profiles WHERE status='active'")
+    }
+    target_specs = [
+        (
+            next((name for name in ("Research Analyst", "Company Analyst", "Research Librarian") if name in active_names), None),
+            "company_research_note",
+            "Independent evidence review",
+            "Verify source claims, separate fact from inference, identify contradictions and missing primary evidence, and write a source-linked research note.",
+        ),
+        (
+            next((name for name in ("Strategy Research Agent", "Head of Quant", "Quant Research Scientist") if name in active_names), None),
+            "generate_strategy_hypothesis",
+            "Falsifiable hypothesis and test design",
+            "Convert only supported claims into abstain-aware, point-in-time hypotheses with data requirements, transaction costs, invalidation tests, and a paper-backtest plan.",
+        ),
+    ]
+    assignments: list[dict] = []
+    for target, skill_key, subject_prefix, mandate in target_specs:
+        if not target:
+            continue
+        message = create_agent_message({
+            "from_agent": "Charlie Munger",
+            "to_agent": target,
+            "subject": f"{subject_prefix}: {title}"[:120],
+            "body": f"Objective: {objective}\n\nMandate: {mandate}\n\nSource: research.research_papers/{paper_id}",
+            "priority": priority,
+            "actor": actor,
+            "related_skill_key": skill_key,
+            "metadata": {
+                "source": "research_source_intake",
+                "paper_id": paper_id,
+                "source_url": paper.get("source_url"),
+                "content_hash": paper.get("content_hash"),
+                "operator_requested": True,
+                "live_execution_allowed": False,
+            },
+        })
+        task = triage_agent_message({
+            "message_id": message.get("id"),
+            "action": "create_task",
+            "actor": "Charlie Munger",
+            "target_workspace": "research",
+            "task_title": f"{subject_prefix}: {title}"[:180],
+            "task_objective": f"{objective}\n\n{mandate}",
+            "recommended_action": "Complete the evidence-linked output and hand it to the next review gate; do not promote to live trading.",
+            "priority": priority,
+        })
+        assignments.append({"agent": target, "message": message, "task": task})
+
+    hypothesis_text = str(payload.get("hypothesis") or payload.get("hypothesis_to_test") or "").strip()
+    hypothesis_result: dict = {"count": 0, "hypotheses": [], "status": "awaiting_agent_review"}
+    if hypothesis_text:
+        hypothesis_result = create_paper_strategy_hypotheses({
+            "paper_id": paper_id,
+            "actor": "Strategy Research Agent",
+            "hypotheses": [{
+                "title": str(payload.get("hypothesis_title") or f"Operator hypothesis from {title}")[:180],
+                "edge_hypothesis": hypothesis_text,
+                "market_scope": [str(payload.get("target_universe") or payload.get("universe") or "operator_defined")],
+                "asset_classes": payload.get("asset_classes") or [],
+                "timeframe": payload.get("timeframe"),
+                "signal_definition": {"status": "draft", "source": "operator_intake", "abstention_supported": True},
+                "data_requirements": {"point_in_time": True, "transaction_costs": True, "survivorship_bias_check": True},
+                "invalidation_tests": ["No out-of-sample persistence", "Edge disappears after costs", "Claim is not supported by the source"],
+                "limitations": ["Operator-supplied draft; independent source and quant review pending"],
+            }],
+        })
+        hypothesis_result["status"] = "draft_queued_for_independent_review"
+
+    cycle_key = "research-cycle-" + hashlib.sha256(
+        f"{paper.get('paper_key')}|{objective}|{hypothesis_text}".encode()
+    ).hexdigest()[:20]
+    cycle_rows = run_psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO strategy.research_cycles (
+                cycle_key,source_kind,source_ref,objective,universe,strategy_spec,
+                status,owner_agent,evidence,broker_write_allowed,live_execution_allowed
+            ) VALUES (
+                {sql_literal(cycle_key)},'research_source',{sql_literal(str(paper_id))},
+                {sql_literal(objective)},{sql_literal(payload.get('target_universe') or payload.get('universe'))},
+                {sql_jsonb({'hypothesis': hypothesis_text or None, 'desired_outputs': normalized['desired_outputs'], 'abstention_supported': True, 'point_in_time_required': True, 'transaction_costs_required': True})},
+                'research','Head of Quant',
+                {sql_jsonb([{'table': 'research.research_papers', 'id': paper_id, 'content_hash': paper.get('content_hash')}])},
+                false,false
+            ) ON CONFLICT (cycle_key) DO NOTHING
+            RETURNING *
+        )
+        SELECT coalesce(json_agg(row_to_json(record)),'[]'::json)::text
+        FROM (
+            SELECT * FROM inserted
+            UNION ALL
+            SELECT * FROM strategy.research_cycles WHERE cycle_key={sql_literal(cycle_key)} AND NOT EXISTS (SELECT 1 FROM inserted)
+            LIMIT 1
+        ) record
+        """
+    )
+    run_psql_text(
+        "UPDATE research.research_papers SET intake_status="
+        + sql_literal("hypothesis_queued" if hypothesis_text else "assigned")
+        + f", updated_at=now() WHERE id={int(paper_id)}"
+    )
+    result.update({
+        "assignments": assignments,
+        "hypothesis_result": hypothesis_result,
+        "research_cycle": cycle_rows[0] if cycle_rows else {},
+        "auto_promoted": False,
+        "broker_write_allowed": False,
+        "live_execution_allowed": False,
+    })
+    audit_api_write(
+        "ai_os_api_ingest_research_source", "ingest_research_source", actor,
+        "research.research_papers", result, {**normalized, "pasted_text": "[stored as hashed artifact]" if pasted_text else ""},
+    )
     return result
 
 
@@ -8885,13 +12239,21 @@ def resolve_approval(payload: dict) -> dict:
         raise ValueError("status must be approved or rejected")
     decided_by = str(payload.get("decided_by") or payload.get("actor") or "Devarsh").strip()
     guarded = run_psql_json(
-        f"SELECT approval_type FROM agent.approvals WHERE id={approval_id} AND status='pending' LIMIT 1"
+        f"SELECT approval_type,requested_action FROM agent.approvals "
+        f"WHERE id={approval_id} AND status='pending' LIMIT 1"
     )
-    if guarded and guarded[0].get("approval_type") in {
+    guarded_action = (
+        guarded[0].get("requested_action")
+        if guarded and isinstance(guarded[0].get("requested_action"), dict)
+        else {}
+    )
+    if guarded and (
+        guarded_action.get("graph_node_run_id")
+        or guarded[0].get("approval_type") in {
         "client_onboarding", "account_change", "holding_update",
         "client_cash_entry", "client_report_send",
         "tradingview_template_action",
-    }:
+    }):
         raise ValueError("This approval must use its dedicated resolve endpoint so the governed state change and side effects remain linked")
     rows = run_psql_json_statement(
         f"""
@@ -9825,7 +13187,31 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
         raise ValueError("symbol is required")
     if side not in {"buy", "sell", "long", "short", "watch", "exit"}:
         raise ValueError("side must be one of buy, sell, long, short, watch, exit")
+    instrument_type = str(payload.get("instrument_type") or "equity").strip().lower()
+    quantity_unit = str(payload.get("quantity_unit") or "units").strip().lower()
+    if quantity_unit not in {"units", "lots"}:
+        raise ValueError("quantity_unit must be units or lots")
+    quantity = float(payload.get("quantity") or 0)
+    if quantity <= 0:
+        raise ValueError("quantity must be greater than zero")
+    lot_count = float(payload.get("lot_count") or quantity) if quantity_unit == "lots" else None
+    lot_size = float(payload.get("lot_size") or 0) if quantity_unit == "lots" else None
+    if quantity_unit == "lots" and (lot_count <= 0 or not lot_size or lot_size <= 0):
+        raise ValueError("positive lot_count and lot_size are required when quantity_unit is lots")
+    contract_quantity = lot_count * lot_size if quantity_unit == "lots" else quantity
+    supplied_contract_quantity = payload.get("contract_quantity")
+    if supplied_contract_quantity is not None and abs(float(supplied_contract_quantity) - contract_quantity) > 0.000001:
+        raise ValueError("contract_quantity does not match lot_count multiplied by lot_size")
     actor = str(payload.get("created_by") or payload.get("actor") or actor_default).strip()
+    persisted_payload = {
+        key: payload.get(key)
+        for key in (
+            "option_type", "strike", "expiry_date", "strategy_name", "notes",
+            "book_key", "purpose_key", "trade_date", "trade_ts",
+            "quantity_unit", "lot_count", "lot_size", "contract_quantity",
+        )
+        if payload.get(key) is not None
+    }
     rows = run_psql_json_statement(
         f"""
         WITH inserted AS (
@@ -9834,7 +13220,7 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 client_code, account_code, strategy_key, symbol, exchange,
                 instrument_type, side, quantity, price, trade_ts, status,
                 thesis, setup_type, timeframe, stop_loss, target_price,
-                realized_pnl, fees, tags, evidence, created_by
+                realized_pnl, fees, tags, evidence, payload, created_by
             )
             VALUES (
                 {sql_literal(payload.get("activity_type") or "trade")},
@@ -9846,14 +13232,14 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 {sql_literal(payload.get("strategy_key"))},
                 {sql_literal(symbol)},
                 {sql_literal(payload.get("exchange") or "NSE")},
-                {sql_literal(payload.get("instrument_type") or "equity")},
+                {sql_literal(instrument_type)},
                 {sql_literal(side)},
-                {sql_numeric(payload.get("quantity"), field_name="quantity")},
+                {sql_numeric(contract_quantity, field_name="quantity")},
                 {sql_numeric(payload.get("price"), field_name="price")},
-                COALESCE({sql_literal(payload.get("trade_ts"))}::timestamptz, now()),
+                COALESCE({sql_literal(payload.get("trade_ts") or payload.get("trade_date"))}::timestamptz, now()),
                 {sql_literal(payload.get("status") or "recorded")},
-                {sql_literal(payload.get("thesis"))},
-                {sql_literal(payload.get("setup_type"))},
+                {sql_literal(payload.get("thesis") or payload.get("notes"))},
+                {sql_literal(payload.get("setup_type") or payload.get("strategy_name"))},
                 {sql_literal(payload.get("timeframe"))},
                 {sql_numeric(payload.get("stop_loss"), field_name="stop_loss")},
                 {sql_numeric(payload.get("target_price"), field_name="target_price")},
@@ -9861,13 +13247,14 @@ def record_trade(payload: dict, *, execution_mode: str, source_kind: str, actor_
                 {sql_numeric(payload.get("fees"), field_name="fees")},
                 {sql_text_array(payload.get("tags"))},
                 {sql_jsonb(payload.get("evidence") or [{"source": "AI Office API"}])},
+                {sql_jsonb(persisted_payload)},
                 {sql_literal(actor)}
             )
             RETURNING id, activity_type, execution_mode, source_kind, source_ref,
                       client_code, account_code, strategy_key, symbol, exchange,
                       instrument_type, side, quantity, price, trade_ts, status,
                       thesis, setup_type, timeframe, stop_loss, target_price,
-                      realized_pnl, fees, tags, evidence, created_by, created_at, updated_at
+                      realized_pnl, fees, tags, evidence, payload, created_by, created_at, updated_at
         )
         SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text
         FROM inserted
@@ -10224,6 +13611,1340 @@ def check_strategy_data_quality(payload: dict) -> dict:
     return result
 
 
+def _parse_engine_json(completed: subprocess.CompletedProcess[str], label: str) -> dict:
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or f"{label} failed").strip()
+        try:
+            error_payload = json.loads(message)
+            message = str(error_payload.get("message") or error_payload.get("error") or message)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        raise ValueError(message)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} returned invalid JSON") from exc
+    if not isinstance(result, dict):
+        raise ValueError(f"{label} returned a non-object JSON response")
+    return result
+
+
+def _run_institutional_json_engine(script_name: str, payload: dict, *, timeout: int, label: str, dry_run: bool) -> dict:
+    command = [sys.executable, str(RUNTIME_ROOT / "scripts" / script_name), "--input", "-"]
+    if dry_run:
+        command.append("--dry-run")
+    engine_payload = dict(payload)
+    engine_payload["dry_run"] = dry_run
+    completed = subprocess.run(
+        command,
+        cwd=RUNTIME_ROOT,
+        input=json.dumps(engine_payload, default=str),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=timeout,
+    )
+    return _parse_engine_json(completed, label)
+
+
+def sync_fundamental_company_intake(payload: dict) -> dict:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    if symbol and not re.fullmatch(r"[A-Z0-9._&-]{1,40}", symbol):
+        raise ValueError("symbol contains unsupported characters")
+    actor = str(payload.get("actor") or "Fundamental Research Factory").strip()
+    rows = run_psql_json(
+        "SELECT research.sync_real_company_intake("
+        f"{sql_literal(actor)},{sql_literal(symbol) if symbol else NULL}"
+        ") AS result"
+    )
+    if not rows or not rows[0].get("result"):
+        raise ValueError("fundamental company intake returned no durable result")
+    result = rows[0]["result"]
+    if isinstance(result, str):
+        result = json.loads(result)
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("fundamental intake violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_sync_fundamental_company_intake",
+        "sync_fundamental_company_intake",
+        actor,
+        "research.company_intake_runs",
+        result,
+        {"symbol": symbol or None, "capital_action_allowed": False},
+    )
+    return result
+
+
+def run_institutional_fundamental_factory(payload: dict) -> dict:
+    selectors = [
+        ("--company-id", payload.get("company_id") or payload.get("companyId")),
+        ("--company-key", payload.get("company_key") or payload.get("companyKey")),
+        ("--symbol", payload.get("symbol")),
+    ]
+    supplied = [(flag, value) for flag, value in selectors if value not in (None, "")]
+    if len(supplied) != 1:
+        raise ValueError("exactly one of company_id, company_key, or symbol is required")
+    as_of = str(payload.get("as_of") or payload.get("asOf") or "").strip()
+    try:
+        parsed_as_of = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("as_of must be an ISO-8601 timestamp with an explicit timezone") from exc
+    if parsed_as_of.tzinfo is None:
+        raise ValueError("as_of must include an explicit timezone")
+    actor = str(payload.get("actor") or "Fundamental Research Factory").strip()
+    dry_run = payload.get("dry_run", payload.get("dryRun", True)) is not False
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "run_institutional_fundamental_factory.py"),
+        supplied[0][0],
+        str(supplied[0][1]),
+        "--as-of",
+        as_of,
+        "--actor",
+        actor,
+    ]
+    if payload.get("exchange"):
+        command.extend(["--exchange", str(payload["exchange"]).upper()])
+    if payload.get("run_key") or payload.get("runKey"):
+        command.extend(["--run-key", str(payload.get("run_key") or payload.get("runKey"))])
+    if dry_run:
+        command.append("--dry-run")
+    completed = subprocess.run(
+        command,
+        cwd=RUNTIME_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    result = _parse_engine_json(completed, "institutional fundamental factory")
+    audit_api_write(
+        "ai_os_api_run_institutional_fundamental_factory",
+        "run_institutional_fundamental_factory",
+        actor,
+        "research.investment_dossier_versions",
+        result.get("database") or result,
+        {**payload, "dry_run": dry_run},
+    )
+    return result
+
+
+def review_fundamental_evidence(payload: dict) -> dict:
+    """Record an explicit human review of a bounded fundamental source."""
+    try:
+        evidence_id = int(payload.get("evidence_id") or payload.get("evidenceId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evidence_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"human_verified", "rejected"}:
+        raise ValueError("decision must be human_verified or rejected")
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true for a human evidence decision")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    rationale = str(payload.get("rationale") or "").strip()
+    if len(rationale) < 12:
+        raise ValueError("rationale must contain at least 12 characters")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT evidence.*, company.company_key, company.legal_name,
+                   company.primary_symbol, company.primary_exchange
+            FROM research.fundamental_evidence evidence
+            JOIN research.companies company ON company.id = evidence.company_id
+            WHERE evidence.id = {evidence_id}
+            FOR UPDATE OF evidence
+        ), updated AS (
+            UPDATE research.fundamental_evidence evidence
+            SET verification_status = {sql_literal(decision)},
+                verified_by = {sql_literal(actor)},
+                verified_at = now(),
+                metadata = evidence.metadata || jsonb_build_object(
+                    'last_human_review', jsonb_build_object(
+                        'decision', {sql_literal(decision)},
+                        'rationale', {sql_literal(rationale)},
+                        'reviewed_by', {sql_literal(actor)},
+                        'reviewed_at', now(),
+                        'operator_confirmed', true,
+                        'broker_write_allowed', false
+                    )
+                )
+            FROM selected
+            WHERE evidence.id = selected.id
+            RETURNING evidence.*
+        ), company_identity_review AS (
+            UPDATE research.companies company
+            SET real_company_verification_evidence_id = CASE
+                    WHEN {sql_literal(decision)} = 'human_verified'
+                         AND updated.source_url IS NOT NULL
+                         AND updated.source_type IN ('corporate_filing', 'annual_report', 'exchange_filing')
+                    THEN updated.id
+                    WHEN {sql_literal(decision)} = 'rejected'
+                         AND company.real_company_verification_evidence_id = updated.id
+                    THEN NULL
+                    ELSE company.real_company_verification_evidence_id
+                END,
+                real_company_verified_at = CASE
+                    WHEN {sql_literal(decision)} = 'human_verified'
+                         AND updated.source_url IS NOT NULL
+                         AND updated.source_type IN ('corporate_filing', 'annual_report', 'exchange_filing')
+                    THEN updated.verified_at
+                    WHEN {sql_literal(decision)} = 'rejected'
+                         AND company.real_company_verification_evidence_id = updated.id
+                    THEN NULL
+                    ELSE company.real_company_verified_at
+                END,
+                metadata = company.metadata || jsonb_build_object(
+                    'identity_review_status', {sql_literal(decision)},
+                    'identity_review_evidence_id', updated.id,
+                    'identity_reviewed_by', {sql_literal(actor)},
+                    'identity_reviewed_at', updated.verified_at
+                ),
+                updated_at = now()
+            FROM updated
+            WHERE company.id = updated.company_id
+              AND (
+                  (
+                      {sql_literal(decision)} = 'human_verified'
+                      AND updated.source_url IS NOT NULL
+                      AND updated.source_type IN ('corporate_filing', 'annual_report', 'exchange_filing')
+                  )
+                  OR (
+                      {sql_literal(decision)} = 'rejected'
+                      AND company.real_company_verification_evidence_id = updated.id
+                  )
+              )
+            RETURNING company.id AS company_id,
+                      company.real_company_verification_evidence_id,
+                      company.real_company_verified_at
+        ), result_rows AS (
+            SELECT updated.id AS evidence_id, updated.company_id,
+                   selected.company_key, selected.legal_name,
+                   selected.primary_symbol, selected.primary_exchange,
+                   updated.source_type, updated.source_name, updated.source_url,
+                   updated.source_title, updated.verification_status,
+                   updated.verified_by, updated.verified_at,
+                   {sql_literal(rationale)} AS review_rationale,
+                   identity.real_company_verification_evidence_id = updated.id
+                       AS selected_for_company_identity,
+                   identity.real_company_verified_at AS company_identity_verified_at,
+                   false AS capital_action_allowed,
+                   false AS broker_write_allowed
+            FROM updated
+            JOIN selected ON selected.id = updated.id
+            LEFT JOIN company_identity_review identity
+              ON identity.company_id = updated.company_id
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("fundamental evidence was not found")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_review_fundamental_evidence",
+        "review_fundamental_evidence",
+        actor,
+        "research.fundamental_evidence",
+        result,
+        {
+            "evidence_id": evidence_id,
+            "decision": decision,
+            "operator_confirmed": True,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
+def review_fundamental_opinion(payload: dict) -> dict:
+    """Record an explicit operator decision on one evidence-linked specialist opinion."""
+    try:
+        opinion_id = int(payload.get("opinion_id") or payload.get("opinionId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("opinion_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"reviewed", "dissent", "rejected"}:
+        raise ValueError("decision must be reviewed, dissent, or rejected")
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true for a specialist opinion decision")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    rationale = str(payload.get("rationale") or "").strip()
+    if len(rationale) < 12:
+        raise ValueError("rationale must contain at least 12 characters")
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH updated AS (
+            UPDATE research.fundamental_specialist_opinions opinion
+            SET opinion_status = {sql_literal(decision)},
+                reviewed_by = {sql_literal(actor)},
+                reviewed_at = now(),
+                review_rationale = {sql_literal(rationale)},
+                updated_at = now()
+            WHERE opinion.id = {opinion_id}
+            RETURNING opinion.*
+        ), result_rows AS (
+            SELECT updated.id AS opinion_id, updated.company_id,
+                   company.company_key, company.legal_name,
+                   company.primary_symbol, company.primary_exchange,
+                   updated.holding_thesis_id, updated.dossier_version_id,
+                   updated.specialist_key, updated.agent_name,
+                   updated.opinion_status, updated.conclusion,
+                   updated.disconfirming_evidence, updated.required_followups,
+                   updated.evidence_id, updated.opinion_as_of,
+                   updated.reviewed_by, updated.reviewed_at,
+                   updated.review_rationale,
+                   false AS capital_action_allowed,
+                   false AS broker_write_allowed
+            FROM updated
+            JOIN research.companies company ON company.id = updated.company_id
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("fundamental specialist opinion was not found")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_review_fundamental_opinion",
+        "review_fundamental_opinion",
+        actor,
+        "research.fundamental_specialist_opinions",
+        result,
+        {
+            "opinion_id": opinion_id,
+            "decision": decision,
+            "operator_confirmed": True,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
+def sync_fundamental_remediation(payload: dict) -> dict:
+    """Create bounded, idempotent work for unresolved institutional specialist lanes."""
+    try:
+        holding_thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("holding_thesis_id is required and must be an integer") from exc
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true before assigning remediation work")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+
+    rows = run_psql_json_statement(
+        f"""
+        WITH target AS (
+            SELECT thesis.id AS holding_thesis_id, thesis.symbol, thesis.exchange,
+                   thesis.company_name, company.id AS company_id
+            FROM portfolio.holding_theses thesis
+            JOIN research.companies company
+              ON upper(company.primary_symbol)=upper(thesis.symbol)
+             AND upper(company.primary_exchange)=upper(thesis.exchange)
+            WHERE thesis.id={holding_thesis_id}
+        ), latest_dossier AS (
+            SELECT version.id AS dossier_version_id
+            FROM research.investment_dossiers dossier
+            JOIN research.investment_dossier_versions version ON version.dossier_id=dossier.id
+            JOIN target ON target.company_id=dossier.company_id
+            ORDER BY version.research_as_of DESC, version.id DESC
+            LIMIT 1
+        ), unresolved AS (
+            SELECT DISTINCT ON (opinion.specialist_key)
+                   opinion.id AS opinion_id, opinion.specialist_key,
+                   opinion.agent_name, opinion.opinion_status, opinion.conclusion,
+                   opinion.required_followups, opinion.evidence_id,
+                   target.symbol, target.exchange, target.company_name,
+                   CASE opinion.specialist_key
+                     WHEN 'moat' THEN 'Moat Analyst'
+                     WHEN 'industry' THEN 'Industry Analyst'
+                     WHEN 'governance' THEN 'Governance Analyst'
+                     WHEN 'forensic_accounting' THEN 'Forensic Accounting Agent'
+                     WHEN 'valuation' THEN 'Valuation Agent'
+                     WHEN 'portfolio_fit' THEN 'Long-Term Portfolio Manager'
+                     WHEN 'risk' THEN 'Independent Risk Agent'
+                     ELSE opinion.agent_name
+                   END AS owner_agent
+            FROM research.fundamental_specialist_opinions opinion
+            JOIN target ON target.company_id=opinion.company_id
+            JOIN latest_dossier ON latest_dossier.dossier_version_id=opinion.dossier_version_id
+            WHERE opinion.opinion_status IN ('draft','rejected','stale')
+               OR jsonb_array_length(opinion.required_followups) > 0
+            ORDER BY opinion.specialist_key, opinion.opinion_as_of DESC, opinion.id DESC
+        ), inserted_tasks AS (
+            INSERT INTO agent.tasks (
+                title, objective, owner_agent, status, priority,
+                approval_required, source_kind, source_ref, output_format, evidence
+            )
+            SELECT
+                'Resolve ' || replace(unresolved.specialist_key, '_', ' ') || ': ' || unresolved.symbol,
+                'Close the retained evidence and analysis gaps for the ' ||
+                replace(unresolved.specialist_key, '_', ' ') ||
+                ' lane. Current conclusion: ' || unresolved.conclusion ||
+                '. Required follow-ups: ' || unresolved.required_followups::text ||
+                '. Return source locators, calculations, disconfirming evidence, and a reviewable opinion. No capital action or broker order is authorized.',
+                unresolved.owner_agent, 'queued',
+                CASE unresolved.specialist_key
+                  WHEN 'valuation' THEN 'high' WHEN 'portfolio_fit' THEN 'high'
+                  WHEN 'governance' THEN 'high' WHEN 'forensic_accounting' THEN 'high'
+                  ELSE 'normal' END,
+                true, 'fundamental_specialist_remediation',
+                'fundamental-thesis:' || {holding_thesis_id} || ':specialist:' || unresolved.specialist_key,
+                'institutional_fundamental_specialist_opinion',
+                jsonb_build_array(
+                    jsonb_build_object('opinion_id', unresolved.opinion_id,
+                                       'evidence_id', unresolved.evidence_id,
+                                       'specialist_key', unresolved.specialist_key,
+                                       'holding_thesis_id', {holding_thesis_id},
+                                       'required_followups', unresolved.required_followups),
+                    jsonb_build_object('capital_action_allowed', false,
+                                       'broker_write_allowed', false,
+                                       'assigned_by', {sql_literal(actor)})
+                )
+            FROM unresolved
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent.tasks existing
+                WHERE existing.source_kind='fundamental_specialist_remediation'
+                  AND existing.status NOT IN ('done','completed','cancelled','rejected')
+                  AND existing.evidence @> jsonb_build_array(jsonb_build_object(
+                      'holding_thesis_id', {holding_thesis_id},
+                      'specialist_key', unresolved.specialist_key
+                  ))
+            )
+            RETURNING *
+        ), inserted_inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id, title, owner_agent, status, priority,
+                recommended_action, evidence, target_workspace
+            )
+            SELECT task.id, task.title, task.owner_agent, 'new', task.priority,
+                   'Complete the named evidence follow-ups, retain source locators, and submit the specialist opinion for independent review.',
+                   task.evidence, 'fundamental'
+            FROM inserted_tasks task
+            RETURNING id, task_id
+        )
+        , result_rows AS (
+            SELECT
+                (SELECT count(*) FROM unresolved) AS unresolved_lane_count,
+                (SELECT count(*) FROM inserted_tasks) AS created_task_count,
+                coalesce((SELECT jsonb_agg(jsonb_build_object(
+                    'task_id', task.id, 'title', task.title, 'owner_agent', task.owner_agent,
+                    'priority', task.priority, 'source_ref', task.source_ref
+                ) ORDER BY task.id) FROM inserted_tasks task), '[]'::jsonb) AS created_tasks,
+                {holding_thesis_id} AS holding_thesis_id,
+                false AS capital_action_allowed,
+                false AS broker_write_allowed
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)), '[]'::json)::text
+        FROM result_rows
+        """
+    )
+    if not rows:
+        raise ValueError("fundamental remediation sync returned no result")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_sync_fundamental_remediation",
+        "sync_fundamental_remediation",
+        actor,
+        "agent.tasks",
+        result,
+        {"holding_thesis_id": holding_thesis_id, "operator_confirmed": True,
+         "capital_action_allowed": False, "broker_write_allowed": False},
+    )
+    return result
+
+
+def _sector_engine_payload(payload: dict) -> dict:
+    selectors = [
+        ("id", payload.get("index_id") or payload.get("indexId")),
+        ("index_key", payload.get("index_key") or payload.get("indexKey")),
+    ]
+    supplied = [(column, value) for column, value in selectors if value not in (None, "")]
+    if len(supplied) != 1:
+        raise ValueError("exactly one of index_id or index_key is required")
+    as_of = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    selector_column, selector_value = supplied[0]
+    selector_sql = sql_numeric(selector_value, required=True, field_name="index_id") if selector_column == "id" else sql_literal(selector_value)
+    index_rows = run_psql_json(f"""
+        SELECT id AS index_id, index_key, index_name, taxonomy_node_id, weighting_method, base_value,
+               base_date AS effective_date, methodology_version,
+               nullif(weighting_rules->>'weight_cap','')::numeric AS weight_cap
+        FROM sector_intelligence.custom_index_definitions
+        WHERE {selector_column}={selector_sql}
+          AND status IN ('validated','active')
+        LIMIT 1
+    """)
+    if not index_rows:
+        raise ValueError("validated custom-index definition not found")
+    index = index_rows[0]
+    index_id = int(index["index_id"])
+    memberships = run_psql_json(f"""
+        SELECT constituent.symbol_id, symbol.symbol, constituent.valid_from,
+               constituent.valid_to, membership.source_reference,
+               coalesce(membership.evidence, '[]'::jsonb) AS evidence,
+               coalesce(membership.created_at, constituent.created_at) AS observed_at,
+               market_cap.value_numeric AS market_cap,
+               free_float.value_numeric AS free_float_factor,
+               quality.value_numeric AS quality_score,
+               momentum.value_numeric AS momentum_score,
+               custom_score.value_numeric AS custom_score
+        FROM sector_intelligence.custom_index_constituents constituent
+        JOIN trading.symbols symbol ON symbol.id=constituent.symbol_id
+        LEFT JOIN sector_intelligence.instrument_membership_history membership
+          ON membership.id=constituent.source_membership_id
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='market_cap'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) market_cap ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='free_float_factor'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) free_float ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='quality_score'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) quality ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='momentum_score'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) momentum ON true
+        LEFT JOIN LATERAL (
+            SELECT observation.value_numeric
+            FROM sector_intelligence.metric_observations observation
+            JOIN sector_intelligence.metric_definitions definition
+              ON definition.id=observation.metric_definition_id
+            WHERE observation.symbol_id=constituent.symbol_id
+              AND definition.metric_key='custom_score'
+              AND observation.quality_status IN ('observed','validated')
+              AND observation.observed_at::date <= {sql_literal(as_of)}::date
+            ORDER BY observation.observed_at DESC LIMIT 1
+        ) custom_score ON true
+        WHERE constituent.index_id={index_id}
+          AND constituent.valid_from <= {sql_literal(as_of)}::date
+          AND (constituent.valid_to IS NULL OR constituent.valid_to >= {sql_literal(as_of)}::date)
+        ORDER BY constituent.symbol_id
+    """)
+    if not memberships:
+        raise ValueError("custom index has no active point-in-time constituents")
+    symbol_ids = ",".join(str(int(row["symbol_id"])) for row in memberships)
+    prices = run_psql_json(f"""
+        SELECT bar.symbol_id, bar.ts, bar.close,
+               jsonb_build_object('source_system_id', bar.source_system_id, 'timeframe', bar.timeframe) AS evidence
+        FROM trading.ohlcv bar
+        WHERE bar.symbol_id IN ({symbol_ids})
+          AND bar.timeframe='1d'
+          AND bar.ts::date BETWEEN {sql_literal(index["effective_date"])}::date AND {sql_literal(as_of)}::date
+          AND bar.close > 0
+          AND bar.source_system_id IS NOT NULL
+        ORDER BY bar.ts, bar.symbol_id
+    """)
+    benchmark_series = run_psql_json(f"""
+        SELECT bar.ts, bar.close,
+               jsonb_build_object('source_system_id',bar.source_system_id,'timeframe',bar.timeframe,
+                                  'symbol','NIFTY 50','exchange','NSE') AS evidence
+        FROM trading.ohlcv bar
+        JOIN trading.symbols symbol ON symbol.id=bar.symbol_id
+        WHERE upper(symbol.symbol)='NIFTY 50' AND upper(symbol.exchange)='NSE'
+          AND symbol.instrument_type='index' AND symbol.active=true
+          AND bar.timeframe='1d'
+          AND bar.ts::date BETWEEN {sql_literal(index["effective_date"])}::date AND {sql_literal(as_of)}::date
+          AND bar.close>0 AND bar.source_system_id IS NOT NULL
+        ORDER BY bar.ts
+    """)
+    return {
+        **payload,
+        "as_of_date": as_of,
+        "index": index,
+        "memberships": memberships,
+        "prices": prices,
+        "benchmark_series": benchmark_series,
+    }
+
+
+def activate_sector_price_baseline(payload: dict) -> dict:
+    taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    try:
+        node_id = int(taxonomy_node_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("taxonomy_node_id must be a positive integer") from exc
+    if node_id <= 0:
+        raise ValueError("taxonomy_node_id must be a positive integer")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    rows = run_psql_json(f"""
+        SELECT sector_intelligence.activate_price_baseline(
+            {node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
+        ) AS activation
+    """)
+    if len(rows) != 1 or not isinstance(rows[0].get("activation"), dict):
+        raise ValueError("sector price baseline returned no durable activation record")
+    activation = rows[0]["activation"]
+    runs = []
+    for index in activation.get("indices") or []:
+        runs.append(run_sector_intelligence_engine({
+            "index_id": int(index["index_id"]),
+            "as_of_date": as_of_date,
+            "horizon": "1D",
+            "dry_run": False,
+            "actor": actor,
+        }))
+    acceptance = run_sector_acceptance({
+        "taxonomy_node_id": node_id,
+        "as_of_date": as_of_date,
+        "actor": actor,
+    })
+    result = {
+        **activation,
+        "engine_runs": runs,
+        "acceptance": acceptance,
+        "broker_write_allowed": False,
+        "capital_action_allowed": False,
+    }
+    audit_api_write(
+        "ai_os_api_activate_sector_price_baseline","activate_sector_price_baseline",actor,
+        "sector_intelligence.custom_index_definitions",result,
+        {"taxonomy_node_id": node_id,"as_of_date": as_of_date},
+    )
+    return result
+
+
+def run_sector_intelligence_engine(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    dry_run = payload.get("dry_run", payload.get("dryRun", True)) is not False
+    engine_payload = _sector_engine_payload(payload)
+    result = _run_institutional_json_engine(
+        "run_sector_intelligence_engine.py",
+        engine_payload,
+        timeout=300,
+        label="sector intelligence engine",
+        dry_run=dry_run,
+    )
+    audit_api_write(
+        "ai_os_api_run_sector_intelligence_engine",
+        "run_sector_intelligence_engine",
+        actor,
+        "sector_intelligence.custom_index_rebalances",
+        result.get("database") or result,
+        {**payload, "dry_run": dry_run},
+    )
+    return result
+
+
+def sync_sector_fundamentals(payload: dict) -> dict:
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Fundamental Analyst").strip()
+    persist = payload.get("persist", True) is not False
+    if not taxonomy_key or len(taxonomy_key) > 160:
+        raise ValueError("taxonomy_key is required and must be at most 160 characters")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "sync_sector_fundamentals.py"),
+        "--taxonomy-key",
+        taxonomy_key,
+        "--as-of-date",
+        as_of_date,
+        "--actor",
+        actor,
+    ]
+    if persist:
+        command.append("--persist")
+    completed = subprocess.run(
+        command,
+        cwd=RUNTIME_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    result = _parse_engine_json(completed, "sector fundamental publisher")
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("sector fundamental publisher violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_sync_sector_fundamentals",
+        "sync_sector_fundamentals",
+        actor,
+        "sector_intelligence.metric_observations",
+        result,
+        {
+            "taxonomy_key": taxonomy_key,
+            "as_of_date": as_of_date,
+            "persist": persist,
+            "capital_action_allowed": False,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
+def sync_sector_ownership_flows(payload: dict) -> dict:
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Flow And Ownership Analyst").strip()
+    persist = payload.get("persist", True) is not False
+    try:
+        lookback_days = int(payload.get("lookback_days") or payload.get("lookbackDays") or 365)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lookback_days must be an integer") from exc
+    if not taxonomy_key or len(taxonomy_key) > 160:
+        raise ValueError("taxonomy_key is required and must be at most 160 characters")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    if lookback_days < 1 or lookback_days > 366:
+        raise ValueError("lookback_days must be between 1 and 366")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "sync_sector_ownership_flows.py"),
+        "--taxonomy-key", taxonomy_key,
+        "--as-of-date", as_of_date,
+        "--lookback-days", str(lookback_days),
+        "--actor", actor,
+    ]
+    if persist:
+        command.append("--persist")
+    completed = subprocess.run(
+        command,cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=900
+    )
+    result = _parse_engine_json(completed, "sector ownership and flow collector")
+    if result.get("broker_write_allowed") is not False or result.get("capital_action_allowed") is not False:
+        raise ValueError("sector ownership and flow collector violated its no-execution contract")
+    if persist and result.get("status") in {"completed", "partial"}:
+        result["acceptance"] = run_sector_acceptance({
+            "taxonomy_key": taxonomy_key,
+            "as_of_date": as_of_date,
+            "actor": actor,
+        })
+    audit_api_write(
+        "ai_os_api_sync_sector_ownership_flows",
+        "sync_sector_ownership_flows",
+        actor,
+        "sector_intelligence.ownership_observations/sector_intelligence.flow_observations",
+        result,
+        {
+            "taxonomy_key": taxonomy_key,
+            "as_of_date": as_of_date,
+            "lookback_days": lookback_days,
+            "persist": persist,
+            "capital_action_allowed": False,
+            "broker_write_allowed": False,
+        },
+    )
+    return result
+
+
+def build_sector_underwrite(payload: dict) -> dict:
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    persist = payload.get("persist", True) is not False
+    if not taxonomy_key or len(taxonomy_key) > 160:
+        raise ValueError("taxonomy_key is required and must be at most 160 characters")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "build_sector_underwrite.py"),
+        "--taxonomy-key", taxonomy_key,
+        "--as-of-date", as_of_date,
+        "--actor", actor,
+    ]
+    if persist:
+        command.append("--persist")
+    completed = subprocess.run(
+        command,cwd=RUNTIME_ROOT,text=True,capture_output=True,check=False,timeout=1200
+    )
+    result = _parse_engine_json(completed, "sector institutional underwrite builder")
+    if result.get("broker_write_allowed") is not False or result.get("capital_action_allowed") is not False:
+        raise ValueError("sector institutional underwrite violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_build_sector_underwrite","build_sector_underwrite",actor,
+        "sector_intelligence.research_coverage/sector_intelligence.sector_committee_packets",
+        result,
+        {
+            "taxonomy_key": taxonomy_key,"as_of_date": as_of_date,"persist": persist,
+            "capital_action_allowed": False,"broker_write_allowed": False,
+        },
+    )
+    return result
+
+
+def run_sector_acceptance(payload: dict) -> dict:
+    taxonomy_node_id = payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId")
+    taxonomy_key = str(payload.get("taxonomy_key") or payload.get("taxonomyKey") or "").strip()
+    as_of_date = str(payload.get("as_of_date") or payload.get("asOfDate") or "").strip()
+    actor = str(payload.get("actor") or "Sector Portfolio Manager").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_date):
+        raise ValueError("as_of_date is required in YYYY-MM-DD format")
+    if taxonomy_node_id is None and not taxonomy_key:
+        raise ValueError("taxonomy_node_id or taxonomy_key is required")
+    if taxonomy_node_id is not None:
+        try:
+            node_id = int(taxonomy_node_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("taxonomy_node_id must be a positive integer") from exc
+        if node_id <= 0:
+            raise ValueError("taxonomy_node_id must be a positive integer")
+    else:
+        rows = run_psql_json(
+            "SELECT id FROM sector_intelligence.taxonomy_nodes "
+            f"WHERE taxonomy_key={sql_literal(taxonomy_key)} "
+            f"AND valid_from<={sql_literal(as_of_date)}::date "
+            f"AND (valid_to IS NULL OR valid_to>={sql_literal(as_of_date)}::date) "
+            "ORDER BY id LIMIT 2"
+        )
+        if len(rows) != 1:
+            raise ValueError("taxonomy_key must resolve to exactly one active sector node")
+        node_id = int(rows[0]["id"])
+    run_key = str(payload.get("run_key") or payload.get("runKey") or f"sector-acceptance-{node_id}-{as_of_date}").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
+        raise ValueError("run_key contains unsupported characters")
+    run_rows = run_psql_json(f"""
+        SELECT sector_intelligence.run_acceptance_gates_v4(
+            {sql_literal(run_key)},{node_id},{sql_literal(as_of_date)}::date,{sql_literal(actor)}
+        ) AS acceptance_run_id
+    """)
+    if len(run_rows) != 1 or not run_rows[0].get("acceptance_run_id"):
+        raise ValueError("sector acceptance function returned no durable run id")
+    acceptance_run_id = int(run_rows[0]["acceptance_run_id"])
+    rows = run_psql_json(f"""
+        SELECT summary.*
+        FROM sector_intelligence.v_acceptance_gate_summary summary
+        WHERE summary.acceptance_run_id={acceptance_run_id}
+    """)
+    if not rows:
+        raise ValueError("sector acceptance run returned no durable result")
+    result = rows[0]
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("sector acceptance violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_sector_acceptance","run_sector_acceptance",actor,
+        "sector_intelligence.acceptance_runs",result,
+        {"taxonomy_node_id": node_id,"as_of_date": as_of_date,"run_key": run_key},
+    )
+    return result
+
+
+def sync_sector_acceptance_remediation(payload: dict) -> dict:
+    try:
+        taxonomy_node_id = int(payload.get("taxonomy_node_id") or payload.get("taxonomyNodeId"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("taxonomy_node_id must be a positive integer") from exc
+    if taxonomy_node_id <= 0:
+        raise ValueError("taxonomy_node_id must be a positive integer")
+    if payload.get("operator_confirmed", payload.get("operatorConfirmed")) is not True:
+        raise ValueError("operator_confirmed must be true before assigning sector work")
+    actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    rows = run_psql_json_statement(f"""
+        WITH latest AS (
+            SELECT run.id AS acceptance_run_id,run.as_of_date,node.taxonomy_key,node.node_name
+            FROM sector_intelligence.acceptance_runs run
+            JOIN sector_intelligence.taxonomy_nodes node ON node.id=run.taxonomy_node_id
+            WHERE run.taxonomy_node_id={taxonomy_node_id}
+            ORDER BY run.as_of_date DESC,run.started_at DESC LIMIT 1
+        ), blocked AS (
+            SELECT result.gate_key,result.gate_name,result.failure_reason,result.evidence,
+                   latest.acceptance_run_id,latest.as_of_date,latest.taxonomy_key,latest.node_name,
+                   CASE result.gate_key
+                     WHEN 'fundamental_valuation_breadth' THEN 'Sector Fundamental Analyst'
+                     WHEN 'flows_and_ownership' THEN 'Sector Flow And Ownership Analyst'
+                     WHEN 'sector_dossier' THEN 'Sector Market Structure Analyst'
+                     WHEN 'committee_dissent' THEN 'Risk Agent'
+                     WHEN 'portfolio_fit' THEN 'Sector Portfolio Manager'
+                     ELSE 'Sector Data Steward'
+                   END AS owner_agent,
+                   CASE result.gate_key
+                     WHEN 'fundamental_valuation_breadth' THEN 10
+                     WHEN 'flows_and_ownership' THEN 20
+                     WHEN 'sector_dossier' THEN 30
+                     WHEN 'committee_dissent' THEN 40
+                     WHEN 'portfolio_fit' THEN 50
+                     ELSE 90
+                   END AS dependency_order
+            FROM sector_intelligence.acceptance_gate_results result
+            JOIN latest ON latest.acceptance_run_id=result.acceptance_run_id
+            WHERE result.status='blocked'
+        ), inserted_tasks AS (
+            INSERT INTO agent.tasks (
+                title,objective,owner_agent,status,priority,approval_required,
+                source_kind,source_ref,output_format,evidence
+            )
+            SELECT
+                blocked.gate_name||': '||blocked.node_name,
+                CASE blocked.gate_key
+                  WHEN 'fundamental_valuation_breadth' THEN
+                    'Build source-linked member-company financial and valuation coverage, then calculate one reproducible sector aggregate and valuation band. Use primary filings or licensed exports; do not infer missing facts.'
+                  WHEN 'flows_and_ownership' THEN
+                    'Collect at least one source-linked sector flow observation and one ownership observation from primary exchange, depository, mutual-fund, or company disclosures. Retain artifact hashes and dates.'
+                  WHEN 'sector_dossier' THEN
+                    'Create a versioned sector dossier covering industry structure, constituents, financial breadth, valuation, market structure, risks, gaps, and monitoring indicators with evidence locators.'
+                  WHEN 'committee_dissent' THEN
+                    'Open an independent sector committee packet only after the dossier is reviewable. Record sealed independent positions, explicit dissent, risk challenge, and a human-final decision gate.'
+                  WHEN 'portfolio_fit' THEN
+                    'Assess portfolio fit, existing book exposure, opportunity cost, concentration, factor overlap, and sizing constraints. Recommendation remains advisory until Devarsh approves.'
+                  ELSE 'Resolve the named sector acceptance gap using retained evidence and submit a reviewable result.'
+                END || ' No capital action or broker order is authorized.',
+                blocked.owner_agent,'queued',
+                CASE WHEN blocked.gate_key IN ('fundamental_valuation_breadth','flows_and_ownership') THEN 'high' ELSE 'normal' END,
+                true,'sector_acceptance_remediation',
+                'sector:'||{taxonomy_node_id}||':gate:'||blocked.gate_key,
+                'sector_acceptance_evidence',
+                jsonb_build_array(
+                    jsonb_build_object('taxonomy_node_id',{taxonomy_node_id},
+                                       'taxonomy_key',blocked.taxonomy_key,
+                                       'acceptance_run_id',blocked.acceptance_run_id,
+                                       'as_of_date',blocked.as_of_date,
+                                       'gate_key',blocked.gate_key,
+                                       'failure_reason',blocked.failure_reason,
+                                       'required_evidence',blocked.evidence,
+                                       'dependency_order',blocked.dependency_order),
+                    jsonb_build_object('assigned_by',{sql_literal(actor)},
+                                       'operator_confirmed',true,
+                                       'capital_action_allowed',false,
+                                       'broker_write_allowed',false)
+                )
+            FROM blocked
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent.tasks existing
+                WHERE existing.source_kind='sector_acceptance_remediation'
+                  AND existing.status NOT IN ('done','completed','cancelled','rejected')
+                  AND existing.evidence @> jsonb_build_array(jsonb_build_object(
+                      'taxonomy_node_id',{taxonomy_node_id},'gate_key',blocked.gate_key
+                  ))
+            )
+            RETURNING *
+        ), inserted_inbox AS (
+            INSERT INTO agent.inbox_items (
+                task_id,title,owner_agent,status,priority,recommended_action,evidence,target_workspace
+            )
+            SELECT task.id,task.title,task.owner_agent,'new',task.priority,
+                   'Complete the source-bounded gate evidence, preserve citations and calculations, then request independent review.',
+                   task.evidence,'sector'
+            FROM inserted_tasks task
+            RETURNING id,task_id
+        ), result_rows AS (
+            SELECT (SELECT count(*) FROM blocked) AS blocked_gate_count,
+                   (SELECT count(*) FROM inserted_tasks) AS created_task_count,
+                   coalesce((SELECT jsonb_agg(jsonb_build_object(
+                       'task_id',task.id,'title',task.title,'owner_agent',task.owner_agent,
+                       'priority',task.priority,'source_ref',task.source_ref
+                   ) ORDER BY task.id) FROM inserted_tasks task),'[]'::jsonb) AS created_tasks,
+                   {taxonomy_node_id} AS taxonomy_node_id,
+                   false AS capital_action_allowed,false AS broker_write_allowed
+        )
+        SELECT coalesce(json_agg(row_to_json(result_rows)),'[]'::json)::text FROM result_rows
+    """)
+    if not rows:
+        raise ValueError("sector remediation sync returned no result")
+    result = rows[0]
+    audit_api_write(
+        "ai_os_api_sync_sector_acceptance_remediation","sync_sector_acceptance_remediation",actor,
+        "agent.tasks",result,{"taxonomy_node_id":taxonomy_node_id,"operator_confirmed":True,
+                              "capital_action_allowed":False,"broker_write_allowed":False},
+    )
+    return result
+
+
+def _options_engine_payload(payload: dict) -> dict:
+    underlying = str(payload.get("underlying") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "NFO").strip().upper()
+    expiry = str(payload.get("expiry_date") or payload.get("expiryDate") or "").strip()
+    as_of = str(payload.get("as_of") or payload.get("asOf") or "").strip()
+    model = str(payload.get("model") or "black_scholes_merton").strip()
+    if not underlying or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry):
+        raise ValueError("underlying and expiry_date are required")
+    try:
+        parsed_as_of = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("as_of must be an ISO-8601 timestamp with an explicit timezone") from exc
+    if parsed_as_of.tzinfo is None:
+        raise ValueError("as_of must include an explicit timezone")
+    batches = run_psql_json(f"""
+        SELECT batch.id, batch.batch_key, batch.spot_price, batch.source_timestamp,
+               batch.received_at
+        FROM trading.option_chain_snapshot_batches batch
+        WHERE batch.exchange={sql_literal(exchange)}
+          AND upper(batch.underlying)={sql_literal(underlying)}
+          AND batch.expiry={sql_literal(expiry)}::date
+          AND batch.source_timestamp <= {sql_literal(as_of)}::timestamptz
+          AND batch.received_at <= {sql_literal(as_of)}::timestamptz
+          AND batch.quality_status IN ('passed','warning')
+        ORDER BY batch.source_timestamp DESC, batch.received_at DESC
+        LIMIT 1
+    """)
+    if not batches:
+        raise ValueError("no quality-qualified option-chain batch exists at the requested cutoff")
+    batch = batches[0]
+    valuations = run_psql_json(f"""
+        SELECT model_family AS model, valuation_timestamp, spot_price, futures_price,
+               forward_price, risk_free_rate, dividend_yield, time_to_expiry_years,
+               expiry_timestamp, input_quality_status, quality_flags
+        FROM trading.option_valuation_inputs
+        WHERE batch_id={int(batch["id"])}
+          AND model_family={sql_literal(model)}
+          AND valuation_timestamp <= {sql_literal(as_of)}::timestamptz
+          AND input_quality_status IN ('passed','warning')
+        ORDER BY valuation_timestamp DESC
+        LIMIT 1
+    """)
+    if not valuations:
+        raise ValueError("no validated point-in-time option valuation input exists for this batch and model")
+    contracts = run_psql_json(f"""
+        SELECT trading_symbol, strike, option_type, contract_multiplier,
+               quote_source_timestamp, received_at, last_price, bid_price, ask_price,
+               volume, open_interest, previous_open_interest
+        FROM trading.option_chain_contract_snapshots
+        WHERE batch_id={int(batch["id"])}
+        ORDER BY strike, option_type
+    """)
+    if not contracts:
+        raise ValueError("the selected option-chain batch contains no contracts")
+    filters = dict(payload.get("filters") or {})
+    for key in ("max_age_seconds", "max_spread_bps", "min_open_interest", "min_volume"):
+        if key in payload and key not in filters:
+            filters[key] = payload[key]
+    return {
+        "operation": "analyze_chain",
+        "underlying": underlying,
+        "exchange": exchange,
+        "expiry_date": expiry,
+        "as_of": as_of,
+        "valuation": valuations[0],
+        "contracts": contracts,
+        "filters": filters,
+        "source_batch": batch,
+        "paper_only": True,
+    }
+
+
+def run_institutional_options_engine(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Options Analyst").strip()
+    operation = str(payload.get("operation") or "analyze_chain").strip().lower()
+    if operation in {"execute", "place_order", "broker_order", "live_trade"}:
+        raise ValueError("institutional options analytics is paper-only and cannot execute orders")
+    if operation != "analyze_chain":
+        raise ValueError("the API exposes only governed stored-chain analysis")
+    engine_payload = _options_engine_payload(payload)
+    result = _run_institutional_json_engine(
+        "run_institutional_options_engine.py",
+        engine_payload,
+        timeout=180,
+        label="institutional options engine",
+        dry_run=True,
+    )
+    if result.get("broker_write_allowed") is not False or result.get("capital_action_allowed") is not False:
+        raise ValueError("institutional options engine violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_institutional_options_engine",
+        "run_institutional_options_engine",
+        actor,
+        "trading.option_acceptance_gate_runs",
+        result,
+        {**payload, "operation": operation, "dry_run": True, "paper_only": True},
+    )
+    return result
+
+
+def run_option_acceptance(payload: dict) -> dict:
+    exchange = str(payload.get("exchange") or "NFO").strip().upper()
+    underlying = str(payload.get("underlying") or "").strip().upper()
+    expiry = str(payload.get("expiry") or payload.get("expiry_date") or payload.get("expiryDate") or "").strip()
+    window_start = str(payload.get("window_start") or payload.get("windowStart") or "").strip()
+    window_end = str(payload.get("window_end") or payload.get("windowEnd") or "").strip()
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    if exchange not in {"NFO", "BFO"}:
+        raise ValueError("exchange must be NFO or BFO")
+    if not underlying or not re.fullmatch(r"[A-Z0-9._&-]{1,40}", underlying):
+        raise ValueError("underlying is required")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry):
+        raise ValueError("expiry_date is required in YYYY-MM-DD format")
+    parsed: dict[str, datetime] = {}
+    for name, raw in (("window_start", window_start), ("window_end", window_end)):
+        try:
+            value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+        if value.tzinfo is None:
+            raise ValueError(f"{name} must include an explicit timezone")
+        parsed[name] = value
+    if parsed["window_start"] >= parsed["window_end"]:
+        raise ValueError("window_start must be before window_end")
+    default_key = (
+        f"options-acceptance-{exchange}-{underlying}-{expiry}-"
+        + parsed["window_end"].astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    )
+    run_key = str(payload.get("run_key") or payload.get("runKey") or default_key).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
+        raise ValueError("run_key contains unsupported characters")
+    run_rows = run_psql_json(f"""
+        SELECT trading.run_option_acceptance_gates(
+            {sql_literal(run_key)},{sql_literal(exchange)},{sql_literal(underlying)},
+            {sql_literal(expiry)}::date,{sql_literal(parsed['window_start'].isoformat())}::timestamptz,
+            {sql_literal(parsed['window_end'].isoformat())}::timestamptz,{sql_literal(actor)}
+        ) AS acceptance_run_id
+    """)
+    if len(run_rows) != 1 or not run_rows[0].get("acceptance_run_id"):
+        raise ValueError("option acceptance function returned no durable run id")
+    acceptance_run_id = int(run_rows[0]["acceptance_run_id"])
+    rows = run_psql_json(f"""
+        SELECT summary.*,
+               (SELECT jsonb_agg(jsonb_build_object(
+                    'gate_key',result.gate_key,'gate_name',result.gate_name,
+                    'status',result.status,'observed_value',result.observed_value,
+                    'threshold_value',result.threshold_value,'comparator',result.comparator,
+                    'failure_reason',result.failure_reason,'evidence',result.evidence
+                ) ORDER BY result.id)
+                FROM trading.option_acceptance_gate_results result
+                WHERE result.acceptance_run_id={acceptance_run_id}) AS gates
+        FROM trading.v_option_acceptance_gate_summary summary
+        WHERE summary.id={acceptance_run_id}
+    """)
+    if not rows:
+        raise ValueError("option acceptance run returned no durable result")
+    result = rows[0]
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("option acceptance violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_option_acceptance","run_option_acceptance",actor,
+        "trading.option_acceptance_gate_runs",result,
+        {"exchange":exchange,"underlying":underlying,"expiry":expiry,
+         "window_start":parsed["window_start"].isoformat(),"window_end":parsed["window_end"].isoformat()},
+    )
+    return result
+
+
+def run_office_operability_acceptance(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Jarvis").strip()
+    default_key = f"office-operability-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    run_key = str(payload.get("run_key") or payload.get("runKey") or default_key).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", run_key):
+        raise ValueError("run_key contains unsupported characters")
+    run_rows = run_psql_json(f"""
+        SELECT agent.run_office_operability_acceptance(
+            {sql_literal(run_key)},{sql_literal(actor)}
+        ) AS run_id
+    """)
+    if len(run_rows) != 1 or not run_rows[0].get("run_id"):
+        raise ValueError("office operability function returned no durable run id")
+    run_id = int(run_rows[0]["run_id"])
+    rows = run_psql_json(f"""
+        SELECT summary.*
+        FROM agent.v_office_operability_acceptance summary
+        WHERE summary.id={run_id}
+    """)
+    if not rows:
+        raise ValueError("office operability acceptance returned no durable result")
+    result = rows[0]
+    if result.get("broker_write_allowed") is not False:
+        raise ValueError("office operability acceptance violated its no-execution contract")
+    audit_api_write(
+        "ai_os_api_run_office_operability_acceptance","run_office_operability_acceptance",
+        actor,"agent.office_operability_runs",result,
+        {"run_key":run_key,"capital_action_allowed":False,"broker_write_allowed":False},
+    )
+    return result
+
+
+def refresh_option_valuation_sources(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    sources = payload.get("sources") or ["rate", "dividends"]
+    if not isinstance(sources, list) or not sources or any(item not in {"rate", "dividends"} for item in sources):
+        raise ValueError("sources must contain rate and/or dividends")
+    managed_python = Path(os.environ.get("AI_OS_PDF_PYTHON") or (Path.home() / "AI_OS_NODE" / "runtime" / "python" / "bin" / "python3"))
+    python_executable = str(managed_python) if managed_python.is_file() else sys.executable
+    command = [python_executable, str(RUNTIME_ROOT / "scripts" / "collect_option_valuation_sources.py"),
+               "--actor", actor, "--sources", *sources]
+    completed = subprocess.run(command, cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    result = _parse_engine_json(completed, "option valuation source collector")
+    if result.get("activated_policy") is not False or result.get("broker_write_allowed") is not False:
+        raise ValueError("valuation source collector violated its no-activation contract")
+    audit_api_write("ai_os_api_refresh_option_valuation_sources", "refresh_option_valuation_sources",
+                    actor, "trading.option_valuation_source_observations", result,
+                    {"sources": sources, "activated_policy": False, "broker_write_allowed": False})
+    return result
+
+
+def upsert_option_valuation_policy(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed=true is required to activate a valuation policy")
+    required = ("policy_key", "provider", "exchange", "underlying", "risk_free_rate",
+                "dividend_yield", "rate_observation_id", "dividend_observation_id",
+                "effective_from", "expires_at")
+    missing = [
+        field for field in required
+        if payload.get(field) is None or (isinstance(payload.get(field), str) and not payload[field].strip())
+    ]
+    if missing:
+        raise ValueError("missing required option valuation policy fields: " + ", ".join(missing))
+    policy_key = str(payload["policy_key"]).strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", policy_key):
+        raise ValueError("policy_key contains unsupported characters")
+    model = str(payload.get("model_family") or "black_scholes_merton").strip()
+    if model not in {"black_scholes_merton", "black_76"}:
+        raise ValueError("model_family must be black_scholes_merton or black_76")
+    risk_free_rate = float(payload.get("risk_free_rate"))
+    dividend_yield = float(payload.get("dividend_yield"))
+    if not -0.20 <= risk_free_rate <= 1.0 or not -0.20 <= dividend_yield <= 1.0:
+        raise ValueError("rates must be decimal values between -0.20 and 1.00")
+    rate_observation_id = int(payload.get("rate_observation_id"))
+    dividend_observation_id = int(payload.get("dividend_observation_id"))
+    underlying = str(payload["underlying"]).strip().upper()
+    evidence = run_psql_json(f"""
+        SELECT rate.id AS rate_observation_id,rate.value_decimal AS risk_free_rate,
+               rate.observed_at AS rate_source_timestamp,rate.source_url AS rate_source,
+               rate.raw_artifact_id AS rate_artifact_id,rate.content_hash AS rate_content_hash,
+               dividend.id AS dividend_observation_id,dividend.value_decimal AS dividend_yield,
+               dividend.observed_at AS dividend_source_timestamp,dividend.source_url AS dividend_source,
+               dividend.raw_artifact_id AS dividend_artifact_id,dividend.content_hash AS dividend_content_hash,
+               least(rate.valid_until,dividend.valid_until) AS valid_until
+        FROM trading.option_valuation_source_observations rate
+        JOIN trading.option_valuation_source_observations dividend ON true
+        WHERE rate.id={rate_observation_id} AND rate.metric_kind='risk_free_rate'
+          AND dividend.id={dividend_observation_id} AND dividend.metric_kind='dividend_yield'
+          AND upper(dividend.underlying)={sql_literal(underlying)}
+          AND rate.quality_status IN ('passed','warning')
+          AND dividend.quality_status IN ('passed','warning')
+          AND rate.valid_until > now() AND dividend.valid_until > now()
+    """)
+    if len(evidence) != 1:
+        raise ValueError("selected valuation observations are missing, expired, blocked, or do not match the underlying")
+    source = evidence[0]
+    if abs(float(source["risk_free_rate"]) - risk_free_rate) > 1e-9 or abs(float(source["dividend_yield"]) - dividend_yield) > 1e-9:
+        raise ValueError("submitted rates do not match the selected source observations")
+    timestamps: dict[str, datetime] = {}
+    for field in ("effective_from", "expires_at"):
+        raw = str(payload.get(field) or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{field} must be ISO-8601") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"{field} must include an explicit timezone")
+        timestamps[field] = parsed
+    if timestamps["effective_from"] >= timestamps["expires_at"]:
+        raise ValueError("effective_from must be before expires_at")
+    source_valid_until = datetime.fromisoformat(str(source["valid_until"]).replace("Z", "+00:00"))
+    if timestamps["expires_at"] > source_valid_until:
+        raise ValueError("policy expiry cannot exceed its source evidence validity")
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    source_artifact_ref = (
+        f"raw-artifact:{source['rate_artifact_id']}@{source['rate_content_hash']},"
+        f"raw-artifact:{source['dividend_artifact_id']}@{source['dividend_content_hash']}"
+    )
+    result = run_psql_json_statement(f"""
+        WITH upserted AS (
+        INSERT INTO trading.option_valuation_policies
+            (policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
+             day_count_convention,expiry_local_time,expiry_timezone,rate_source,rate_source_timestamp,
+             dividend_source,dividend_source_timestamp,source_artifact_ref,effective_from,expires_at,
+             validation_status,validated_by,validated_at,assumptions,active,broker_write_allowed,
+             rate_observation_id,dividend_observation_id,operator_confirmed)
+        VALUES ({sql_literal(policy_key)},{sql_literal(str(payload['provider']).strip())},
+                {sql_literal(str(payload['exchange']).strip().upper())},
+                {sql_literal(str(payload['underlying']).strip().upper())},{sql_literal(model)},
+                {sql_numeric(risk_free_rate, required=True, field_name='risk_free_rate')},
+                {sql_numeric(dividend_yield, required=True, field_name='dividend_yield')},
+                {sql_literal(str(payload.get('day_count_convention') or 'ACT/365F'))},
+                {sql_literal(str(payload.get('expiry_local_time') or '15:30:00'))}::time,
+                {sql_literal(str(payload.get('expiry_timezone') or 'Asia/Kolkata'))},
+                {sql_literal(source['rate_source'])},{sql_literal(str(source['rate_source_timestamp']))}::timestamptz,
+                {sql_literal(source['dividend_source'])},{sql_literal(str(source['dividend_source_timestamp']))}::timestamptz,
+                {sql_literal(source_artifact_ref)},{sql_literal(timestamps['effective_from'].isoformat())}::timestamptz,
+                {sql_literal(timestamps['expires_at'].isoformat())}::timestamptz,'validated',
+                {sql_literal(actor)},now(),{sql_jsonb(payload.get('assumptions') or {})},true,false,
+                {rate_observation_id},{dividend_observation_id},true)
+        ON CONFLICT (policy_key) DO UPDATE SET
+            risk_free_rate=EXCLUDED.risk_free_rate,dividend_yield=EXCLUDED.dividend_yield,
+            rate_source=EXCLUDED.rate_source,rate_source_timestamp=EXCLUDED.rate_source_timestamp,
+            dividend_source=EXCLUDED.dividend_source,dividend_source_timestamp=EXCLUDED.dividend_source_timestamp,
+            source_artifact_ref=EXCLUDED.source_artifact_ref,effective_from=EXCLUDED.effective_from,
+            expires_at=EXCLUDED.expires_at,validation_status='validated',validated_by=EXCLUDED.validated_by,
+            validated_at=now(),assumptions=EXCLUDED.assumptions,active=true,updated_at=now(),
+            rate_observation_id=EXCLUDED.rate_observation_id,
+            dividend_observation_id=EXCLUDED.dividend_observation_id,operator_confirmed=true
+        RETURNING id,policy_key,provider,exchange,underlying,model_family,risk_free_rate,dividend_yield,
+                  effective_from,expires_at,validation_status,source_artifact_ref,
+                  rate_observation_id,dividend_observation_id,operator_confirmed,false AS broker_write_allowed
+        )
+        SELECT coalesce(json_agg(row_to_json(upserted)),'[]'::json)::text FROM upserted;
+    """)
+    if not result:
+        raise ValueError("option valuation policy upsert returned no row")
+    audit_api_write("ai_os_api_upsert_option_valuation_policy", "upsert_option_valuation_policy",
+                    actor, "trading.option_valuation_policies", result[0], payload)
+    return result[0]
+
+
+def materialize_institutional_options(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Options Data Quality Agent").strip()
+    limit = max(1, min(100, int(payload.get("limit") or 20)))
+    interval = max(60, min(3600, int(payload.get("interval_seconds") or 300)))
+    completed = subprocess.run(
+        [sys.executable, str(RUNTIME_ROOT / "scripts" / "materialize_institutional_options.py"),
+         "--limit", str(limit), "--interval-seconds", str(interval)],
+        cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=300,
+    )
+    result = _parse_engine_json(completed, "institutional options materializer")
+    audit_api_write("ai_os_api_materialize_institutional_options", "materialize_institutional_options",
+                    actor, "ops.institutional_pipeline_runs", result, payload)
+    return result
+
+
+def import_sector_intelligence_package(payload: dict) -> dict:
+    package = payload.get("package")
+    if not isinstance(package, dict):
+        raise ValueError("package must be a sector-intelligence JSON object")
+    actor = str(payload.get("actor") or "Sector Data Steward").strip()
+    command = [sys.executable, str(RUNTIME_ROOT / "scripts" / "import_sector_intelligence_package.py"),
+               "--input", "-", "--actor", actor]
+    if payload.get("persist") is True:
+        command.append("--persist")
+    completed = subprocess.run(
+        command, cwd=RUNTIME_ROOT, input=json.dumps(package, default=str), text=True,
+        capture_output=True, check=False, timeout=300,
+    )
+    result = _parse_engine_json(completed, "sector intelligence package importer")
+    audit_api_write("ai_os_api_import_sector_intelligence_package", "import_sector_intelligence_package",
+                    actor, "sector_intelligence.source_import_runs", result,
+                    {"persist": payload.get("persist") is True, "package_hash": result.get("package_hash")})
+    return result
+
+
 def run_strategy_backtest(payload: dict) -> dict:
     try:
         candidate_id = int(payload.get("candidate_id") or payload.get("candidateId") or payload.get("strategy_id") or payload.get("strategyId"))
@@ -10252,6 +14973,10 @@ def run_strategy_backtest(payload: dict) -> dict:
         command.extend(["--timeframe", str(payload.get("timeframe"))])
     if payload.get("template"):
         command.extend(["--template", str(payload.get("template"))])
+    if payload.get("start_date") or payload.get("startDate"):
+        command.extend(["--start-date", str(payload.get("start_date") or payload.get("startDate"))])
+    if payload.get("end_date") or payload.get("endDate"):
+        command.extend(["--end-date", str(payload.get("end_date") or payload.get("endDate"))])
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "strategy backtest failed").strip()
@@ -10313,7 +15038,7 @@ def run_user_defined_strategy_optimizer(payload: dict) -> dict:
         sys.executable,
         str(RUNTIME_ROOT / "scripts" / "run_user_defined_strategy_optimizer.py"),
         "--run-key",
-        str(payload.get("run_key") or payload.get("runKey") or "user_strategy_optimizer_ui"),
+        str(payload.get("run_key") or payload.get("runKey") or f"user_strategy_optimizer_ui_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"),
         "--actor",
         str(payload.get("actor") or "Devarsh"),
         "--strategy-name",
@@ -11116,16 +15841,41 @@ def generate_special_situation_memo(payload: dict) -> dict:
 
 def generate_long_term_thesis_memo(payload: dict) -> dict:
     actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    exchange = str(payload.get("exchange") or "").strip().upper()
+    thesis_id = payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or payload.get("id")
+    if thesis_id not in (None, ""):
+        try:
+            thesis_id = int(thesis_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("holding_thesis_id must be an integer") from exc
+        rows = run_psql_json_statement(
+            f"""
+            SELECT coalesce(json_agg(row_to_json(thesis_rows)), '[]'::json)::text
+            FROM (
+                SELECT symbol, exchange
+                FROM portfolio.holding_theses
+                WHERE id = {thesis_id}
+                LIMIT 1
+            ) thesis_rows
+            """
+        )
+        if not rows:
+            raise ValueError(f"holding_thesis_id {thesis_id} not found")
+        resolved_symbol = str(rows[0].get("symbol") or "").strip().upper()
+        resolved_exchange = str(rows[0].get("exchange") or "").strip().upper()
+        if symbol and symbol != resolved_symbol:
+            raise ValueError("symbol does not match holding_thesis_id")
+        symbol = resolved_symbol
+        exchange = exchange or resolved_exchange
     command = [
         sys.executable,
         str(RUNTIME_ROOT / "scripts" / "generate_long_term_thesis_memo.py"),
         "--actor",
         actor,
     ]
-    symbol = str(payload.get("symbol") or "").strip().upper()
     if symbol:
         command.extend(["--symbol", symbol])
-    exchange = str(payload.get("exchange") or "").strip().upper()
     if exchange:
         command.extend(["--exchange", exchange])
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=180)
@@ -11252,6 +16002,8 @@ def update_long_term_valuation_model(payload: dict) -> dict:
         command.extend(["--outputs-json", json.dumps(payload.get("outputs") or {})])
     if "evidence" in payload:
         command.extend(["--evidence-json", json.dumps(payload.get("evidence") or [])])
+    if payload.get("operator_confirmed") is True or payload.get("operatorConfirmed") is True:
+        command.append("--operator-confirmed")
     completed = subprocess.run(command, cwd=VAULT_ROOT, text=True, capture_output=True, check=False, timeout=120)
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "long-term valuation update failed").strip()
@@ -11371,6 +16123,505 @@ def resolve_long_term_committee_decision(payload: dict) -> dict:
     audit_api_write("ai_os_api_resolve_long_term_committee_decision", "resolve_long_term_committee_decision", actor, "portfolio.long_term_committee_decisions", result, payload)
     return result
 
+
+
+def sync_research_case_official_sources(case_id: int, actor: str) -> dict:
+    """Link already-captured, extracted official filings before pricing model work."""
+    rows = run_psql_json_statement(f"""
+      WITH selected_case AS (
+        SELECT id,ticker FROM research.research_cases WHERE id={int(case_id)} LIMIT 1
+      ), qualified AS (
+        SELECT filing.* FROM research.corporate_filings filing
+        JOIN selected_case case_row ON upper(filing.symbol)=upper(case_row.ticker)
+        WHERE filing.source_url IS NOT NULL AND length(coalesce(filing.extracted_text,''))>100
+          AND filing.extraction_status IN ('extracted','validated','human_reviewed')
+        ORDER BY coalesce(filing.filed_at,filing.created_at) DESC,filing.id DESC LIMIT 12
+      ), linked AS (
+        INSERT INTO research.research_case_evidence (
+          research_case_id,source_kind,source_identifier,source_url,local_artifact_path,
+          publication_date,effective_date,captured_at,parser_status,validation_status,
+          citation_locator,dedupe_key,created_by
+        ) SELECT {int(case_id)},
+          CASE WHEN lower(coalesce(filing_type,'')) LIKE '%annual%' THEN 'annual_report' ELSE 'exchange_filing' END,
+          'corporate_filing:'||id,source_url,local_path,
+          coalesce(filed_at,created_at)::date,coalesce(filed_at,created_at)::date,created_at,
+          extraction_status,CASE WHEN extraction_status IN ('validated','human_reviewed')
+            THEN extraction_status ELSE 'machine_extracted' END,
+          jsonb_build_object('corporate_filing_id',id,'pdf_page_count',pdf_page_count,
+            'content_hash',content_hash,'title',title),
+          'corporate-filing:'||id||':'||coalesce(content_hash,md5(source_url)),{sql_literal(actor)}
+        FROM qualified
+        ON CONFLICT (research_case_id,dedupe_key) DO UPDATE SET
+          parser_status=EXCLUDED.parser_status,validation_status=EXCLUDED.validation_status,
+          citation_locator=EXCLUDED.citation_locator,local_artifact_path=EXCLUDED.local_artifact_path,
+          updated_at=now() RETURNING id,local_artifact_path,parser_status
+      ), existing_evidence AS (
+        SELECT id,local_artifact_path,parser_status FROM research.research_case_evidence
+        WHERE research_case_id={int(case_id)}
+      ), combined_evidence AS (
+        SELECT * FROM existing_evidence UNION SELECT * FROM linked
+      ), counts AS (
+        SELECT count(DISTINCT id)::integer source_count,
+          count(DISTINCT id) FILTER (WHERE local_artifact_path IS NOT NULL)::integer document_count,
+          count(DISTINCT id) FILTER (WHERE parser_status IN ('parsed','extracted','validated','human_reviewed'))::integer cached_document_count
+        FROM combined_evidence
+      ), updated_preflight AS (
+        UPDATE research.model_run_preflights preflight SET
+          source_count=counts.source_count,document_count=counts.document_count,
+          cached_document_count=counts.cached_document_count,updated_at=now()
+        FROM counts WHERE preflight.research_case_id={int(case_id)}
+          AND preflight.request_kind='research_case' AND preflight.status='awaiting_approval'
+        RETURNING preflight.approval_id
+      ), updated_approval AS (
+        UPDATE agent.approvals approval SET requested_action=
+          jsonb_set(jsonb_set(jsonb_set(coalesce(approval.requested_action,'{{}}'::jsonb),
+            '{{source_count}}',to_jsonb(counts.source_count),true),
+            '{{document_count}}',to_jsonb(counts.document_count),true),
+            '{{cached_document_count}}',to_jsonb(counts.cached_document_count),true)
+        FROM counts WHERE approval.id IN (SELECT approval_id FROM updated_preflight)
+          AND approval.status='pending' RETURNING approval.id
+      ) SELECT coalesce(json_agg(json_build_object('source_count',counts.source_count,
+        'document_count',counts.document_count,'cached_document_count',counts.cached_document_count,
+        'linked_or_refreshed',(SELECT count(*) FROM linked))), '[]'::json)::text FROM counts
+    """)
+    return rows[0] if rows else {"source_count": 0, "document_count": 0, "cached_document_count": 0}
+
+
+def sync_research_case_imported_research(case_id: int, actor: str) -> dict:
+    rows = run_psql_json_statement(f"""
+      WITH selected_case AS (SELECT id,company_id FROM research.research_cases WHERE id={int(case_id)}),
+      linked AS (
+        INSERT INTO research.research_case_evidence (research_case_id,source_kind,source_identifier,local_artifact_path,
+          captured_at,parser_status,validation_status,citation_locator,dedupe_key,created_by)
+        SELECT {int(case_id)},'user_supplied_historical_research','imported-research:'||artifact.id,artifact.local_artifact_path,
+          artifact.imported_at,artifact.parser_status,'needs_fresh_corroboration',
+          jsonb_build_object('imported_artifact_id',artifact.id,'title',artifact.title,'original_filename',artifact.original_filename,
+            'source_posture',artifact.source_posture,'accepted_current_fact',false),
+          'imported-research:'||artifact.id||':'||artifact.content_hash,{sql_literal(actor)}
+        FROM research.imported_company_research_artifacts artifact JOIN selected_case ON selected_case.company_id=artifact.company_id
+        ON CONFLICT (research_case_id,dedupe_key) DO UPDATE SET local_artifact_path=EXCLUDED.local_artifact_path,
+          parser_status=EXCLUDED.parser_status,validation_status='needs_fresh_corroboration',citation_locator=EXCLUDED.citation_locator,updated_at=now()
+        RETURNING id
+      ) SELECT coalesce(json_agg(json_build_object('linked',(SELECT count(*) FROM linked))),'[]'::json)::text
+    """)
+    return rows[0] if rows else {"linked": 0}
+
+
+def propose_research_case(payload: dict) -> dict:
+    result = propose_research_case_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+    )
+    research_case = result.get("research_case") if isinstance(result, dict) else None
+    if isinstance(research_case, dict) and research_case.get("id") and result.get("status") == "proposed":
+        result["source_sync"] = sync_research_case_official_sources(
+            int(research_case["id"]), str(payload.get("actor") or "Devarsh")
+        )
+        result["imported_research_sync"] = sync_research_case_imported_research(
+            int(research_case["id"]), str(payload.get("actor") or "Devarsh")
+        )
+        result["model_preflight"] = ensure_research_case_preflight(
+            int(research_case["id"]),
+            actor=str(payload.get("actor") or "Devarsh"),
+            run_rows=run_psql_json,
+            create_preflight=create_research_model_preflight,
+        )
+    audit_api_write("ai_os_api_propose_research_case", "propose_research_case", str(payload.get("actor") or "Devarsh"), "research.research_cases", result, payload)
+    return result
+
+
+def start_research_case(payload: dict) -> dict:
+    requested_case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    source_queue = queue_case_sources(
+        requested_case_id, str(payload.get("actor") or "Devarsh"),
+        run_statement=run_psql_json_statement, sql_literal=sql_literal,
+    ) if requested_case_id else {"queued": 0, "candidate_count": 0}
+    result = start_research_case_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+        start_graph=start_graph_control_run,
+    )
+    research_case = result.get("research_case") if isinstance(result, dict) else None
+    if not isinstance(research_case, dict) or not research_case.get("id"):
+        raise RuntimeError("Research Case start did not return a durable case")
+    preflight_id = int(payload.get("model_preflight_id") or payload.get("modelPreflightId") or 0)
+    result["source_queue"] = source_queue
+    if int(source_queue.get("queued") or 0) > 0:
+        run_psql_json_statement(f"""
+          WITH updated AS (UPDATE research.research_cases SET status='collecting',
+            lead_status='collecting_official_sources',current_goal='Collect and parse bounded official filings automatically',
+            last_progress_at=now(),updated_at=now() WHERE id={int(research_case['id'])} RETURNING id),
+          event AS (INSERT INTO research.research_case_events
+            (research_case_id,event_type,event_status,event_summary,actor,event_payload)
+            VALUES ({int(research_case['id'])},'source_collection','running',
+              'Approval recorded. The stack is collecting and extracting its existing official source archive before paid specialist analysis.',
+              {sql_literal(str(payload.get('actor') or 'Devarsh'))},{sql_jsonb({'automatic': True, 'queued': int(source_queue.get('queued') or 0)})}) RETURNING id)
+          SELECT coalesce(json_agg(row_to_json(event)),'[]'::json)::text FROM event
+        """)
+        result["model_dispatch_allowed"] = False
+        result["autonomous_runtime"] = {
+            "status": "collecting_official_sources", "model_run_count": 0,
+            "source_count": int(result.get("source_count") or 0),
+            "queued_source_jobs": int(source_queue.get("queued") or 0),
+            "detail": "The stack is extracting bounded official filings locally. It will dispatch agents automatically when the source packet is ready.",
+            "private_data_egress_allowed": False, "external_write_allowed": False, "capital_action_allowed": False,
+        }
+        audit_api_write("ai_os_api_start_research_case", "start_research_case", str(payload.get("actor") or "Devarsh"), "research.research_cases", result, payload)
+        return result
+    if result.get("model_dispatch_allowed") is False:
+        result["autonomous_runtime"] = {
+            "status": "waiting_for_qualified_public_sources",
+            "model_run_count": 0,
+            "source_count": int(result.get("source_count") or 0),
+            "detail": "Research Case is active for source collection. Paid model roles will not run until at least one qualified public source is captured and approved.",
+            "private_data_egress_allowed": False,
+            "external_write_allowed": False,
+            "capital_action_allowed": False,
+        }
+        audit_api_write("ai_os_api_start_research_case", "start_research_case", str(payload.get("actor") or "Devarsh"), "research.research_cases", result, payload)
+        return result
+    result["autonomous_runtime"] = prepare_research_case_runtime(
+        int(research_case["id"]),
+        preflight_id,
+        actor=str(payload.get("actor") or "Devarsh"),
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+    )
+    audit_api_write("ai_os_api_start_research_case", "start_research_case", str(payload.get("actor") or "Devarsh"), "research.research_cases", result, payload)
+    return result
+
+def prepare_research_case_resume(payload: dict) -> dict:
+    case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    if not case_id:
+        raise ValueError("research_case_id is required")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    case_rows = run_psql_json(f"SELECT id,status FROM research.research_cases WHERE id={case_id} LIMIT 1")
+    if not case_rows:
+        raise ValueError("Research Case was not found")
+    preflight = ensure_research_case_preflight(
+        case_id, actor=actor, run_rows=run_psql_json,
+        create_preflight=create_research_model_preflight, force_new=True,
+    )
+    run_psql_json_statement(f"""
+      WITH blocker AS (
+        INSERT INTO research.research_case_blockers
+          (research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,metadata)
+        VALUES ({case_id},'independent_review','review',
+          'Independent review requires a corrected research iteration',
+          'The prior packet failed numeric provenance and valuation-readiness checks. No committee decision or report was accepted.',
+          'The stack corrected INR-million to lakh normalization, rebuilt validated facts and prepared a fresh bounded public-only cost plan.',
+          'Review the new estimate and hard ceiling, then explicitly approve Resume.','open','high',
+          {sql_jsonb({'preflight_id': int(preflight['id']), 'no_model_invocation': True})})
+        ON CONFLICT (research_case_id,blocker_key) DO UPDATE SET
+          title=EXCLUDED.title,detail=EXCLUDED.detail,system_action=EXCLUDED.system_action,
+          user_action=EXCLUDED.user_action,status='open',severity=EXCLUDED.severity,
+          metadata=EXCLUDED.metadata,resolved_at=NULL,resolution=NULL,updated_at=now() RETURNING id
+      ), event AS (
+        INSERT INTO research.research_case_events
+          (research_case_id,event_type,event_status,event_summary,actor,event_payload)
+        VALUES ({case_id},'resume_cost_plan','awaiting_approval',
+          'A corrected public-only analysis iteration is ready for cost review; no model was called.',
+          {sql_literal(actor)},{sql_jsonb({'preflight_id': int(preflight['id']), 'no_model_invocation': True})}) RETURNING id
+      ) SELECT coalesce(json_agg(json_build_object('blocker_id',blocker.id,'event_id',event.id)),'[]'::json)::text FROM blocker CROSS JOIN event
+    """)
+    result = {"case_id": case_id, "preflight": preflight, "no_model_invocation": True}
+    audit_api_write("ai_os_api_prepare_research_case_resume", "prepare_research_case_resume", actor, "research.model_run_preflights", result, payload)
+    return result
+
+
+def repair_research_case(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before repairing a Research Case")
+    case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    if not case_id:
+        raise ValueError("research_case_id is required")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    requested_preflight_id = int(payload.get("model_preflight_id") or payload.get("modelPreflightId") or 0)
+    source_queue = queue_case_sources(case_id, actor, run_statement=run_psql_json_statement, sql_literal=sql_literal)
+    refresh_rows = run_psql_json(f"""
+      SELECT preflight.id preflight_id,preflight.status preflight_status,
+        coalesce((SELECT jsonb_array_length(packet.public_context->'evidence')
+          FROM research.research_case_public_packets packet WHERE packet.research_case_id={case_id}
+          ORDER BY packet.packet_version DESC LIMIT 1),0)::integer packet_evidence_count,
+        (SELECT count(*) FROM research.research_case_evidence evidence
+          WHERE evidence.research_case_id={case_id})::integer current_evidence_count
+      FROM research.model_run_preflights preflight
+      WHERE preflight.research_case_id={case_id} AND preflight.status='approved'
+        AND ({requested_preflight_id}=0 OR preflight.id={requested_preflight_id})
+      ORDER BY preflight.id DESC LIMIT 1
+    """)
+    refresh = refresh_rows[0] if refresh_rows else {}
+    if (requested_preflight_id or payload.get("force_new_iteration") is True) and not refresh:
+        raise ValueError("The refreshed public-only cost plan must be explicitly approved before Resume")
+    needs_fresh_iteration = (
+        int(source_queue.get("queued") or 0) == 0
+        and refresh.get("preflight_status") == "approved"
+        and (
+            payload.get("force_new_iteration") is True
+            or int(refresh.get("current_evidence_count") or 0) > int(refresh.get("packet_evidence_count") or 0)
+        )
+    )
+    if needs_fresh_iteration:
+        runtime = prepare_research_case_runtime(
+            case_id, int(refresh["preflight_id"]), actor=actor,
+            run_rows=run_psql_json, run_statement=run_psql_json_statement,
+            sql_literal=sql_literal, sql_jsonb=sql_jsonb, force_new_iteration=True,
+        )
+        run_psql_json_statement(f"""
+          WITH updated AS (UPDATE research.research_cases SET status='active',lead_status='specialists_running',
+            current_goal='Run refreshed specialist analysis across the complete qualified public packet',
+            decision_readiness='needs_research',last_progress_at=now(),updated_at=now() WHERE id={case_id} RETURNING id),
+          event AS (INSERT INTO research.research_case_events
+            (research_case_id,event_type,event_status,event_summary,actor,event_payload)
+            VALUES ({case_id},'case_iteration','started',
+              'A new governed analysis iteration started from the expanded qualified public source packet.',
+              {sql_literal(actor)},{sql_jsonb({'automatic': True, 'source_queue': source_queue})}) RETURNING id)
+          SELECT coalesce(json_agg(row_to_json(event)),'[]'::json)::text FROM event
+        """)
+        run_psql_json_statement(f"""
+          UPDATE research.research_case_blockers SET status='retrying',retry_count=retry_count+1,
+            next_retry_at=NULL,system_action='Corrected packet approved; specialist analysis and independent review are running.',
+            user_action=NULL,updated_at=now()
+          WHERE research_case_id={case_id} AND blocker_key='independent_review'
+        """)
+        result = {"case_id": case_id, "requeued_roles": runtime.get("queued_roles") or [],
+          "source_queue": source_queue, "autonomous_runtime": runtime, "fresh_iteration": True}
+        audit_api_write("ai_os_api_repair_research_case", "repair_research_case", actor, "research.research_cases", result, payload)
+        return result
+    rows = run_psql_json_statement(f"""
+      WITH latest AS (
+        SELECT DISTINCT ON (role_key) * FROM research.research_case_model_runs
+        WHERE research_case_id={case_id} ORDER BY role_key,iteration DESC,attempt DESC,id DESC
+      ), repairable AS (
+        SELECT * FROM latest WHERE
+          (status IN ('failed','blocked') AND attempt<3
+            AND exception_detail SIMILAR TO '%(invalid_json|missing_key|structured_output_parse_failed)%')
+          OR (role_key IN ('lead_synthesis','executive_summary','independent_review')
+            AND status='needs_revision' AND attempt<4)
+      ), inserted AS (
+        INSERT INTO research.research_case_model_runs (
+          research_case_id,public_packet_id,preflight_id,role_key,agent_name,run_key,iteration,attempt,status,
+          route_name,provider,model_name,output_contract
+        ) SELECT research_case_id,public_packet_id,preflight_id,role_key,agent_name,
+          run_key||'-repair-'||(attempt+1),iteration,attempt+1,
+          CASE WHEN role_key='lead_synthesis' THEN 'queued' ELSE 'awaiting_dependencies' END,route_name,provider,model_name,output_contract
+        FROM repairable ON CONFLICT (research_case_id,role_key,iteration,attempt) DO UPDATE SET
+          status=CASE WHEN research.research_case_model_runs.status='completed' THEN 'completed' ELSE 'queued' END,
+          exception_detail=NULL,updated_at=now() RETURNING role_key
+      ), agent_updated AS (
+        UPDATE research.research_case_agent_runs agent_run SET status='queued',
+          exceptions=coalesce(exceptions,'[]'::jsonb)||jsonb_build_array(jsonb_build_object(
+            'kind','runtime_parser_repair','detail','Safe structured-output parser deployed; bounded retry queued.')),
+          updated_at=now() WHERE research_case_id={case_id} AND role_key IN (SELECT role_key FROM inserted)
+        RETURNING graph_node_run_id,task_id
+      ), node_updated AS (
+        UPDATE agent.graph_node_runs node SET status='queued',error='{{}}'::jsonb,finished_at=NULL,updated_at=now()
+        WHERE id IN (SELECT graph_node_run_id FROM agent_updated) RETURNING task_id
+      ), task_updated AS (
+        UPDATE agent.tasks task SET status='queued',updated_at=now()
+        WHERE id IN (SELECT task_id FROM node_updated) RETURNING id
+      ), blocker_resolved AS (
+        UPDATE research.research_case_blockers SET status='resolved',resolved_at=now(),
+          resolution='Runtime parser repaired; bounded specialist retry queued.',updated_at=now()
+        WHERE research_case_id={case_id} AND blocker_key='model_output_contract' RETURNING id
+      ), case_updated AS (
+        UPDATE research.research_cases SET status=CASE WHEN {int(source_queue.get('queued') or 0)}>0 THEN 'collecting' ELSE 'active' END,
+          lead_status=CASE WHEN {int(source_queue.get('queued') or 0)}>0 THEN 'collecting_official_sources' ELSE 'bounded_runtime_repair' END,
+          current_goal=CASE WHEN {int(source_queue.get('queued') or 0)}>0 THEN 'Collect and parse bounded official filings automatically'
+            ELSE 'Resume specialist analysis with repaired structured-output validation' END,
+          decision_readiness='needs_research',last_progress_at=now(),updated_at=now() WHERE id={case_id} RETURNING id
+      ), event AS (
+        INSERT INTO research.research_case_events (research_case_id,event_type,event_status,event_summary,actor,event_payload)
+        VALUES ({case_id},'case_repair','resumed',
+          'The stack repaired the structured-output failure, queued bounded retries and resumed autonomous source work.',
+          {sql_literal(actor)},jsonb_build_object('requeued_roles',coalesce((SELECT jsonb_agg(role_key) FROM inserted),'[]'::jsonb),
+            'source_jobs_queued',{int(source_queue.get('queued') or 0)})) RETURNING id
+      ) SELECT coalesce(json_agg(json_build_object('case_id',{case_id},'requeued_roles',
+        coalesce((SELECT jsonb_agg(role_key) FROM inserted),'[]'::jsonb),'source_queue',{sql_jsonb(source_queue)},'event_id',event.id)),'[]'::json)::text FROM event
+    """)
+    result = rows[0] if rows else {"case_id": case_id, "requeued_roles": [], "source_queue": source_queue}
+    audit_api_write("ai_os_api_repair_research_case", "repair_research_case", actor, "research.research_cases", result, payload)
+    return result
+
+
+def create_research_model_preflight(payload: dict) -> dict:
+    result = create_model_run_preflight_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+    )
+    audit_api_write("ai_os_api_create_research_model_preflight", "create_research_model_preflight", str(payload.get("actor") or "Devarsh"), "research.model_run_preflights", result, payload)
+    return result
+
+
+def approve_research_model_preflight(payload: dict) -> dict:
+    result = approve_model_run_preflight_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+    )
+    audit_api_write("ai_os_api_approve_research_model_preflight", "approve_research_model_preflight", str(payload.get("actor") or "Devarsh"), "research.model_run_preflights", result, payload)
+    return result
+
+
+def configure_research_public_model_canary(payload: dict) -> dict:
+    result = configure_public_model_canary_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+    )
+    audit_api_write("ai_os_api_configure_research_public_model_canary", "configure_research_public_model_canary", str(payload.get("actor") or "Devarsh"), "research.public_model_canary_runs", result, payload)
+    return result
+
+
+def run_research_public_model_canary(payload: dict) -> dict:
+    result = run_public_model_canary_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+        openrouter_chat=openrouter_chat,
+    )
+    audit_api_write("ai_os_api_run_research_public_model_canary", "run_research_public_model_canary", str(payload.get("actor") or "Devarsh"), "research.public_model_canary_runs", result, payload)
+    return result
+
+
+def link_research_case_upload(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before linking uploaded evidence")
+    case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    if not case_id:
+        raise ValueError("research_case_id is required")
+    artifact_path = Path(str(payload.get("local_artifact_path") or ""))
+    ssd_root = Path("/Volumes/Devarsh SSD")
+    if not ssd_root.is_mount() or ssd_root not in artifact_path.parents or not artifact_path.is_file():
+        raise ValueError("uploaded evidence must be an existing file on mounted Devarsh SSD")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    source_identifier = str(payload.get("source_identifier") or payload.get("content_hash") or artifact_path.name).strip()
+    dedupe_key = str(payload.get("content_hash") or source_identifier).strip()
+    parser_status = str(payload.get("parser_status") or "registered").strip().lower()
+    citation_locator = payload.get("citation_locator") if isinstance(payload.get("citation_locator"), dict) else {}
+    rows = run_psql_json_statement(f"""
+      WITH linked AS (
+        INSERT INTO research.research_case_evidence (
+          research_case_id,source_kind,source_identifier,local_artifact_path,
+          captured_at,parser_status,validation_status,citation_locator,dedupe_key,created_by
+        ) SELECT {case_id},'user_supplied_research',{sql_literal(source_identifier)},
+          {sql_literal(str(artifact_path))},now(),{sql_literal(parser_status)},'pending',
+          {sql_jsonb(citation_locator)},{sql_literal(dedupe_key)},{sql_literal(actor)}
+        WHERE EXISTS (SELECT 1 FROM research.research_cases WHERE id={case_id})
+        ON CONFLICT (research_case_id,dedupe_key) DO UPDATE SET
+          parser_status=EXCLUDED.parser_status,citation_locator=EXCLUDED.citation_locator,
+          local_artifact_path=EXCLUDED.local_artifact_path,updated_at=now()
+        RETURNING *
+      ), event AS (
+        INSERT INTO research.research_case_events (
+          research_case_id,event_type,event_status,event_summary,actor,event_payload
+        ) SELECT {case_id},'evidence_uploaded','needs_review',
+          'User-supplied evidence linked; validation remains pending.',{sql_literal(actor)},
+          jsonb_build_object('evidence_id',linked.id,'dedupe_key',linked.dedupe_key,
+            'parser_status',linked.parser_status,'validation_status',linked.validation_status)
+        FROM linked RETURNING id
+      ) SELECT coalesce(json_agg(row_to_json(linked)), '[]'::json)::text FROM linked
+    """)
+    if not rows:
+        raise ValueError("research case was not found")
+    result = rows[0]
+    audit_api_write("ai_os_api_link_research_case_upload", "link_research_case_upload", actor, "research.research_case_evidence", result, payload)
+    return result
+
+
+
+def preflight_long_term_thesis_report(payload: dict) -> dict:
+    thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or 0)
+    if not thesis_id:
+        raise ValueError("holding_thesis_id is required")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    snapshot_rows = run_psql_json(f"""
+      SELECT min(sf.fiscal_year) AS fiscal_year_start,max(sf.fiscal_year) AS fiscal_year_end,
+        count(*)::integer AS validated_fact_count,count(DISTINCT sf.production_run_id)::integer AS source_document_count,
+        count(DISTINCT sf.source_page)::integer AS cited_page_count
+      FROM research.financial_source_facts sf
+      WHERE sf.company_id=(SELECT company_id FROM portfolio.holding_theses WHERE id={thesis_id})
+        AND sf.extraction_status IN ('validated','human_reviewed')
+    """)
+    snapshot = snapshot_rows[0] if snapshot_rows else {}
+    preflight_key = f"thesis-report-{thesis_id}-{secrets.token_urlsafe(9)}"
+    result_rows = run_psql_json_statement(f"""
+      WITH inserted AS (
+        INSERT INTO research.report_generation_preflights
+          (preflight_key,holding_thesis_id,requested_by,source_snapshot,data_boundary,
+           estimated_cost_usd,hard_max_cost_usd,estimated_duration_seconds,model_invocation,external_egress,status)
+        VALUES ({sql_literal(preflight_key)},{thesis_id},{sql_literal(actor)},{sql_jsonb(snapshot)},
+          'local_ssd_only',0,0,20,false,false,'pending_confirmation')
+        RETURNING id,preflight_key,holding_thesis_id,source_snapshot,data_boundary,estimated_cost_usd,
+          hard_max_cost_usd,estimated_duration_seconds,model_invocation,external_egress,status,expires_at
+      ) SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text FROM inserted
+    """)
+    if not result_rows:
+        raise RuntimeError("report_preflight_not_persisted")
+    result = result_rows[0]
+    result["confirmation_required"] = True
+    result["estimate_note"] = "This report is a deterministic local render: no model call, paid data call, broker action, or external egress. Outputs stay on the external SSD."
+    audit_api_write("ai_os_api_preflight_long_term_thesis_report", "preflight_long_term_thesis_report", actor, "research.report_generation_preflights", result, payload)
+    return result
+
+
+def generate_long_term_thesis_report(payload: dict) -> dict:
+    thesis_id = int(payload.get("holding_thesis_id") or payload.get("holdingThesisId") or payload.get("thesis_id") or 0)
+    if not thesis_id:
+        raise ValueError("holding_thesis_id is required")
+    preflight_id = int(payload.get("report_preflight_id") or payload.get("reportPreflightId") or 0)
+    if not preflight_id or payload.get("operator_confirmed") is not True:
+        raise PermissionError("Generate requires a current local report preflight and explicit confirmation.")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    accepted = run_psql_json_statement(f"""
+      WITH updated AS (
+        UPDATE research.report_generation_preflights
+        SET status='approved',approved_by={sql_literal(actor)},approved_at=now()
+        WHERE id={preflight_id} AND holding_thesis_id={thesis_id}
+          AND status='pending_confirmation' AND expires_at>now()
+        RETURNING id
+      ) SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated
+    """)
+    if not accepted:
+        raise PermissionError("Report preflight is missing, expired, already used, or belongs to another thesis.")
+    try:
+        result = generate_thesis_report_helper(
+            thesis_id=thesis_id,
+            actor=actor,
+            run_rows=run_psql_json,
+            run_statement=run_psql_json_statement,
+            sql_literal=sql_literal,
+            sql_jsonb=sql_jsonb,
+        )
+    except Exception:
+        run_psql_json_statement(f"""WITH updated AS (
+          UPDATE research.report_generation_preflights SET status='failed',completed_at=now()
+          WHERE id={preflight_id} RETURNING id
+        ) SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated""")
+        raise
+    run_psql_json_statement(f"""WITH updated AS (
+      UPDATE research.report_generation_preflights
+      SET status='completed',completed_at=now(),artifact_refs={sql_jsonb(result)}
+      WHERE id={preflight_id} RETURNING id
+    ) SELECT coalesce(json_agg(row_to_json(updated)), '[]'::json)::text FROM updated""")
+    audit_api_write("ai_os_api_generate_long_term_thesis_report", "generate_long_term_thesis_report", actor, "research.thesis_reports", result, payload)
+    return result
 
 def dispatch_long_term_specialists(payload: dict) -> dict:
     actor = str(payload.get("actor") or "Long-Term Portfolio Manager").strip()
@@ -12818,13 +18069,13 @@ def get_model_route(route_name: str) -> dict:
     return {
         "route_name": route_name,
         "task_class": "chat",
-        "default_provider": "ollama",
-        "default_model": "llama3.2:3b",
-        "escalation_provider": "codex_or_cloud",
-        "escalation_model": "frontier_on_approval",
-        "max_cost_tier": "hybrid",
-        "notes": "Fallback model route from API defaults.",
-        "enabled": True,
+        "default_provider": "local_tools",
+        "default_model": "deterministic_router_v1",
+        "escalation_provider": None,
+        "escalation_model": None,
+        "max_cost_tier": "local",
+        "notes": "Route missing or disabled; deterministic fail-closed response only.",
+        "enabled": False,
     }
 
 
@@ -12885,6 +18136,19 @@ def estimate_model_call_cost(
     }
 
 
+COST_TIER_RANK = {
+    "local": 0,
+    "local_plus": 1,
+    "cloud_low": 2,
+    "cloud_medium": 3,
+    "frontier": 4,
+}
+
+
+def cost_tier_allowed(route_tier: str | None, maximum_tier: str | None) -> bool:
+    return COST_TIER_RANK.get(str(route_tier or ""), 99) <= COST_TIER_RANK.get(str(maximum_tier or ""), -1)
+
+
 def choose_chat_model_call(payload: dict, prompt: str) -> dict:
     agent_name = str(payload.get("assistant_name") or payload.get("assistantName") or "Charlie Munger").strip()
     privacy_class = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
@@ -12899,6 +18163,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                assignment.fallback_route, assignment.escalation_route,
                assignment.max_autonomous_cost_tier,
                cap.cloud_requires_approval, cap.autonomous_cloud_allowed,
+               cap.max_cost_tier AS cap_max_cost_tier,
                cap.hard_stop_on_breach, cap.daily_cap_usd, cap.monthly_cap_usd,
                cap.cost_today_usd, cap.cost_month_usd,
                cap.daily_remaining_usd, cap.monthly_remaining_usd,
@@ -12918,7 +18183,7 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
     # Specialist prompts must fail closed. A conversation-only model is not a
     # valid fallback for research, valuation, filing, strategy, or backtest work.
     fallback_candidates = (
-        (requested_route, assignment.get("fallback_route"), CHAT_MODEL_ROUTE)
+        (requested_route, assignment.get("fallback_route"), assignment.get("escalation_route"), CHAT_MODEL_ROUTE)
         if requested_route == CHAT_MODEL_ROUTE
         else (requested_route,)
     )
@@ -12957,13 +18222,23 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                 reason = "model_unavailable"
             else:
                 reason = str(governance.get("reason") or "evaluation_required")
-        elif provider == "openrouter":
+        elif provider in CLOUD_CHAT_PROVIDERS:
+            max_completion_tokens = (
+                OPENAI_MAX_OUTPUT_TOKENS if provider == "openai" else OPENROUTER_MAX_COMPLETION_TOKENS
+            )
             cost_estimate = estimate_model_call_cost(
                 provider,
                 model_name,
                 len(prompt),
-                OPENROUTER_MAX_COMPLETION_TOKENS,
+                max_completion_tokens,
             )
+            try:
+                system_budget_rows = run_psql_json(
+                    "SELECT * FROM agent.v_system_model_budget_status WHERE policy_key='ai_os_cloud' LIMIT 1"
+                )
+            except RuntimeError:
+                system_budget_rows = []
+            system_budget = system_budget_rows[0] if system_budget_rows else None
             daily_cap = Decimal(str(assignment.get("daily_cap_usd") or 0))
             monthly_cap = Decimal(str(assignment.get("monthly_cap_usd") or 0))
             cost_today = Decimal(str(assignment.get("cost_today_usd") or 0))
@@ -12971,6 +18246,8 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             cost_block_reason = None
             if cost_estimate is None:
                 cost_block_reason = "cost_rate_missing"
+            elif system_budget is None:
+                cost_block_reason = "system_cloud_budget_unavailable"
             elif daily_cap <= 0 or monthly_cap <= 0:
                 cost_block_reason = "cloud_budget_disabled"
             else:
@@ -12979,23 +18256,44 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
                     cost_block_reason = "daily_cost_cap_would_breach"
                 elif cost_month + estimated_cost > monthly_cap:
                     cost_block_reason = "monthly_cost_cap_would_breach"
+                elif estimated_cost > Decimal(str(system_budget.get("daily_remaining_usd") or 0)):
+                    cost_block_reason = "system_daily_cost_cap_would_breach"
+                elif estimated_cost > Decimal(str(system_budget.get("monthly_remaining_usd") or 0)):
+                    cost_block_reason = "system_monthly_cost_cap_would_breach"
+                elif str(system_budget.get("budget_status") or "unconfigured") in {
+                    "daily_hard_cap_breach", "monthly_hard_cap_breach", "disabled"
+                }:
+                    cost_block_reason = "system_cloud_budget_hard_stop"
+            route_cost_tier = str((cost_estimate or {}).get("cost_tier") or route.get("max_cost_tier") or "frontier")
+            autonomous_cloud = (
+                bool(assignment.get("autonomous_cloud_allowed"))
+                and not bool(assignment.get("cloud_requires_approval", True))
+                and cost_tier_allowed(route_cost_tier, assignment.get("max_autonomous_cost_tier"))
+            )
+            approved_cloud = (
+                cloud_approved
+                and cost_tier_allowed(route_cost_tier, assignment.get("cap_max_cost_tier"))
+            )
+            provider_has_key = bool(OPENAI_API_KEY) if provider == "openai" else bool(OPENROUTER_API_KEY)
             available = (
-                bool(OPENROUTER_API_KEY)
-                and cloud_approved
+                provider_has_key
+                and (autonomous_cloud or approved_cloud)
                 and privacy_class in {"public", "internal"}
                 and not contains_client_data
                 and cost_block_reason is None
             )
-            if not OPENROUTER_API_KEY:
-                reason = "openrouter_key_unavailable"
-            elif not cloud_approved:
-                reason = "explicit_cloud_approval_required"
+            if not provider_has_key:
+                reason = f"{provider}_key_unavailable"
             elif privacy_class not in {"public", "internal"} or contains_client_data:
                 reason = "cloud_route_blocks_client_private_context"
+            elif not autonomous_cloud and not cloud_approved:
+                reason = "explicit_cloud_approval_required"
+            elif cloud_approved and not approved_cloud:
+                reason = "approved_route_exceeds_agent_cost_tier"
             elif cost_block_reason:
                 reason = cost_block_reason
             else:
-                reason = "available"
+                reason = "available_autonomous_capped" if autonomous_cloud and not cloud_approved else "available_explicit_approval"
         elif provider in {"local_python", "deterministic", "local_tools"}:
             available = False
             reason = "deterministic_tool_route_not_chat_model"
@@ -13006,13 +18304,14 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             "route_name": route_name, "provider": provider,
             "model_name": model_name, "available_for_chat": available, "reason": reason,
         }
-        if provider == "openrouter":
+        if provider in CLOUD_CHAT_PROVIDERS:
             candidate_record["cost_estimate"] = cost_estimate
             candidate_record["cost_cap"] = {
                 "daily_cap_usd": float(Decimal(str(assignment.get("daily_cap_usd") or 0))),
                 "monthly_cap_usd": float(Decimal(str(assignment.get("monthly_cap_usd") or 0))),
                 "cost_today_usd": float(Decimal(str(assignment.get("cost_today_usd") or 0))),
                 "cost_month_usd": float(Decimal(str(assignment.get("cost_month_usd") or 0))),
+                "system_budget": system_budget,
                 "hard_stop_on_breach": bool(assignment.get("hard_stop_on_breach", True)),
                 "cap_status": str(assignment.get("cap_status") or "unconfigured"),
             }
@@ -13020,7 +18319,11 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
             candidate_record["governance"] = governance
         candidates.append(candidate_record)
         if selected is None and available:
-            selected = {**route, "_cost_estimate": cost_estimate if provider == "openrouter" else None}
+            selected = {
+                **route,
+                "_cost_estimate": cost_estimate if provider in CLOUD_CHAT_PROVIDERS else None,
+                "_autonomous_cloud": autonomous_cloud if provider in CLOUD_CHAT_PROVIDERS else False,
+            }
 
     policy = run_psql_json(
         f"SELECT * FROM agent.model_privacy_policies WHERE privacy_class={sql_literal(privacy_class)} LIMIT 1"
@@ -13031,10 +18334,10 @@ def choose_chat_model_call(payload: dict, prompt: str) -> dict:
         block_reasons.append("client_data_requires_client_private_or_restricted_class")
     if len(prompt) > int(policy["max_context_chars"]):
         block_reasons.append("context_exceeds_privacy_policy_limit")
-    if selected and str(selected.get("default_provider")) == "openrouter":
+    if selected and str(selected.get("default_provider")) in CLOUD_CHAT_PROVIDERS:
         if not bool(policy.get("cloud_model_allowed")):
             block_reasons.append("privacy_policy_blocks_cloud_model")
-        if not cloud_approved:
+        if not cloud_approved and not bool(selected.get("_autonomous_cloud")):
             block_reasons.append("explicit_cloud_approval_required")
         if contains_client_data or privacy_class not in {"public", "internal"}:
             block_reasons.append("cloud_route_blocks_client_private_context")
@@ -13215,7 +18518,8 @@ def request_model_escalation(payload: dict) -> dict:
 
 
 def record_selected_model_usage(decision: dict, model_status: str, usage: dict | None = None) -> None:
-    if str(decision.get("selected_provider") or "") != "openrouter":
+    provider = str(decision.get("selected_provider") or "")
+    if provider not in CLOUD_CHAT_PROVIDERS:
         return
     route_record = decision.get("selected_route_record") or {}
     estimate = route_record.get("_cost_estimate") or {}
@@ -13223,7 +18527,8 @@ def record_selected_model_usage(decision: dict, model_status: str, usage: dict |
         return
     usage = usage or {}
     prompt_tokens_est = int(estimate.get("prompt_tokens_est") or 1)
-    completion_tokens_est = int(estimate.get("completion_tokens_reserved") or OPENROUTER_MAX_COMPLETION_TOKENS)
+    default_completion_tokens = OPENAI_MAX_OUTPUT_TOKENS if provider == "openai" else OPENROUTER_MAX_COMPLETION_TOKENS
+    completion_tokens_est = int(estimate.get("completion_tokens_reserved") or default_completion_tokens)
     actual_prompt_tokens = int(usage.get("prompt_tokens") or 0)
     actual_completion_tokens = int(usage.get("completion_tokens") or 0)
     actual_total_tokens = int(usage.get("total_tokens") or 0)
@@ -13249,7 +18554,7 @@ def record_selected_model_usage(decision: dict, model_status: str, usage: dict |
             ) VALUES (
                 'model_call_decision', {sql_literal(source_ref)},
                 {sql_literal(decision.get('agent_name'))}, {sql_literal(decision.get('selected_route'))},
-                'openrouter', {sql_literal(decision.get('selected_model'))},
+                {sql_literal(provider)}, {sql_literal(decision.get('selected_model'))},
                 'chat', 'chat', {sql_literal(model_status)},
                 {prompt_tokens_est}, {completion_tokens_est}, {prompt_tokens_est + completion_tokens_est},
                 {actual_prompt_tokens if actual_prompt_tokens else 'NULL'},
@@ -13261,7 +18566,7 @@ def record_selected_model_usage(decision: dict, model_status: str, usage: dict |
                 'pre_call_rate_and_reserved_completion',
                 {int(estimate['rate_id'])},
                 {sql_jsonb([{'table':'agent.model_call_decisions','id':decision.get('id')},{'raw_prompt_stored':False}])},
-                {sql_jsonb({'explicit_cloud_approval':True,'zdr_required':True,'data_collection':'deny','usage':usage})},
+                {sql_jsonb({'explicit_cloud_approval':not bool(route_record.get('_autonomous_cloud')),'autonomous_capped':bool(route_record.get('_autonomous_cloud')),'store':False,'zdr_required':provider == 'openrouter','data_collection':'deny','usage':usage})},
                 'AI OS model call control plane'
             )
             ON CONFLICT (source_kind, source_ref) WHERE source_ref IS NOT NULL
@@ -13286,7 +18591,9 @@ def finish_chat_model_call(
     model_status: str,
     latency_ms: int,
     usage: dict | None = None,
+    attempt_status: str | None = None,
 ) -> None:
+    attempt_status = attempt_status or model_status
     record_selected_model_usage(decision, model_status, usage)
     response_hash = hashlib.sha256(response.encode("utf-8", errors="replace")).hexdigest()
     cache_status = str(decision.get("cache_status") or "bypassed")
@@ -13319,7 +18626,12 @@ def finish_chat_model_call(
             SET decision_status={sql_literal('completed' if model_status in {'called','cache_hit','deterministic_fallback'} else 'failed')},
                 cache_status={sql_literal(cache_status)}, response_hash={sql_literal(response_hash)},
                 latency_ms={max(0, int(latency_ms))},
-                error_message={sql_literal(None if model_status in {'called','cache_hit','deterministic_fallback'} else model_status)},
+                evidence=evidence || jsonb_build_array(jsonb_build_object(
+                    'attempt_status', {sql_literal(attempt_status)},
+                    'final_status', {sql_literal(model_status)},
+                    'fallback_used', {str(attempt_status != model_status).lower()}
+                )),
+                error_message={sql_literal(None if attempt_status in {'called','cache_hit','deterministic_fallback','deterministic_tool_route'} else attempt_status)},
                 finished_at=now()
             WHERE id={int(decision['id'])}
             RETURNING id
@@ -13373,7 +18685,11 @@ def infer_widget_intents(message: str, snapshot_context: dict) -> list[dict]:
     return intents
 
 
-def build_chat_context(message: str, include_client_context: bool = True) -> dict:
+def build_chat_context(
+    message: str,
+    include_client_context: bool = True,
+    assistant_name: str | None = None,
+) -> dict:
     queries = {
         "clients": """
             SELECT client_code, display_name, account_count, latest_position_count,
@@ -13552,11 +18868,90 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             LIMIT 8
         """,
         "latest_reports": """
-            SELECT id, report_key, report_name, report_family, status,
-                   output_note_path, summary, started_at, finished_at
+            SELECT id, report_key, report_name, report_family, owner_agent, status,
+                   output_note_path, summary, started_at, finished_at, updated_at
             FROM ops.v_recent_report_runs
             ORDER BY started_at DESC, id DESC
             LIMIT 8
+        """,
+        "research_intakes": """
+            SELECT paper_id,title,source_kind,source_url,research_objective,
+                   target_universe,extraction_word_count,intake_status,
+                   hypothesis_count,open_task_count,latest_task_at,updated_at
+            FROM research.v_research_intake_pipeline
+            ORDER BY updated_at DESC,paper_id DESC
+            LIMIT 8
+        """,
+        "research_cycles": """
+            SELECT id,cycle_key,source_kind,source_ref,objective,as_of,universe,
+                   status,owner_agent,broker_write_allowed,live_execution_allowed
+            FROM strategy.research_cycles
+            ORDER BY created_at DESC,id DESC
+            LIMIT 8
+        """,
+        "research_cases": """
+            SELECT case_row.id,case_row.company_name,case_row.exchange,case_row.ticker,
+                   case_row.status,case_row.lead_status,case_row.current_goal,
+                   case_row.decision_readiness,case_row.updated_at,
+                   coalesce(blockers.open_count,0)::int AS open_blockers,
+                   coalesce(source_jobs.pending_count,0)::int AS pending_source_jobs,
+                   coalesce(model_runs.running_count,0)::int AS running_model_runs,
+                   coalesce(model_runs.failed_count,0)::int AS failed_model_runs,
+                   preflight.status AS preflight_status,
+                   preflight.estimated_cost_usd,preflight.hard_max_cost_usd,
+                   preflight.exchange_rate_inr_per_usd,
+                   CASE
+                     WHEN case_row.status='proposed' THEN 'Review cost and explicitly start'
+                     WHEN case_row.status='collecting' THEN 'Official-source collection is in progress'
+                     WHEN case_row.status='active' AND coalesce(blockers.open_count,0)>0 THEN 'Review exact blockers'
+                     WHEN case_row.status='active' THEN 'Specialist research is running'
+                     WHEN case_row.status='review' THEN 'Human review is required'
+                     WHEN case_row.status='blocked' THEN 'Repair the failed stage'
+                     WHEN case_row.status='completed' THEN 'Open the completed research pack'
+                     ELSE 'Inspect case history' END AS next_action
+            FROM research.research_cases case_row
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE status IN ('open','retrying')) AS open_count
+                FROM research.research_case_blockers
+                WHERE research_case_id=case_row.id
+            ) blockers ON true
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE status IN ('queued','running','retry_wait')) AS pending_count
+                FROM research.research_case_source_jobs
+                WHERE research_case_id=case_row.id
+            ) source_jobs ON true
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE status IN ('queued','running')) AS running_count,
+                       count(*) FILTER (WHERE status IN ('failed','blocked')) AS failed_count
+                FROM research.research_case_model_runs
+                WHERE research_case_id=case_row.id
+            ) model_runs ON true
+            LEFT JOIN LATERAL (
+                SELECT status,estimated_cost_usd,hard_max_cost_usd,exchange_rate_inr_per_usd
+                FROM research.model_run_preflights
+                WHERE research_case_id=case_row.id AND request_kind='research_case'
+                ORDER BY id DESC LIMIT 1
+            ) preflight ON true
+            ORDER BY CASE case_row.status WHEN 'review' THEN 1 WHEN 'active' THEN 2
+                     WHEN 'collecting' THEN 3 WHEN 'proposed' THEN 4 WHEN 'blocked' THEN 5
+                     WHEN 'completed' THEN 6 ELSE 7 END,
+                     case_row.updated_at DESC,case_row.id DESC
+            LIMIT 12
+        """,
+        "research_worker_outputs": """
+            SELECT run.id AS worker_run_id,run.agent_name,run.skill_key,run.status,
+                   run.output_note_path,run.finished_at,task.id AS task_id,task.title,
+                   paper.id AS paper_id,paper.title AS paper_title
+            FROM agent.worker_runs run
+            JOIN agent.tasks task ON task.id=run.task_id
+            LEFT JOIN agent.agent_messages message ON message.generated_task_id=task.id
+            LEFT JOIN research.research_papers paper
+              ON paper.id=nullif(message.metadata->>'paper_id','')::BIGINT
+            WHERE run.status='completed'
+              AND message.metadata->>'source'='research_source_intake'
+              AND run.skill_key <> 'route_user_request'
+            ORDER BY run.finished_at DESC,run.id DESC
+            LIMIT 24
         """,
         "options_summary": """
             SELECT provider, exchange, underlying, expiry, observed_at,
@@ -13566,11 +18961,130 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             FROM trading.v_options_surface_summary
             LIMIT 8
         """,
+        "option_analytics_readiness": """
+            SELECT readiness.provider, readiness.exchange, readiness.underlying,
+                   readiness.expiry, readiness.minute_ts, readiness.freshness_status,
+                   readiness.batch_quality_status, readiness.contract_count,
+                   readiness.policy_key, readiness.model_family,
+                   readiness.policy_expires_at, readiness.analytics_readiness,
+                   coalesce(counts.fresh_contract_count,0) AS fresh_contract_count,
+                   coalesce(counts.liquid_contract_count,0) AS liquid_contract_count,
+                   coalesce(counts.validated_greeks_count,0) AS validated_greeks_count,
+                   coalesce(counts.stale_contract_count,0) AS stale_contract_count,
+                   readiness.broker_write_allowed
+            FROM trading.v_option_analytics_readiness readiness
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE contract.staleness_status='live') AS fresh_contract_count,
+                       count(*) FILTER (WHERE contract.liquidity_status='liquid') AS liquid_contract_count,
+                       count(*) FILTER (WHERE greeks.calculation_status='validated') AS validated_greeks_count,
+                       count(*) FILTER (WHERE contract.staleness_status='stale') AS stale_contract_count
+                FROM trading.option_chain_snapshot_batches batch
+                JOIN trading.option_chain_contract_snapshots contract ON contract.batch_id=batch.id
+                LEFT JOIN trading.option_iv_greeks_results greeks ON greeks.contract_snapshot_id=contract.id
+                WHERE batch.provider=readiness.provider AND batch.exchange=readiness.exchange
+                  AND batch.underlying=readiness.underlying AND batch.expiry=readiness.expiry
+                  AND batch.minute_ts=readiness.minute_ts
+            ) counts ON true
+            ORDER BY readiness.minute_ts DESC NULLS LAST, readiness.underlying, readiness.expiry
+            LIMIT 8
+        """,
+        "institutional_option_pipeline_runs": """
+            SELECT run_key, status, rows_read, rows_written, batches_created,
+                   calculations_completed, calculations_blocked,
+                   quality_summary, started_at, finished_at, error_message
+            FROM ops.institutional_pipeline_runs
+            WHERE workload_key='institutional_options_materializer'
+            ORDER BY started_at DESC
+            LIMIT 5
+        """,
+        "option_valuation_source_candidates": """
+            SELECT underlying,rate_observation_id,risk_free_rate,rate_observed_at,
+                   rate_valid_until,rate_instrument_identifier,rate_source_url,
+                   rate_content_hash,rate_calculation_method,rate_calculation_inputs,
+                   rate_quality_status,dividend_observation_id,dividend_yield,
+                   dividend_observed_at,dividend_valid_until,dividend_source_url,
+                   dividend_content_hash,dividend_quality_status,source_artifact_ref,
+                   candidate_valid_until,operator_confirmed,broker_write_allowed
+            FROM trading.v_option_valuation_source_candidates
+            ORDER BY underlying
+        """,
+        "sector_data_freshness": """
+            SELECT taxonomy_node_id, taxonomy_key, node_name,
+                   latest_metric_at, latest_market_monitor_at, latest_flow_at,
+                   latest_ownership_period_end, latest_research_review_at,
+                   CASE
+                     WHEN greatest(latest_metric_at,latest_market_monitor_at,latest_flow_at) >= now()-interval '2 days' THEN 'fresh'
+                     WHEN greatest(latest_metric_at,latest_market_monitor_at,latest_flow_at) IS NULL THEN 'missing'
+                     ELSE 'stale'
+                   END AS freshness_state
+            FROM sector_intelligence.v_sector_data_freshness
+            ORDER BY CASE freshness_state WHEN 'fresh' THEN 3 WHEN 'stale' THEN 1 ELSE 2 END,
+                     latest_metric_at DESC NULLS LAST
+            LIMIT 12
+        """,
+        "sector_custom_indices": """
+            SELECT index_id, index_key, index_name, status, weighting_method,
+                   rebalance_frequency, latest_rebalance_date,
+                   current_constituent_count, latest_calculated_at,
+                   latest_index_value
+            FROM sector_intelligence.v_custom_index_control
+            ORDER BY status, index_name
+            LIMIT 12
+        """,
+        "sector_import_runs": """
+            SELECT run.run_key, source.name AS source_name, run.status,
+                   run.package_hash, run.source_artifact_ref,
+                   run.taxonomy_rows, run.membership_rows, run.metric_rows,
+                   run.index_rows, run.validation_errors,
+                   run.observed_at, run.imported_at
+            FROM sector_intelligence.source_import_runs run
+            JOIN core.source_systems source ON source.id=run.source_system_id
+            ORDER BY run.imported_at DESC
+            LIMIT 6
+        """,
+        "sector_acceptance": """
+            SELECT acceptance_run_id,run_key,taxonomy_key,node_name,as_of_date,status,
+                   gate_count,passed_count,failed_count,blocked_count,gates,
+                   started_at,finished_at,broker_write_allowed
+            FROM sector_intelligence.v_acceptance_gate_summary
+            ORDER BY started_at DESC
+            LIMIT 6
+        """,
+        "fundamental_coverage": """
+            SELECT company_key, legal_name, primary_symbol, primary_exchange,
+                   real_company_verified, annual_statement_years,
+                   segment_count, operational_kpi_count, market_share_series_count,
+                   peer_count, management_communication_count,
+                   management_claim_count, claims_with_outcomes,
+                   latest_statement_available_at, latest_evidence_retrieved_at
+            FROM research.v_company_fundamental_coverage
+            ORDER BY real_company_verified DESC, annual_statement_years DESC, legal_name
+            LIMIT 10
+        """,
+        "investment_dossiers": """
+            SELECT dossier_key, company_key, legal_name, primary_symbol,
+                   dossier_status, version_number, version_status, research_as_of,
+                   evidence_coverage, section_count, reviewed_section_count,
+                   specialist_count, has_portfolio_fit, updated_at
+            FROM research.v_latest_investment_dossiers
+            ORDER BY updated_at DESC
+            LIMIT 10
+        """,
+        "fundamental_acceptance": """
+            SELECT run_key, company_key, legal_name, primary_symbol, run_status,
+                   real_company_verified, data_as_of, gate_count, passed_gate_count,
+                   failed_gate_count, blocked_gate_count, started_at, completed_at
+            FROM research.v_real_company_acceptance_status
+            ORDER BY started_at DESC
+            LIMIT 8
+        """,
         "broker_snapshots": """
-            SELECT provider, connector_key, dataset, captured_at,
-                   row_count, status, source_account_ref, broker_write_allowed
+            SELECT provider, source_connector_key AS connector_key, dataset,
+                   retrieved_at AS captured_at, row_count,
+                   'captured'::TEXT AS status,
+                   account_ref AS source_account_ref, broker_write_allowed
             FROM trading.v_latest_broker_read_snapshots
-            ORDER BY captured_at DESC
+            ORDER BY retrieved_at DESC
             LIMIT 12
         """,
         "widgets": """
@@ -13578,18 +19092,129 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
             FROM ops.v_dashboard_widget_intents
             LIMIT 12
         """,
+        "graph_catalog": """
+            SELECT graph_key,graph_name,graph_family,description,owner_agent,
+                   default_autonomy_level AS autonomy_ceiling,
+                   node_count,edge_count,open_run_count,
+                   completed_run_count,failed_run_count,latest_run_at
+            FROM agent.v_graph_catalog
+            ORDER BY graph_family,graph_name
+        """,
+        "graph_runs": """
+            SELECT run.graph_run_id,run.graph_key,run.graph_name,run.run_status,
+                   run.trigger_type,run.triggered_by,run.subject_type,run.subject_ref,
+                   active_node.node_key AS current_node_key,
+                   active_node.node_name AS current_node_name,
+                   active_node.owner_agent AS current_owner_agent,
+                   run.node_run_count AS total_nodes,
+                   run.completed_node_count AS completed_nodes,
+                   run.failed_node_count AS failed_nodes,
+                   run.waiting_node_count AS waiting_nodes,
+                   (SELECT count(*)
+                      FROM agent.v_graph_attention_queue attention
+                     WHERE attention.graph_run_id=run.graph_run_id
+                       AND attention.status='open') AS open_wait_count,
+                   (SELECT count(*)
+                      FROM agent.v_graph_node_run_detail node_detail
+                     WHERE node_detail.graph_run_id=run.graph_run_id
+                       AND node_detail.approval_status='pending') AS open_approval_count,
+                   run.started_at,run.updated_at,run.finished_at
+            FROM agent.v_graph_run_status run
+            LEFT JOIN LATERAL (
+                SELECT detail.node_key,detail.node_name,detail.owner_agent
+                FROM agent.v_graph_node_run_detail detail
+                WHERE detail.graph_run_id=run.graph_run_id
+                  AND detail.status IN ('ready','queued','running','waiting_approval','waiting_input','failed')
+                ORDER BY CASE detail.status
+                           WHEN 'running' THEN 1
+                           WHEN 'waiting_approval' THEN 2
+                           WHEN 'waiting_input' THEN 3
+                           WHEN 'ready' THEN 4
+                           WHEN 'queued' THEN 5
+                           ELSE 6
+                         END,
+                         detail.updated_at DESC,
+                         detail.graph_node_run_id DESC
+                LIMIT 1
+            ) active_node ON true
+            ORDER BY run.created_at DESC,run.graph_run_id DESC
+            LIMIT 12
+        """,
+        "graph_attention": """
+            SELECT attention.attention_kind,attention.id AS attention_id,
+                   attention.graph_run_id,node_detail.graph_key,node_detail.node_key,
+                   attention.title,attention.detail,attention.owner_agent,
+                   attention.category AS priority,attention.status,attention.created_at
+            FROM agent.v_graph_attention_queue attention
+            LEFT JOIN agent.v_graph_node_run_detail node_detail
+              ON node_detail.graph_node_run_id=attention.graph_node_run_id
+            ORDER BY attention.created_at DESC
+            LIMIT 12
+        """,
     }
+    if assistant_name:
+        queries["scoped_employee"] = f"""
+            SELECT agent_name, display_title, department_key, department_name,
+                   live_state, current_work_title, current_work_detail,
+                   presence_state,presence_reason,presence_source_kind,
+                   presence_source_id,presence_started_at,presence_expires_at,
+                   presence_is_fresh,presence_title,presence_detail,
+                   current_task_id, current_task_title, current_task_objective,
+                   current_task_status, current_task_priority, open_task_count,
+                   queued_task_count, in_progress_task_count, blocked_task_count,
+                   open_inbox_count, unread_message_count, latest_worker_run_id,
+                   latest_worker_status, latest_worker_summary, latest_activity_at
+            FROM agent.v_live_office_presence_v2
+            WHERE lower(agent_name) = lower({sql_literal(assistant_name)})
+            LIMIT 1
+        """
     if not include_client_context:
-        for private_key in ("clients", "latest_positions", "book_summary", "investment_books", "symbol_intelligence", "pending_approvals"):
+        for private_key in (
+            "clients", "latest_positions", "book_summary", "investment_books",
+            "symbol_intelligence", "pending_approvals", "graph_runs",
+            "graph_attention",
+        ):
             queries.pop(private_key, None)
+        # Fast/public Charlie must not execute the full office snapshot one SQL
+        # process at a time. Select only the bounded, public sections needed by
+        # this message; this also keeps unrelated private surfaces out of scope.
+        normalized_context_request = message.lower()
+        public_sections = {"models", "scoped_employee"}
+        if any(term in normalized_context_request for term in (
+            "research", "company", "waiting for me", "stack", "system status",
+            "office status", "daemon", "ssd", "model route",
+        )):
+            public_sections.add("research_cases")
+        if any(term in normalized_context_request for term in ("thesis", "dossier", "fundamental", "moat", "valuation")):
+            public_sections.update({"fundamental_coverage", "investment_dossiers"})
+        if any(term in normalized_context_request for term in ("filing", "announcement", "nse", "bse")):
+            public_sections.update({"filing_summary", "latest_filings", "filing_intelligence"})
+        if "news" in normalized_context_request:
+            public_sections.update({"latest_news", "news_brief"})
+        if any(term in normalized_context_request for term in ("calendar", "event", "holiday", "result date")):
+            public_sections.update({"market_events", "market_holidays"})
+        if any(term in normalized_context_request for term in ("watchlist", "follow", "track", "monitor")):
+            public_sections.add("watchlist")
+        if any(term in normalized_context_request for term in ("workflow", "graph run", "attention", "blocker")):
+            public_sections.update({"graph_catalog", "graph_runs", "graph_attention"})
+        if any(term in normalized_context_request for term in ("paper", "article", "hypothesis", "source intake")):
+            public_sections.update({"research_intakes", "research_cycles", "research_worker_outputs"})
+        queries = {key: query for key, query in queries.items() if key in public_sections}
     context: dict[str, object] = {}
     context_errors: list[dict[str, str]] = []
-    for key, query in queries.items():
+    if not include_client_context:
         try:
-            context[key] = run_psql_json(query)
+            context.update(run_psql_json_object(queries, row_limit=120))
         except Exception as exc:  # noqa: BLE001
-            context[key] = []
-            context_errors.append({"section": key, "error": type(exc).__name__})
+            context = {key: [] for key in queries}
+            context_errors.append({"section": "bounded_public_context", "error": type(exc).__name__})
+    else:
+        for key, query in queries.items():
+            try:
+                context[key] = run_psql_json(query)
+            except Exception as exc:  # noqa: BLE001
+                context[key] = []
+                context_errors.append({"section": key, "error": type(exc).__name__})
     context["context_errors"] = context_errors
     context["message_symbols"] = [symbol for symbol in message.upper().split() if symbol.isalnum() and 2 <= len(symbol) <= 12][:12]
     return context
@@ -13598,6 +19223,83 @@ def build_chat_context(message: str, include_client_context: bool = True) -> dic
 def is_broad_office_request(message: str) -> bool:
     normalized = message.lower()
     return any(term in normalized for term in ("what is going on", "office today", "office briefing", "daily brief", "brief me", "briefing", "summarize verified", "what should i decide", "what do i need to decide", "decide next"))
+
+
+def is_auto_factual_retrieval_request(message: str) -> bool:
+    normalized = message.lower()
+    request_terms = (
+        "how many", "show", "list", "latest", "status", "what changed",
+        "where is", "where are", "do we have", "give me", "get me",
+        "what is completed", "what is actually completed", "needs my review",
+        "find", "retrieve", "cite", "use our stored", "what does", "name the",
+    )
+    domain_terms = (
+        "filing", "announcement", "news", "watchlist", "idea list", "report",
+        "letter", "broker", "zerodha", "option", "position", "holding",
+        "client", "ohlcv", "market data", "calendar", "holiday", "result date",
+        "research", "paper", "article", "hypothesis", "backtest", "worker",
+        "agent", "department", "office", "workflow", "graph run", "cycle",
+        "memory", "vault", "obsidian", "stored note", "knowledge base",
+        "sector", "industry", "custom index", "fundamental", "dossier",
+    )
+    return (
+        any(term in normalized for term in request_terms)
+        and any(term in normalized for term in domain_terms)
+    )
+
+
+def structured_evidence_sections_for_request(message: str, context: dict) -> list[str]:
+    """Return authoritative warehouse sections that directly answer the request."""
+    normalized = message.lower()
+    section_rules = (
+        (("report", "letter", "brief"), ("latest_reports",)),
+        (("filing", "announcement", "nse", "bse", "demerger", "merger", "arbitrage"),
+         ("filings", "filing_intelligence")),
+        (("news",), ("latest_news", "news_brief")),
+        (("watchlist",), ("watchlist",)),
+        (("idea list", "idea pipeline", "opportunity"), ("generated_ideas",)),
+        (("option", "straddle", "chain", "open interest", "greeks", "gamma", "vanna", "charm"),
+         ("options_summary", "option_analytics_readiness", "institutional_option_pipeline_runs")),
+        (("sector", "industry", "custom index", "relative strength", "breadth"),
+         ("sector_data_freshness", "sector_custom_indices", "sector_import_runs")),
+        (("fundamental", "long term", "long-term", "dossier", "moat", "management", "valuation"),
+         ("fundamental_coverage", "investment_dossiers", "fundamental_acceptance")),
+        (("calendar", "holiday", "result date"), ("market_events", "market_holidays")),
+        (("broker", "zerodha"), ("broker_snapshots", "zerodha_market_status")),
+        (("ohlcv", "market data"), ("ohlcv",)),
+        (("research", "paper", "article", "hypothesis"),
+         ("research_cases", "research_intakes", "research_cycles", "research_worker_outputs")),
+        (("stack", "system status", "daemon", "ssd", "model route", "office status"),
+         ("research_cases", "models", "graph_runs", "graph_attention")),
+        (("workflow", "graph run", "cycle"), ("graph_catalog", "graph_runs", "graph_attention")),
+        (("agent", "department", "office"),
+         ("scoped_employee", "agent_tasks", "agent_messages", "departments")),
+        (("position", "holding", "client", "portfolio"),
+         ("latest_positions", "book_summary", "clients", "symbol_intelligence")),
+    )
+    matched: list[str] = []
+    for terms, sections in section_rules:
+        if not any(term in normalized for term in terms):
+            continue
+        matched.extend(section for section in sections if context.get(section))
+    return list(dict.fromkeys(matched))
+
+
+def message_requires_client_private_context(message: str) -> bool:
+    normalized = message.lower()
+    if is_broad_office_request(message):
+        return True
+    private_terms = (
+        "client", "portfolio", "holding", "position", "account", "mandate",
+        "pnl", "profit and loss", "exposure", "zerodha", "broker", "order",
+        "trade blotter", "trade journal", "my trades", "our trades",
+    )
+    return any(term in normalized for term in private_terms)
+
+
+def is_explicit_cloud_route_selection(payload: dict, route: dict) -> bool:
+    route_name = str(payload.get("route_name") or payload.get("routeName") or "").strip()
+    return bool(route_name and str(route.get("default_provider") or "") in CLOUD_CHAT_PROVIDERS)
 
 
 def deterministic_chat_reply(
@@ -13625,7 +19327,25 @@ def deterministic_chat_reply(
     watchlist = context.get("watchlist") or []
     ideas = context.get("generated_ideas") or []
     reports = context.get("latest_reports") or []
+    research_intakes = context.get("research_intakes") or []
+    research_cycles = context.get("research_cycles") or []
+    research_worker_outputs = context.get("research_worker_outputs") or []
+    research_cases = context.get("research_cases") or []
+    research_output_counts: dict[str, int] = {}
+    for output in research_worker_outputs:
+        paper_title = str(output.get("paper_title") or "").strip()
+        if paper_title:
+            research_output_counts[paper_title] = research_output_counts.get(paper_title, 0) + 1
     options = context.get("options_summary") or []
+    option_readiness = context.get("option_analytics_readiness") or []
+    option_pipeline_runs = context.get("institutional_option_pipeline_runs") or []
+    sector_freshness = context.get("sector_data_freshness") or []
+    sector_indices = context.get("sector_custom_indices") or []
+    sector_import_runs = context.get("sector_import_runs") or []
+    sector_acceptance = context.get("sector_acceptance") or []
+    fundamental_coverage = context.get("fundamental_coverage") or []
+    investment_dossiers = context.get("investment_dossiers") or []
+    fundamental_acceptance = context.get("fundamental_acceptance") or []
     broker_snapshots = context.get("broker_snapshots") or []
     news_brief = context.get("news_brief") or []
     filing_intelligence = context.get("filing_intelligence") or []
@@ -13636,16 +19356,225 @@ def deterministic_chat_reply(
     approval_summary = {str(row.get("metric")): str(row.get("value")) for row in context.get("approval_summary") or []}
     pending_approvals = context.get("pending_approvals") or []
     institutional_risk = {str(row.get("metric")): str(row.get("value")) for row in context.get("institutional_risk") or []}
+    graph_catalog = context.get("graph_catalog") or []
+    graph_runs = context.get("graph_runs") or []
+    graph_attention = context.get("graph_attention") or []
     broad_office_request = is_broad_office_request(message)
+    graph_request = any(term in normalized for term in ("workflow", "graph run", "control plane", "lifecycle", "daily office loop"))
+    scoped_employee_rows = context.get("scoped_employee") or []
+    scoped_employee = scoped_employee_rows[0] if scoped_employee_rows else {}
+    scoped_status_request = any(term in normalized for term in (
+        "what are you", "what is your", "working on", "backtesting",
+        "current task", "current assignment", "live assignment", "assignment",
+        "your status", "your workload", "evidence is missing", "what are you doing",
+    ))
+    capability_question = any(phrase in normalized for phrase in (
+        "what can i ask you", "what can you do", "what are you able to do",
+        "explain what you can do", "your capabilities", "how can you help",
+    ))
+    if capability_question:
+        return (
+            "I can answer from the live portfolio, research, risk, market, and operating ledgers; "
+            "ingest articles and documents; delegate named work; create strategy intakes; run governed "
+            "research, backtest, and committee workflows; update approved dashboard widgets; and track every result.\n"
+            "I will state what I actually did, who owns the next step, the evidence used, and what needs your decision.\n"
+            "I cannot approve capital or place broker orders; those remain locked behind explicit human and risk gates."
+        )
+
+    delegation_results = [
+        operation
+        for operation in tool_results
+        if str(operation.get("tool") or "") == "delegate_agent_work"
+    ]
+    if delegation_results:
+        delegation_lines: list[str] = []
+        for operation in delegation_results:
+            result = operation.get("result") if isinstance(operation.get("result"), dict) else {}
+            target = str(result.get("to_agent") or "the assigned employee")
+            message_id = result.get("id")
+            task_id = result.get("generated_task_id")
+            if str(task_id or "").isdigit():
+                delegation_lines.append(
+                    f"I assigned {target}; task #{task_id} is {result.get('processing_status') or operation.get('status') or 'queued'}."
+                )
+            elif str(message_id or "").isdigit():
+                delegation_lines.append(
+                    f"I created mailbox message #{message_id} for {target}. It is "
+                    f"{result.get('processing_status') or operation.get('status') or 'pending'}; "
+                    "the agent daemon has not assigned a task ID yet."
+                )
+            else:
+                delegation_lines.append(
+                    f"I sent the request to {target}; routing status is "
+                    f"{result.get('processing_status') or operation.get('status') or 'pending'}."
+                )
+        delegation_lines.append(
+            "The requested output remains an evidence-backed memo separating verified facts, inference, and missing evidence."
+        )
+        delegation_lines.append(
+            "No trade was proposed or placed; broker writes and live execution remain locked."
+        )
+        return "\n".join(delegation_lines)
+
+    attention_request = any(phrase in normalized for phrase in (
+        "needs my attention", "need my attention", "what should i decide",
+        "what do i need to decide", "what needs my review", "needs my review",
+    ))
+    if attention_request:
+        attention_lines: list[str] = []
+        if scoped_employee:
+            current_title = scoped_employee.get("current_task_title") or scoped_employee.get("current_work_title")
+            current_detail = scoped_employee.get("current_task_objective") or scoped_employee.get("current_work_detail")
+            if current_title:
+                sentence = f"I am {scoped_employee.get('live_state') or 'available'}; my current assignment is {current_title}."
+                if current_detail:
+                    sentence += f" Latest evidence: {str(current_detail)[:280]}"
+                attention_lines.append(sentence)
+        pending_count = int(approval_summary.get("pending", "0") or 0)
+        high_count = int(approval_summary.get("high_or_critical_pending", "0") or 0)
+        if pending_count:
+            approval_titles = "; ".join(str(row.get('title')) for row in pending_approvals[:3] if row.get('title'))
+            attention_lines.append(
+                f"Your decision queue has {pending_count} pending approvals, including {high_count} high or critical."
+                + (f" Review first: {approval_titles}." if approval_titles else "")
+            )
+        else:
+            attention_lines.append("You have no pending approval recorded in the current warehouse snapshot.")
+        if graph_attention:
+            attention_lines.append(
+                "Workflow attention: " + "; ".join(
+                    f"run {row.get('graph_run_id')} {row.get('title')} ({row.get('priority')})"
+                    for row in graph_attention[:2]
+                ) + "."
+            )
+        attention_lines.append("Broker execution remains locked; no capital action was taken.")
+        return "\n".join(attention_lines)
 
     focused: list[str] = []
     if tool_results:
         for result in tool_results:
+            if result.get("tool") == "propose_research_case":
+                payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+                case = payload.get("research_case") if isinstance(payload.get("research_case"), dict) else {}
+                if payload.get("status") in {"blocked_conflict", "open_case_conflict"}:
+                    focused.append(
+                        f"Research Case #{case.get('id') or 'existing'} for {case.get('ticker') or 'this company'} needs attention, but it does not block a new mandate. "
+                        f"{payload.get('detail') or 'Review the existing case or confirm a distinct mandate.'}"
+                    )
+                    focused.append("Choose: open and repair the existing cited inputs, or change the decision question and confirm a distinct Research Case in the Thesis workspace.")
+                elif payload.get("status") == "proposed":
+                    focused.append(
+                        f"Research Case #{case.get('id')} is durably proposed for {case.get('exchange')}:{case.get('ticker')}. "
+                        "Review the resolved entity, mandate, boundaries and source plan; agents start only after your explicit Start."
+                    )
+                else:
+                    focused.append(f"Research Case status: {payload.get('status') or result.get('status')}. {payload.get('detail') or ''}".strip())
+            else:
+                focused.append(
+                    f"Action: {result.get('tool')} -> {result.get('status')}"
+                    + (f" ({result.get('detail')})" if result.get("detail") else "")
+                    + "."
+                )
+    if scoped_employee and scoped_status_request:
+        scoped_name = scoped_employee.get("agent_name") or "Scoped employee"
+        scoped_state = scoped_employee.get("live_state") or "unknown"
+        scoped_task_status = scoped_employee.get("current_task_status") or "no_open_task"
+        scoped_task_title = scoped_employee.get("current_task_title") or scoped_employee.get("current_work_title")
+        scoped_task_id = scoped_employee.get("current_task_id")
+        task_ref = f"task #{scoped_task_id}" if scoped_task_id else "current assignment"
+        if scoped_task_title:
             focused.append(
-                f"Action: {result.get('tool')} -> {result.get('status')}"
-                + (f" ({result.get('detail')})" if result.get("detail") else "")
-                + "."
+                f"Live employee state (authoritative): {scoped_name} is {scoped_state}. "
+                f"{task_ref} is {scoped_task_status}: {scoped_task_title}. "
+                f"Open tasks {scoped_employee.get('open_task_count') or 0}; "
+                f"last activity {scoped_employee.get('latest_activity_at') or 'unknown'}."
             )
+            assignment_detail = (
+                scoped_employee.get("current_task_objective")
+                or scoped_employee.get("current_work_detail")
+                or scoped_employee.get("latest_worker_summary")
+            )
+            if assignment_detail:
+                focused.append(f"Assignment evidence state: {assignment_detail}")
+        else:
+            focused.append(
+                f"Live employee state (authoritative): {scoped_name} is {scoped_state} "
+                "with no current task title in the warehouse."
+            )
+    if graph_request:
+        if graph_runs:
+            focused.append(
+                f"Graph Control Plane: {len(graph_catalog)} active definitions and "
+                f"{len(graph_runs)} recent governed runs are visible."
+            )
+            focused.extend(
+                f"- run {row.get('graph_run_id')} {row.get('graph_name') or row.get('graph_key')}: "
+                f"{row.get('run_status')}; node {row.get('current_node_name') or row.get('current_node_key') or 'none'} "
+                f"owned by {row.get('current_owner_agent') or 'unassigned'}; "
+                f"{row.get('completed_nodes') or 0}/{row.get('total_nodes') or 0} nodes complete"
+                for row in graph_runs[:6]
+            )
+        else:
+            focused.append(
+                f"Graph Control Plane: {len(graph_catalog)} active definitions are registered; no governed run is visible."
+            )
+        if graph_attention:
+            focused.append("Waiting on action:")
+            focused.extend(
+                f"- {row.get('title')} for run {row.get('graph_run_id')} "
+                f"({row.get('priority')}, owner {row.get('owner_agent')})"
+                for row in graph_attention[:5]
+            )
+        focused.append("All graph capital actions remain human-gated; broker writes are disabled.")
+    research_status_request = any(term in normalized for term in (
+        "research", "paper", "article", "hypothesis", "backtest", "stack", "system status",
+        "office status", "waiting for me", "what is waiting", "needs my review",
+    ))
+    if research_status_request and research_cases:
+        focused.append(f"Company Research: {len(research_cases)} recent durable cases are visible in this bounded view.")
+        focused.extend(
+            f"- Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')} ({row.get('company_name')}): "
+            f"{row.get('status')}; {row.get('next_action')}; "
+            f"{row.get('open_blockers') or 0} open blockers and {row.get('pending_source_jobs') or 0} source jobs pending."
+            for row in research_cases[:6]
+        )
+        proposed = [row for row in research_cases if row.get("status") == "proposed"]
+        if proposed:
+            focused.append(
+                "Waiting for your explicit approval: " + "; ".join(
+                    f"Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')} "
+                    f"estimated ${float(row.get('estimated_cost_usd') or 0):.4f}, "
+                    f"hard max ${float(row.get('hard_max_cost_usd') or 0):.4f}"
+                    for row in proposed[:3]
+                ) + "."
+            )
+    if any(term in normalized for term in ("research", "paper", "article", "hypothesis", "backtest")):
+        if research_intakes:
+            focused.append(
+                f"Research pipeline: {len(research_intakes)} recent source intakes, "
+                f"{len(research_cycles)} immutable cycles (research ledger entries, not completed backtests), "
+                f"and {len(research_worker_outputs)} completed specialist outputs."
+            )
+            focused.extend(
+                f"- {row.get('title')}: {row.get('hypothesis_count')} hypothesis, "
+                f"status {row.get('intake_status')}, {row.get('extraction_word_count')} extracted words "
+                f"and {research_output_counts.get(str(row.get('title') or '').strip(), 0)} completed specialist outputs "
+                f"[source]({row.get('source_url')})"
+                for row in research_intakes[:8]
+            )
+            if research_worker_outputs:
+                focused.append("Recent completed specialist work (bounded sample, not the full ledger):")
+                focused.extend(
+                    f"- run {row.get('worker_run_id')} by {row.get('agent_name')} using "
+                    f"{row.get('skill_key')} for {row.get('paper_title')}; "
+                    f"output {row.get('output_note_path')}"
+                    for row in research_worker_outputs[:4]
+                )
+            focused.append(
+                "All listed research cycles remain research-only; broker writes and live execution are disabled."
+            )
+        elif not research_cases and not any(result.get("tool") == "propose_research_case" for result in tool_results):
+            focused.append("No research source intake is stored in the current verified snapshot.")
     if "news" in normalized:
         if news_brief:
             focused.append("What matters now from the live, source-linked news queue:")
@@ -13695,6 +19624,81 @@ def deterministic_chat_reply(
             f"latest option snapshot {zerodha_market_status.get('latest_option_at') or 'not available'}. "
             "Broker writes remain disabled."
         )
+    if any(term in normalized for term in ("fundamental", "long term", "long-term", "dossier", "moat", "management quality", "valuation")):
+        if fundamental_coverage:
+            focused.append(
+                f"Fundamental factory: {len(fundamental_coverage)} covered companies in this bounded view, "
+                f"{len(investment_dossiers)} current dossiers, and {len(fundamental_acceptance)} recent acceptance runs."
+            )
+            focused.extend(
+                f"- {row.get('primary_symbol') or row.get('legal_name')}: "
+                f"{row.get('annual_statement_years') or 0} annual statement years, "
+                f"{row.get('operational_kpi_count') or 0} KPIs, {row.get('peer_count') or 0} peers, "
+                f"real-company evidence {'verified' if row.get('real_company_verified') else 'not verified'}"
+                for row in fundamental_coverage[:5]
+            )
+            if investment_dossiers:
+                focused.append("Dossier readiness:")
+                focused.extend(
+                    f"- {row.get('primary_symbol') or row.get('legal_name')}: {row.get('dossier_status')}; "
+                    f"{row.get('reviewed_section_count') or 0}/{row.get('section_count') or 0} sections reviewed; "
+                    f"{row.get('specialist_count') or 0} specialists; portfolio-fit "
+                    f"{'present' if row.get('has_portfolio_fit') else 'missing'}"
+                    for row in investment_dossiers[:5]
+                )
+        else:
+            focused.append("No real-company fundamental coverage row is stored; the factory cannot claim institutional readiness.")
+    if any(term in normalized for term in ("sector", "industry", "custom index", "relative strength", "breadth")):
+        if sector_freshness or sector_indices:
+            stale_count = sum(1 for row in sector_freshness if str(row.get("freshness_state")) != "fresh")
+            focused.append(
+                f"Sector intelligence: {len(sector_freshness)} sector rows in this bounded view, "
+                f"{stale_count} not fresh, and {len(sector_indices)} custom indices."
+            )
+            focused.extend(
+                f"- {row.get('node_name')}: {row.get('freshness_state')}; "
+                f"latest metrics {row.get('latest_metric_at') or 'missing'}, "
+                f"market monitor {row.get('latest_market_monitor_at') or 'missing'}, "
+                f"flows {row.get('latest_flow_at') or 'missing'}"
+                for row in sector_freshness[:5]
+            )
+            if sector_import_runs:
+                latest_import = sector_import_runs[0]
+                focused.append(
+                    f"Latest source package {latest_import.get('run_key')} is {latest_import.get('status')} "
+                    f"from {latest_import.get('source_name')} at {latest_import.get('imported_at')}."
+                )
+            if sector_acceptance:
+                latest_acceptance = sector_acceptance[0]
+                focused.append(
+                    f"Latest sector acceptance {latest_acceptance.get('run_key')} is "
+                    f"{latest_acceptance.get('status')}: {latest_acceptance.get('passed_count') or 0}/"
+                    f"{latest_acceptance.get('gate_count') or 0} gates passed and "
+                    f"{latest_acceptance.get('blocked_count') or 0} blocked."
+                )
+            else:
+                focused.append("No real-sector acceptance run has been executed; sector readiness is unproven.")
+        else:
+            focused.append("Sector taxonomy and custom-index controls exist, but no populated sector intelligence row is stored yet.")
+    if any(term in normalized for term in ("option", "straddle", "chain", "iv", "open interest", "greeks", "gamma", "vanna", "charm")):
+        if option_readiness:
+            focused.append("Institutional options readiness:")
+            focused.extend(
+                f"- {row.get('underlying')} {row.get('expiry')}: {row.get('analytics_readiness')}; "
+                f"{row.get('validated_greeks_count') or 0}/{row.get('contract_count') or 0} validated Greeks; "
+                f"policy {row.get('model_family') or 'missing'}"
+                for row in option_readiness[:5]
+            )
+        else:
+            focused.append("No institutional option batch is materialized; legacy quote rows cannot be presented as validated IV or Greeks.")
+        if option_pipeline_runs:
+            latest_pipeline = option_pipeline_runs[0]
+            focused.append(
+                f"Latest options materializer run {latest_pipeline.get('run_key')} is {latest_pipeline.get('status')}; "
+                f"{latest_pipeline.get('batches_created') or 0} batches created, "
+                f"{latest_pipeline.get('calculations_completed') or 0} calculations completed and "
+                f"{latest_pipeline.get('calculations_blocked') or 0} blocked."
+            )
     if focused and not broad_office_request:
         return "\n".join(focused)
 
@@ -13728,6 +19732,23 @@ def deterministic_chat_reply(
             f"{top_symbol.get('symbol')} for {top_symbol.get('client_name')} at INR "
             f"{float(top_symbol.get('gross_exposure') or 0):,.0f}, bias {top_symbol.get('overall_bias')}."
         )
+    if broad_office_request and graph_catalog:
+        open_graph_runs = [
+            row for row in graph_runs
+            if str(row.get("run_status") or "") not in {"completed", "failed", "cancelled"}
+        ]
+        lines.append(
+            f"Graph operations: {len(graph_catalog)} active workflows, "
+            f"{len(open_graph_runs)} open runs, and {len(graph_attention)} items waiting for review or input."
+        )
+        if open_graph_runs:
+            lines.append(
+                "Active workflow: " + "; ".join(
+                    f"run {row.get('graph_run_id')} {row.get('graph_name') or row.get('graph_key')} "
+                    f"at {row.get('current_node_name') or row.get('current_node_key')}"
+                    for row in open_graph_runs[:3]
+                ) + "."
+            )
     if broad_office_request or "risk" in normalized:
         lines.append(
             "Institutional risk: run "
@@ -13792,9 +19813,22 @@ def deterministic_chat_reply(
             "; " + "; ".join(str(row.get('title')) for row in ideas[:3]) if ideas else ""
         ) + ".")
     if any(term in normalized for term in ("letter", "report", "brief")):
-        lines.append(f"Report ledger: {len(reports)} recent runs" + (
-            "; latest is " + str(reports[0].get('report_name')) + " at " + str(reports[0].get('output_note_path')) if reports else ""
-        ) + ".")
+        if reports:
+            latest_report = reports[0]
+            report_timestamp = (
+                latest_report.get("updated_at")
+                or latest_report.get("finished_at")
+                or latest_report.get("started_at")
+            )
+            lines.append(
+                f"Report ledger: {len(reports)} recent runs; latest is "
+                f"{latest_report.get('report_name')} produced by "
+                f"{latest_report.get('owner_agent') or 'unassigned'}; "
+                f"updated {report_timestamp or 'unknown'}; exact stored artifact: "
+                f"{latest_report.get('output_note_path') or 'not materialized'}."
+            )
+        else:
+            lines.append("Report ledger: no recent report runs were returned by the warehouse.")
     if any(term in normalized for term in ("option", "straddle", "chain", "iv", "open interest")):
         if options:
             lines.append("Options surfaces: " + "; ".join(
@@ -13811,6 +19845,15 @@ def deterministic_chat_reply(
     if retrieval_hits:
         titles = [str(hit.get("title")) for hit in retrieval_hits[:3] if hit.get("title")]
         lines.append("Most relevant memory hits: " + "; ".join(titles) + ".")
+    elif (
+        is_auto_factual_retrieval_request(message)
+        and retrieval_status != "ok"
+        and not structured_evidence_sections_for_request(message, context)
+    ):
+        lines.append(
+            "Semantic memory retrieval is unavailable for this turn "
+            f"({retrieval_status}). I cannot name or cite stored notes until retrieval succeeds."
+        )
     if widget_intents:
         lines.append("Suggested dashboard widgets: " + ", ".join(intent["widget_title"] for intent in widget_intents) + ".")
     else:
@@ -13929,6 +19972,7 @@ def persist_response_truth_envelope(chat_turn: dict, route: dict, envelope: dict
 def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_status: str, retrieval_hits: list[dict], widget_intents: list[dict], tool_intents: list[dict]) -> dict:
     session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
     actor = str(payload.get("actor") or "Devarsh").strip() or "Devarsh"
+    assistant_name = str(payload.get("assistant_name") or payload.get("assistantName") or "Charlie Munger").strip() or "Charlie Munger"
     user_message = str(payload.get("message") or "").strip()
     model_provider = str(route.get("default_provider") or "ollama")
     model_name = str(route.get("default_model") or "llama3.2:3b")
@@ -13943,7 +19987,7 @@ def persist_chat_turn(payload: dict, assistant_message: str, route: dict, model_
                 retrieval_hits, widget_intents, tool_intents, metadata
             )
             VALUES (
-                {sql_literal(session_key)}, {sql_literal(actor)}, 'Charlie Munger',
+                {sql_literal(session_key)}, {sql_literal(actor)}, {sql_literal(assistant_name)},
                 {sql_literal(user_message)}, {sql_literal(assistant_message)},
                 {sql_literal(route_name)}, {sql_literal(model_provider)}, {sql_literal(model_name)},
                 {sql_literal(model_status)}, {sql_jsonb(retrieval_hits)},
@@ -14015,6 +20059,7 @@ def resolve_agent_for_instruction(message: str) -> dict | None:
             return profile
     department_aliases = {
         "research": ("research", "fundamental"),
+        "sector": ("sector", "industry"),
         "quant": ("quant", "strategy"),
         "risk": ("risk",),
         "options": ("options", "derivatives"),
@@ -14022,17 +20067,459 @@ def resolve_agent_for_instruction(message: str) -> dict | None:
         "portfolio": ("portfolio", "capital allocation"),
         "data": ("data",),
     }
-    for aliases in department_aliases.values():
-        if not any(alias in normalized for alias in aliases):
-            continue
+
+    def department_profile(aliases: tuple[str, ...]) -> dict | None:
         for profile in profiles:
             department = f"{profile.get('department') or ''} {profile.get('department_name') or ''}".lower()
             if any(alias in department for alias in aliases):
                 return profile
+        return None
+
+    # A named destination such as "quant team" must outrank incidental
+    # subject words such as "research source" in the assignment body.
+    for department_key, aliases in department_aliases.items():
+        explicit_phrases = tuple(
+            f"{alias} {unit}"
+            for alias in (department_key, *aliases)
+            for unit in ("team", "department", "desk", "office")
+        )
+        if any(phrase in normalized for phrase in explicit_phrases):
+            target = department_profile(aliases)
+            if target:
+                return target
+    for aliases in department_aliases.values():
+        if not any(alias in normalized for alias in aliases):
+            continue
+        target = department_profile(aliases)
+        if target:
+            return target
     return None
 
 
-def execute_charlie_safe_tools(message: str) -> list[dict]:
+def resolve_delegation_skill(target: dict) -> str | None:
+    """Choose the target employee's active substantive skill for durable work."""
+    agent_name = str(target.get("agent_name") or "").strip()
+    if not agent_name:
+        return None
+    try:
+        rows = run_psql_json(
+            "SELECT skill_key FROM agent.v_agent_skill_matrix "
+            f"WHERE {sql_literal(agent_name)}=ANY(coalesce(primary_agents, '{{}}'::text[])) "
+            f"OR {sql_literal(agent_name)}=ANY(coalesce(assigned_agents, '{{}}'::text[])) "
+            "ORDER BY CASE WHEN " + sql_literal(agent_name) + "=ANY(coalesce(primary_agents, '{}'::text[])) THEN 0 ELSE 1 END, skill_key LIMIT 1"
+        )
+        if rows and rows[0].get("skill_key"):
+            return str(rows[0]["skill_key"])
+    except Exception:  # Rolling migrations may temporarily hide the matrix view.
+        pass
+    fallback_by_agent = {
+        "Head of Quant": "head_quant_governance",
+        "Research Analyst": "company_research_note",
+        "Sector Portfolio Manager": "sector_portfolio_management",
+        "Sector Fundamental Analyst": "sector_fundamental_review",
+        "Sector Market Structure Analyst": "sector_market_structure_review",
+        "Sector Flow And Ownership Analyst": "sector_flow_ownership_review",
+        "Sector Data Steward": "sector_data_quality_control",
+        "Options Data Quality Agent": "options_data_quality_control",
+        "Strategy Research Agent": "generate_strategy_hypothesis",
+        "News Analyst": "news_to_dashboard_alert",
+        "Risk Agent": "risk_gate_review",
+    }
+    return fallback_by_agent.get(agent_name)
+
+
+def resolve_conversation_identity(payload: dict) -> dict:
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    requested = str(
+        metadata.get("assistant_scope")
+        or metadata.get("assistantScope")
+        or payload.get("assistant_scope")
+        or "Charlie Munger"
+    ).strip() or "Charlie Munger"
+    try:
+        rows = run_psql_json(
+            "SELECT agent_name,display_title,department,department_name,role_scope,persona,"
+            "operating_style,mental_models,primary_route,permission_level,reports_to_agent,"
+            "voice_style,first_person_identity,conversation_contract "
+            "FROM agent.v_conversational_employee_profiles "
+            f"WHERE lower(agent_name)=lower({sql_literal(requested)}) "
+            f"OR lower(character_name)=lower({sql_literal(requested)}) "
+            "ORDER BY CASE WHEN lower(agent_name)=lower(" + sql_literal(requested) + ") THEN 0 ELSE 1 END LIMIT 1"
+        )
+    except Exception:  # Migration-safe fallback during a rolling release.
+        rows = run_psql_json(
+            "SELECT agent_name,display_title,department,department_name,role_scope,persona,"
+            "operating_style,mental_models,primary_route,permission_level,reports_to_agent,voice_style "
+            "FROM agent.v_employee_profiles_v1 "
+            f"WHERE lower(agent_name)=lower({sql_literal(requested)}) "
+            f"OR lower(character_name)=lower({sql_literal(requested)}) LIMIT 1"
+        )
+    if not rows and requested.lower() != "charlie munger":
+        return resolve_conversation_identity({**payload, "metadata": {**metadata, "assistant_scope": "Charlie Munger"}})
+    row = rows[0] if rows else {
+        "agent_name": "Charlie Munger",
+        "display_title": "Chief Investment Orchestrator",
+        "department_name": "Executive Office",
+        "role_scope": "Turn operator intent into evidence-linked work and decisions.",
+        "persona": "Blunt, rational, downside-first, and intolerant of unsupported claims.",
+        "operating_style": "Apply inversion, opportunity cost, and margin of safety before action.",
+        "mental_models": ["inversion", "opportunity_cost", "margin_of_safety"],
+        "primary_route": "charlie_munger_orchestration",
+        "permission_level": "write_with_approval",
+    }
+    if not row.get("first_person_identity"):
+        row["first_person_identity"] = (
+            f"I am {row.get('agent_name')}, {row.get('display_title') or row.get('role_scope')}. "
+            f"{row.get('persona') or ''} {row.get('operating_style') or ''} "
+            "I speak in first person, lead with verified facts, label inference and unknowns, cite evidence, and claim only work I completed."
+        )
+    row["requested_scope"] = requested
+    return row
+
+
+def identity_fallback_reply(identity: dict, response: str) -> str:
+    if str(identity.get("agent_name")) == "Charlie Munger":
+        return response
+    first_line = f"I am {identity.get('agent_name')}, {identity.get('display_title') or identity.get('role_scope')}."
+    return first_line + "\n\n" + response
+
+
+def _graph_subject_from_message(message: str, fallback: str) -> str:
+    match = re.search(
+        r"\b(?:on|for|about|subject|hypothesis)\s*(?::|=|-)?\s*(.{3,500})$",
+        message,
+        flags=re.IGNORECASE,
+    )
+    subject = (match.group(1) if match else fallback).strip(" \t\r\n.,;:-")
+    return subject[:500] or fallback
+
+
+def _explicit_hypothesis_from_message(message: str) -> str:
+    """Extract only an operator-stated hypothesis, never invent one from a source URL."""
+    patterns = (
+        r"\btest\s+(?:the\s+)?hypothesis\s+that\s+(.{8,800})$",
+        r"\btest\s+whether\s+(.{8,800})$",
+        r"\bhypothesis\s+(?:is|that)\s+(.{8,800})$",
+        r"\bhypothesis\s*(?::|=|-)\s*(.{8,800})$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+        hypothesis = re.sub(r"https://[^\s<>\]\[()]+", "", match.group(1))
+        hypothesis = re.split(
+            r"\b(?:then\s+)?(?:and\s+)?(?:delegate|assign|send)\b",
+            hypothesis,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        hypothesis = re.sub(r"\s+", " ", hypothesis).strip(" \t\r\n.,;:-\"'")
+        if len(hypothesis) >= 8:
+            return hypothesis[:800]
+    return ""
+
+
+def _resolve_strategy_candidate_from_message(message: str) -> dict:
+    explicit = re.search(
+        r"\b(?:candidate|strategy)(?:\s+id)?\s*#?\s*(\d+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if explicit:
+        return {"status": "resolved", "candidate_id": int(explicit.group(1)), "match": "explicit_id"}
+
+    candidates = run_psql_json(
+        "SELECT id,candidate_key,name FROM strategy.strategy_candidates "
+        "ORDER BY updated_at DESC,id DESC LIMIT 100"
+    )
+    normalized = re.sub(r"\s+", " ", message.lower())
+    matches: list[dict] = []
+    seen_ids: set[int] = set()
+    for candidate in candidates:
+        candidate_id = int(candidate.get("id") or 0)
+        labels = [str(candidate.get("candidate_key") or "").strip(), str(candidate.get("name") or "").strip()]
+        if candidate_id and any(len(label) >= 4 and label.lower() in normalized for label in labels):
+            if candidate_id not in seen_ids:
+                matches.append(candidate)
+                seen_ids.add(candidate_id)
+    if len(matches) == 1:
+        return {"status": "resolved", "candidate_id": int(matches[0]["id"]), "match": "unique_name"}
+    return {
+        "status": "needs_candidate",
+        "detail": "Name one unique strategy candidate or include its candidate ID.",
+        "matches": [{"id": row.get("id"), "candidate_key": row.get("candidate_key"), "name": row.get("name")} for row in matches[:8]],
+    }
+
+
+def infer_tradingview_template_request(message: str) -> dict | None:
+    normalized = re.sub(r"\s+", " ", message.lower()).strip()
+    if "tradingview" not in normalized or not re.search(r"\b(?:open|show|load|build|create)\b", normalized):
+        return None
+
+    template_key = ""
+    if "straddle" in normalized and any(term in normalized for term in ("four pane", "4 pane", "four chart", "4 chart", "layout")):
+        template_key = "option_straddle_four_pane"
+    elif "relative strength" in normalized or "ratio chart" in normalized:
+        template_key = "relative_strength_ratio_chart"
+    elif "spread" in normalized and any(term in normalized for term in ("pair", "formula", "chart")):
+        template_key = "spread_pair_formula_chart"
+    elif "fundamental" in normalized and any(term in normalized for term in ("ratio", "chart", "dashboard")):
+        template_key = "fundamental_ratio_dashboard"
+    elif "market regime" in normalized:
+        template_key = "market_regime_four_pane"
+    elif "indicator" in normalized and any(
+        term in normalized for term in ("stack", "rsi", "macd", "atr", "vwap", "supertrend", "volume")
+    ):
+        template_key = "technical_indicator_stack"
+    elif "alert" in normalized:
+        template_key = "create_alert_request"
+    if not template_key:
+        return None
+
+    ignored = {
+        "TRADINGVIEW", "NSE", "BSE", "NFO", "BFO", "MCX", "RSI", "MACD", "ATR", "VWAP",
+        "CALL", "PUT", "OI", "IV", "ROCE", "ROIC", "USDINR", "INDIAVIX",
+    }
+    symbol_candidates = [
+        item.upper() for item in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,29}\b", message)
+        if item.upper() not in ignored
+    ]
+    if not symbol_candidates:
+        natural_symbol = re.search(
+            r"\b(?:for|of)\s+([A-Za-z][A-Za-z0-9&.-]{1,29})\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if natural_symbol and natural_symbol.group(1).lower() != "tradingview":
+            symbol_candidates = [natural_symbol.group(1).upper()]
+    symbol_candidates = list(dict.fromkeys(symbol_candidates))
+
+    timeframe_match = re.search(
+        r"\b(1|3|5|15|30|45|60|120|240|D|W|M)\s*(?:MIN|MINS|MINUTE|MINUTES)?\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    payload: dict[str, object] = {
+        "template_key": template_key,
+        "symbol": symbol_candidates[0] if symbol_candidates else "",
+        "exchange": "NSE",
+        "timeframe": timeframe_match.group(1).upper() if timeframe_match else "D",
+        "actor": "Devarsh via Charlie",
+        "instruction": message,
+        "source_ref": "charlie_chat",
+        "parameters": {},
+    }
+    parameters = payload["parameters"]
+    missing: list[str] = []
+
+    if template_key == "relative_strength_ratio_chart":
+        benchmark_match = re.search(r"\b(?:versus|vs\.?|against|benchmark)\s*[:=-]?\s*([A-Za-z][A-Za-z0-9&.-]{1,29})", message, flags=re.IGNORECASE)
+        benchmark = benchmark_match.group(1).upper() if benchmark_match else (symbol_candidates[1] if len(symbol_candidates) > 1 else "")
+        parameters["benchmark"] = benchmark
+        missing = [key for key, value in (("symbol", payload["symbol"]), ("benchmark", benchmark)) if not value]
+    elif template_key == "spread_pair_formula_chart":
+        parameters.update({"leg_a": symbol_candidates[0] if symbol_candidates else "", "leg_b": symbol_candidates[1] if len(symbol_candidates) > 1 else "", "hedge_ratio": "1"})
+        missing = [key for key in ("leg_a", "leg_b") if not parameters[key]]
+    elif template_key == "option_straddle_four_pane":
+        call_match = re.search(r"\bcall(?:\s+symbol)?\s*[:=-]?\s*([A-Za-z0-9&.-]{4,40})", message, flags=re.IGNORECASE)
+        put_match = re.search(r"\bput(?:\s+symbol)?\s*[:=-]?\s*([A-Za-z0-9&.-]{4,40})", message, flags=re.IGNORECASE)
+        expiry_match = re.search(r"\bexpiry\s*[:=-]?\s*([A-Za-z0-9-]{4,20})", message, flags=re.IGNORECASE)
+        strike_match = re.search(r"\bstrike\s*[:=-]?\s*(\d{2,8}(?:\.\d+)?)", message, flags=re.IGNORECASE)
+        parameters.update({"underlying": payload["symbol"], "expiry": expiry_match.group(1).upper() if expiry_match else "", "strike": strike_match.group(1) if strike_match else "", "call_symbol": call_match.group(1).upper() if call_match else "", "put_symbol": put_match.group(1).upper() if put_match else ""})
+        missing = [key for key in ("underlying", "expiry", "strike", "call_symbol", "put_symbol") if not parameters[key]]
+    elif template_key == "technical_indicator_stack":
+        catalog = ("VWAP", "Volume", "RSI", "MACD", "ATR", "Supertrend")
+        requested = [item for item in catalog if item.lower() in normalized]
+        parameters["indicators"] = requested or list(catalog)
+        missing = [] if payload["symbol"] else ["symbol"]
+    elif template_key == "fundamental_ratio_dashboard":
+        parameters.update({"fields": ["TOTAL_REVENUE", "NET_INCOME", "OPERATING_MARGIN", "RETURN_ON_INVESTED_CAPITAL", "TOTAL_DEBT", "PRICE_EARNINGS", "PRICE_BOOK"], "filing_cross_check_required": True})
+        missing = [] if payload["symbol"] else ["symbol"]
+    elif template_key == "market_regime_four_pane":
+        payload["symbol"] = payload["symbol"] or "NIFTY"
+        parameters.update({"equity_index": "NSE:NIFTY", "volatility_index": "NSE:INDIAVIX", "bond_yield": "TVC:IN10Y", "currency": "FX_IDC:USDINR"})
+    elif template_key == "create_alert_request":
+        condition_match = re.search(r"\balert\s+(?:me\s+)?(?:when|if)\s+(.{4,500})$", message, flags=re.IGNORECASE)
+        parameters["condition"] = condition_match.group(1).strip() if condition_match else ""
+        missing = [key for key, value in (("symbol", payload["symbol"]), ("condition", parameters["condition"])) if not value]
+
+    return {"payload": payload, "missing": missing}
+
+
+def infer_graph_control_command(message: str) -> dict | None:
+    """Return an explicit, bounded graph command; never infer writes from questions."""
+    normalized = re.sub(r"\s+", " ", message.lower()).strip()
+    if not normalized:
+        return None
+
+    control_match = re.search(
+        r"\b(pause|resume|cancel|advance|continue)\s+"
+        r"(?:(?:the\s+)?(?:graph|workflow|cycle|loop)\s+)?(?:run\s+)?#?(\d+)\b",
+        normalized,
+    )
+    if control_match:
+        action = control_match.group(1)
+        return {
+            "action": "advance" if action == "continue" else action,
+            "graph_run_id": int(control_match.group(2)),
+        }
+
+    if not re.search(r"\b(?:start|run|launch|begin|open)\b", normalized):
+        return None
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    source_urls = [url.rstrip(".,;:!?") for url in re.findall(r"https://[^\s<>\]\[()]+", message)]
+
+    if any(
+        phrase in normalized
+        for phrase in (
+            "daily office loop",
+            "daily office workflow",
+            "daily office cycle",
+            "daily intelligence loop",
+            "office intelligence loop",
+        )
+    ):
+        input_payload = {"as_of": today}
+        return {
+            "action": "start",
+            "graph_key": "daily_office_intelligence",
+            "input_payload": input_payload,
+            "subject_type": "office_day",
+            "subject_ref": today,
+        }
+
+    research_flow = any(
+        phrase in normalized
+        for phrase in (
+            "research-to-investment",
+            "research to investment",
+            "research decision workflow",
+            "research decision cycle",
+            "company research lifecycle",
+            "company research workflow",
+            "full research cycle",
+            "full research workflow",
+            "end-to-end research",
+            "end to end research",
+        )
+    )
+    if research_flow:
+        subject = _graph_subject_from_message(message, message.strip())
+        input_payload: dict[str, object] = {"subject": subject, "objective": message.strip()}
+        if source_urls:
+            input_payload["source_urls"] = source_urls[:10]
+        symbols = [
+            symbol for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol not in {"NSE", "BSE", "NFO", "MCX", "URL", "PDF"}
+        ]
+        if symbols:
+            input_payload["symbol"] = symbols[0]
+        return {
+            "action": "start",
+            "graph_key": "research_to_investment_decision",
+            "input_payload": input_payload,
+            "subject_type": "research_subject",
+            "subject_ref": slug_for_text(subject)[:120],
+        }
+
+    strategy_flow = any(
+        phrase in normalized
+        for phrase in (
+            "strategy research lifecycle",
+            "strategy research workflow",
+            "strategy research cycle",
+            "quant research lifecycle",
+            "quant research workflow",
+            "full strategy lifecycle",
+            "full strategy cycle",
+            "full quant validation cycle",
+        )
+    )
+    if strategy_flow:
+        hypothesis = _graph_subject_from_message(message, message.strip())
+        ignored = {"NSE", "BSE", "NFO", "MCX", "ATR", "RSI", "EMA", "OHLCV", "PDF"}
+        symbols = [
+            symbol for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol not in ignored
+        ][:20]
+        input_payload = {"hypothesis": hypothesis}
+        if symbols:
+            input_payload["symbols"] = symbols
+        timeframe_match = re.search(r"\b(1m|3m|5m|15m|30m|1h|4h|1d|daily|weekly)\b", normalized)
+        if timeframe_match:
+            input_payload["timeframe"] = {"daily": "1d", "weekly": "1w"}.get(
+                timeframe_match.group(1), timeframe_match.group(1)
+            )
+        return {
+            "action": "start",
+            "graph_key": "strategy_research_lifecycle",
+            "input_payload": input_payload,
+            "subject_type": "strategy_hypothesis",
+            "subject_ref": slug_for_text(hypothesis)[:120],
+        }
+
+    if "kronos" in normalized and any(term in normalized for term in ("forecast", "prediction", "feature research")):
+        ignored = {"KRONOS", "NSE", "BSE", "NFO", "MCX", "OHLCV"}
+        symbols = [
+            symbol for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol not in ignored
+        ]
+        if not symbols:
+            return {"action": "needs_input", "detail": "A Kronos run requires an explicit symbol."}
+        timeframe_match = re.search(r"\b(1m|3m|5m|15m|30m|1h|4h|1d|daily)\b", normalized)
+        timeframe = timeframe_match.group(1) if timeframe_match else "1d"
+        if timeframe == "daily":
+            timeframe = "1d"
+        exchange_match = re.search(r"\b(NSE|BSE|NFO|BFO|MCX)\b", message, flags=re.IGNORECASE)
+        exchange = exchange_match.group(1).upper() if exchange_match else "NSE"
+        input_payload = {
+            "symbol": symbols[0],
+            "exchange": exchange,
+            "timeframe": timeframe,
+            "as_of": today,
+            "lookback": 512,
+            "horizon": 5,
+            "path_count": 20,
+            "model_revision": "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
+        }
+        return {
+            "action": "start",
+            "graph_key": "kronos_forecast_research",
+            "input_payload": input_payload,
+            "subject_type": "market_symbol",
+            "subject_ref": f"{exchange}:{symbols[0]}:{timeframe}:{today}",
+        }
+
+    return None
+
+
+def is_open_ended_work_request(message: str) -> bool:
+    """Detect explicit work requests that need durable triage, not a prose-only reply."""
+    normalized = re.sub(r"\s+", " ", message.lower()).strip()
+    if not normalized:
+        return False
+    if re.search(r"\b(?:do not|don't|dont|never)\s+(?:start|begin|research|investigate|build|prepare|monitor|track|compile|collect|test|evaluate|work|look)\b", normalized):
+        return False
+    if any(term in normalized for term in ("dashboard widget", "add widget", "remove widget")):
+        return False
+    if re.match(r"^(?:what|why|how|where|when|who|is|are|does|do|should|would)\b", normalized):
+        return False
+
+    work = (
+        r"(?:research|investigate|prepare|build|develop|monitor|track|compile|collect|"
+        r"test|evaluate|organize|work\s+on|look\s+into|deep\s+dive)"
+    )
+    prefixed = re.search(
+        rf"\b(?:please|can\s+you|could\s+you|i\s+need\s+you\s+to|"
+        rf"i\s+want\s+you\s+to|go\s+ahead\s+and|start|begin)\s+(?:to\s+)?{work}\b",
+        normalized,
+    )
+    direct = re.match(rf"^{work}\b", normalized)
+    return bool(prefixed or direct)
+
+
+def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> list[dict]:
     normalized = message.lower()
     explicit_refresh = any(term in normalized for term in ("refresh", "update", "sync", "collect", "fetch"))
     results: list[dict] = []
@@ -14051,6 +20538,219 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             })
         except Exception as exc:  # noqa: BLE001
             results.append({"tool": tool, "status": "failed", "detail": f"{type(exc).__name__}: {exc}"[:500]})
+
+    research_control_match = re.search(
+        r"\b(?P<verb>approve(?:\s+and\s+start)?|confirm(?:\s+and\s+start)?|go\s+ahead(?:\s+and\s+start)?|start|resume|repair)\b"
+        r"[^\n]{0,100}?\b(?:research\s+)?case\s*#?(?P<case_id>\d+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    research_control_handled = False
+    research_control_case_id = int(research_control_match.group("case_id")) if research_control_match else 0
+    research_control_verb = research_control_match.group("verb").lower() if research_control_match else ""
+    if not research_control_match and re.fullmatch(
+        r"\s*(?:yes[, ]*)?(?:approve|confirm|go\s+ahead)(?:\s+(?:and\s+)?start(?:\s+the)?\s+research)?[.!]?\s*",
+        message, flags=re.IGNORECASE,
+    ):
+        pending_rows = run_psql_json(
+            """SELECT case_row.id FROM research.research_cases case_row
+               JOIN LATERAL (SELECT status FROM research.model_run_preflights preflight
+                 WHERE preflight.research_case_id=case_row.id AND preflight.request_kind='research_case'
+                 ORDER BY preflight.id DESC LIMIT 1) preflight ON preflight.status='awaiting_approval'
+               WHERE case_row.status='proposed' AND case_row.updated_at>=now()-interval '30 minutes'
+               ORDER BY case_row.updated_at DESC,case_row.id DESC LIMIT 2"""
+        )
+        if len(pending_rows) == 1:
+            research_control_case_id = int(pending_rows[0]["id"])
+            research_control_verb = "approve and start"
+        elif len(pending_rows) > 1:
+            research_control_handled = True
+            results.append({"tool":"research_case_control","status":"needs_disambiguation",
+                            "detail":"More than one recent Research Case is awaiting approval. Say 'approve and start research case #<id>'."})
+    if research_control_case_id:
+        research_control_handled = True
+        case_id = research_control_case_id
+        verb = research_control_verb
+        case_rows = run_psql_json(
+            f"SELECT id,status,company_name,exchange,ticker FROM research.research_cases WHERE id={case_id} LIMIT 1"
+        )
+        if not case_rows:
+            results.append({"tool": "research_case_control", "status": "not_found", "detail": f"Research Case #{case_id} was not found."})
+        else:
+            latest_preflight = run_psql_json(
+                f"""SELECT id,status,estimated_cost_usd,hard_max_cost_usd,exchange_rate_inr_per_usd
+                    FROM research.model_run_preflights
+                    WHERE research_case_id={case_id} AND request_kind='research_case'
+                    ORDER BY id DESC LIMIT 1"""
+            )
+            preflight = latest_preflight[0] if latest_preflight else {}
+            explicit_cost_approval = any(term in verb for term in ("approve", "confirm", "go ahead"))
+            if preflight.get("status") == "awaiting_approval" and explicit_cost_approval:
+                invoke(
+                    "approve_research_cost_plan",
+                    lambda: approve_research_model_preflight({
+                        "preflight_id": int(preflight["id"]),
+                        "operator_confirmed": True,
+                        "actor": f"Devarsh via {actor}",
+                    }),
+                    "status",
+                )
+                preflight["status"] = "approved"
+            if preflight.get("status") == "approved":
+                if verb.startswith("resume") or verb.startswith("repair"):
+                    invoke(
+                        "repair_research_case",
+                        lambda: repair_research_case({
+                            "research_case_id": case_id,
+                            "model_preflight_id": int(preflight["id"]),
+                            "operator_confirmed": True,
+                            "force_new_iteration": True,
+                            "actor": f"Devarsh via {actor}",
+                        }),
+                        "case_id",
+                    )
+                else:
+                    invoke(
+                        "start_research_case",
+                        lambda: start_research_case({
+                            "research_case_id": case_id,
+                            "model_preflight_id": int(preflight["id"]),
+                            "operator_confirmed": True,
+                            "actor": f"Devarsh via {actor}",
+                        }),
+                        "status",
+                    )
+            elif preflight.get("status") == "awaiting_approval":
+                rate = float(preflight.get("exchange_rate_inr_per_usd") or 87)
+                estimate = float(preflight.get("estimated_cost_usd") or 0) * rate
+                hard_max = float(preflight.get("hard_max_cost_usd") or 0) * rate
+                results.append({
+                    "tool": "research_case_control",
+                    "status": "awaiting_explicit_cost_approval",
+                    "detail": f"Case #{case_id} is ready. Say 'approve and start research case {case_id}' after reviewing estimated INR {estimate:.2f} and hard stop INR {hard_max:.2f}.",
+                    "research_case_id": case_id,
+                    "preflight_id": preflight.get("id"),
+                    "estimated_cost_inr": round(estimate, 2),
+                    "hard_max_cost_inr": round(hard_max, 2),
+                })
+            else:
+                invoke(
+                    "prepare_research_resume_cost_plan",
+                    lambda: prepare_research_case_resume({"research_case_id": case_id, "actor": f"Devarsh via {actor}"}),
+                    "case_id",
+                )
+
+    research_case_entity = extract_research_entity(message)
+    if research_case_entity and not research_control_handled:
+        entity = research_case_entity[:180]
+        invoke(
+            "propose_research_case",
+            lambda: propose_research_case({
+                "request_text": message,
+                "entity": entity,
+                "actor": f"Devarsh via {actor}",
+            }),
+            "status",
+        )
+
+    graph_command = infer_graph_control_command(message)
+    graph_action = str((graph_command or {}).get("action") or "")
+    if graph_command:
+        if graph_action == "needs_input":
+            results.append({
+                "tool": "graph_control",
+                "status": "needs_input",
+                "detail": str(graph_command.get("detail") or "More graph input is required."),
+            })
+        elif graph_action == "start":
+            graph_key = str(graph_command["graph_key"])
+            if graph_key == "kronos_forecast_research":
+                adapter = run_psql_json(
+                    "SELECT tool_name,enabled FROM agent.tool_registry "
+                    "WHERE tool_name='kronos_inference_adapter' AND enabled=true LIMIT 1"
+                )
+                if not adapter:
+                    results.append({
+                        "tool": "start_graph_run",
+                        "status": "dependency_required",
+                        "detail": "Kronos adapter is not installed and validated; no forecast run was started.",
+                    })
+                else:
+                    payload = {
+                        **graph_command,
+                        "actor": f"Devarsh via {actor}",
+                        "trigger_type": "charlie_chat",
+                    }
+                    payload.pop("action", None)
+                    payload["idempotency_key"] = graph_control_plane.idempotency_key(
+                        graph_key,
+                        str(payload.get("subject_ref") or ""),
+                        payload.get("input_payload") or {},
+                    )
+                    invoke("start_graph_run", lambda: start_graph_control_run(payload), "graph_run_id")
+            else:
+                payload = {
+                    **graph_command,
+                    "actor": f"Devarsh via {actor}",
+                    "trigger_type": "charlie_chat",
+                }
+                payload.pop("action", None)
+                payload["idempotency_key"] = graph_control_plane.idempotency_key(
+                    graph_key,
+                    str(payload.get("subject_ref") or ""),
+                    payload.get("input_payload") or {},
+                )
+                invoke("start_graph_run", lambda: start_graph_control_run(payload), "graph_run_id")
+        elif graph_action in {"pause", "resume", "cancel", "advance"}:
+            run_payload = {
+                "graph_run_id": int(graph_command["graph_run_id"]),
+                "actor": f"Devarsh via {actor}",
+            }
+            handlers: dict[str, tuple[str, Callable[[], dict]]] = {
+                "pause": ("pause_graph_run", lambda: pause_graph_control_run(run_payload)),
+                "resume": ("resume_graph_run", lambda: resume_graph_control_run(run_payload)),
+                "cancel": ("cancel_graph_run", lambda: cancel_graph_control_run(run_payload)),
+                "advance": ("advance_graph_run", lambda: advance_graph_control_run(run_payload)),
+            }
+            tool_name, callback = handlers[graph_action]
+            invoke(tool_name, callback, "graph_run_id")
+
+    source_urls = list(dict.fromkeys(
+        url.rstrip(".,;:!?")
+        for url in re.findall(r"https://[^\s<>\]\[()]+", message)
+    ))[:5]
+    source_intent = bool(
+        re.search(
+            r"\b(?:ingest|read|analy[sz]e|review|extract|summari[sz]e|study|research)\b",
+            normalized,
+        )
+        or any(term in normalized for term in ("article", "paper", "blog", "research source", "hypothesis"))
+    )
+    source_intent_negated = bool(
+        re.search(
+            r"\b(?:do not|don't|dont|never)\s+(?:ingest|read|analy[sz]e|review|extract|summari[sz]e|study|research)\b",
+            normalized,
+        )
+    )
+    if source_urls and source_intent and not source_intent_negated:
+        explicit_hypothesis = _explicit_hypothesis_from_message(message)
+        for source_index, source_url in enumerate(source_urls):
+            source_payload = {
+                "source_url": source_url,
+                "source_key": "github" if "github.com" in source_url.lower() else "web",
+                "research_objective": message,
+                "desired_outputs": ["research_note", "hypothesis_review", "backtest_spec"],
+                "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
+                "actor": f"Devarsh via {actor}",
+            }
+            # A batch-level hypothesis is recorded once; every source still gets its own evidence task.
+            if explicit_hypothesis and source_index == 0:
+                source_payload["hypothesis"] = explicit_hypothesis
+            invoke(
+                "ingest_research_source",
+                lambda payload=source_payload: ingest_research_source(payload),
+                "live_execution_allowed",
+            )
 
     if explicit_refresh and "news" in normalized:
         invoke(
@@ -14099,6 +20799,125 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             }),
         )
 
+    office_acceptance_command = re.search(
+        r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:ai\s+)?office\s+operability(?:\s+acceptance)?\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if office_acceptance_command:
+        invoke(
+            "run_office_operability_acceptance",
+            lambda: run_office_operability_acceptance({"actor": f"Devarsh via {actor}"}),
+            "status",
+        )
+
+    fundamental_factory_command = re.search(
+        r"\b(?:run|validate|refresh)\s+(?:the\s+)?(?:institutional\s+)?fundamental\s+(?:research\s+)?factory\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if fundamental_factory_command:
+        timestamp_match = re.search(
+            r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})\b",
+            message,
+        )
+        exchange_match = re.search(r"\b(NSE|BSE)\b", message, flags=re.IGNORECASE)
+        ignored = {"RUN", "VALIDATE", "REFRESH", "THE", "INSTITUTIONAL", "FUNDAMENTAL", "RESEARCH", "FACTORY", "NSE", "BSE", "PERSIST", "WRITE", "DRY"}
+        symbols = [
+            symbol.upper() for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol.upper() not in ignored
+        ]
+        if not timestamp_match or not exchange_match or not symbols:
+            results.append({
+                "tool": "run_institutional_fundamental_factory",
+                "status": "needs_input",
+                "detail": "Provide company symbol, NSE or BSE, and a timezone-aware ISO research cutoff. Add 'persist' only when the validated dossier should be written.",
+            })
+        else:
+            persist = bool(re.search(r"\b(?:persist|write)\b", message, flags=re.IGNORECASE))
+            invoke(
+                "run_institutional_fundamental_factory",
+                lambda: run_institutional_fundamental_factory({
+                    "symbol": symbols[0],
+                    "exchange": exchange_match.group(1).upper(),
+                    "as_of": timestamp_match.group(0),
+                    "dry_run": not persist,
+                    "actor": f"Devarsh via {actor}",
+                }),
+                "acceptance_status",
+            )
+
+    sector_acceptance_command = re.search(
+        r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:real[- ]sector\s+|sector\s+)?acceptance\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if sector_acceptance_command:
+        date_match = re.search(r"\b(?:as\s+of\s+)?(\d{4}-\d{2}-\d{2})\b", message)
+        node_id_match = re.search(r"\b(?:taxonomy\s+)?node(?:\s+id)?\s+(\d+)\b", message, flags=re.IGNORECASE)
+        key_match = re.search(
+            r"\b(?:sector|industry|taxonomy\s+key)\s+([A-Za-z0-9._:-]{1,160})\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if not date_match or (not node_id_match and not key_match):
+            results.append({
+                "tool": "run_sector_acceptance",
+                "status": "needs_input",
+                "detail": "Name a taxonomy node id or sector taxonomy key and an as-of date in YYYY-MM-DD format.",
+            })
+        else:
+            acceptance_payload = {
+                "as_of_date": date_match.group(1),
+                "actor": f"Devarsh via {actor}",
+            }
+            if node_id_match:
+                acceptance_payload["taxonomy_node_id"] = int(node_id_match.group(1))
+            else:
+                acceptance_payload["taxonomy_key"] = key_match.group(1)
+            invoke(
+                "run_sector_acceptance",
+                lambda: run_sector_acceptance(acceptance_payload),
+                "status",
+            )
+
+    option_acceptance_command = re.search(
+        r"\b(?:run|evaluate|check)\s+(?:the\s+)?(?:institutional\s+)?options?\s+acceptance\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if option_acceptance_command:
+        exchange_match = re.search(r"\b(NFO|BFO|NSE|BSE)\b", message, flags=re.IGNORECASE)
+        expiry_match = re.search(r"\bexpiry\s+(\d{4}-\d{2}-\d{2})\b", message, flags=re.IGNORECASE)
+        timestamps = re.findall(
+            r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})\b",
+            message,
+        )
+        ignored = {"NFO", "BFO", "NSE", "BSE", "OPTIONS", "OPTION", "ACCEPTANCE"}
+        symbols = [
+            symbol.upper() for symbol in re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+            if symbol.upper() not in ignored
+        ]
+        if not exchange_match or not expiry_match or len(timestamps) < 2 or not symbols:
+            results.append({
+                "tool": "run_option_acceptance",
+                "status": "needs_input",
+                "detail": "Provide exchange, underlying, expiry YYYY-MM-DD, and two timezone-aware ISO timestamps for window start and end.",
+            })
+        else:
+            invoke(
+                "run_option_acceptance",
+                lambda: run_option_acceptance({
+                    "exchange": exchange_match.group(1).upper(),
+                    "underlying": symbols[0],
+                    "expiry_date": expiry_match.group(1),
+                    "window_start": timestamps[0],
+                    "window_end": timestamps[1],
+                    "actor": f"Devarsh via {actor}",
+                }),
+                "status",
+            )
+
     watchlist_match = re.search(
         r"\badd\s+([A-Za-z0-9&.-]{2,20})\s+(?:to|on)\s+(?:my\s+)?watchlist\b",
         message,
@@ -14133,7 +20952,7 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
         message,
         flags=re.IGNORECASE,
     )
-    if strategy_command:
+    if strategy_command and not graph_command:
         named = re.search(
             r"\b(?:called|named)\s+[\"']?(.{3,80}?)[\"']?(?=\s+(?:that|which|with|using|for)\b|[,.;\n]|$)",
             message,
@@ -14167,25 +20986,143 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             "candidate_key",
         )
 
-    delegation_command = re.search(
-        r"\b(?:delegate|assign|ask)\b.+\b(?:to|team|agent|department)\b",
-        message,
-        flags=re.IGNORECASE,
+    backtest_command = bool(
+        re.search(
+            r"\b(?:(?:run|start|re-run|rerun|queue)\s+(?:a\s+|the\s+)?(?:strategy\s+)?backtest|backtest\s+(?:candidate|strategy))\b",
+            message,
+            flags=re.IGNORECASE,
+        )
     )
-    if delegation_command:
+    optimization_command = bool(
+        re.search(
+            r"\b(?:(?:run|start)\s+(?:an?\s+|the\s+)?(?:strategy\s+)?optimi[sz]ation|optimi[sz]e\s+(?:candidate|strategy))\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+    )
+    if backtest_command and not strategy_command and not graph_command:
+        resolved = _resolve_strategy_candidate_from_message(message)
+        if resolved.get("status") == "resolved":
+            invoke(
+                "run_strategy_backtest",
+                lambda: run_strategy_backtest({
+                    "candidate_id": resolved["candidate_id"],
+                    "actor": "Devarsh via Charlie",
+                }),
+                "status",
+            )
+        else:
+            results.append({"tool": "run_strategy_backtest", **resolved})
+    if optimization_command and not strategy_command and not graph_command:
+        resolved = _resolve_strategy_candidate_from_message(message)
+        if resolved.get("status") == "resolved":
+            invoke(
+                "run_strategy_optimization",
+                lambda: run_strategy_optimization({
+                    "candidate_id": resolved["candidate_id"],
+                    "actor": "Devarsh via Charlie",
+                }),
+                "status",
+            )
+        else:
+            results.append({"tool": "run_strategy_optimization", **resolved})
+
+    tradingview_template_request = infer_tradingview_template_request(message)
+    if tradingview_template_request:
+        missing = tradingview_template_request.get("missing") or []
+        if missing:
+            results.append({
+                "tool": "execute_tradingview_template_action",
+                "status": "needs_input",
+                "detail": "TradingView template requires: " + ", ".join(str(item) for item in missing),
+                "template_key": tradingview_template_request["payload"]["template_key"],
+            })
+        else:
+            invoke(
+                "execute_tradingview_template_action",
+                lambda: execute_tradingview_template_action(tradingview_template_request["payload"]),
+                "status",
+            )
+
+    tradingview_desktop_command = (
+        "tradingview" in normalized
+        and re.search(r"\b(?:open|show|load)\b", message, flags=re.IGNORECASE)
+        and not tradingview_template_request
+    )
+    if tradingview_desktop_command:
+        symbol_candidates = re.findall(r"\b[A-Z][A-Z0-9&.-]{1,19}\b", message)
+        if not symbol_candidates:
+            natural_symbol = re.search(
+                r"\b(?:open|show|load)\s+(?:the\s+)?(?:chart\s+(?:for|of)\s+)?([A-Za-z][A-Za-z0-9&.-]{1,19})\b",
+                message,
+                flags=re.IGNORECASE,
+            )
+            symbol_candidates = [natural_symbol.group(1).upper()] if natural_symbol else []
+        ignored_symbols = {"TRADINGVIEW", "CHART", "DESKTOP", "APP", "THE", "NSE", "BSE", "NFO"}
+        symbol_candidates = [item.upper() for item in symbol_candidates if item.upper() not in ignored_symbols]
+        timeframe_match = re.search(
+            r"\b(1|3|5|15|30|45|60|120|240|D|W|M)\s*(?:MIN|MINS|MINUTE|MINUTES)?\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if symbol_candidates:
+            invoke(
+                "open_tradingview_desktop",
+                lambda: open_tradingview_desktop_chart({
+                    "symbol": symbol_candidates[0],
+                    "exchange": "NSE",
+                    "timeframe": timeframe_match.group(1).upper() if timeframe_match else "D",
+                    "actor": "Devarsh via Charlie",
+                    "instruction": message,
+                    "source_ref": "charlie_chat",
+                }),
+                "status",
+            )
+        else:
+            results.append({
+                "tool": "open_tradingview_desktop",
+                "status": "needs_symbol",
+                "detail": "Name the symbol Charlie should open in TradingView Desktop.",
+            })
+
+    delegation_command = (
+        re.search(
+            r"\b(?:delegate|assign)\b[^.!?\n]{1,200}\bto\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\bask\s+(?!you\b)(?:the\s+)?[^.!?\n]{1,120}\bto\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:have|get|tell|send)\s+(?:the\s+)?(?:research|fundamental|sector|industry|quant|risk|options|news|portfolio|data)\b[^.!?\n]{1,200}\b(?:review|analy[sz]e|test|build|check|prepare|investigate|do|work)\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+    )
+    source_intake_handled = bool(source_urls and source_intent and not source_intent_negated)
+    if delegation_command and not graph_command and not source_intake_handled:
         target = resolve_agent_for_instruction(message)
         if target:
             subject = re.sub(r"\s+", " ", message).strip()[:120]
+            related_skill_key = resolve_delegation_skill(target)
             invoke(
                 "delegate_agent_work",
                 lambda: create_agent_message({
-                    "from_agent": "Charlie Munger",
+                    "from_agent": actor if actor in {str(row.get('agent_name')) for row in run_psql_json("SELECT agent_name FROM agent.profiles WHERE status='active'")} else "Charlie Munger",
                     "to_agent": target["agent_name"],
                     "subject": subject,
                     "body": message,
                     "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
                     "actor": "Devarsh via Charlie",
-                    "metadata": {"source": "charlie_chat", "operator_requested": True},
+                    "related_skill_key": related_skill_key,
+                    "metadata": {
+                        "source": "charlie_chat",
+                        "operator_requested": True,
+                        "skill_key": related_skill_key,
+                    },
                 }),
                 "id",
             )
@@ -14202,7 +21139,168 @@ def execute_charlie_safe_tools(message: str) -> list[dict]:
             lambda: run_agent_worker({"actor": "Devarsh via Charlie", "limit": 5}),
             "processed",
         )
+
+    if not results and is_open_ended_work_request(message):
+        active_agents = {
+            str(row.get("agent_name"))
+            for row in run_psql_json("SELECT agent_name FROM agent.profiles WHERE status='active'")
+        }
+        from_agent = actor if actor in active_agents else "Charlie Munger"
+        target_agent = "Jarvis" if "Jarvis" in active_agents else "Charlie Munger"
+        invoke(
+            "queue_open_ended_work",
+            lambda: create_agent_message({
+                "from_agent": from_agent,
+                "to_agent": target_agent,
+                "subject": re.sub(r"\s+", " ", message).strip()[:120],
+                "body": message,
+                "priority": "high" if any(term in normalized for term in ("urgent", "today", "critical")) else "medium",
+                "actor": "Devarsh via Charlie",
+                "related_skill_key": "route_user_request",
+                "metadata": {
+                    "source": "charlie_chat",
+                    "operator_requested": True,
+                    "open_ended_intake": True,
+                    "skill_key": "route_user_request",
+                },
+            }),
+            "id",
+        )
     return results
+
+
+def is_fast_verified_stack_request(message: str, include_client_context: bool) -> bool:
+    normalized = message.lower()
+    asks_status = any(term in normalized for term in (
+        "stack status", "system status", "office status", "what company research",
+        "research is waiting", "research waiting", "what is waiting for me",
+        "current ai os", "research cases waiting", "our stack", "the stack",
+        "what do you know about the stack", "what is running", "daemon status",
+        "company monitoring", "followed companies",
+    ))
+    return asks_status and any(term in normalized for term in (
+        "stack", "system", "office", "research", "waiting", "running", "monitoring", "followed"
+    ))
+
+
+def fast_verified_stack_response(payload: dict, message: str) -> dict:
+    rows = run_psql_json(
+        """
+        SELECT case_row.id,case_row.company_name,case_row.exchange,case_row.ticker,
+               case_row.status,case_row.lead_status,case_row.current_goal,
+               case_row.exception_count,case_row.updated_at,case_row.holding_thesis_id,
+               preflight.status AS preflight_status,preflight.estimated_cost_usd,
+               preflight.hard_max_cost_usd,preflight.exchange_rate_inr_per_usd
+        FROM research.research_cases case_row
+        LEFT JOIN LATERAL (
+            SELECT status,estimated_cost_usd,hard_max_cost_usd,exchange_rate_inr_per_usd
+            FROM research.model_run_preflights
+            WHERE research_case_id=case_row.id AND request_kind='research_case'
+            ORDER BY id DESC LIMIT 1
+        ) preflight ON true
+        ORDER BY CASE case_row.status WHEN 'review' THEN 1 WHEN 'active' THEN 2
+                 WHEN 'collecting' THEN 3 WHEN 'proposed' THEN 4 WHEN 'blocked' THEN 5
+                 WHEN 'completed' THEN 6 ELSE 7 END,case_row.updated_at DESC,case_row.id DESC
+        LIMIT 12
+        """
+    )
+    heartbeat_rows = run_psql_json(
+        """SELECT status,host_name,process_id,heartbeat_at,last_error,last_pass_summary
+           FROM core.runtime_daemon_heartbeats WHERE daemon_key='agent_message_daemon' LIMIT 1"""
+    )
+    heartbeat = heartbeat_rows[0] if heartbeat_rows else {}
+    raw_daemon_error = str(heartbeat.get("last_error") or "").strip()
+    daemon_status = str(heartbeat.get("status") or "not reported")
+    options_error = any(marker in raw_daemon_error.lower() for marker in (
+        "materialize_institutional_options", "options materializer", "option materializer"
+    ))
+    if options_error:
+        daemon_summary = (
+            f"Company Research daemon is running; last heartbeat "
+            f"{heartbeat.get('heartbeat_at') or 'unavailable'}. "
+            "Options data refresh needs attention; inspect System Health."
+        )
+    elif raw_daemon_error:
+        daemon_summary = (
+            f"Company Research daemon reports {daemon_status}; last heartbeat "
+            f"{heartbeat.get('heartbeat_at') or 'unavailable'}. "
+            "A background task needs attention; inspect System Health for technical detail."
+        )
+    else:
+        daemon_summary = (
+            f"Company Research daemon is {daemon_status}; last heartbeat "
+            f"{heartbeat.get('heartbeat_at') or 'unavailable'}; no active error."
+        )
+    monitoring = run_psql_json(
+        """SELECT count(*)::integer followed_count,
+                  count(*) FILTER (WHERE latest_filing_at>=now()-interval '7 days')::integer filing_changes_7d,
+                  count(*) FILTER (WHERE latest_news_at>=now()-interval '7 days')::integer news_changes_7d
+           FROM research.v_company_research_monitoring"""
+    )
+    monitoring_row = monitoring[0] if monitoring else {}
+    update_rows = run_psql_json(
+        """SELECT company_name,exchange,symbol,update_type,title,materiality,decision_impact,effective_at,
+                  source_url,case_href,thesis_href
+           FROM research.v_company_research_update_feed
+           WHERE status='new' ORDER BY CASE materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+                    effective_at DESC,id DESC LIMIT 5"""
+    )
+    ssd_root = Path("/Volumes/Devarsh SSD")
+    lines = [
+        f"AI OS is online; the external Devarsh SSD is {'mounted' if ssd_root.is_mount() else 'not mounted'}, and broker/client/external writes remain locked.",
+        f"Company Research has {len(rows)} recent durable cases in this bounded view.",
+        daemon_summary,
+        f"Monitoring covers {int(monitoring_row.get('followed_count') or 0)} followed companies; {int(monitoring_row.get('filing_changes_7d') or 0)} have a filing and {int(monitoring_row.get('news_changes_7d') or 0)} have authorized news in the last seven days.",
+    ]
+    for row in rows[:6]:
+        status = str(row.get("status") or "unknown")
+        if status == "proposed":
+            rate = float(row.get("exchange_rate_inr_per_usd") or 87)
+            estimate = float(row.get("estimated_cost_usd") or 0)
+            hard_max = float(row.get("hard_max_cost_usd") or 0)
+            action = f"waiting for explicit cost approval (estimated INR {estimate * rate:.2f}; hard stop INR {hard_max * rate:.2f})"
+        elif status == "blocked":
+            action = f"needs repair; {int(row.get('exception_count') or 0)} recorded exceptions"
+        elif status == "collecting":
+            action = "collecting and extracting authorized public sources"
+        elif status == "review":
+            action = "waiting for human review"
+        elif status == "active":
+            action = str(row.get("current_goal") or "specialist research is running")
+        elif status == "completed":
+            action = "completed pack is available"
+        else:
+            action = str(row.get("current_goal") or "inspect case history")
+        lines.append(f"- [Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')}](/research/cases?case_id={row.get('id')}): {status}; {action}.")
+    if update_rows:
+        lines.append("Latest material followed-company changes:")
+        lines.extend(
+            f"- {row.get('exchange')}:{row.get('symbol')} {row.get('update_type')}: {row.get('title')} ({row.get('materiality')}; {row.get('decision_impact')}) [{row.get('source_url') or row.get('case_href')}]"
+            for row in update_rows
+        )
+    assistant_message = "\n".join(lines)
+    route = {"route_name": "verified_stack_status_v2", "default_provider": "local_tools", "default_model": "deterministic_status_v2"}
+    persisted_payload = dict(payload)
+    persisted_payload["assistant_name"] = "Charlie Munger"
+    metadata = dict(payload.get("metadata") or {})
+    metadata.update({"api_route": "/api/chat", "fast_verified_stack_snapshot": True,
+                     "private_data_egress": False, "external_write_allowed": False,
+                     "broker_write_allowed": False, "model_calls": 0})
+    persisted_payload["metadata"] = metadata
+    chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, "deterministic_fallback", [], [], [])
+    return {
+        "chat_turn": chat_turn, "message": assistant_message,
+        "assistant_identity": {"agent_name": "Charlie Munger", "display_title": "Chief of Staff · Orchestrator"},
+        "conversation_mode": "orchestrator", "route": route, "model_status": "deterministic_fallback",
+        "model_call_control": {"decision_id": None, "selected_route": "verified_stack_status_v2", "selected_provider": "local_tools", "selected_model": "deterministic_status_v2", "privacy_class": "internal", "contains_client_data": False, "raw_prompt_stored": False},
+        "retrieval_status": "bounded_warehouse_snapshot", "retrieval_hits": [], "widget_intents": [],
+        "materialization": {"count": 0, "materialized": []}, "dashboard_widgets": [], "agent_jobs": [],
+        "tool_intents": [], "truth_envelope": {"evidence_status": "warehouse_verified", "source_refs": [
+            {"source_table": "research.research_cases", "row_count": len(rows)},
+            {"source_table": "research.v_company_research_monitoring", "row_count": int(monitoring_row.get('followed_count') or 0)},
+            {"source_table": "research.v_company_research_update_feed", "row_count": len(update_rows)},
+        ], "missing_evidence": []},
+    }
 
 
 def chat_with_charlie(payload: dict) -> dict:
@@ -14211,11 +21309,19 @@ def chat_with_charlie(payload: dict) -> dict:
         raise ValueError("message is required")
 
     include_client_context = bool(payload.get("include_client_context", payload.get("includeClientContext", True)))
+    if is_fast_verified_stack_request(message, include_client_context):
+        return fast_verified_stack_response(payload, message)
+
+    identity = resolve_conversation_identity(payload)
     requested_privacy = str(payload.get("privacy_class") or payload.get("privacyClass") or "client_private").strip()
     if include_client_context and requested_privacy in {"public", "internal"}:
         raise ValueError("public or internal chat cannot include client context; use client_private or restricted")
-    tool_intents = execute_charlie_safe_tools(message)
-    context = build_chat_context(message, include_client_context=include_client_context)
+    tool_intents = execute_charlie_safe_tools(message, str(identity.get("agent_name") or "Charlie Munger"))
+    context = build_chat_context(
+        message,
+        include_client_context=include_client_context,
+        assistant_name=str(identity.get("agent_name") or "Charlie Munger"),
+    )
     context["tool_results"] = tool_intents
     context["broad_office_request"] = is_broad_office_request(message)
     context["approval_summary_map"] = {
@@ -14223,19 +21329,8 @@ def chat_with_charlie(payload: dict) -> dict:
         for row in context.get("approval_summary") or []
     }
     normalized_message = message.lower()
-    factual_request_terms = (
-        "how many", "show", "list", "latest", "status", "what changed",
-        "where is", "where are", "do we have", "give me", "get me",
-    )
-    factual_domain_terms = (
-        "filing", "announcement", "news", "watchlist", "idea list", "report",
-        "letter", "broker", "zerodha", "option", "position", "holding",
-        "client", "ohlcv", "market data", "calendar", "holiday", "result date",
-    )
-    auto_factual_retrieval = (
-        any(term in normalized_message for term in factual_request_terms)
-        and any(term in normalized_message for term in factual_domain_terms)
-    )
+    auto_factual_retrieval = is_auto_factual_retrieval_request(message)
+    structured_evidence_sections = structured_evidence_sections_for_request(message, context)
     deterministic_only = bool(payload.get("deterministic_only", payload.get("deterministicOnly", False)))
     if include_client_context and not deterministic_only:
         retrieval_hits, retrieval_status = qdrant_search(message)
@@ -14250,9 +21345,16 @@ def chat_with_charlie(payload: dict) -> dict:
         or infer_local_chat_route(message)
     )
     preview_route = get_model_route(requested_route)
-    session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
+    requires_client_private_context = bool(include_client_context and message_requires_client_private_context(message))
+    model_retrieval_hits = retrieval_hits
+    if str(preview_route.get("default_provider") or "") in CLOUD_CHAT_PROVIDERS:
+        # Cloud receives only the bounded deterministic draft. Local Qdrant
+        # snippets may contain unrelated client material and never cross this boundary.
+        model_retrieval_hits = []
+    base_session_key = str(payload.get("session_key") or payload.get("sessionKey") or "default").strip() or "default"
+    session_key = base_session_key + ":" + slug_for_text(str(identity.get("agent_name") or "charlie"))
     history: list[dict] = []
-    if include_client_context and str(preview_route.get("default_provider") or "") != "openrouter":
+    if include_client_context and str(preview_route.get("default_provider") or "") not in CLOUD_CHAT_PROVIDERS:
         history = load_chat_history(session_key, limit=4)
     verified_draft = deterministic_chat_reply(
         message,
@@ -14263,27 +21365,79 @@ def chat_with_charlie(payload: dict) -> dict:
         retrieval_status,
         include_route_status=False,
     )
+    needs_verified_facts = bool(
+        context["broad_office_request"]
+        or auto_factual_retrieval
+        or tool_intents
+        or any(term in normalized_message for term in (
+            "portfolio", "risk", "holding", "position", "watchlist", "strategy", "research",
+            "filing", "news", "calendar", "option", "market", "broker", "task", "inbox", "approval",
+            "backtest", "sector", "industry", "custom index", "fundamental", "dossier",
+            "working", "assignment", "what are you doing", "stack", "system status", "daemon",
+            "ssd", "model route", "what can you do", "office status"
+        ))
+    )
+    bounded_verified_context = (
+        verified_draft[:1800]
+        if needs_verified_facts
+        else "No office snapshot was needed for this conversational turn. Do not invent office state or completed work."
+    )
+    identity_system_prompt = (
+        CHARLIE_TRUTH_SYSTEM_PROMPT.replace(
+            "You are Charlie Munger, the evidence-bound orchestrator for a private AI portfolio office.",
+            f"You are {identity.get('agent_name')}, {identity.get('display_title') or identity.get('role_scope')}, in a private AI portfolio office.",
+        )
+        + "\n\nACTIVE EMPLOYEE IDENTITY:\n"
+        + str(identity.get("first_person_identity") or "")
+        + "\nYou are this employee for the entire response. Speak as yourself in first person. "
+          "Do not call yourself Charlie unless the active identity is Charlie Munger. "
+          "Your title, mandate, tools, permissions, and completed actions come only from the supplied identity and evidence."
+    )
 
     prompt = (
         "/no_think\n"
+        "Active employee identity and operating contract:\n"
+        f"{json.dumps({key: identity.get(key) for key in ('agent_name','display_title','department_name','role_scope','persona','operating_style','mental_models','primary_route','permission_level','reports_to_agent')}, default=str)[:1200]}\n\n"
         "Recent local conversation (context only; current verified data controls):\n"
-        f"{json.dumps(history, default=str)[:1800]}\n\n"
+        f"{json.dumps(history, default=str)[:900]}\n\n"
         "Current user message:\n"
         f"{message}\n\n"
-        "Verified office facts and deterministic calculations:\n"
-        f"{verified_draft[:5000]}\n\n"
+        "Relevant verified office facts and deterministic calculations:\n"
+        f"{bounded_verified_context}\n\n"
+        "The scoped employee row in verified facts is authoritative for current work and status. "
+        "Never claim idle or no active work when it reports an executing or in-progress task.\n\n"
         "Completed or attempted operator actions:\n"
-        f"{json.dumps(tool_intents, default=str)[:1400]}\n\n"
+        f"{json.dumps(tool_intents, default=str)[:900]}\n\n"
         "Source-linked memory snippets:\n"
-        f"{json.dumps(retrieval_hits[:3], default=str)[:700]}\n\n"
-        "Answer as Charlie in a natural ongoing conversation. Lead with the direct answer, then state what was "
-        "actually done and the most useful next decision. Preserve facts, caveats, numbers, action status, and "
+        f"{json.dumps(model_retrieval_hits[:3], default=str)[:500]}\n\n"
+        f"Answer as {identity.get('agent_name')} in a natural ongoing conversation. Lead with the direct answer. "
+        "When work was requested, state exactly what you completed, what you delegated, who owns it, and its stored status. "
+        "Any row list is a bounded sample unless explicitly labelled complete; omission from a sample is never evidence that a record or run does not exist. "
+        "Preserve facts, caveats, numbers, action status, and "
         "links exactly. Never invent an action or recommendation. Do not add buy, sell, hold, sizing, order, or "
-        "execution advice. Broker writes remain locked. Return only the user-facing answer."
+        "execution advice. Broker writes remain locked. Use at most four short sentences and 90 words unless the user explicitly asks for detail. "
+        "Return only the user-facing answer."
     )
+
+    def deterministic_for_identity() -> str:
+        return identity_fallback_reply(
+            identity,
+            deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status),
+        )
     started = time.perf_counter()
     control_payload = dict(payload)
-    control_payload["contains_client_data"] = include_client_context
+    control_payload["contains_client_data"] = requires_client_private_context
+    if str(preview_route.get("default_provider") or "") in CLOUD_CHAT_PROVIDERS:
+        if requires_client_private_context:
+            control_payload["route_name"] = CHAT_MODEL_ROUTE
+            control_payload["privacy_class"] = "client_private"
+        else:
+            control_payload["privacy_class"] = "internal"
+            control_payload["cloud_approved"] = bool(
+                payload.get("cloud_approved")
+                or payload.get("cloudApproved")
+                or is_explicit_cloud_route_selection(payload, preview_route)
+            )
     if not control_payload.get("route_name") and not control_payload.get("routeName"):
         control_payload["route_name"] = requested_route
     model_decision = choose_chat_model_call(control_payload, prompt)
@@ -14296,35 +21450,48 @@ def chat_with_charlie(payload: dict) -> dict:
         )
     )
     cached_response = model_decision.get("cached_response")
+    model_attempt_status = "not_attempted"
+    retrieval_gate_blocked = bool(
+        auto_factual_retrieval
+        and retrieval_status != "ok"
+        and not structured_evidence_sections
+    )
     if deterministic_only:
         route = {**route, "last_model_status": "deterministic_tool_route"}
-        assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+        assistant_message = deterministic_for_identity()
         model_status = "deterministic_fallback"
+    elif retrieval_gate_blocked:
+        route = {**route, "last_model_status": f"retrieval_gate_blocked:{retrieval_status}"}
+        assistant_message = deterministic_for_identity()
+        model_status = "deterministic_fallback"
+        model_attempt_status = f"retrieval_gate_blocked:{retrieval_status}"
     elif cached_response:
         assistant_message, model_status = str(cached_response), "cache_hit"
     elif model_decision.get("decision_status") == "allowed":
         selected_model = str(route.get("default_model") or "llama3.2:3b")
         if route.get("default_provider") == "mlx":
-            assistant_message, model_status = mlx_chat(selected_model, prompt)
+            assistant_message, model_status = mlx_chat(selected_model, prompt, identity_system_prompt)
         elif route.get("default_provider") == "local_openai":
-            assistant_message, model_status = local_openai_chat(selected_model, prompt)
+            assistant_message, model_status = local_openai_chat(selected_model, prompt, identity_system_prompt)
+        elif route.get("default_provider") == "openai":
+            assistant_message, model_status, cloud_usage = openai_responses_chat(selected_model, prompt, identity_system_prompt)
         elif route.get("default_provider") == "openrouter":
-            assistant_message, model_status, cloud_usage = openrouter_chat(selected_model, prompt)
+            assistant_message, model_status, cloud_usage = openrouter_chat(selected_model, prompt, identity_system_prompt)
         else:
-            assistant_message, model_status = ollama_chat(selected_model, prompt)
+            assistant_message, model_status = ollama_chat(selected_model, prompt, identity_system_prompt)
     else:
         assistant_message, model_status = None, "model_call_blocked"
+    model_attempt_status = model_status
     if assistant_message and model_status == "called":
         response_guardrail = validate_charlie_model_response(assistant_message, context)
         if response_guardrail:
+            model_attempt_status = "response_guardrail_rejected"
             route = {**route, "last_model_status": "response_guardrail_rejected"}
-            assistant_message = deterministic_chat_reply(
-                message, context, retrieval_hits, widget_intents, route, retrieval_status
-            )
+            assistant_message = deterministic_for_identity()
             model_status = "deterministic_fallback"
     if not assistant_message:
         route = {**route, "last_model_status": model_status}
-        assistant_message = deterministic_chat_reply(message, context, retrieval_hits, widget_intents, route, retrieval_status)
+        assistant_message = deterministic_for_identity()
         model_status = "deterministic_fallback"
 
     finish_chat_model_call(
@@ -14333,19 +21500,56 @@ def chat_with_charlie(payload: dict) -> dict:
         model_status,
         int((time.perf_counter() - started) * 1000),
         cloud_usage,
+        attempt_status=model_attempt_status,
     )
 
     persisted_payload = dict(payload)
+    persisted_payload["assistant_name"] = str(identity.get("agent_name") or "Charlie Munger")
     metadata = dict(payload.get("metadata") or {})
     metadata.update({
         "api_route": "/api/chat",
+        "assistant_identity": identity.get("agent_name"),
+        "assistant_title": identity.get("display_title"),
         "model_call_decision_id": model_decision.get("id"),
         "privacy_class": model_decision.get("privacy_class"),
         "response_guardrail": response_guardrail,
+        "model_attempt_status": model_attempt_status,
         "cloud_usage": cloud_usage,
         "auto_factual_retrieval": auto_factual_retrieval,
     })
     truth_envelope = build_response_truth_envelope(model_status, route, retrieval_status, retrieval_hits, include_client_context)
+    if structured_evidence_sections:
+        truth_envelope["missing_evidence"] = [
+            item for item in truth_envelope.get("missing_evidence") or []
+            if not str(item).startswith("retrieval_status:")
+            and item != "no_semantic_source_hits"
+        ]
+        truth_envelope["verification_checks"]["structured_evidence_sections"] = structured_evidence_sections
+    if needs_verified_facts:
+        context_errors = context.get("context_errors") or []
+        existing_missing_evidence = list(truth_envelope.get("missing_evidence") or [])
+        truth_envelope["evidence_status"] = (
+            "warehouse_partial" if context_errors or retrieval_gate_blocked else "warehouse_verified"
+        )
+        truth_envelope["source_refs"] = [{
+            "source_table": "warehouse_chat_snapshot",
+            "as_of": truth_envelope["as_of"],
+            "context_sections": sorted(
+                key for key, value in context.items()
+                if key not in {"context_errors", "tool_results"} and value
+            ),
+        }]
+        truth_envelope["missing_evidence"] = existing_missing_evidence + [
+            f"context_error:{row.get('section')}:{row.get('error')}"
+            for row in context_errors
+        ]
+        truth_envelope["verification_checks"]["warehouse_context_loaded"] = True
+        truth_envelope["verification_checks"]["warehouse_context_error_count"] = len(context_errors)
+        semantic_retrieval_required = bool(auto_factual_retrieval and not structured_evidence_sections)
+        truth_envelope["verification_checks"]["semantic_retrieval_required"] = semantic_retrieval_required
+        truth_envelope["verification_checks"]["semantic_retrieval_passed"] = (
+            not semantic_retrieval_required or retrieval_status == "ok"
+        )
     metadata["truth_envelope"] = truth_envelope
     persisted_payload["metadata"] = metadata
     chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, model_status, retrieval_hits, widget_intents, tool_intents)
@@ -14359,9 +21563,28 @@ def chat_with_charlie(payload: dict) -> dict:
                 "limit": len(widget_intents),
             }
         )
+    delegated_jobs = [
+        assignment.get("task")
+        for operation in tool_intents
+        for assignment in ((operation.get("result") or {}).get("assignments") or [])
+        if assignment.get("task")
+    ]
+    direct_message_jobs = [
+        {
+            "message_id": (operation.get("result") or {}).get("id"),
+            "to_agent": (operation.get("result") or {}).get("to_agent"),
+            "task_name": (operation.get("result") or {}).get("subject") or operation.get("tool"),
+            "status": (operation.get("result") or {}).get("processing_status") or operation.get("status"),
+        }
+        for operation in tool_intents
+        if operation.get("tool") in {"delegate_agent_work", "queue_open_ended_work"}
+        and (operation.get("result") or {}).get("id")
+    ]
     return {
         "chat_turn": chat_turn,
         "message": assistant_message,
+        "assistant_identity": identity,
+        "conversation_mode": "employee" if identity.get("agent_name") != "Charlie Munger" else "orchestrator",
         "route": route,
         "model_status": model_status,
         "model_call_control": {
@@ -14375,6 +21598,7 @@ def chat_with_charlie(payload: dict) -> dict:
             "contains_client_data": model_decision.get("contains_client_data"),
             "cache_status": model_decision.get("cache_status"),
             "block_reasons": model_decision.get("block_reasons"),
+            "attempt_status": model_attempt_status,
             "raw_prompt_stored": False,
         },
         "retrieval_status": retrieval_status,
@@ -14382,7 +21606,7 @@ def chat_with_charlie(payload: dict) -> dict:
         "widget_intents": widget_intents,
         "materialization": materialization,
         "dashboard_widgets": [item.get("widget") for item in materialization.get("materialized", []) if item.get("widget")],
-        "agent_jobs": [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
+        "agent_jobs": delegated_jobs + direct_message_jobs + [item.get("task") for item in materialization.get("materialized", []) if item.get("task")],
         "tool_intents": tool_intents,
         "operations": tool_intents,
         "response_guardrail": response_guardrail,
@@ -14393,6 +21617,8 @@ def chat_with_charlie(payload: dict) -> dict:
             "mlx_url": MLX_BASE_URL,
             "local_openai_url": LOCAL_OPENAI_BASE_URL,
             "openrouter_key_available": bool(OPENROUTER_API_KEY),
+            "openai_url": OPENAI_BASE_URL,
+            "openai_key_available": bool(OPENAI_API_KEY),
             "embedding_model": EMBEDDING_MODEL,
             "embedding_available": ollama_model_available(EMBEDDING_MODEL),
             "chat_model_available": (
@@ -14400,6 +21626,8 @@ def chat_with_charlie(payload: dict) -> dict:
                 if route.get("default_provider") == "mlx"
                 else local_openai_model_available(str(route.get("default_model") or ""))
                 if route.get("default_provider") == "local_openai"
+                else bool(OPENAI_API_KEY)
+                if route.get("default_provider") == "openai"
                 else bool(OPENROUTER_API_KEY)
                 if route.get("default_provider") == "openrouter"
                 else ollama_model_available(str(route.get("default_model") or ""))
@@ -14407,6 +21635,71 @@ def chat_with_charlie(payload: dict) -> dict:
             "chat_model_governance": local_model_governance(str(route.get("default_model") or "")),
         },
     }
+
+
+def advance_active_graph_control_runs(payload: dict | None = None) -> dict:
+    request = payload or {}
+    try:
+        limit = int(request.get("limit") or request.get("run_limit") or 20)
+        max_steps = int(request.get("max_steps") or request.get("maxSteps") or 40)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit and max_steps must be integers") from exc
+    limit = max(1, min(limit, 50))
+    max_steps = max(1, min(max_steps, 100))
+    actor = str(request.get("actor") or "Jarvis").strip() or "Jarvis"
+    runs = run_psql_json(
+        f"""
+        SELECT graph_run_id,graph_key,run_status,updated_at
+        FROM agent.v_graph_run_status
+        WHERE run_status IN ('queued','running','waiting_approval')
+        ORDER BY updated_at,graph_run_id
+        LIMIT {limit}
+        """
+    )
+    advanced: list[dict] = []
+    errors: list[dict] = []
+    for run in runs:
+        run_id = int(run["graph_run_id"])
+        try:
+            result = graph_control_plane.advance_graph_run(
+                run_psql_json,
+                run_psql_json_statement,
+                {
+                    "graph_run_id": run_id,
+                    "actor": actor,
+                    "max_steps": max_steps,
+                },
+            )
+            advanced.append({
+                "graph_run_id": run_id,
+                "graph_key": result.get("graph_key") or run.get("graph_key"),
+                "run_status": result.get("run_status"),
+                "processed_steps": result.get("processed_steps", 0),
+                "waiting": len(result.get("attention") or []),
+            })
+        except Exception as exc:  # noqa: BLE001
+            errors.append({
+                "graph_run_id": run_id,
+                "graph_key": run.get("graph_key"),
+                "error": f"{type(exc).__name__}: {exc}"[:1000],
+            })
+    result = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "failed" if errors else "success",
+        "active_runs_seen": len(runs),
+        "count": len(advanced),
+        "runs": advanced,
+        "errors": errors,
+    }
+    audit_api_write(
+        "ai_os_advance_active_graph_runs",
+        "advance_active_graph_runs",
+        actor,
+        "agent.graph_runs",
+        result,
+        request,
+    )
+    return result
 
 
 def run_agent_worker(payload: dict) -> dict:
@@ -14432,12 +21725,37 @@ def run_agent_worker(payload: dict) -> dict:
         except (TypeError, ValueError) as exc:
             raise ValueError("task_id must be an integer") from exc
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, cwd=str(VAULT_ROOT), timeout=90)
+        worker_timeout = max(30, int(os.environ.get("AI_OS_AGENT_WORKER_TIMEOUT_SECONDS") or 300))
+    except ValueError:
+        worker_timeout = 300
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=str(VAULT_ROOT),
+            timeout=worker_timeout,
+        )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("agent worker timed out after 90 seconds") from exc
+        raise RuntimeError(f"agent worker timed out after {worker_timeout} seconds") from exc
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "agent worker failed").strip())
     result = json.loads(completed.stdout or "{}")
+    try:
+        result["graph_control_plane"] = advance_active_graph_control_runs({
+            "actor": str(payload.get("actor") or "Jarvis"),
+            "limit": 20,
+            "max_steps": 40,
+        })
+    except Exception as exc:  # noqa: BLE001
+        result["graph_control_plane"] = {
+            "status": "failed",
+            "active_runs_seen": 0,
+            "count": 0,
+            "runs": [],
+            "errors": [{"error": f"{type(exc).__name__}: {exc}"[:1000]}],
+        }
     audit_api_write(
         "ai_os_api_agent_worker_run_once",
         "run_agent_worker",
@@ -14470,6 +21788,334 @@ def materialize_agent_schedules(payload: dict) -> dict:
     )
     return result
 
+
+def build_graph_control_snapshot(query: dict[str, list[str]]) -> dict:
+    raw_run_id = str(query.get("run_id", query.get("graph_run_id", [""]))[0]).strip()
+    run_id = int(raw_run_id) if raw_run_id else None
+    snapshot = graph_control_plane.build_snapshot(run_psql_json, run_id=run_id)
+    issues: list[dict] = []
+    try:
+        kronos_filter = f"WHERE graph_run_id={run_id}" if run_id is not None else ""
+        snapshot["kronos_runs"] = run_psql_json(
+            f"SELECT * FROM strategy.v_kronos_research_runs {kronos_filter} "
+            "ORDER BY created_at DESC,forecast_run_id DESC LIMIT 80"
+        )
+        snapshot["kronos_adapter"] = run_psql_json(
+            "SELECT tool_name,tool_type,owning_agent,permission_level,enabled,"
+            "description,config,created_at AS updated_at FROM agent.tool_registry "
+            "WHERE tool_name='kronos_inference_adapter' LIMIT 1"
+        )
+        score_filter = (
+            f"WHERE score.forecast_run_id IN ("
+            f"SELECT forecast_run_id FROM strategy.v_kronos_research_runs WHERE graph_run_id={run_id})"
+            if run_id is not None
+            else ""
+        )
+        snapshot["kronos_scores"] = run_psql_json(
+            "SELECT score.id AS score_id,score.forecast_run_id,score.score_kind,"
+            "score.evaluation_start_ts,score.evaluation_end_ts,score.realized_points,"
+            "score.interval_coverage,score.directional_accuracy,score.crps,"
+            "score.mean_interval_width,score.validation_status,score.feature_payload,"
+            "score.evidence,score.scored_by,score.scored_at "
+            f"FROM strategy.kronos_forecast_scores score {score_filter} "
+            "ORDER BY score.scored_at DESC,score.id DESC LIMIT 160"
+        )
+    except Exception as exc:  # noqa: BLE001
+        snapshot["kronos_runs"] = []
+        snapshot["kronos_adapter"] = []
+        snapshot["kronos_scores"] = []
+        issues.append({"section": "kronos_research", "error": f"{type(exc).__name__}: {exc}"})
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(RUNTIME_ROOT),
+        "data_mode": {
+            "seed_data_allowed": False,
+            "execution_policy": "Declarative graph tasks only; arbitrary code and broker writes are disabled.",
+        },
+        "issues": issues,
+        **snapshot,
+    }
+
+
+def calibrate_kronos_forecast(payload: dict) -> dict:
+    raw_id = payload.get("forecast_run_id") or payload.get("forecastRunId")
+    try:
+        forecast_run_id = int(raw_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("forecast_run_id is required and must be an integer") from exc
+    actor = str(payload.get("actor") or "Model Validation Agent").strip() or "Model Validation Agent"
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "calibrate_kronos_forecast.py"),
+        "--forecast-run-id",
+        str(forecast_run_id),
+        "--actor",
+        actor,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=VAULT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Kronos calibration returned invalid JSON") from exc
+    if completed.returncode != 0:
+        raise ValueError(str(result.get("error") or completed.stderr or "Kronos calibration failed"))
+    audit_api_write(
+        "ai_os_api_calibrate_kronos_forecast",
+        "calibrate_kronos_forecast",
+        actor,
+        "strategy.kronos_forecast_scores",
+        result,
+        payload,
+    )
+    return result
+
+
+def start_graph_control_run(payload: dict) -> dict:
+    governed_payload = dict(payload)
+    evidence_gate: dict[str, Any] | None = None
+    if str(governed_payload.get("graph_key") or governed_payload.get("graphKey") or "") == "research_to_investment_decision":
+        input_payload = governed_payload.get("input_payload") or governed_payload.get("inputPayload") or {}
+        if not isinstance(input_payload, dict):
+            raise ValueError("input_payload must be an object")
+        input_payload = dict(input_payload)
+        packet = build_public_market_evidence_packet(run_psql_json, input_payload)
+        input_payload["evidence_packet"] = packet
+        governed_payload["input_payload"] = input_payload
+        governed_payload.pop("inputPayload", None)
+        subject_ref = str(governed_payload.get("subject_ref") or governed_payload.get("subjectRef") or packet.get("subject") or "research")
+        trigger_type = str(
+            governed_payload.get("trigger_type")
+            or governed_payload.get("triggerType")
+            or "manual"
+        ).lower()
+        identity_payload = {
+            "subject": packet.get("subject"),
+            "symbol": packet.get("symbol"),
+            "decision_question": input_payload.get("decision_question"),
+            "objective": input_payload.get("objective"),
+        }
+        # A repeated user command must remain idempotent even while collectors append
+        # source rows. Scheduled/system runs stay evidence-versioned; their separate
+        # heartbeat cooldown prevents duplicate autonomous work.
+        if trigger_type not in {"user_command", "operator_command", "charlie_chat"}:
+            identity_payload["source_fingerprint"] = packet.get("source_fingerprint")
+        governed_payload["idempotency_key"] = graph_control_plane.idempotency_key(
+            "research_to_investment_decision", subject_ref, identity_payload
+        )
+        evidence_gate = {
+            "packet_version": packet.get("packet_version"),
+            "source_fingerprint": packet.get("source_fingerprint"),
+            "quality": packet.get("quality"),
+        }
+
+    started = graph_control_plane.start_graph_run(run_psql_json, run_psql_json_statement, governed_payload)
+    run_id = int(started["graph_run_id"])
+    result = graph_control_plane.advance_graph_run(
+        run_psql_json,
+        run_psql_json_statement,
+        {
+            "graph_run_id": run_id,
+            "actor": governed_payload.get("actor") or "Jarvis",
+            "max_steps": governed_payload.get("max_steps") or governed_payload.get("maxSteps") or 20,
+        },
+    )
+    result["created"] = bool(started.get("created"))
+    if evidence_gate is not None:
+        result["evidence_gate"] = evidence_gate
+    audit_api_write(
+        "ai_os_start_graph_run",
+        "start_graph_run",
+        str(governed_payload.get("actor") or "Jarvis"),
+        "agent.graph_runs",
+        result,
+        governed_payload,
+    )
+    return result
+
+
+def advance_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.advance_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_advance_graph_run",
+        "advance_graph_run",
+        str(payload.get("actor") or "Jarvis"),
+        "agent.graph_runs",
+        result,
+        payload,
+    )
+    return result
+
+
+def pause_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.pause_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write("ai_os_pause_graph_run", "pause_graph_run", str(payload.get("actor") or "Devarsh"), "agent.graph_runs", result, payload)
+    return result
+
+
+def resume_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.resume_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write("ai_os_resume_graph_run", "resume_graph_run", str(payload.get("actor") or "Devarsh"), "agent.graph_runs", result, payload)
+    return result
+
+
+def cancel_graph_control_run(payload: dict) -> dict:
+    result = graph_control_plane.cancel_graph_run(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write("ai_os_cancel_graph_run", "cancel_graph_run", str(payload.get("actor") or "Devarsh"), "agent.graph_runs", result, payload)
+    return result
+
+
+def resolve_graph_principal_wait(payload: dict) -> dict:
+    result = graph_control_plane.resolve_principal_wait(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_resolve_graph_wait",
+        "resolve_graph_wait",
+        str(payload.get("actor") or "Devarsh"),
+        "agent.waiting_on_principal",
+        result,
+        payload,
+    )
+    return result
+
+
+def resolve_graph_control_decision(payload: dict) -> dict:
+    try:
+        approval_id = int(payload.get("approval_id") or payload.get("approvalId") or payload.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approval_id is required and must be an integer") from exc
+    decision = str(payload.get("decision") or payload.get("status") or "").strip().lower()
+    rationale = str(payload.get("rationale") or payload.get("notes") or "").strip()
+    actor = str(payload.get("actor") or payload.get("decided_by") or "Devarsh").strip()
+    if not decision:
+        raise ValueError("decision is required")
+    if not rationale:
+        raise ValueError("rationale is required")
+
+    rows = run_psql_json(
+        f"""
+        SELECT approval.id,approval.approval_type,approval.status,
+               approval.requested_action,node_run.graph_run_id,
+               node_run.id AS graph_node_run_id,
+               packet.id AS committee_packet_id,packet.packet_status,
+               registry.decision_options
+        FROM agent.approvals approval
+        JOIN agent.graph_node_runs node_run ON node_run.approval_id=approval.id
+        LEFT JOIN agent.committee_packets packet
+          ON packet.id=nullif(approval.requested_action->>'committee_packet_id','')::BIGINT
+        LEFT JOIN agent.committee_registry registry
+          ON registry.committee_key=packet.committee_key
+        WHERE approval.id={approval_id} AND approval.status='pending'
+        LIMIT 1
+        """
+    )
+    if not rows:
+        raise ValueError("pending graph approval not found")
+    graph_decision = rows[0]
+    requested_action = (
+        graph_decision.get("requested_action")
+        if isinstance(graph_decision.get("requested_action"), dict)
+        else {}
+    )
+    options = graph_decision.get("decision_options") or requested_action.get("decision_options") or ["approve", "reject"]
+    allowed = {str(option).lower() for option in options}
+    if decision not in allowed:
+        raise ValueError("decision must be one of: " + ", ".join(sorted(allowed)))
+    packet_id = graph_decision.get("committee_packet_id")
+    if packet_id and str(graph_decision.get("packet_status") or "") != "awaiting_human":
+        raise ValueError("committee packet is not awaiting a human decision")
+    approval_status = "approved" if packet_id or decision == "approve" else "rejected"
+    packet_sql = str(int(packet_id)) if packet_id else "NULL"
+    result_rows = run_psql_json_statement(
+        f"""
+        WITH selected AS (
+            SELECT id,task_id FROM agent.approvals
+            WHERE id={approval_id} AND status='pending'
+            FOR UPDATE
+        ), committee_decision AS (
+            SELECT CASE WHEN {packet_sql} IS NOT NULL
+                THEN agent.record_committee_human_decision(
+                    {packet_sql},{sql_literal(decision)},{sql_literal(actor)},{sql_literal(rationale)}
+                )
+                ELSE '{{}}'::jsonb END AS result
+            FROM selected
+        ), approval_update AS (
+            UPDATE agent.approvals approval
+            SET status={sql_literal(approval_status)},decided_by={sql_literal(actor)},
+                decided_at=now(),requested_action=approval.requested_action ||
+                    jsonb_build_object(
+                        'selected_decision',{sql_literal(decision)},
+                        'decision_rationale',{sql_literal(rationale)},
+                        'committee_result',(SELECT result FROM committee_decision)
+                    )
+            FROM selected
+            WHERE approval.id=selected.id
+            RETURNING approval.*
+        ), task_update AS (
+            UPDATE agent.tasks task
+            SET status=CASE WHEN {sql_literal(approval_status)}='approved' THEN 'completed' ELSE 'cancelled' END,
+                updated_at=now()
+            FROM selected WHERE task.id=selected.task_id RETURNING task.id
+        ), inbox_update AS (
+            UPDATE agent.inbox_items inbox
+            SET status=CASE WHEN {sql_literal(approval_status)}='approved' THEN 'done' ELSE 'cancelled' END,
+                updated_at=now()
+            FROM selected WHERE inbox.task_id=selected.task_id RETURNING inbox.id
+        )
+        SELECT jsonb_build_array(jsonb_build_object(
+            'approval_id',approval_update.id,'approval_status',approval_update.status,
+            'graph_run_id',{int(graph_decision['graph_run_id'])},
+            'graph_node_run_id',{int(graph_decision['graph_node_run_id'])},
+            'committee_packet_id',{packet_sql},'decision',{sql_literal(decision)},
+            'rationale',{sql_literal(rationale)}
+        ))::TEXT
+        FROM approval_update
+        """
+    )
+    if not result_rows:
+        raise ValueError("graph decision could not be recorded")
+    result = result_rows[0]
+    result["graph"] = advance_graph_control_run({
+        "graph_run_id": int(graph_decision["graph_run_id"]),
+        "actor": actor,
+        "max_steps": 40,
+    })
+    audit_api_write(
+        "ai_os_resolve_graph_decision","resolve_graph_decision",actor,
+        "agent.approvals",result,payload,
+    )
+    return result
+
+
+def request_graph_control_change(payload: dict) -> dict:
+    result = graph_control_plane.request_graph_change(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_request_graph_change",
+        "request_graph_change",
+        str(payload.get("actor") or "Charlie Munger"),
+        "agent.graph_change_requests",
+        result,
+        payload,
+    )
+    return result
+
+
+def record_graph_control_correction(payload: dict) -> dict:
+    result = graph_control_plane.record_correction(run_psql_json, run_psql_json_statement, payload)
+    audit_api_write(
+        "ai_os_record_graph_correction",
+        "record_graph_correction",
+        str(payload.get("actor") or "Devarsh"),
+        "agent.correction_ledger",
+        result,
+        payload,
+    )
+    return result
 
 class AiOsApiHandler(BaseHTTPRequestHandler):
     server_version = "AiOsApi/0.1"
@@ -14525,6 +22171,26 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(data)
+    def _send_artifact(self, path: Path, content_type: str, disposition: str) -> None:
+        size = path.stat().st_size
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", path.name).strip("-") or "research-report"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'{disposition}; filename="{safe_name}"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+        self.send_header("Vary", "Origin")
+        self.end_headers()
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -14561,6 +22227,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._authorize_request(write=False)
+            if request_path == "/api/liveness":
+                self._send_json({"ok": True, "generated_at": datetime.now(timezone.utc).isoformat(), "service": "api"})
+                return
             if request_path in {"/", "/api/health"}:
                 db_rows = safe_query(
                     "db",
@@ -14573,7 +22242,11 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                         "ok": healthy,
                         "generated_at": datetime.now(timezone.utc).isoformat(),
                         "runtime_root": str(RUNTIME_ROOT),
-                        "tradingview_cdp": probe_tradingview_cdp(),
+                        "tradingview_desktop": (
+                            None
+                            if request_path == "/api/liveness"
+                            else probe_tradingview_desktop()
+                        ),
                         "operator_auth": {
                             "bind_host": API_HOST,
                             "allowed_origins": sorted(ALLOWED_ORIGINS),
@@ -14604,14 +22277,87 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/mission-control/snapshot":
                 self._send_json(build_mission_control_snapshot())
                 return
+            if request_path == "/api/daily/command":
+                self._send_json(build_daily_command_snapshot())
+                return
+            if request_path == "/api/research/cases":
+                self._send_json(build_research_case_tracker(query))
+                return
+            if request_path == "/api/today/research-updates":
+                self._send_json(build_company_research_updates(query))
+                return
+            if request_path == "/api/research/monitoring":
+                self._send_json(build_company_research_monitoring(query))
+                return
+            if request_path == "/api/research/runtime-repairs":
+                self._send_json(build_research_runtime_repairs(query))
+                return
             if request_path == "/api/portfolio-office/snapshot":
                 self._send_json(build_portfolio_office_snapshot())
+                return
+            if request_path == "/api/sector-intelligence/snapshot":
+                self._send_json(build_sector_intelligence_snapshot())
                 return
             if request_path == "/api/research-ideas/snapshot":
                 self._send_json(build_research_ideas_snapshot())
                 return
+            if request_path == "/api/research/daily":
+                self._send_json(build_research_daily_snapshot())
+                return
+            case_report_match = re.fullmatch(r"/api/research/case-reports/(\d+)/(view|download)", request_path)
+            if case_report_match:
+                report_id = int(case_report_match.group(1)); action = case_report_match.group(2)
+                report_rows = run_psql_json(f"SELECT html_path,pdf_path FROM research.research_case_reports WHERE id={report_id} LIMIT 1")
+                if not report_rows:
+                    raise ValueError("research case report was not found")
+                ssd_root = Path("/Volumes/Devarsh SSD").resolve()
+                selected = Path(str(report_rows[0].get("pdf_path") if action == "download" and report_rows[0].get("pdf_path") else report_rows[0].get("html_path") or "")).resolve()
+                if not ssd_root.is_mount() or ssd_root not in selected.parents or not selected.is_file():
+                    raise PermissionError("research case report is outside the mounted Devarsh SSD or missing")
+                if selected.suffix.lower() == ".pdf":
+                    self._send_artifact(selected,"application/pdf",f'attachment; filename="{selected.name}"')
+                else:
+                    self._send_artifact(selected,"text/html; charset=utf-8",f'inline; filename="{selected.name}"')
+                return
+            report_delivery_match = re.fullmatch(r"/api/research/thesis-reports/(\d+)/(view|download)", request_path)
+            if report_delivery_match:
+                report_id = int(report_delivery_match.group(1))
+                action = report_delivery_match.group(2)
+                report_rows = run_psql_json(
+                    "SELECT artifact_path FROM research.thesis_reports "
+                    f"WHERE id={report_id} LIMIT 1"
+                )
+                if not report_rows:
+                    raise ValueError("thesis report was not found")
+                ssd_root = Path("/Volumes/Devarsh SSD").resolve()
+                report_path = Path(str(report_rows[0].get("artifact_path") or "")).resolve()
+                if not ssd_root.is_mount() or (report_path != ssd_root and ssd_root not in report_path.parents):
+                    raise PermissionError("report artifact is outside the mounted Devarsh SSD")
+                if not report_path.is_file():
+                    raise ValueError("thesis report artifact is missing")
+                selected_path, content_type, disposition = select_thesis_report_delivery(report_path, action)
+                selected_path = selected_path.resolve()
+                if ssd_root not in selected_path.parents or not selected_path.is_file():
+                    raise PermissionError("selected report artifact is outside the mounted Devarsh SSD or missing")
+                self._send_artifact(selected_path, content_type, disposition)
+                return
+            if request_path == "/api/research/long-term-thesis":
+                self._send_json(
+                    build_long_term_thesis_workspace(
+                        query,
+                        run_rows=run_psql_json,
+                        run_map=run_psql_json_object,
+                        sql_literal=sql_literal,
+                        runtime_root=RUNTIME_ROOT,
+                        vault_root=VAULT_ROOT,
+                    )
+                )
+                return
             if request_path == "/api/trading-quant-risk/snapshot":
                 self._send_json(build_trading_quant_risk_snapshot())
+                return
+            if request_path == "/api/options/daily":
+                self._send_json(build_options_daily_snapshot(query))
                 return
             if request_path == "/api/strategy-arsenal/snapshot":
                 self._send_json(build_strategy_arsenal_snapshot())
@@ -14621,6 +22367,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if request_path == "/api/reports/snapshot":
                 self._send_json(build_reports_snapshot())
+                return
+            if request_path == "/api/graph-control/snapshot":
+                self._send_json(build_graph_control_snapshot(query))
+                return
+            if request_path == "/api/graphs/daily":
+                self._send_json(build_graph_daily_snapshot(query))
                 return
             if request_path == "/api/workspaces/config":
                 self._send_json(build_workspace_config(str(query.get("profile_key", ["devarsh"])[0])))
@@ -14649,11 +22401,24 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                     raise ValueError("evidence entity key is required")
                 self._send_json(build_entity_evidence(entity_kind, entity_key))
                 return
-            if self.path.startswith("/api/tradingview/cdp-status"):
-                self._send_json(probe_tradingview_cdp())
+            if request_path == "/api/tradingview/cdp-status":
+                self._send_json(
+                    {
+                        "error": "retired",
+                        "message": "The managed TradingView browser/CDP surface is retired. Use the logged-in TradingView Desktop app.",
+                        "desktop": probe_tradingview_desktop(),
+                    },
+                    410,
+                )
+                return
+            if request_path == "/api/tradingview/desktop-status":
+                self._send_json(probe_tradingview_desktop())
                 return
             if request_path == "/api/zerodha/auth/status":
                 self._send_json(zerodha_auth_status())
+                return
+            if request_path == "/api/research/company-ir/sources":
+                self._send_json(company_ir_sources(query))
                 return
             if request_path == "/api/zerodha/stream/status":
                 self._send_json(zerodha_stream_status())
@@ -14665,16 +22430,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(live_price_history(query))
                 return
             if request_path == "/api/zerodha/market/status":
-                status = _run_zerodha_market_adapter(["--check-config"], 30)
-                status["warehouse"] = run_psql_json(
-                    "SELECT (SELECT count(*) FROM market.zerodha_instruments WHERE active) active_instruments,"
-                    "(SELECT max(last_seen_at) FROM market.zerodha_instruments) latest_instrument_at,"
-                    "(SELECT max(quote_ts) FROM market.price_quotes WHERE provider='Zerodha') latest_quote_at,"
-                    "(SELECT max(observed_at) FROM trading.option_chain_snapshots WHERE provider='Zerodha') latest_option_at,"
-                    "false broker_write_allowed"
-                )[0]
-                status["stream"] = (run_psql_json("SELECT * FROM market.v_zerodha_stream_health") or [{}])[0]
-                self._send_json(status)
+                self._send_json(zerodha_market_status())
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)
         except PermissionError as exc:
@@ -14691,6 +22447,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             payload = self._read_body()
             if self.path == "/api/tradingview/tasks":
                 self._send_json(create_tradingview_task(payload), 201)
+                return
+            if self.path == "/api/tradingview/desktop/open":
+                self._send_json(open_tradingview_desktop_chart(payload), 201)
                 return
             if self.path == "/api/artifacts/local/ingest":
                 self._send_json(ingest_local_artifact(payload), 201)
@@ -14721,6 +22480,42 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/agents/messages/triage":
                 self._send_json(triage_agent_message(payload), 200)
+                return
+            if self.path == "/api/agents/delegate":
+                self._send_json(delegate_agent_task(payload), 201)
+                return
+            if self.path == "/api/graphs/runs/start":
+                self._send_json(start_graph_control_run(payload), 201)
+                return
+            if self.path == "/api/graphs/runs/advance":
+                self._send_json(advance_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/advance-active":
+                self._send_json(advance_active_graph_control_runs(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/pause":
+                self._send_json(pause_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/resume":
+                self._send_json(resume_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/runs/cancel":
+                self._send_json(cancel_graph_control_run(payload), 200)
+                return
+            if self.path == "/api/graphs/waits/resolve":
+                self._send_json(resolve_graph_principal_wait(payload), 200)
+                return
+            if self.path == "/api/graphs/decisions":
+                self._send_json(resolve_graph_control_decision(payload), 200)
+                return
+            if self.path == "/api/graphs/change-requests":
+                self._send_json(request_graph_control_change(payload), 201)
+                return
+            if self.path == "/api/graphs/corrections":
+                self._send_json(record_graph_control_correction(payload), 201)
+                return
+            if self.path == "/api/kronos/forecasts/calibrate":
+                self._send_json(calibrate_kronos_forecast(payload), 200)
                 return
             if self.path == "/api/agents/comments":
                 self._send_json(create_agent_comment(payload), 201)
@@ -14785,6 +22580,12 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path == "/api/integrations/schema-mappings/upsert":
                 self._send_json(upsert_integration_schema_mapping(payload), 201)
                 return
+            if self.path == "/api/blueprint/evidence/reconcile":
+                self._send_json(reconcile_blueprint_evidence(payload), 201)
+                return
+            if self.path == "/api/blueprint/evidence/review":
+                self._send_json(review_blueprint_evidence(payload), 200)
+                return
             if self.path == "/api/integrations/schema-mappings/validate":
                 self._send_json(validate_integration_schema_mapping(payload), 200)
                 return
@@ -14797,8 +22598,20 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path == "/api/watchlist/items/upsert":
                 self._send_json(upsert_watchlist_item(payload), 201)
                 return
+            if self.path == "/api/research/investor-sources/register":
+                self._send_json(register_investor_source(payload), 201)
+                return
+            if self.path == "/api/zerodha/auth/begin":
+                self._send_json(begin_zerodha_auth(payload), 201)
+                return
             if self.path == "/api/zerodha/auth/exchange":
                 self._send_json(exchange_zerodha_request_token(payload), 200)
+                return
+            if self.path == "/api/zerodha/auth/exchange-url":
+                self._send_json(exchange_zerodha_callback_url(payload), 200)
+                return
+            if self.path == "/api/zerodha/auth/service-session/refresh":
+                self._send_json(refresh_zerodha_service_session(payload), 200)
                 return
             if self.path == "/api/zerodha/sync":
                 self._send_json(sync_zerodha_read_only(payload), 201)
@@ -14824,11 +22637,83 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path == "/api/browser/profiles/check":
                 self._send_json(check_browser_profile(payload), 201)
                 return
+            if self.path == "/api/research/hub/refresh":
+                self._send_json(refresh_research_hub(payload), 201)
+                return
+            if self.path == "/api/research/fundamental-intake/sync":
+                self._send_json(sync_fundamental_company_intake(payload), 201)
+                return
+            if self.path == "/api/research/fundamental-factory/run":
+                self._send_json(run_institutional_fundamental_factory(payload), 201)
+                return
+            if self.path == "/api/research/fundamental-evidence/review":
+                self._send_json(review_fundamental_evidence(payload), 200)
+                return
+            if self.path == "/api/research/fundamental-opinion/review":
+                self._send_json(review_fundamental_opinion(payload), 200)
+                return
+            if self.path == "/api/research/fundamental-remediation/sync":
+                self._send_json(sync_fundamental_remediation(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/run":
+                self._send_json(run_sector_intelligence_engine(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/fundamentals/sync":
+                self._send_json(sync_sector_fundamentals(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/ownership-flows/sync":
+                self._send_json(sync_sector_ownership_flows(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/underwrite/build":
+                self._send_json(build_sector_underwrite(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/activate-price-baseline":
+                self._send_json(activate_sector_price_baseline(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/import":
+                self._send_json(import_sector_intelligence_package(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/acceptance/run":
+                self._send_json(run_sector_acceptance(payload), 201)
+                return
+            if self.path == "/api/sector-intelligence/remediation/sync":
+                self._send_json(sync_sector_acceptance_remediation(payload), 201)
+                return
+            if self.path == "/api/options/institutional-analytics/run":
+                self._send_json(run_institutional_options_engine(payload), 201)
+                return
+            if self.path == "/api/options/institutional-analytics/acceptance/run":
+                self._send_json(run_option_acceptance(payload), 201)
+                return
+            if self.path == "/api/office/operability/acceptance/run":
+                self._send_json(run_office_operability_acceptance(payload), 201)
+                return
+            if self.path == "/api/options/institutional-analytics/materialize":
+                self._send_json(materialize_institutional_options(payload), 201)
+                return
+            if self.path == "/api/options/valuation-sources/refresh":
+                self._send_json(refresh_option_valuation_sources(payload), 201)
+                return
+            if self.path == "/api/options/valuation-policy/upsert":
+                self._send_json(upsert_option_valuation_policy(payload), 201)
+                return
             if self.path == "/api/research/filings/collect":
                 self._send_json(run_filing_collector(payload), 201)
                 return
+            if self.path == "/api/research/company-ir/collect":
+                self._send_json(run_company_ir_collector(payload), 201)
+                return
+            if self.path == "/api/research/company-ir/sources":
+                self._send_json(register_company_ir_source(payload), 201)
+                return
+            if self.path == "/api/research/company-ir/sources/collect":
+                self._send_json(collect_registered_company_ir_source(payload), 201)
+                return
             if self.path == "/api/research/filings/extract-pdfs":
                 self._send_json(run_filing_pdf_extractor(payload), 201)
+                return
+            if self.path == "/api/research/sources/ingest":
+                self._send_json(ingest_research_source(payload), 201)
                 return
             if self.path == "/api/research/papers/ingest":
                 self._send_json(ingest_research_paper(payload), 201)
@@ -14841,6 +22726,48 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/portfolio/long-term-thesis/memo":
                 self._send_json(generate_long_term_thesis_memo(payload), 201)
+                return
+            if self.path == "/api/research/cases/propose":
+                self._send_json(propose_research_case(payload), 201)
+                return
+            if self.path == "/api/research/cases/start":
+                self._send_json(start_research_case(payload), 201)
+                return
+            if self.path == "/api/research/cases/resume-preflight":
+                self._send_json(prepare_research_case_resume(payload), 201)
+                return
+            if self.path == "/api/research/cases/repair":
+                self._send_json(repair_research_case(payload), 200)
+                return
+            if self.path == "/api/research/model-runs/preflight":
+                self._send_json(create_research_model_preflight(payload), 201)
+                return
+            if self.path == "/api/research/model-runs/preflight/approve":
+                self._send_json(approve_research_model_preflight(payload), 200)
+                return
+            if self.path == "/api/research/model-runs/canary/configure":
+                self._send_json(configure_research_public_model_canary(payload), 201)
+                return
+            if self.path == "/api/research/model-runs/canary/run":
+                self._send_json(run_research_public_model_canary(payload), 201)
+                return
+            if self.path == "/api/research/cases/evidence/link-upload":
+                self._send_json(link_research_case_upload(payload), 201)
+                return
+            if self.path == "/api/research/monitoring/run":
+                self._send_json(run_company_research_monitor(payload), 201)
+                return
+            if self.path == "/api/research/monitoring/updates/review":
+                self._send_json(review_company_research_update(payload), 200)
+                return
+            if self.path == "/api/research/runtime-repairs/propose":
+                self._send_json(propose_research_runtime_repair(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/report/preflight":
+                self._send_json(preflight_long_term_thesis_report(payload), 201)
+                return
+            if self.path == "/api/portfolio/long-term-thesis/report":
+                self._send_json(generate_long_term_thesis_report(payload), 201)
                 return
             if self.path == "/api/portfolio/long-term-thesis/research-packet":
                 self._send_json(generate_long_term_research_packet(payload), 201)
@@ -15097,8 +23024,13 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": type(exc).__name__, "message": str(exc)}, 500)
 
 
+class AiOsThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def main() -> int:
-    server = ThreadingHTTPServer((API_HOST, API_PORT), AiOsApiHandler)
+    server = AiOsThreadingHTTPServer((API_HOST, API_PORT), AiOsApiHandler)
     print(f"AI OS API listening on http://{API_HOST}:{API_PORT}", flush=True)
     try:
         server.serve_forever()

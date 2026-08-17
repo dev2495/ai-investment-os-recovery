@@ -36,7 +36,7 @@
     <key>AI_OS_PSQL_BIN</key>
     <string>/opt/homebrew/opt/postgresql@15/bin/psql</string>
     <key>AI_OS_DOCKER_BIN</key>
-    <string>/usr/local/bin/docker</string>
+    <string>/opt/homebrew/bin/docker</string>
   </dict>
 </dict>
 </plist>

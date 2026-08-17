@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "storage_root": "/Volumes/Devarsh SSD/AI OS Data/ollama/models",
   "runtime": {
     "provider": "ollama",
@@ -171,6 +171,61 @@
       ]
     },
     {
+      "model": "mlx-community/Qwen3.5-9B-4bit",
+      "provider": "local_openai",
+      "source": "https://huggingface.co/mlx-community/Qwen3.5-9B-4bit",
+      "revision": "8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "local_path": "/Users/devarshthakkar/Library/Application Support/AIOS/models/qwen3.5-9b-4bit-8b2b98c",
+      "runtime": "mlx-vlm==0.6.6",
+      "tier": "mid",
+      "required_profiles": [
+        "macbook"
+      ],
+      "context_tokens": 8192,
+      "max_kv_tokens": 8192,
+      "max_output_tokens": 1400,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "approved",
+      "uses": [
+        "charlie_conversation",
+        "tool_intake",
+        "task_delegation",
+        "evidence_bound_summary"
+      ],
+      "qualification": {
+        "runtime": "mlx-vlm==0.6.6",
+        "kv_cache_quantization": false,
+        "conversation_v1_score": 1.0,
+        "conversation_v1_hard_failures": 0,
+        "mid_v1_score": 0.7143,
+        "mid_v1_allowed": false,
+        "qualified_at": "2026-08-02T03:04:00+05:30"
+      }
+    },
+    {
+      "model": "mlx-community/Qwen3.5-2B-4bit",
+      "provider": "local_openai",
+      "source": "https://huggingface.co/mlx-community/Qwen3.5-2B-4bit",
+      "revision": "674aaa7240b91e8012fcad5d791b7dfe5ba90207",
+      "local_path": "/Volumes/Devarsh SSD/AI OS Data/mlx/models/qwen3.5-2b-4bit-674aaa7",
+      "runtime": "mlx-vlm==0.6.6",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_kv_tokens": 4096,
+      "max_output_tokens": 600,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": [
+        "charlie_conversation_fallback",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary"
+      ]
+    },
+    {
       "model": "qwen3-embedding:0.6b",
       "tier": "retrieval",
       "required_profiles": [
@@ -225,6 +280,64 @@
       "promotion_status": "rollback_only",
       "uses": [
         "legacy_embedding_comparison"
+      ]
+    },
+    {
+      "model": "nanbeige/nanbeige4.2:3b-Q4_K_M",
+      "provider": "local_openai",
+      "source": "https://huggingface.co/Nanbeige/Nanbeige4.2-3B",
+      "revision": "f56ec5a9650268aa098496734743c25ea778bd2d",
+      "runtime_source": "https://github.com/Nanbeige/llama.cpp/tree/nanbeige42",
+      "runtime_revision": "c6640a1c0cf7b38df342b67021a3900b04d092e7",
+      "local_path": "nanbeige/nanbeige4.2:3b-Q4_K_M",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 384,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary",
+        "business_review_draft",
+        "deck_outline"
+      ],
+      "activation_requirements": [
+        "isolated pinned Nanbeige llama.cpp runtime",
+        "official Hugging Face revision and GGUF SHA-256",
+        "conversation_v1 pass with zero hard failures",
+        "median latency at or below 30000 ms"
+      ]
+    },
+    {
+      "model": "ministral-3:3b-instruct-2512-q4_K_M",
+      "provider": "ollama",
+      "source": "https://ollama.com/library/ministral-3:3b-instruct-2512-q4_K_M",
+      "tier": "light",
+      "required_profiles": [
+        "imac"
+      ],
+      "context_tokens": 8192,
+      "max_output_tokens": 512,
+      "eval_suite": "conversation_v1",
+      "promotion_status": "candidate",
+      "uses": [
+        "conversation",
+        "task_intake",
+        "tool_selection",
+        "evidence_bound_summary",
+        "structured_output"
+      ],
+      "activation_requirements": [
+        "Ollama 0.13.1 or later",
+        "exact model digest",
+        "conversation_v1 pass",
+        "zero hard failures",
+        "median latency at or below 30000 ms"
       ]
     },
     {

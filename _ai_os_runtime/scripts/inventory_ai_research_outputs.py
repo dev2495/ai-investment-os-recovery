@@ -6,6 +6,7 @@ import html
 import csv
 import json
 import mimetypes
+import os
 import re
 import subprocess
 import zipfile
@@ -28,7 +29,7 @@ except Exception:  # pragma: no cover - optional runtime dependency
 SOURCE_SYSTEM_NAME = "AI generated research outputs"
 SOURCE_SYSTEM_LOCATION = "local research output folders and standalone dashboard/report files"
 
-SOURCE_ROOTS = [
+DEFAULT_SOURCE_ROOTS = [
     ("cowork_research", Path("/Users/devarshthakkar/Downloads/cowork reseaarch")),
     ("cowork_outputs", Path("/Users/devarshthakkar/Downloads/cowork outputs")),
     ("claude_cowork_outputs", Path("/Users/devarshthakkar/Downloads/claude cowork outputs")),
@@ -39,6 +40,36 @@ SOURCE_ROOTS = [
     ("desktop_codex_outputs", Path("/Users/devarshthakkar/Desktop/codex outputs")),
     ("ultimate_foils", Path("/Users/devarshthakkar/Downloads/ultimate foils data")),
 ]
+
+def configured_source_roots() -> list[tuple[str, Path]]:
+    """Return bounded local and shared inboxes without scanning the whole vault."""
+    roots = list(DEFAULT_SOURCE_ROOTS)
+    vault_root = Path(os.environ.get("AI_OS_VAULT_ROOT") or "/Volumes/Devarsh SSD/Obsidian memory ")
+    data_root = Path(os.environ.get("AI_OS_DATA_ROOT") or "/Volumes/Devarsh SSD/AI OS Data")
+    roots.extend(
+        [
+            ("vault_agent_outputs", vault_root / "ai memory" / "00 AI OS" / "Agent Outputs"),
+            ("vault_research_outputs", vault_root / "ai memory" / "01 Research" / "AI Outputs"),
+            ("shared_research_inbox", data_root / "research-inbox"),
+        ]
+    )
+    configured = filter(
+        None,
+        os.environ.get("AI_OS_RESEARCH_EXTRA_ROOTS", "").split(os.pathsep),
+    )
+    for index, value in enumerate(configured, start=1):
+        roots.append((f"configured_root_{index}", Path(value).expanduser()))
+
+    deduplicated: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for label, root in roots:
+        normalized = str(root.expanduser())
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduplicated.append((label, Path(normalized)))
+    return deduplicated
+
 
 STANDALONE_FILES = [
     Path("/Users/devarshthakkar/Downloads/SJS_Enterprises_Institutional_Research_Report.pdf"),
@@ -99,7 +130,7 @@ def sha256_file(path: Path) -> str:
 
 def root_files() -> Iterable[tuple[str, Path]]:
     seen: set[Path] = set()
-    for label, root in SOURCE_ROOTS:
+    for label, root in configured_source_roots():
         if not root.exists():
             continue
         for path in root.rglob("*"):
@@ -405,7 +436,7 @@ def main() -> int:
         family = row["metadata"]["artifact_family"]
         family_counts[family] = family_counts.get(family, 0) + 1
     summary["family_counts"] = family_counts
-    summary["source_roots"] = [str(root) for _, root in SOURCE_ROOTS]
+    summary["source_roots"] = [str(root) for _, root in configured_source_roots()]
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

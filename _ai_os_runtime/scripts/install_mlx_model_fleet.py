@@ -14,16 +14,21 @@ from huggingface_hub.errors import HfHubHTTPError
 from httpx import TimeoutException
 
 
-MODEL_ID = "DreamFoundries/Qwen3.5-9B-4bit"
-REVISION = "20353927abe35e90c459ee908fac8806e5edd455"
-ROOT = Path(os.environ.get("AI_OS_MLX_MODEL_ROOT", "/Volumes/Devarsh SSD/AI OS Data/mlx/models"))
-TARGET = ROOT / "qwen3.5-9b-4bit-20353927"
+MODEL_ID = "mlx-community/Qwen3.5-9B-4bit"
+REVISION = "8b2b98c00a6b4d291155e4890773ca8f769aee53"
+INTERNAL_ROOT = Path.home() / "Library/Application Support/AIOS"
+ROOT = Path(os.environ.get("AI_OS_MLX_MODEL_ROOT", str(INTERNAL_ROOT / "models"))).expanduser()
+CACHE_ROOT = Path(os.environ.get("HF_HOME", str(INTERNAL_ROOT / "huggingface"))).expanduser()
+TARGET = ROOT / "qwen3.5-9b-4bit-8b2b98c"
 
 
 def main() -> int:
-    if not str(ROOT).startswith("/Volumes/") and os.environ.get("AI_OS_ALLOW_INTERNAL_MODEL_STORE") != "1":
-        raise SystemExit("MLX model root must be on an external volume")
+    resolved_root = ROOT.resolve()
+    allowed_internal = INTERNAL_ROOT.resolve()
+    if not (str(resolved_root).startswith(str(allowed_internal)) or str(resolved_root).startswith("/Volumes/")):
+        raise SystemExit("MLX model root must stay inside the AIOS application directory or an external volume")
     ROOT.mkdir(parents=True, exist_ok=True)
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     resolved = None
     for attempt in range(1, 6):
         try:
@@ -31,7 +36,7 @@ def main() -> int:
                 repo_id=MODEL_ID,
                 revision=REVISION,
                 local_dir=TARGET,
-                cache_dir=os.environ.get("HF_HOME", "/Volumes/Devarsh SSD/AI OS Data/huggingface"),
+                cache_dir=str(CACHE_ROOT),
                 max_workers=1,
             )
             break

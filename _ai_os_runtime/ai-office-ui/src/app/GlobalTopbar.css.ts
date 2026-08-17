@@ -80,6 +80,12 @@ export const GlobalTopbarCss = `
   color: var(--accent);
   background: var(--accent-soft);
 }
+.aios-topbar__mobile-nav {
+  display: none;
+  width: 132px;
+  min-width: 0;
+  height: 34px;
+}
 
 /* Actions */
 .aios-topbar__actions {
@@ -164,6 +170,59 @@ export const GlobalTopbarCss = `
   box-shadow: 0 0 0 3px var(--status-warn-soft);
 }
 
+.aios-broker-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.aios-broker-session__summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.aios-broker-session__summary > div,
+.aios-broker-session__stage {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+.aios-broker-session__summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.aios-broker-session__stage > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+}
+.aios-broker-session__stage p {
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.aios-broker-session__buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.aios-broker-session__error {
+  padding: var(--space-3);
+  color: var(--status-risk);
+  background: var(--status-risk-soft);
+  border: 1px solid var(--status-risk);
+  border-radius: var(--radius-sm);
+}
+.aios-broker-session__safety {
+  padding: var(--space-3);
+  color: var(--status-ok);
+  background: var(--status-ok-soft);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
 /* Attention badge */
 .aios-topbar__attention {
   position: relative;
@@ -214,9 +273,17 @@ export const GlobalTopbarCss = `
   .aios-topbar__zerodha-label { display: none; }
 }
 @media (max-width: 900px) {
-  .aios-topbar__nav-item span { display: none; }
+  .aios-topbar__nav { display: none; }
+  .aios-topbar__mobile-nav { display: block; }
+  .aios-topbar__actions { margin-left: auto; }
   .aios-topbar__wordmark { display: none; }
   .aios-topbar__search { min-width: 40px; padding: 0 8px; justify-content: center; }
   .aios-topbar__kbd { display: none; }
+}
+@media (max-width: 520px) {
+  .aios-topbar { gap: var(--space-2); padding: 0 var(--space-2); }
+  .aios-topbar__brand { padding-right: 0; }
+  .aios-topbar__mobile-nav { width: 116px; }
+  .aios-topbar__zerodha { display: none; }
 }
 `;
