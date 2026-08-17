@@ -1,0 +1,4 @@
+{
+  "name": "AI Investment OS",
+  "install": "npm ci --prefix _ai_os_runtime/ai-office-ui\npython3 -m py_compile _ai_os_runtime/api/ai_os_api_server.py _ai_os_runtime/mcp_server/ai_os_mcp_server.py _ai_os_runtime/agents/agent_runner.py"
+}
