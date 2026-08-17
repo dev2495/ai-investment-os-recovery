@@ -24,6 +24,7 @@ if str(RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNTIME_ROOT))
 
 from api import graph_control_plane  # noqa: E402
+from api.research_monitor_runtime import run_company_research_monitor_once  # noqa: E402
 from api.market_research_workflow import (  # noqa: E402
     build_public_market_evidence_packet,
     materiality_for_news,
@@ -323,12 +324,23 @@ def daemon_pass(
         research_case_model = run_research_case_agent_once()
     except Exception as exc:  # keep the daemon alive; durable run remains retryable or blocked
         research_case_model = {"status": "error", "count": 0, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        company_research_monitor = run_company_research_monitor_once(
+            run_rows=psql_json,
+            run_statement=psql_json_statement,
+            sql_literal=sql_literal,
+            sql_jsonb=sql_jsonb,
+            limit=int(os.environ.get("AI_OS_COMPANY_RESEARCH_MONITOR_LIMIT", "80")),
+        )
+    except Exception as exc:  # monitoring is durable and isolated from other daemon work
+        company_research_monitor = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
     result = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "messages_processed": len(message_results),
         "message_results": message_results,
         "worker": worker_results,
         "research_case_model": research_case_model,
+        "company_research_monitor": company_research_monitor,
     }
     if graph_control_enabled:
         result["graph_control_plane"] = advance_active_graph_runs(

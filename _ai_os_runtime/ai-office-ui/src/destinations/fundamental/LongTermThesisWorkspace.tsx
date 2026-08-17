@@ -46,6 +46,7 @@ import "./LongTermThesisWorkspace.css";
 import "./ThesisDecisionWorkspaces.css";
 import "./ReportLedger.css";
 import { UshaMultiYearReport } from "./UshaMultiYearReport";
+import { ValuationWorkbench } from "./ValuationWorkbench";
 
 const PAGE_SIZE = 12;
 
@@ -354,7 +355,19 @@ export default function LongTermThesisWorkspace() {
   const data = query.data;
   const selected = data?.selected_thesis ?? null;
   const selectedId = num(selected, "id", 0);
+  const requestedSymbol = React.useMemo(() => new URLSearchParams(window.location.search).get("symbol")?.trim().toUpperCase() || "", []);
   const caseReportId = num(record(selected?.metadata), "report_id", 0);
+
+  React.useEffect(() => {
+    if (!requestedSymbol || !data?.theses.length) return;
+    const match = data.theses.find((row) => text(row, "symbol").toUpperCase() === requestedSymbol);
+    const matchId = num(match, "id", 0);
+    if (matchId > 0 && matchId !== selectedId) {
+      setThesisId(matchId);
+      setFactsPage(1);
+      setEvidencePage(1);
+    }
+  }, [data?.theses, requestedSymbol, selectedId]);
   const coverage = data?.coverage[0] ?? {};
   const freshness = data?.freshness[0] ?? {};
   const execution = data?.execution_control[0] ?? {};
@@ -446,6 +459,10 @@ export default function LongTermThesisWorkspace() {
       </div>
 
       {text(selected, "symbol") === "USHAMART" ? <UshaMultiYearReport data={data} onResearch={() => { setResearchOpsOpen(true); window.setTimeout(() => document.getElementById("research-case")?.scrollIntoView({ behavior: "smooth" }), 30); }} /> : <InvestmentBrief selected={selected} business={businessSection} moat={moatSection} opinions={opinions} risks={data.governance_observations} filings={data.filings} models={data.valuation_models} financialHistory={data.financial_history} productionRatios={data.financial_production_ratios} validationChecks={data.financial_validation_checks} />}
+
+      <section id="valuation-workbench" aria-label="Valuation and expected return">
+        <ValuationWorkbench workbench={record(data.valuation_workbench)} />
+      </section>
 
       <details className="ltw-research-operations ltw-frontstage-drawer" open={researchOpsOpen} onToggle={(event) => setResearchOpsOpen(event.currentTarget.open)}>
         <summary><div><span>Research Operations</span><strong>Start, repair or inspect a governed Research Case</strong></div><Badge tone={data.research_cases.some((row) => text(row, "status") === "blocked") ? "risk" : "default"}>{data.research_cases.length} case{data.research_cases.length === 1 ? "" : "s"}</Badge></summary>

@@ -452,7 +452,7 @@ def start_research_case(payload, *, run_rows, run_statement, sql_literal, sql_js
           watchlist_id,symbol,exchange,company_name,item_type,status,priority,thesis,
           review_on,owner_agent,source_kind,source_ref,created_by,evidence,metadata
         ) SELECT id,{sql_literal(case.get('ticker'))},{sql_literal(case.get('exchange'))},
-          {sql_literal(case.get('company_name'))},'research','active',{sql_literal(str(case.get('priority') or 'medium'))},
+          {sql_literal(case.get('company_name'))},'research_case','active',{sql_literal(str(case.get('priority') or 'medium'))},
           {sql_literal(case.get('mandate'))},current_date+7,'Company Analyst','research_case',
           {sql_literal('research_case:'+str(case_id))},{sql_literal(actor)},'[]'::jsonb,
           jsonb_build_object('research_case_id',{case_id},'automatic_collection',true,

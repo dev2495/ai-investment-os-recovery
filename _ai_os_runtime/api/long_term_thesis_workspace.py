@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from financial_quality import build_financial_quality
+from valuation_workbench import build_valuation_workbench
 
 
 def build_long_term_thesis_workspace(
@@ -433,6 +434,7 @@ def build_long_term_thesis_workspace(
     coverage = (data.get("coverage") or [{}])[0]
     if not dashboard_profile:
         data["financial_quality"] = build_financial_quality(data.get("financial_series") or [])
+    data["valuation_workbench"] = build_valuation_workbench(selected, data)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "workspace_profile": "long_term_thesis_dashboard_v1" if dashboard_profile else "long_term_thesis_workspace_v1",

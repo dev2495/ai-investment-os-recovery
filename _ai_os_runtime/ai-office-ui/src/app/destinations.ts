@@ -109,7 +109,7 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "LIBRARY", path: "/firm/library", label: "Knowledge Library", icon: Library, description: "Obsidian vault, Qdrant retrieval, note graph", group: "firm", order: 7, status: "beta" },
 
   /* ---- FUNDAMENTAL RESEARCH (Buffett school) ---- */
-  { code: "LTF", path: "/fundamental/theses", label: "Company Thesis Dashboard", icon: BookOpen, description: "Source-backed investment theses — change log, moat, management, quality, valuation, evidence, and decisions", group: "fundamental", order: 0, status: "live" },
+  { code: "LTF", path: "/fundamental/theses", label: "Company Dashboard", icon: BookOpen, description: "Source-backed investment theses — change log, moat, management, quality, valuation, evidence, and decisions", group: "fundamental", order: 0, status: "live" },
   { code: "SCOR", path: "/fundamental/scorecards", label: "Specialist Scorecards", icon: Microscope, description: "12 scorecards — business model, moat, governance, forensic, valuation, portfolio fit", group: "fundamental", order: 1, status: "beta" },
   { code: "VAL", path: "/fundamental/valuation", label: "Valuation Suite", icon: Calculator, description: "DCF, multiples, reverse DCF, Monte Carlo per holding", group: "fundamental", order: 2, status: "beta" },
   { code: "COV", path: "/fundamental/coverage", label: "Coverage & Checklists", icon: ClipboardCheck, description: "Coverage queue, theses checklists, review schedule", group: "fundamental", order: 3, status: "beta" },
@@ -179,7 +179,7 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "FIL", path: "/research/filings", label: "Filings & Updates", icon: FileText, description: "NSE/BSE/SEC filings, collector runs, PDF extraction", group: "fundamental", order: 2, status: "beta" },
   { code: "SPEC", path: "/research/special-situations", label: "Special Situations", icon: Target, description: "Arbitrage, demergers, buybacks, delistings — committee gates", group: "research", order: 2, status: "beta" },
   { code: "PAPER", path: "/research/papers", label: "Research Papers", icon: BookOpen, description: "Ingest academic papers → strategy hypotheses", group: "research", order: 3, status: "beta" },
-  { code: "ING", path: "/research/ingest", label: "Research Library & Ingest", icon: Download, description: "Ingest research pages, blogs, PDFs → strategy ideas", group: "fundamental", order: 3, status: "beta" },
+  { code: "ING", path: "/research/ingest", label: "Research Library", icon: Download, description: "Ingest research pages, blogs, PDFs → strategy ideas", group: "fundamental", order: 3, status: "beta" },
 
   /* ---- RISK & COMPLIANCE ---- */
   { code: "RISK", path: "/risk/dashboard", label: "Risk Dashboard", icon: ShieldAlert, description: "Live breaches, limit checks, concentration, drawdown", group: "risk", order: 0, status: "beta" },

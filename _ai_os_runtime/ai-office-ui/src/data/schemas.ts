@@ -301,6 +301,7 @@ export const LongTermThesisWorkspaceSchema = z.object({
   dossier_sections: z.array(liveRow).default([]),
   checklists: z.array(liveRow).default([]),
   valuation_models: z.array(liveRow).default([]),
+  valuation_workbench: liveRow.optional(),
   monte_carlo_runs: z.array(liveRow).default([]),
   research_updates: z.array(liveRow).default([]),
   financial_facts: z.array(liveRow).default([]),

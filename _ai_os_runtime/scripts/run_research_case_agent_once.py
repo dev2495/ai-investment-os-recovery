@@ -18,6 +18,7 @@ if str(RUNTIME_ROOT / "api") not in sys.path:
 from api.ai_os_api_server import openrouter_chat  # noqa: E402
 from api.research_case_agent_runtime import run_next_research_case_model  # noqa: E402
 from api.research_case_source_runtime import run_source_once  # noqa: E402
+from api.research_case_report import retry_pending_research_case_report  # noqa: E402
 from run_agent_worker_once import psql_json, psql_text, sql_jsonb, sql_literal  # noqa: E402
 
 
@@ -47,13 +48,16 @@ def run_once():
     )
     if source_result.get("status") != "idle":
         return source_result
-    return run_next_research_case_model(
+    model_result = run_next_research_case_model(
         run_rows=psql_json,
         run_statement=psql_json_statement,
         sql_literal=sql_literal,
         sql_jsonb=sql_jsonb,
         openrouter_chat=research_openrouter_chat,
     )
+    if model_result.get("status") != "idle":
+        return model_result
+    return retry_pending_research_case_report()
 
 
 def main() -> int:

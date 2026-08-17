@@ -69,7 +69,7 @@ def queue_case_sources(case_id: int, actor: str, *, run_statement, sql_literal) 
           lead_status=CASE WHEN status='proposed' THEN lead_status ELSE 'collecting_official_sources' END,
           current_goal=CASE WHEN status='proposed' THEN current_goal ELSE 'Collect and parse bounded official filings automatically' END,
           last_progress_at=now(),updated_at=now()
-        WHERE id={int(case_id)} AND (SELECT count(*) FROM inserted)>0 RETURNING id
+        WHERE id={int(case_id)} AND (SELECT count(*) FROM inserted WHERE status='queued')>0 RETURNING id
       ), event AS (
         INSERT INTO research.research_case_events (research_case_id,event_type,event_status,event_summary,actor,event_payload)
         SELECT {int(case_id)},'source_collection',
@@ -170,6 +170,12 @@ def run_source_once(*, run_statement, sql_literal, sql_jsonb) -> dict[str, Any]:
                 )
         return {"status":"source_completed","case_id":case_id,"source_job_id":job_id,"remaining":remaining_count,"blocked":blocked_count,"sync":sync,"autonomous_runtime":runtime}
     error = ((completed.stderr or completed.stdout or "extractor failed").strip())[:2000]
+    if "pypdf is required" in error.lower():
+        display_error = "The governed SSD PDF parser was unavailable for this attempt; the local runtime will be checked before retry."
+    elif "timed out" in error.lower() or "timeoutexpired" in error.lower():
+        display_error = "The official filing parser exceeded its bounded time window; the cached SSD document is preserved for retry."
+    else:
+        display_error = "The official filing could not be parsed on this attempt; the source document is preserved on SSD and a bounded retry is scheduled."
     retrying = int(job.get("attempt") or 0) < int(job.get("max_attempts") or 3)
     job_status = "retry_wait" if retrying else "blocked"
     blocker_status = "retrying" if retrying else "open"
@@ -182,13 +188,14 @@ def run_source_once(*, run_statement, sql_literal, sql_jsonb) -> dict[str, Any]:
       ), blocker AS (
         INSERT INTO research.research_case_blockers (research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,retry_count,next_retry_at,metadata)
         VALUES ({case_id},{sql_literal('source_job:'+str(job_id))},'sources','Official filing extraction failed',
-          {sql_literal(error)},'The stack will retry locally with bounded cooldown.',
+          {sql_literal(display_error)},'The stack will retry locally with bounded cooldown.',
           CASE WHEN {str(retrying).lower()} THEN NULL ELSE 'Open the source link and review the exact parser exception.' END,
           {sql_literal(blocker_status)},'high',{int(job.get('attempt') or 0)+1},
           CASE WHEN {str(retrying).lower()} THEN now()+interval '15 minutes' ELSE NULL END,
-          {sql_jsonb({'source_job_id':job_id,'corporate_filing_id':filing_id})})
-        ON CONFLICT (research_case_id,blocker_key) DO UPDATE SET detail=EXCLUDED.detail,status=EXCLUDED.status,
-          retry_count=EXCLUDED.retry_count,next_retry_at=EXCLUDED.next_retry_at,updated_at=now() RETURNING id
+          {sql_jsonb({'source_job_id':job_id,'corporate_filing_id':filing_id,'technical_detail':error})})
+        ON CONFLICT (research_case_id,blocker_key) DO UPDATE SET title=EXCLUDED.title,detail=EXCLUDED.detail,
+          system_action=EXCLUDED.system_action,user_action=EXCLUDED.user_action,status=EXCLUDED.status,
+          retry_count=EXCLUDED.retry_count,next_retry_at=EXCLUDED.next_retry_at,metadata=EXCLUDED.metadata,updated_at=now() RETURNING id
       ) SELECT coalesce(json_agg(row_to_json(blocker)),'[]'::json)::text FROM blocker
     """)
     return {"status":"source_retry_wait" if retrying else "source_blocked","case_id":case_id,"source_job_id":job_id,"error":error}

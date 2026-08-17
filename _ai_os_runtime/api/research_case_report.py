@@ -136,8 +136,13 @@ def generate_research_case_report(case_id:int,generated_by:str='Research Report 
  sources=''.join(source_rows)
  document=f"""<!doctype html><html><head><meta charset='utf-8'><link rel='icon' href='data:,'><title>{h(case['company_name'])} Research Pack</title><style>@page{{size:A4;margin:16mm}}*{{box-sizing:border-box}}body{{margin:0;background:#f7f3eb;color:#1d2d3d;font:14px/1.55 Arial,sans-serif}}main{{max-width:1120px;margin:auto;background:#fffdf9}}header{{padding:44px 48px;background:#eee3d2;border-bottom:1px solid #d7c9b5}}.kicker{{color:#986524;text-transform:uppercase;letter-spacing:.12em;font-size:10px;font-weight:800}}h1,h2{{font-family:Georgia,serif}}h1{{font-size:40px;margin:8px 0}}h2{{font-size:24px;line-height:1.25;margin:7px 0 18px}}h3{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8c622d}}section{{padding:30px 48px;border-bottom:1px solid #e2d8ca;break-inside:avoid}}.meta,.cols{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}.meta div{{padding:12px 0;border-top:1px solid #d2c3af}}ul{{padding-left:20px}}li{{margin:0 0 9px}}li small{{display:block;color:#8a837a}}.gap{{padding:11px 13px;background:#f6efe5;color:#6b6258}}table{{width:100%;border-collapse:collapse;font-size:11px}}th,td{{padding:8px;border-bottom:1px solid #ded5c8;text-align:left;vertical-align:top}}a{{color:#315f83}}footer{{padding:24px 48px;color:#6f756f;font-size:11px}}@media(max-width:700px){{header,section,footer{{padding-left:20px;padding-right:20px}}.meta,.cols{{grid-template-columns:1fr}}}}</style></head><body><main><header><span class='kicker'>Complete Company Research Pack · Version {version}</span><h1>{h(case['company_name'])} · {h(case.get('exchange'))}:{h(case.get('ticker'))}</h1><p>{h(case['mandate'])}</p><div class='meta'><div><strong>As of</strong><br>{asof}</div><div><strong>Research state</strong><br>{h(case['decision_readiness']).replace('_',' ')}</div><div><strong>Source coverage</strong><br>{len(evidence)} linked sources</div><div><strong>Authority</strong><br>Human decision required; no trading authority</div></div></header>{''.join(section_html)}<section><span class='kicker'>Appendix</span><h2>Source register</h2><table><thead><tr><th>ID</th><th>Type</th><th>Date</th><th>Review state</th><th>Link</th></tr></thead><tbody>{sources}</tbody></table></section><footer>Generated locally from durable Research Case sections on Devarsh SSD. Historical user research is reference material and requires fresh primary corroboration. No broker, client, capital or external write is authorized.</footer></main></body></html>"""
  html_path.write_text(document);html_hash=hashlib.sha256(document.encode()).hexdigest();pdf_hash=None;pdf_error=None;browser=chrome()
- if browser:pdf_hash,pdf_error=render_pdf(browser,html_path,pdf_path,target)
- else:pdf_error='No local Chromium renderer is installed'
+ if browser:
+  pdf_hash,pdf_error=render_pdf(browser,html_path,pdf_path,target)
+  if not pdf_hash:
+   first_error=pdf_error
+   pdf_hash,pdf_error=render_pdf(browser,html_path,pdf_path,target)
+   if not pdf_hash:pdf_error=f'PDF retry did not complete; HTML is ready. First attempt: {first_error}; retry: {pdf_error}'
+ else:pdf_error='No local Chromium renderer is installed; HTML is ready'
  report_status='generated' if pdf_hash else 'needs_revision'
  statement(f"""INSERT INTO research.research_case_reports
   (research_case_id,report_version,report_status,as_of_date,source_cutoff_at,html_path,html_hash,pdf_path,pdf_hash,section_count,citation_count,coverage_snapshot,generated_by)
@@ -148,6 +153,24 @@ def generate_research_case_report(case_id:int,generated_by:str='Research Report 
   as_of_date=EXCLUDED.as_of_date,source_cutoff_at=EXCLUDED.source_cutoff_at,html_path=EXCLUDED.html_path,
   html_hash=EXCLUDED.html_hash,pdf_path=EXCLUDED.pdf_path,pdf_hash=EXCLUDED.pdf_hash,section_count=EXCLUDED.section_count,
   citation_count=EXCLUDED.citation_count,coverage_snapshot=EXCLUDED.coverage_snapshot,generated_by=EXCLUDED.generated_by;""")
+ if pdf_hash:
+  statement(f"""UPDATE research.research_case_blockers SET status='resolved',resolved_at=now(),
+    resolution='A clean local Chrome session rendered the PDF; the HTML report remained available throughout.',
+    system_action='Resolved automatically without rerunning paid analysis.',user_action=NULL,updated_at=now()
+    WHERE research_case_id={case_id} AND blocker_key='report_pdf_render' AND status<>'resolved';""")
+ else:
+  statement(f"""INSERT INTO research.research_case_blockers
+    (research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,retry_count,next_retry_at,metadata)
+    VALUES ({case_id},'report_pdf_render','report','PDF is being retried; the HTML report is ready',
+      'The local PDF renderer did not finish two clean bounded attempts. Research sections and the HTML report are preserved.',
+      'The stack will retry PDF rendering from a clean local browser session without rerunning paid research.',
+      'Open the HTML report now; use Repair only if the PDF is still unavailable after the next retry.',
+      'retrying','medium',2,now()+interval '15 minutes',
+      {j({'technical_detail':pdf_error,'html_path':str(html_path),'paid_research_rerun_required':False})})
+    ON CONFLICT (research_case_id,blocker_key) DO UPDATE SET title=EXCLUDED.title,detail=EXCLUDED.detail,
+      system_action=EXCLUDED.system_action,user_action=EXCLUDED.user_action,status='retrying',severity=EXCLUDED.severity,
+      retry_count=research.research_case_blockers.retry_count+1,next_retry_at=EXCLUDED.next_retry_at,
+      metadata=EXCLUDED.metadata,resolved_at=NULL,resolution=NULL,updated_at=now();""")
  persisted=rows(f"SELECT id,report_version,report_status,html_path,html_hash,pdf_path,pdf_hash FROM research.research_case_reports WHERE research_case_id={case_id} AND report_version={version} LIMIT 1")
  if not persisted:raise RuntimeError('research case report persistence returned no row')
  report=persisted[0];thesis_id=publish_case_workspace(case,sections,report,generated_by)
@@ -155,3 +178,21 @@ def generate_research_case_report(case_id:int,generated_by:str='Research Report 
   'report_version':version,'report_status':report_status,'html_path':str(html_path),'html_hash':html_hash,
   'pdf_path':str(pdf_path) if pdf_hash else None,'pdf_hash':pdf_hash,'pdf_error':pdf_error,
   'section_count':len(sections),'citation_count':len(evidence)}
+
+def retry_pending_research_case_report()->dict[str,Any]:
+ candidates=rows("""SELECT blocker.research_case_id,blocker.retry_count FROM research.research_case_blockers blocker
+  JOIN research.research_cases case_row ON case_row.id=blocker.research_case_id
+  WHERE blocker.blocker_key='report_pdf_render' AND blocker.status='retrying'
+    AND blocker.next_retry_at<=now() AND blocker.retry_count<4
+    AND case_row.status IN ('review','completed','blocked')
+  ORDER BY blocker.next_retry_at,blocker.id LIMIT 1""")
+ if not candidates:
+  statement("""UPDATE research.research_case_blockers SET status='open',
+    title='HTML report is ready; PDF needs browser repair',
+    detail='Four clean local PDF render attempts did not complete. The source-backed HTML report remains available.',
+    system_action='Automatic PDF retries stopped without rerunning paid research.',
+    user_action='Open the HTML report or approve a scoped report-render repair.',next_retry_at=NULL,updated_at=now()
+    WHERE blocker_key='report_pdf_render' AND status='retrying' AND retry_count>=4;""")
+  return {'status':'idle'}
+ result=generate_research_case_report(int(candidates[0]['research_case_id']),'Research Report Retry')
+ return {'status':'report_retry_completed' if result.get('pdf_hash') else 'report_retry_wait',**result}

@@ -82,6 +82,11 @@ except ImportError:  # Direct script execution on the iMac.
     from research_case_source_runtime import queue_case_sources  # type: ignore
 
 try:
+    from .research_monitor_runtime import run_company_research_monitor_once
+except ImportError:  # Direct script execution on the iMac.
+    from research_monitor_runtime import run_company_research_monitor_once  # type: ignore
+
+try:
     from .reporting_helpers import generate_thesis_report as generate_thesis_report_helper
 except ImportError:  # Direct script execution on the iMac.
     from reporting_helpers import generate_thesis_report as generate_thesis_report_helper  # type: ignore
@@ -2469,6 +2474,181 @@ def _daily_snapshot_payload(source: str, queries: dict[str, str], *, row_limit: 
 
 
 
+def build_company_research_updates(query: dict[str, list[str]]) -> dict:
+    try:
+        page = max(1, int(query.get("page", ["1"])[0]))
+        page_size = max(1, min(50, int(query.get("page_size", ["20"])[0])))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("page and page_size must be integers") from exc
+    status = str(query.get("status", ["new"])[0]).strip().lower()
+    materiality = str(query.get("materiality", [""])[0]).strip().lower()
+    symbol = str(query.get("symbol", [""])[0]).strip().upper()
+    scope = str(query.get("scope", ["decision_required"])[0]).strip().lower()
+    allowed_status = {"new", "reviewed", "dismissed", "superseded", "all"}
+    allowed_materiality = {"", "low", "medium", "high", "critical"}
+    if status not in allowed_status or materiality not in allowed_materiality:
+        raise ValueError("status or materiality is not supported")
+    if scope not in {"followed", "decision_required", "all"}:
+        raise ValueError("scope must be followed, decision_required or all")
+    filters = []
+    if status != "all":
+        filters.append(f"feed.status={sql_literal(status)}")
+    if materiality:
+        filters.append(f"feed.materiality={sql_literal(materiality)}")
+    if symbol:
+        filters.append(f"upper(feed.symbol)={sql_literal(symbol)}")
+    if scope == "decision_required":
+        filters.append("feed.decision_impact IN ('review','reunderwrite')")
+    where_sql = "WHERE " + " AND ".join(filters) if filters else ""
+    offset = (page-1)*page_size
+    count_rows = run_psql_json(f"SELECT count(*)::integer total FROM research.v_company_research_update_feed feed {where_sql}")
+    total = int((count_rows[0] if count_rows else {}).get("total") or 0)
+    items = run_psql_json(f"""
+      SELECT feed.* FROM research.v_company_research_update_feed feed {where_sql}
+      ORDER BY CASE feed.materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+               feed.effective_at DESC,feed.id DESC LIMIT {page_size} OFFSET {offset}
+    """)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scope": scope,
+        "role_scope": "local_operator",
+        "pagination": {"page":page,"page_size":page_size,"total":total,"pages":(total+page_size-1)//page_size},
+        "items": items,
+        "source_posture": "authorized warehouse sources only",
+        "private_data_egress_allowed": False,
+        "external_write_allowed": False,
+        "broker_write_allowed": False,
+    }
+
+
+def build_company_research_monitoring(query: dict[str, list[str]]) -> dict:
+    try:
+        limit = max(1,min(100,int(query.get("limit",["50"])[0])))
+    except (TypeError,ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    rows = run_psql_json(f"""
+      SELECT monitoring.*,
+        latest_update.id latest_update_id,latest_update.update_type,latest_update.title latest_update_title,
+        latest_update.summary latest_update_summary,latest_update.materiality latest_update_materiality,
+        latest_update.decision_impact latest_update_decision_impact,
+        latest_update.effective_at latest_update_at,latest_update.source_url latest_update_source_url,
+        latest_update.case_href,latest_update.thesis_href,
+        coalesce(update_count.new_count,0)::integer new_update_count
+      FROM research.v_company_research_monitoring monitoring
+      LEFT JOIN LATERAL (SELECT * FROM research.v_company_research_update_feed feed
+        WHERE upper(feed.exchange)=upper(monitoring.exchange) AND upper(feed.symbol)=upper(monitoring.symbol)
+        ORDER BY feed.effective_at DESC,feed.id DESC LIMIT 1) latest_update ON true
+      LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE feed.status='new') new_count
+        FROM research.v_company_research_update_feed feed
+        WHERE upper(feed.exchange)=upper(monitoring.exchange) AND upper(feed.symbol)=upper(monitoring.symbol)) update_count ON true
+      ORDER BY CASE monitoring.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+               coalesce(latest_update.effective_at,monitoring.last_progress_at,monitoring.followed_since) DESC
+      LIMIT {limit}
+    """)
+    run_rows = run_psql_json("""SELECT * FROM research.company_research_monitor_runs ORDER BY id DESC LIMIT 5""")
+    return {"generated_at":datetime.now(timezone.utc).isoformat(),"companies":rows,"monitor_runs":run_rows,
+            "private_data_egress_allowed":False,"external_write_allowed":False,"broker_write_allowed":False}
+
+
+def run_company_research_monitor(payload: dict) -> dict:
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    result = run_company_research_monitor_once(
+        run_rows=run_psql_json,run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,sql_jsonb=sql_jsonb,limit=int(payload.get("limit") or 80),min_interval_minutes=int(payload.get("min_interval_minutes") or 15),
+        force=payload.get("operator_confirmed") is True,
+    )
+    audit_api_write("ai_os_api_company_research_monitor", "run_company_research_monitor", actor,
+                    "research.company_research_updates", result, {"limit":payload.get("limit") or 80})
+    return result
+
+
+def review_company_research_update(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before changing an update review state")
+    update_id = int(payload.get("update_id") or payload.get("updateId") or 0)
+    decision = str(payload.get("decision") or "").strip().lower()
+    if not update_id or decision not in {"reviewed","dismissed"}:
+        raise ValueError("update_id and decision reviewed or dismissed are required")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    rows = run_psql_json_statement(f"""
+      UPDATE research.company_research_updates SET status={sql_literal(decision)},reviewed_by={sql_literal(actor)},
+        reviewed_at=now(),updated_at=now(),metadata=metadata||jsonb_build_object('review_note',{sql_literal(str(payload.get('note') or ''))})
+      WHERE id={update_id} AND status='new' RETURNING *
+    """)
+    if not rows:
+        raise ValueError("update was not found or already decided")
+    audit_api_write("ai_os_api_company_research_update_review", "review_company_research_update", actor,
+                    "research.company_research_updates", rows[0], payload)
+    return rows[0]
+
+
+def propose_research_runtime_repair(payload: dict) -> dict:
+    issue_type = str(payload.get("issue_type") or payload.get("issueType") or "other").strip().lower()
+    allowed_issue_types = {"source_collection","extraction","model_contract","valuation","report_render","monitoring","chat_context","other"}
+    if issue_type not in allowed_issue_types:
+        raise ValueError("unsupported issue_type")
+    title = str(payload.get("title") or "").strip()
+    observed = str(payload.get("observed_failure") or payload.get("observedFailure") or "").strip()
+    diagnosis = str(payload.get("diagnosis") or "").strip()
+    rollback = str(payload.get("rollback_plan") or payload.get("rollbackPlan") or "").strip()
+    allowed_paths = payload.get("allowed_paths") or payload.get("allowedPaths") or []
+    proposed_change = payload.get("proposed_change") or payload.get("proposedChange") or {}
+    test_plan = payload.get("test_plan") or payload.get("testPlan") or []
+    if not title or not observed or not diagnosis or not rollback or not isinstance(allowed_paths,list) or not allowed_paths:
+        raise ValueError("title, observed_failure, diagnosis, rollback_plan and allowed_paths are required")
+    if any(not str(path).startswith("_ai_os_runtime/") or ".." in str(path) for path in allowed_paths):
+        raise ValueError("allowed_paths must be bounded _ai_os_runtime repository paths")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    estimate = max(0,float(payload.get("estimated_cost_usd") or payload.get("estimatedCostUsd") or 0))
+    hard_max = max(estimate,float(payload.get("hard_max_cost_usd") or payload.get("hardMaxCostUsd") or estimate))
+    request_key = "research-repair-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    rows = run_psql_json_statement(f"""
+      WITH approval AS (
+        INSERT INTO agent.approvals (approval_type,title,owner_agent,risk_level,status,requested_action,rationale,created_at)
+        VALUES ('research_runtime_code_repair',{sql_literal(title)},'Coding Lead Agent','high','pending',
+          {sql_jsonb({'request_key':request_key,'allowed_paths':allowed_paths,'estimated_cost_usd':estimate,'hard_max_cost_usd':hard_max,
+                      'auto_deploy_allowed':False,'external_write_allowed':False,'broker_write_allowed':False,'client_write_allowed':False})},
+          {sql_literal('A scoped coding repair can run only after explicit human approval; no scope expansion or deployment is authorized.')},now())
+        RETURNING id
+      ), request AS (
+        INSERT INTO research.research_runtime_repair_requests
+          (request_key,research_case_id,issue_type,title,observed_failure,diagnosis,proposed_change,allowed_paths,
+           test_plan,rollback_plan,estimated_cost_usd,hard_max_cost_usd,approval_id,requested_by)
+        SELECT {sql_literal(request_key)},{case_id or 'NULL'},{sql_literal(issue_type)},{sql_literal(title)},
+          {sql_literal(observed)},{sql_literal(diagnosis)},{sql_jsonb(proposed_change)},{sql_jsonb(allowed_paths)},
+          {sql_jsonb(test_plan)},{sql_literal(rollback)},{estimate},{hard_max},approval.id,{sql_literal(actor)} FROM approval
+        RETURNING *
+      ) SELECT coalesce(json_agg(row_to_json(request)),'[]'::json)::text FROM request
+    """)
+    if not rows:
+        raise RuntimeError("repair proposal was not created")
+    result=rows[0]
+    result["code_change_applied"]=False
+    result["deployment_allowed"]=False
+    audit_api_write("ai_os_api_research_runtime_repair_propose","propose_research_runtime_repair",actor,
+                    "research.research_runtime_repair_requests",result,payload)
+    return result
+
+
+def build_research_runtime_repairs(query: dict[str, list[str]]) -> dict:
+    try:
+        limit=max(1,min(50,int(query.get("limit",["20"])[0])))
+    except (TypeError,ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    status=str(query.get("status",[""])[0]).strip().lower()
+    allowed={"","awaiting_approval","approved","queued","running","completed","failed","rejected","cancelled"}
+    if status not in allowed:
+        raise ValueError("unsupported repair status")
+    where=f"WHERE request.status={sql_literal(status)}" if status else ""
+    items=run_psql_json(f"""SELECT request.*,approval.status approval_status,approval.decided_by,approval.decided_at
+      FROM research.research_runtime_repair_requests request JOIN agent.approvals approval ON approval.id=request.approval_id
+      {where} ORDER BY request.updated_at DESC,request.id DESC LIMIT {limit}""")
+    return {"generated_at":datetime.now(timezone.utc).isoformat(),"items":items,
+            "proposal_only":True,"code_change_applied":False,"auto_deploy_allowed":False,
+            "private_data_egress_allowed":False,"external_write_allowed":False,"broker_write_allowed":False}
+
+
 def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
     """Bounded global Research Case tracker, independent of thesis creation."""
     try:
@@ -2482,6 +2662,8 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
     if requested_status and requested_status not in allowed_statuses:
         raise ValueError("status is not supported")
     filters = []
+    if case_id:
+        filters.append(f"case_row.id={case_id}")
     if requested_status:
         filters.append(f"case_row.status={sql_literal(requested_status)}")
     where_sql = "WHERE " + " AND ".join(filters) if filters else ""
@@ -2524,6 +2706,10 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
           preflight.private_data_egress_allowed,preflight.external_write_allowed,
           preflight.broker_write_allowed,latest_event.event_type latest_event_type,
           latest_event.event_summary latest_event_summary,latest_event.occurred_at latest_event_at,
+          (monitor_item.id IS NOT NULL) is_followed,coalesce((monitor_item.metadata->>'monitoring_enabled')::boolean,(monitor_item.metadata->>'automatic_collection')::boolean,false) monitoring_enabled,
+          latest_update.effective_at latest_material_update_at,latest_update.summary latest_material_update_summary,
+          coalesce(latest_update.update_count,0)::int latest_material_update_count,
+          latest_update.case_href latest_material_update_href,
           CASE WHEN case_row.status='proposed' THEN 'Review cost and explicitly start'
             WHEN case_row.status='collecting' THEN 'The stack is collecting and extracting official sources'
             WHEN case_row.status='active' AND coalesce(evidence_stats.total,0)=0 THEN 'Collect qualified public sources before agent analysis'
@@ -2571,6 +2757,14 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
         LEFT JOIN LATERAL (SELECT event_type,event_summary,occurred_at
           FROM research.research_case_events WHERE research_case_id=case_row.id
           ORDER BY occurred_at DESC,id DESC LIMIT 1) latest_event ON true
+        LEFT JOIN LATERAL (SELECT item.id,item.metadata FROM research.watchlist_items item
+          JOIN research.watchlists list_row ON list_row.id=item.watchlist_id AND list_row.watchlist_key='company_research_following'
+          WHERE upper(item.exchange)=upper(case_row.exchange) AND upper(item.symbol)=upper(case_row.ticker) AND item.status='active'
+          ORDER BY item.updated_at DESC,item.id DESC LIMIT 1) monitor_item ON true
+        LEFT JOIN LATERAL (SELECT feed.effective_at,feed.summary,feed.case_href,
+          count(*) OVER () update_count FROM research.v_company_research_update_feed feed
+          WHERE feed.research_case_id=case_row.id AND feed.status='new'
+          ORDER BY CASE feed.materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,feed.effective_at DESC,feed.id DESC LIMIT 1) latest_update ON true
         {where_sql}
         ORDER BY CASE case_row.status WHEN 'review' THEN 1 WHEN 'active' THEN 2
           WHEN 'collecting' THEN 3 WHEN 'proposed' THEN 4 WHEN 'blocked' THEN 5
@@ -2602,7 +2796,7 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
       {detail_filter.replace('research_case_id','job.research_case_id')} ORDER BY job.priority,job.id LIMIT 40""")
     blockers = run_psql_json(f"""SELECT id,research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,
       retry_count,next_retry_at,resolution,metadata,created_at,updated_at FROM research.research_case_blockers
-      {detail_filter} ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,updated_at DESC LIMIT 30""")
+      {detail_filter} AND status<>'resolved' ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,updated_at DESC LIMIT 30""")
     sections = run_psql_json(f"""SELECT id,research_case_id,section_key,title,owner_role,status,summary,citation_ids,coverage_gaps,
       artifact_path,artifact_hash,version,updated_at FROM research.research_pack_sections {detail_filter} AND version=1
       ORDER BY CASE section_key WHEN 'investment_conclusion' THEN 1 WHEN 'business_segments' THEN 2 WHEN 'industry_structure' THEN 3
@@ -16010,7 +16204,7 @@ def propose_research_case(payload: dict) -> dict:
         sql_jsonb=sql_jsonb,
     )
     research_case = result.get("research_case") if isinstance(result, dict) else None
-    if isinstance(research_case, dict) and research_case.get("id") and result.get("status") not in {"blocked_conflict", "open_case_conflict"}:
+    if isinstance(research_case, dict) and research_case.get("id") and result.get("status") == "proposed":
         result["source_sync"] = sync_research_case_official_sources(
             int(research_case["id"]), str(payload.get("actor") or "Devarsh")
         )
@@ -20333,8 +20527,109 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
         except Exception as exc:  # noqa: BLE001
             results.append({"tool": tool, "status": "failed", "detail": f"{type(exc).__name__}: {exc}"[:500]})
 
+    research_control_match = re.search(
+        r"\b(?P<verb>approve(?:\s+and\s+start)?|confirm(?:\s+and\s+start)?|go\s+ahead(?:\s+and\s+start)?|start|resume|repair)\b"
+        r"[^\n]{0,100}?\b(?:research\s+)?case\s*#?(?P<case_id>\d+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    research_control_handled = False
+    research_control_case_id = int(research_control_match.group("case_id")) if research_control_match else 0
+    research_control_verb = research_control_match.group("verb").lower() if research_control_match else ""
+    if not research_control_match and re.fullmatch(
+        r"\s*(?:yes[, ]*)?(?:approve|confirm|go\s+ahead)(?:\s+(?:and\s+)?start(?:\s+the)?\s+research)?[.!]?\s*",
+        message, flags=re.IGNORECASE,
+    ):
+        pending_rows = run_psql_json(
+            """SELECT case_row.id FROM research.research_cases case_row
+               JOIN LATERAL (SELECT status FROM research.model_run_preflights preflight
+                 WHERE preflight.research_case_id=case_row.id AND preflight.request_kind='research_case'
+                 ORDER BY preflight.id DESC LIMIT 1) preflight ON preflight.status='awaiting_approval'
+               WHERE case_row.status='proposed' AND case_row.updated_at>=now()-interval '30 minutes'
+               ORDER BY case_row.updated_at DESC,case_row.id DESC LIMIT 2"""
+        )
+        if len(pending_rows) == 1:
+            research_control_case_id = int(pending_rows[0]["id"])
+            research_control_verb = "approve and start"
+        elif len(pending_rows) > 1:
+            research_control_handled = True
+            results.append({"tool":"research_case_control","status":"needs_disambiguation",
+                            "detail":"More than one recent Research Case is awaiting approval. Say 'approve and start research case #<id>'."})
+    if research_control_case_id:
+        research_control_handled = True
+        case_id = research_control_case_id
+        verb = research_control_verb
+        case_rows = run_psql_json(
+            f"SELECT id,status,company_name,exchange,ticker FROM research.research_cases WHERE id={case_id} LIMIT 1"
+        )
+        if not case_rows:
+            results.append({"tool": "research_case_control", "status": "not_found", "detail": f"Research Case #{case_id} was not found."})
+        else:
+            latest_preflight = run_psql_json(
+                f"""SELECT id,status,estimated_cost_usd,hard_max_cost_usd,exchange_rate_inr_per_usd
+                    FROM research.model_run_preflights
+                    WHERE research_case_id={case_id} AND request_kind='research_case'
+                    ORDER BY id DESC LIMIT 1"""
+            )
+            preflight = latest_preflight[0] if latest_preflight else {}
+            explicit_cost_approval = any(term in verb for term in ("approve", "confirm", "go ahead"))
+            if preflight.get("status") == "awaiting_approval" and explicit_cost_approval:
+                invoke(
+                    "approve_research_cost_plan",
+                    lambda: approve_research_model_preflight({
+                        "preflight_id": int(preflight["id"]),
+                        "operator_confirmed": True,
+                        "actor": f"Devarsh via {actor}",
+                    }),
+                    "status",
+                )
+                preflight["status"] = "approved"
+            if preflight.get("status") == "approved":
+                if verb.startswith("resume") or verb.startswith("repair"):
+                    invoke(
+                        "repair_research_case",
+                        lambda: repair_research_case({
+                            "research_case_id": case_id,
+                            "model_preflight_id": int(preflight["id"]),
+                            "operator_confirmed": True,
+                            "force_new_iteration": True,
+                            "actor": f"Devarsh via {actor}",
+                        }),
+                        "case_id",
+                    )
+                else:
+                    invoke(
+                        "start_research_case",
+                        lambda: start_research_case({
+                            "research_case_id": case_id,
+                            "model_preflight_id": int(preflight["id"]),
+                            "operator_confirmed": True,
+                            "actor": f"Devarsh via {actor}",
+                        }),
+                        "status",
+                    )
+            elif preflight.get("status") == "awaiting_approval":
+                rate = float(preflight.get("exchange_rate_inr_per_usd") or 87)
+                estimate = float(preflight.get("estimated_cost_usd") or 0) * rate
+                hard_max = float(preflight.get("hard_max_cost_usd") or 0) * rate
+                results.append({
+                    "tool": "research_case_control",
+                    "status": "awaiting_explicit_cost_approval",
+                    "detail": f"Case #{case_id} is ready. Say 'approve and start research case {case_id}' after reviewing estimated INR {estimate:.2f} and hard stop INR {hard_max:.2f}.",
+                    "research_case_id": case_id,
+                    "preflight_id": preflight.get("id"),
+                    "estimated_cost_inr": round(estimate, 2),
+                    "hard_max_cost_inr": round(hard_max, 2),
+                })
+            else:
+                invoke(
+                    "prepare_research_resume_cost_plan",
+                    lambda: prepare_research_case_resume({"research_case_id": case_id, "actor": f"Devarsh via {actor}"}),
+                    "case_id",
+                )
+
     research_case_entity = extract_research_entity(message)
-    if research_case_entity:
+    if research_case_entity and not research_control_handled:
         entity = research_case_entity[:180]
         invoke(
             "propose_research_case",
@@ -20863,15 +21158,17 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
 
 
 def is_fast_verified_stack_request(message: str, include_client_context: bool) -> bool:
-    if include_client_context:
-        return False
     normalized = message.lower()
     asks_status = any(term in normalized for term in (
         "stack status", "system status", "office status", "what company research",
         "research is waiting", "research waiting", "what is waiting for me",
-        "current ai os", "research cases waiting",
+        "current ai os", "research cases waiting", "our stack", "the stack",
+        "what do you know about the stack", "what is running", "daemon status",
+        "company monitoring", "followed companies",
     ))
-    return asks_status and any(term in normalized for term in ("stack", "system", "office", "research", "waiting"))
+    return asks_status and any(term in normalized for term in (
+        "stack", "system", "office", "research", "waiting", "running", "monitoring", "followed"
+    ))
 
 
 def fast_verified_stack_response(payload: dict, message: str) -> dict:
@@ -20879,7 +21176,7 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
         """
         SELECT case_row.id,case_row.company_name,case_row.exchange,case_row.ticker,
                case_row.status,case_row.lead_status,case_row.current_goal,
-               case_row.exception_count,case_row.updated_at,
+               case_row.exception_count,case_row.updated_at,case_row.holding_thesis_id,
                preflight.status AS preflight_status,preflight.estimated_cost_usd,
                preflight.hard_max_cost_usd,preflight.exchange_rate_inr_per_usd
         FROM research.research_cases case_row
@@ -20895,10 +21192,31 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
         LIMIT 12
         """
     )
+    heartbeat_rows = run_psql_json(
+        """SELECT status,host_name,process_id,heartbeat_at,last_error,last_pass_summary
+           FROM core.runtime_daemon_heartbeats WHERE daemon_key='agent_message_daemon' LIMIT 1"""
+    )
+    heartbeat = heartbeat_rows[0] if heartbeat_rows else {}
+    monitoring = run_psql_json(
+        """SELECT count(*)::integer followed_count,
+                  count(*) FILTER (WHERE latest_filing_at>=now()-interval '7 days')::integer filing_changes_7d,
+                  count(*) FILTER (WHERE latest_news_at>=now()-interval '7 days')::integer news_changes_7d
+           FROM research.v_company_research_monitoring"""
+    )
+    monitoring_row = monitoring[0] if monitoring else {}
+    update_rows = run_psql_json(
+        """SELECT company_name,exchange,symbol,update_type,title,materiality,decision_impact,effective_at,
+                  source_url,case_href,thesis_href
+           FROM research.v_company_research_update_feed
+           WHERE status='new' ORDER BY CASE materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+                    effective_at DESC,id DESC LIMIT 5"""
+    )
     ssd_root = Path("/Volumes/Devarsh SSD")
     lines = [
         f"AI OS is online; the external Devarsh SSD is {'mounted' if ssd_root.is_mount() else 'not mounted'}, and broker/client/external writes remain locked.",
         f"Company Research has {len(rows)} recent durable cases in this bounded view.",
+        f"Agent daemon is {heartbeat.get('status') or 'not reported'}; last heartbeat {heartbeat.get('heartbeat_at') or 'unavailable'}; last error {heartbeat.get('last_error') or 'none'}.",
+        f"Monitoring covers {int(monitoring_row.get('followed_count') or 0)} followed companies; {int(monitoring_row.get('filing_changes_7d') or 0)} have a filing and {int(monitoring_row.get('news_changes_7d') or 0)} have authorized news in the last seven days.",
     ]
     for row in rows[:6]:
         status = str(row.get("status") or "unknown")
@@ -20906,7 +21224,7 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
             rate = float(row.get("exchange_rate_inr_per_usd") or 87)
             estimate = float(row.get("estimated_cost_usd") or 0)
             hard_max = float(row.get("hard_max_cost_usd") or 0)
-            action = f"waiting for your explicit cost approval (estimated INR {estimate * rate:.2f}; hard stop INR {hard_max * rate:.2f})"
+            action = f"waiting for explicit cost approval (estimated INR {estimate * rate:.2f}; hard stop INR {hard_max * rate:.2f})"
         elif status == "blocked":
             action = f"needs repair; {int(row.get('exception_count') or 0)} recorded exceptions"
         elif status == "collecting":
@@ -20919,43 +21237,35 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
             action = "completed pack is available"
         else:
             action = str(row.get("current_goal") or "inspect case history")
-        lines.append(
-            f"- [Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')}](/research/cases?case_id={row.get('id')}): {status}; {action}."
+        lines.append(f"- [Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')}](/research/cases?case_id={row.get('id')}): {status}; {action}.")
+    if update_rows:
+        lines.append("Latest material followed-company changes:")
+        lines.extend(
+            f"- {row.get('exchange')}:{row.get('symbol')} {row.get('update_type')}: {row.get('title')} ({row.get('materiality')}; {row.get('decision_impact')}) [{row.get('source_url') or row.get('case_href')}]"
+            for row in update_rows
         )
     assistant_message = "\n".join(lines)
-    route = {
-        "route_name": "verified_stack_status_v1",
-        "default_provider": "local_tools",
-        "default_model": "deterministic_status_v1",
-    }
+    route = {"route_name": "verified_stack_status_v2", "default_provider": "local_tools", "default_model": "deterministic_status_v2"}
     persisted_payload = dict(payload)
     persisted_payload["assistant_name"] = "Charlie Munger"
     metadata = dict(payload.get("metadata") or {})
-    metadata.update({
-        "api_route": "/api/chat",
-        "fast_verified_stack_snapshot": True,
-        "private_data_egress": False,
-        "external_write_allowed": False,
-        "broker_write_allowed": False,
-    })
+    metadata.update({"api_route": "/api/chat", "fast_verified_stack_snapshot": True,
+                     "private_data_egress": False, "external_write_allowed": False,
+                     "broker_write_allowed": False, "model_calls": 0})
     persisted_payload["metadata"] = metadata
     chat_turn = persist_chat_turn(persisted_payload, assistant_message, route, "deterministic_fallback", [], [], [])
     return {
-        "chat_turn": chat_turn,
-        "message": assistant_message,
+        "chat_turn": chat_turn, "message": assistant_message,
         "assistant_identity": {"agent_name": "Charlie Munger", "display_title": "Chief of Staff · Orchestrator"},
-        "conversation_mode": "orchestrator",
-        "route": route,
-        "model_status": "deterministic_fallback",
-        "model_call_control": {"decision_id": None, "selected_route": "verified_stack_status_v1", "selected_provider": "local_tools", "selected_model": "deterministic_status_v1", "privacy_class": "internal", "contains_client_data": False, "raw_prompt_stored": False},
-        "retrieval_status": "bounded_warehouse_snapshot",
-        "retrieval_hits": [],
-        "widget_intents": [],
-        "materialization": {"count": 0, "materialized": []},
-        "dashboard_widgets": [],
-        "agent_jobs": [],
-        "tool_intents": [],
-        "truth_envelope": {"evidence_status": "warehouse_verified", "source_refs": [{"source_table": "research.research_cases", "row_count": len(rows)}], "missing_evidence": []},
+        "conversation_mode": "orchestrator", "route": route, "model_status": "deterministic_fallback",
+        "model_call_control": {"decision_id": None, "selected_route": "verified_stack_status_v2", "selected_provider": "local_tools", "selected_model": "deterministic_status_v2", "privacy_class": "internal", "contains_client_data": False, "raw_prompt_stored": False},
+        "retrieval_status": "bounded_warehouse_snapshot", "retrieval_hits": [], "widget_intents": [],
+        "materialization": {"count": 0, "materialized": []}, "dashboard_widgets": [], "agent_jobs": [],
+        "tool_intents": [], "truth_envelope": {"evidence_status": "warehouse_verified", "source_refs": [
+            {"source_table": "research.research_cases", "row_count": len(rows)},
+            {"source_table": "research.v_company_research_monitoring", "row_count": int(monitoring_row.get('followed_count') or 0)},
+            {"source_table": "research.v_company_research_update_feed", "row_count": len(update_rows)},
+        ], "missing_evidence": []},
     }
 
 
@@ -21939,6 +22249,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/research/cases":
                 self._send_json(build_research_case_tracker(query))
                 return
+            if request_path == "/api/today/research-updates":
+                self._send_json(build_company_research_updates(query))
+                return
+            if request_path == "/api/research/monitoring":
+                self._send_json(build_company_research_monitoring(query))
+                return
+            if request_path == "/api/research/runtime-repairs":
+                self._send_json(build_research_runtime_repairs(query))
+                return
             if request_path == "/api/portfolio-office/snapshot":
                 self._send_json(build_portfolio_office_snapshot())
                 return
@@ -22400,6 +22719,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/cases/evidence/link-upload":
                 self._send_json(link_research_case_upload(payload), 201)
+                return
+            if self.path == "/api/research/monitoring/run":
+                self._send_json(run_company_research_monitor(payload), 201)
+                return
+            if self.path == "/api/research/monitoring/updates/review":
+                self._send_json(review_company_research_update(payload), 200)
+                return
+            if self.path == "/api/research/runtime-repairs/propose":
+                self._send_json(propose_research_runtime_repair(payload), 201)
                 return
             if self.path == "/api/portfolio/long-term-thesis/report/preflight":
                 self._send_json(preflight_long_term_thesis_report(payload), 201)
