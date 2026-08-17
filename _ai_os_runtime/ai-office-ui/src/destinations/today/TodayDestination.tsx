@@ -43,12 +43,11 @@ export default function TodayDestination() {
   const { data: research } = useResearchIdeas();
   const openEvidence = useUIStore((s) => s.openEvidence);
   const setAssistantScope = useUIStore((s) => s.setAssistantScope);
-  const setAssistantOpen = useUIStore((s) => s.setAssistantOpen);
+  const queueAssistantMessage = useUIStore((s) => s.queueAssistantMessage);
 
   function askCharlie(q: string) {
     setAssistantScope("charlie");
-    setAssistantOpen(true);
-    window.dispatchEvent(new CustomEvent("aios:assistant-send", { detail: q }));
+    queueAssistantMessage(q);
   }
 
   if (error) {

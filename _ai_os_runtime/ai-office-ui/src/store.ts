@@ -51,6 +51,9 @@ interface UIState {
   setAssistantOpen: (open: boolean) => void;
   toggleAssistant: () => void;
   setAssistantScope: (scope: UIState["assistantScope"]) => void;
+  pendingAssistantMessage: { id: string; message: string } | null;
+  queueAssistantMessage: (message: string) => void;
+  consumeAssistantMessage: (id: string) => void;
 
   /* Command palette (Cmd-K) */
   paletteOpen: boolean;
@@ -122,6 +125,18 @@ export const useUIStore = create<UIState>()(
       toggleAssistant: () => set({ assistantOpen: !get().assistantOpen }),
       setAssistantScope: (assistantScope) =>
         set({ assistantScope, assistantOpen: true }),
+      pendingAssistantMessage: null,
+      queueAssistantMessage: (message) => {
+        const trimmed = message.trim();
+        if (!trimmed) return;
+        set({
+          assistantOpen: true,
+          pendingAssistantMessage: { id: "assistant-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8), message: trimmed },
+        });
+      },
+      consumeAssistantMessage: (id) => {
+        if (get().pendingAssistantMessage?.id === id) set({ pendingAssistantMessage: null });
+      },
 
       /* ---- Command palette ---- */
       paletteOpen: false,

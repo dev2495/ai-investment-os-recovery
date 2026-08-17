@@ -262,5 +262,3 @@ def run_company_research_monitor_once(
         "broker_write_allowed": False,
     })
     return result
-
-\n

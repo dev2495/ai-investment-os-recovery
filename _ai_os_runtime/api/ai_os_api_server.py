@@ -2523,9 +2523,14 @@ def build_company_research_updates(query: dict[str, list[str]]) -> dict:
 
 def build_company_research_monitoring(query: dict[str, list[str]]) -> dict:
     try:
-        limit = max(1,min(100,int(query.get("limit",["50"])[0])))
-    except (TypeError,ValueError) as exc:
-        raise ValueError("limit must be an integer") from exc
+        page = max(1, int(query.get("page", ["1"])[0]))
+        requested_size = query.get("page_size", query.get("limit", ["20"]))[0]
+        page_size = max(1, min(100, int(requested_size)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("page and page_size must be integers") from exc
+    offset = (page - 1) * page_size
+    count_rows = run_psql_json("SELECT count(*)::integer total FROM research.v_company_research_monitoring")
+    total = int((count_rows[0] if count_rows else {}).get("total") or 0)
     rows = run_psql_json(f"""
       SELECT monitoring.*,
         latest_update.id latest_update_id,latest_update.update_type,latest_update.title latest_update_title,
@@ -2543,12 +2548,19 @@ def build_company_research_monitoring(query: dict[str, list[str]]) -> dict:
         WHERE upper(feed.exchange)=upper(monitoring.exchange) AND upper(feed.symbol)=upper(monitoring.symbol)) update_count ON true
       ORDER BY CASE monitoring.priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
                coalesce(latest_update.effective_at,monitoring.last_progress_at,monitoring.followed_since) DESC
-      LIMIT {limit}
+      LIMIT {page_size} OFFSET {offset}
     """)
     run_rows = run_psql_json("""SELECT * FROM research.company_research_monitor_runs ORDER BY id DESC LIMIT 5""")
-    return {"generated_at":datetime.now(timezone.utc).isoformat(),"companies":rows,"monitor_runs":run_rows,
-            "private_data_egress_allowed":False,"external_write_allowed":False,"broker_write_allowed":False}
-
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pagination": {"page": page, "page_size": page_size, "total": total,
+                       "pages": (total + page_size - 1) // page_size},
+        "companies": rows,
+        "monitor_runs": run_rows,
+        "private_data_egress_allowed": False,
+        "external_write_allowed": False,
+        "broker_write_allowed": False,
+    }
 
 def run_company_research_monitor(payload: dict) -> dict:
     actor = str(payload.get("actor") or "Devarsh").strip()
@@ -21197,6 +21209,28 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
            FROM core.runtime_daemon_heartbeats WHERE daemon_key='agent_message_daemon' LIMIT 1"""
     )
     heartbeat = heartbeat_rows[0] if heartbeat_rows else {}
+    raw_daemon_error = str(heartbeat.get("last_error") or "").strip()
+    daemon_status = str(heartbeat.get("status") or "not reported")
+    options_error = any(marker in raw_daemon_error.lower() for marker in (
+        "materialize_institutional_options", "options materializer", "option materializer"
+    ))
+    if options_error:
+        daemon_summary = (
+            f"Company Research daemon is running; last heartbeat "
+            f"{heartbeat.get('heartbeat_at') or 'unavailable'}. "
+            "Options data refresh needs attention; inspect System Health."
+        )
+    elif raw_daemon_error:
+        daemon_summary = (
+            f"Company Research daemon reports {daemon_status}; last heartbeat "
+            f"{heartbeat.get('heartbeat_at') or 'unavailable'}. "
+            "A background task needs attention; inspect System Health for technical detail."
+        )
+    else:
+        daemon_summary = (
+            f"Company Research daemon is {daemon_status}; last heartbeat "
+            f"{heartbeat.get('heartbeat_at') or 'unavailable'}; no active error."
+        )
     monitoring = run_psql_json(
         """SELECT count(*)::integer followed_count,
                   count(*) FILTER (WHERE latest_filing_at>=now()-interval '7 days')::integer filing_changes_7d,
@@ -21215,7 +21249,7 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
     lines = [
         f"AI OS is online; the external Devarsh SSD is {'mounted' if ssd_root.is_mount() else 'not mounted'}, and broker/client/external writes remain locked.",
         f"Company Research has {len(rows)} recent durable cases in this bounded view.",
-        f"Agent daemon is {heartbeat.get('status') or 'not reported'}; last heartbeat {heartbeat.get('heartbeat_at') or 'unavailable'}; last error {heartbeat.get('last_error') or 'none'}.",
+        daemon_summary,
         f"Monitoring covers {int(monitoring_row.get('followed_count') or 0)} followed companies; {int(monitoring_row.get('filing_changes_7d') or 0)} have a filing and {int(monitoring_row.get('news_changes_7d') or 0)} have authorized news in the last seven days.",
     ]
     for row in rows[:6]:

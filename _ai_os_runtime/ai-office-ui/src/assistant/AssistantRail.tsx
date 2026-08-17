@@ -110,13 +110,11 @@ function extractResearchRequest(command: string): string | null {
   const explicit = extractResearchStartEntity(command);
   if (explicit) return explicit;
   const normalized = command.trim();
-  if (!normalized) return null;
-  const researchWords = /\b(research|filings?|annual reports?|results?|news|thesis|valuation|moat|company|underwrite|catalysts?|fundamental)\b/i;
-  const actionWords = /\b(start|begin|review|analyse|analyze|check|latest|update|follow|track|build|do)\b/i;
-  const directResearchVerb = /^\s*(research|underwrite|analyse|analyze|check|follow|track)\b/i;
-  return researchWords.test(normalized) && (actionWords.test(normalized) || directResearchVerb.test(normalized))
-    ? normalized
-    : null;
+  if (!normalized || normalized.endsWith("?")) return null;
+  const imperative = normalized.match(/^\s*(?:please\s+)?(?:research|underwrite|analyse|analyze)\s+(?:company\s+)?(.+)/i);
+  if (!imperative) return null;
+  const entity = String(imperative[1] || "").trim();
+  return entity || null;
 }
 const QUICK_ACTIONS = [
   { label: "What do I need to decide today?", icon: ClipboardCheck },
@@ -130,6 +128,8 @@ const QUICK_ACTIONS = [
 export function AssistantRail() {
   const open = useUIStore((s) => s.assistantOpen);
   const setOpen = useUIStore((s) => s.setAssistantOpen);
+  const pendingAssistantMessage = useUIStore((s) => s.pendingAssistantMessage);
+  const consumeAssistantMessage = useUIStore((s) => s.consumeAssistantMessage);
   const scope = useUIStore((s) => s.assistantScope);
   const openEvidence = useUIStore((s) => s.openEvidence);
 
@@ -182,6 +182,14 @@ export function AssistantRail() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  React.useEffect(() => {
+    if (!pendingAssistantMessage || !open || assistantPending) return;
+    send(pendingAssistantMessage.message);
+    consumeAssistantMessage(pendingAssistantMessage.id);
+    // send is a component-local dispatcher; the durable store command is the effect dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAssistantMessage?.id, open, assistantPending, consumeAssistantMessage]);
 
   React.useEffect(() => {
     const handlePrefill = (event: Event) => {
