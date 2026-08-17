@@ -25,6 +25,7 @@ import {
   useAdvanceActiveGraphRuns,
   useAdvanceGraphRun,
   useCancelGraphRun,
+  useCalibrateKronosForecast,
   usePauseGraphRun,
   useRecordGraphCorrection,
   useRequestGraphChange,
@@ -36,6 +37,7 @@ import {
 import {
   Badge,
   Button,
+  DataTable,
   Empty,
   Field,
   Metric,
@@ -374,6 +376,7 @@ function WaitItem({
 export function GraphStudio() {
   const { data, isLoading, error, refetch, isFetching } = useGraphControlSnapshot();
   const startRun = useStartGraphRun();
+  const calibrateKronos = useCalibrateKronosForecast();
   const advanceRun = useAdvanceGraphRun();
   const advanceActive = useAdvanceActiveGraphRuns();
   const pauseRun = usePauseGraphRun();
@@ -449,6 +452,11 @@ export function GraphStudio() {
     kronosAdapterConfig.runtime_status ?? (kronosAdapter?.enabled ? "ready" : "setup_required")
   );
   const selectedKronosRun = kronosRuns.find((row) => rowId(row, "graph_run_id") === selectedRunId) ?? kronosRuns[0];
+  const kronosScores = data?.kronos_scores ?? [];
+  const selectedKronosScore = kronosScores.find(
+    (row) => rowId(row, "forecast_run_id") === rowId(selectedKronosRun, "forecast_run_id")
+      && text(row, "score_kind") === "realized_calibration"
+  );
   const kronosFeatures = asObject(selectedKronosRun, "feature_payload");
   const kronosTerminal = (
     kronosFeatures.terminal_return && typeof kronosFeatures.terminal_return === "object"
@@ -626,10 +634,10 @@ export function GraphStudio() {
         <div>
           <div className="graph-studio__title">
             <GitBranch size={26} />
-            Graph Studio
+            Graph & Loop Studio
             <Badge tone="accent">CONTROL</Badge>
           </div>
-          <div className="graph-studio__subtitle">Governed agent workflows, decisions, evidence, corrections, and live handoffs.</div>
+          <div className="graph-studio__subtitle">Graph Engineering · Loop Engineering · governed decisions, evidence, corrections, and live handoffs.</div>
         </div>
         <div className="graph-studio__toolbar">
           {data && <StatusPill tone="ok" dot>{formatRelative(data.generated_at)}</StatusPill>}
@@ -663,6 +671,31 @@ export function GraphStudio() {
         </MetricTile>
         <MetricTile><Metric label="Autonomy Policies" value={data?.autonomy?.length ?? 0} /></MetricTile>
       </div>
+
+      <Panel icon={Wrench} title="Workflow Engineering Sheet"
+        actions={<Badge tone="accent">{graphs.length} versioned loops</Badge>}>
+        {graphs.length === 0 ? (
+          <Empty icon={GitBranch} title="No validated workflow definitions" description="The catalog is empty or unavailable; no workflow activity is being simulated." />
+        ) : (
+          <DataTable
+            dense
+            columns={[
+              { key: "loop", header: "Graph / loop", render: (row) => <><strong>{text(row, "graph_name")}</strong><div className="micro">{text(row, "graph_key")}</div></> },
+              { key: "owner", header: "Accountable owner", render: (row) => text(row, "owner_agent", "Unassigned") },
+              { key: "version", header: "Version", render: (row) => `v${text(row, "active_version", "—")}` },
+              { key: "shape", header: "Engineering shape", render: (row) => {
+                const key = text(row, "graph_key");
+                return `${(data?.nodes ?? []).filter((node) => text(node, "graph_key") === key).length} nodes · ${(data?.edges ?? []).filter((edge) => text(edge, "graph_key") === key).length} handoffs`;
+              } },
+              { key: "runs", header: "Open work", align: "right", render: (row) => num(row, "open_run_count", 0) },
+              { key: "validation", header: "Safety / validation", render: (row) => <StatusPill status={asObject(row, "validation_result").valid === true ? "validated" : "blocked"} /> },
+              { key: "open", header: "Worksheet", render: (row) => <Button size="sm" variant="ghost" onClick={() => { setSelectedGraphKey(text(row, "graph_key")); setSelectedRunId(null); }}>Open</Button> },
+            ]}
+            rows={graphs}
+            rowKey={(row) => text(row, "graph_key")}
+          />
+        )}
+      </Panel>
 
       <div className="graph-studio__workspace">
         <aside className="graph-studio__catalog">
@@ -842,7 +875,25 @@ export function GraphStudio() {
         <Panel
           icon={Activity}
           title="Kronos Forecast Research"
-          actions={<StatusPill status={kronosRuntimeStatus}>{kronosRuntimeStatus.replace(/_/g, " ")}</StatusPill>}
+          actions={
+            <div className="graph-run-actions">
+              <StatusPill status={kronosRuntimeStatus}>{kronosRuntimeStatus.replace(/_/g, " ")}</StatusPill>
+              <Button
+                size="sm"
+                icon={ShieldCheck}
+                disabled={!selectedKronosRun || text(selectedKronosRun, "status") !== "completed" || calibrateKronos.isPending}
+                onClick={() => calibrateKronos.mutate(
+                  { forecast_run_id: rowId(selectedKronosRun, "forecast_run_id"), actor: "Devarsh via Graph Studio" },
+                  {
+                    onSuccess: (result) => notify("Realized calibration recorded", "ok", text(result, "status")),
+                    onError: (mutationError) => notify("Calibration failed", "risk", mutationError.message),
+                  }
+                )}
+              >
+                Score realized bars
+              </Button>
+            </div>
+          }
         >
           <div className="graph-studio__metrics">
             <MetricTile tone={kronosAdapter?.enabled ? "ok" : "warn"}>
@@ -850,6 +901,22 @@ export function GraphStudio() {
             </MetricTile>
             <MetricTile tone={text(selectedKronosRun, "validation_status") === "passed" ? "ok" : selectedKronosRun ? "warn" : "default"}>
               <Metric label="Validation" value={text(selectedKronosRun, "validation_status", "No Run").replace(/_/g, " ")} sub={text(selectedKronosRun, "device", "no inference yet")} />
+            </MetricTile>
+            <MetricTile tone={selectedKronosScore ? "default" : "warn"}>
+              <Metric
+                label="Realized Bars"
+                value={selectedKronosScore ? num(selectedKronosScore, "realized_points") : "Not scored"}
+                sub={selectedKronosScore ? text(selectedKronosScore, "validation_status").replace(/_/g, " ") : "future bars required"}
+              />
+            </MetricTile>
+            <MetricTile>
+              <Metric label="Interval Coverage" value={selectedKronosScore ? formatPercent(num(selectedKronosScore, "interval_coverage")) : "Not scored"} sub="P10 to P90" />
+            </MetricTile>
+            <MetricTile>
+              <Metric label="Direction Accuracy" value={selectedKronosScore ? formatPercent(num(selectedKronosScore, "directional_accuracy")) : "Not scored"} sub="single origin only" />
+            </MetricTile>
+            <MetricTile>
+              <Metric label="CRPS" value={selectedKronosScore ? num(selectedKronosScore, "crps").toFixed(4) : "Not scored"} sub="lower is better" />
             </MetricTile>
             <MetricTile><Metric label="Stored Paths" value={selectedKronosRun ? num(selectedKronosRun, "stored_paths") : "—"} sub={selectedKronosRun ? `${num(selectedKronosRun, "stored_points")} forecast points` : "no inference yet"} /></MetricTile>
             <MetricTile><Metric label="Mean Return" value={selectedKronosRun ? formatPercent(num(kronosTerminal, "mean")) : "—"} sub={selectedKronosRun ? `P10 ${formatPercent(num(kronosTerminal, "p10"))} · P90 ${formatPercent(num(kronosTerminal, "p90"))}` : "no distribution yet"} /></MetricTile>
@@ -876,6 +943,29 @@ export function GraphStudio() {
                 <span><b>OHLC validity</b>{formatPercent(num(selectedKronosRun, "ohlc_validity"))}</span>
                 <span><b>Volume validity</b>{formatPercent(num(selectedKronosRun, "volume_validity"))}</span>
               </div>
+              {!selectedKronosScore && (
+                <div className="graph-muted">
+                  No realized calibration exists. Score the run after canonical future bars are available.
+                </div>
+              )}
+              {selectedKronosScore && (
+                <details className="graph-node-inspector__evidence">
+                  <summary>Realized calibration and model-risk evidence</summary>
+                  <pre>{jsonPreview({
+                    score_kind: text(selectedKronosScore, "score_kind"),
+                    validation_status: text(selectedKronosScore, "validation_status"),
+                    realized_points: num(selectedKronosScore, "realized_points"),
+                    interval_coverage: value(selectedKronosScore, "interval_coverage", null),
+                    directional_accuracy: value(selectedKronosScore, "directional_accuracy", null),
+                    crps: value(selectedKronosScore, "crps", null),
+                    mean_interval_width: value(selectedKronosScore, "mean_interval_width", null),
+                    feature_payload: value(selectedKronosScore, "feature_payload", {}),
+                    evidence: value(selectedKronosScore, "evidence", []),
+                    automatic_strategy_promotion_allowed: false,
+                    broker_order_allowed: false,
+                  })}</pre>
+                </details>
+              )}
               <details className="graph-node-inspector__evidence">
                 <summary>Distribution, validation, and immutable lineage</summary>
                 <pre>{jsonPreview({

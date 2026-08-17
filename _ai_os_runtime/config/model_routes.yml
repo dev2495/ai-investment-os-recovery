@@ -1,9 +1,114 @@
-version: 5
+version: 7
 purpose: >
   Charlie handles natural operator conversation and delegates typed work to Jarvis
   and role-scoped agents. Private context stays on evaluated local models. Public
   and internal work can use capped cloud routes. Deterministic tools own arithmetic,
   research extraction, risk, backtests, approvals, and execution state.
+
+registry_contract:
+  declaration_fields: [task_type, risk, tools, context_need, latency, cost_ceiling_inr, data_boundary, approval_required]
+  decision_fields: [primary_alias, fallback_alias, escalation_alias, escalation_trigger, maximum_budget_inr, trace_id, decision_reason, usage_event_id]
+  rule: >
+    Agents declare task requirements and never bind provider model slugs. The
+    central alias registry owns provider bindings, retries, fallbacks, budgets,
+    and audit fields so a model can be switched without editing each agent.
+
+model_aliases:
+  local.private.default:
+    route: charlie_munger_orchestration
+    data_boundary: client_private_local_only
+  research.public.extractor:
+    route: openrouter_public_extract_flash
+    provider_binding: openrouter
+    model_binding: deepseek/deepseek-v4-flash-0731
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_only
+    approval_required: true
+    status: canary_only_disabled
+  research.public.multimodal:
+    route: openrouter_public_multimodal_gemini
+    provider_binding: openrouter
+    model_binding: google/gemini-3.7-flash
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_only
+    approval_required: true
+    status: canary_only_disabled
+  research.public.lead.glm52:
+    route: openrouter_public_lead_glm52_canary
+    provider_binding: openrouter
+    model_binding: z-ai/glm-5.2
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_only
+    approval_required: true
+    status: canary_only_disabled
+  research.public.lead.deepseek_v4_pro:
+    route: openrouter_public_lead_deepseek_v4_pro_canary
+    provider_binding: openrouter
+    model_binding: deepseek/deepseek-v4-pro-0813
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_only
+    approval_required: true
+    status: canary_only_disabled
+  research.public.lead.qwen38_max:
+    route: openrouter_public_lead_qwen38_max_canary
+    provider_binding: openrouter
+    model_binding: qwen/qwen3.8-max
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_only
+    approval_required: true
+    status: pending_no_verified_zdr_endpoint
+  cloud.volume.default:
+    route: cloud_volume_flash
+    provider_binding: openrouter
+    model_binding: deepseek/deepseek-v4-flash
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_or_redacted_internal_only
+  cloud.complex.escalation:
+    route: cloud_complex_glm
+    provider_binding: openrouter
+    model_binding: z-ai/glm-5.2
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_or_approved_redacted_internal_only
+  specialist.lead_engineer:
+    route: heavy_specialist_lead_engineer
+    provider_binding: operator_selected_heavy_llama
+    data_boundary: repository_only_no_secrets
+  specialist.senior_investment_reviewer:
+    route: heavy_specialist_investment_reviewer
+    provider_binding: operator_selected_heavy_llama
+    data_boundary: public_or_approved_redacted_internal_only
+  specialist.final_strategy_writer:
+    route: heavy_specialist_final_strategy_writer
+    provider_binding: operator_selected_heavy_llama
+    data_boundary: public_or_approved_redacted_internal_only
+
+task_routing_registry:
+  high_volume_public_work:
+    task_types: [extraction, classification, summary, routing, research_triage, document_processing, first_pass_agent_work]
+    primary_alias: cloud.volume.default
+    fallback_alias: local.private.default
+    escalation_alias: cloud.complex.escalation
+    escalation_triggers: [two_failed_attempts, low_confidence, tool_plan_over_8_steps, context_over_64000, reviewer_rejects]
+    maximum_budget_inr: 35
+    concurrency_limit: 3
+    batching: true
+    caching: deterministic_and_public_only
+  complex_public_work:
+    task_types: [complex_planning, long_context_tool_use, difficult_coding, long_multi_step_task]
+    primary_alias: cloud.complex.escalation
+    fallback_alias: cloud.volume.default
+    escalation_alias: specialist.lead_engineer
+    escalation_triggers: [glm_failure, explicit_specialist_request, release_gate_failure]
+    maximum_budget_inr: 120
+    concurrency_limit: 1
+    approval_required: true
+  named_first_class_specialists:
+    allowed_agents: [Lead Engineer, Senior Investment Reviewer, Final Strategy Writer]
+    aliases: [specialist.lead_engineer, specialist.senior_investment_reviewer, specialist.final_strategy_writer]
+    prohibited_uses: [routine_work, committee_duplication, parallel_opinion_generation]
+    maximum_budget_inr: 250
+    concurrency_limit: 1
+    approval_required: true
 
 providers:
   local_openai:
@@ -41,6 +146,103 @@ providers:
     notes: "Repository implementation, debugging, architecture changes, and release verification."
 
 routes:
+  openrouter_public_extract_flash:
+    task_class: public_document_extraction_canary
+    default_provider: openrouter
+    default_model: deepseek/deepseek-v4-flash-0731
+    fallback_route: local_workhorse_synthesis
+    escalation_route: openrouter_public_multimodal_gemini
+    max_cost_tier: cloud_low
+    privacy: public_only
+    status: disabled_until_explicit_preflight_approval_and_canary_promotion
+
+  openrouter_public_multimodal_gemini:
+    task_class: public_document_multimodal_canary
+    default_provider: openrouter
+    default_model: google/gemini-3.7-flash
+    fallback_route: openrouter_public_extract_flash
+    escalation_route: openrouter_public_lead_deepseek_v4_pro_canary
+    max_cost_tier: cloud_medium
+    privacy: public_only
+    status: disabled_until_explicit_preflight_approval_and_canary_promotion
+
+  openrouter_public_lead_glm52_canary:
+    task_class: public_company_lead_canary
+    default_provider: openrouter
+    default_model: z-ai/glm-5.2
+    fallback_route: openrouter_public_lead_deepseek_v4_pro_canary
+    escalation_route: openrouter_public_lead_qwen38_max_canary
+    max_cost_tier: cloud_medium
+    privacy: public_only
+    status: disabled_until_explicit_preflight_approval_and_canary_promotion
+
+  openrouter_public_lead_deepseek_v4_pro_canary:
+    task_class: public_company_lead_canary
+    default_provider: openrouter
+    default_model: deepseek/deepseek-v4-pro-0813
+    fallback_route: openrouter_public_lead_glm52_canary
+    escalation_route: openrouter_public_lead_qwen38_max_canary
+    max_cost_tier: cloud_medium
+    privacy: public_only
+    status: disabled_until_explicit_preflight_approval_and_canary_promotion
+
+  openrouter_public_lead_qwen38_max_canary:
+    task_class: public_company_lead_canary
+    default_provider: openrouter
+    default_model: qwen/qwen3.8-max
+    fallback_route: openrouter_public_lead_deepseek_v4_pro_canary
+    escalation_route: human_or_local_review
+    max_cost_tier: frontier
+    privacy: public_only
+    status: disabled_until_explicit_preflight_approval_and_canary_promotion
+
+  cloud_volume_flash:
+    task_class: high_volume_public_or_redacted_internal_work
+    default_provider: openrouter
+    default_model: deepseek/deepseek-v4-flash
+    fallback_route: charlie_munger_orchestration
+    escalation_route: cloud_complex_glm
+    max_cost_tier: cloud_low
+    privacy: no_client_or_restricted_data
+    status: production_when_secret_and_budget_gate_pass
+
+  cloud_complex_glm:
+    task_class: complex_planning_long_context_tool_use_and_difficult_coding
+    default_provider: openrouter
+    default_model: z-ai/glm-5.2
+    fallback_route: cloud_volume_flash
+    escalation_route: human_or_named_specialist_only
+    max_cost_tier: cloud_medium
+    privacy: public_or_approved_redacted_internal_only
+    status: approval_and_budget_gated
+
+  heavy_specialist_lead_engineer:
+    task_class: named_first_class_lead_engineer
+    default_provider: operator_selected_heavy_llama
+    default_model: specialist.lead_engineer
+    fallback_route: cloud_complex_glm
+    max_cost_tier: frontier
+    privacy: repository_only_no_secrets
+    status: explicit_operator_approval_only
+
+  heavy_specialist_investment_reviewer:
+    task_class: named_first_class_senior_investment_review
+    default_provider: operator_selected_heavy_llama
+    default_model: specialist.senior_investment_reviewer
+    fallback_route: cloud_complex_glm
+    max_cost_tier: frontier
+    privacy: public_or_approved_redacted_internal_only
+    status: explicit_operator_approval_only
+
+  heavy_specialist_final_strategy_writer:
+    task_class: named_first_class_final_strategy_writing
+    default_provider: operator_selected_heavy_llama
+    default_model: specialist.final_strategy_writer
+    fallback_route: cloud_complex_glm
+    max_cost_tier: frontier
+    privacy: public_or_approved_redacted_internal_only
+    status: explicit_operator_approval_only
+
   charlie_munger_orchestration:
     task_class: private_conversation_and_delegation
     default_provider: local_openai
@@ -177,10 +379,39 @@ routes:
 budget:
   currency: INR
   monthly_soft_cap: 3000
-  monthly_hard_cap: 4500
+  monthly_hard_cap: 4000
   daily_hard_cap: 150
   heavy_route_reserve_pct: 20
   hard_stop_on_breach: true
+  expected_operating_band_inr: 3000-4000
+  preflight_required_for_research_and_reports: true
+  public_canary_requires_explicit_approval: true
+  quote_exchange_rate_inr_per_usd: 87
+  per_agent_quotas: true
+  concurrency_limits: true
+  batch_public_work: true
+  cache_public_deterministic_outputs: true
+
+failure_and_degradation:
+  provider_timeout: retry_once_then_fallback
+  rate_limit: exponential_backoff_then_local_or_queue
+  malformed_output: schema_repair_once_then_fallback
+  budget_soft_cap: block_heavy_routes_and_reduce_concurrency
+  budget_hard_cap: cloud_hard_stop_local_only
+  secret_missing: mark_blocked_secret_never_log_secret_value
+  model_unavailable: resolve_alias_fallback_without_agent_change
+  all_models_unavailable: deterministic_tools_and_human_queue
+  client_or_restricted_data: local_only_no_cloud_fallback
+
+governance:
+  secret_storage: environment_or_keychain_reference_only
+  secret_logging: prohibited
+  provider_slug_location: central_alias_registry_only
+  benchmark_before_promotion: true
+  benchmark_suites: [routing_accuracy, extraction_quality, tool_use_success, long_context_recall, coding_release_gate, investment_review_calibration]
+  canary_required: true
+  rollback: alias_repoint_without_agent_edits
+  audit_fields: [trace_id, task_type, alias, resolved_provider, resolved_model, decision_reason, attempts, latency_ms, tokens, estimated_cost_inr, actual_cost_inr, approval_id, data_boundary, preflight_id, receipt_id]
 
 safety:
   broker_writes: false
@@ -188,3 +419,7 @@ safety:
   raw_cloud_prompt_storage: false
   autonomous_heavy_models: false
   human_final_investment_authority: Devarsh
+  trading_progression: [read_only, research_and_reports, draft, paper, staged_live, human_confirmed]
+  low_cost_research_and_drafts_allowed: true
+  strong_review_before_execution: true
+  explicit_human_confirmation_before_live_execution: true

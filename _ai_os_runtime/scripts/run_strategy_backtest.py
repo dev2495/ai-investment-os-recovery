@@ -34,7 +34,20 @@ def sql_jsonb(value: object) -> str:
     return f"{sql_literal(json.dumps(value, sort_keys=True, default=str))}::jsonb"
 
 
-def run_psql_json(sql: str) -> list[dict[str, Any]]:
+def run_psql_json(
+    sql: str,
+    *,
+    statement_timeout_ms: int = 30000,
+    timeout_seconds: float = 35,
+) -> list[dict[str, Any]]:
+    """Run one JSON-returning SQL statement with bounded cancellation.
+
+    Existing callers retain the historical 30s/35s defaults. Latency-sensitive
+    supervised workloads can choose a smaller statement/subprocess timeout so a
+    slow analytical query cannot starve the operator API heartbeat.
+    """
+    statement_timeout_ms = max(250, int(statement_timeout_ms))
+    timeout_seconds = max(0.5, float(timeout_seconds))
     psql_bin = os.environ.get("AI_OS_PSQL_BIN") or "/opt/homebrew/opt/postgresql@15/bin/psql"
     password = os.environ.get("AI_OS_POSTGRES_PASSWORD")
     workload_psql_mode = (os.environ.get("AI_OS_WORKLOAD_PSQL_MODE") or "host").strip().lower()
@@ -46,15 +59,22 @@ def run_psql_json(sql: str) -> list[dict[str, Any]]:
             f"port={os.environ.get('AI_OS_POSTGRES_PORT') or '54329'} "
             f"dbname={os.environ.get('AI_OS_POSTGRES_DB') or 'ai_os'} "
             f"user={os.environ.get('AI_OS_POSTGRES_USER') or 'ai_os'} "
-            "connect_timeout=3 options='-c statement_timeout=30000 -c lock_timeout=5000'",
+            f"connect_timeout=3 options='-c statement_timeout={statement_timeout_ms} "
+            f"-c lock_timeout={min(5000, statement_timeout_ms)}'",
             "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql,
         ]
         env = os.environ.copy()
         env["PGPASSWORD"] = password
-        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=35)
+        completed = subprocess.run(
+            command, text=True, capture_output=True, check=False, env=env,
+            timeout=timeout_seconds,
+        )
     else:
         command = ["docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"]
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, timeout=35)
+        completed = subprocess.run(
+            command, input=sql, text=True, capture_output=True, check=False,
+            timeout=timeout_seconds,
+        )
     transient_markers = (
         "timeout expired",
         "connection refused",
@@ -72,9 +92,15 @@ def run_psql_json(sql: str) -> list[dict[str, Any]]:
             break
         time.sleep(delay)
         if use_host_psql:
-            completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=35)
+            completed = subprocess.run(
+                command, text=True, capture_output=True, check=False, env=env,
+                timeout=timeout_seconds,
+            )
         else:
-            completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, timeout=35)
+            completed = subprocess.run(
+                command, input=sql, text=True, capture_output=True, check=False,
+                timeout=timeout_seconds,
+            )
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout).strip())
     output = completed.stdout.strip()

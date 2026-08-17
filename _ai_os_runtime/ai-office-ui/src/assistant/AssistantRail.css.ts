@@ -351,6 +351,10 @@ export const AssistantRailCss = `
   cursor: pointer;
 }
 
+.aios-assistant__action-copy { display: grid; gap: 3px; min-width: 0; }
+.aios-assistant__action-copy strong { font-size: var(--text-xs); font-weight: 700; }
+.aios-assistant__action-copy small { color: var(--text-muted); font-size: var(--text-2xs); font-weight: 500; line-height: 1.45; }
+
 .aios-assistant__action:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 15%, var(--surface-soft));

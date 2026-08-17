@@ -62,6 +62,8 @@ export const MissionControlSchema = z.object({
   payload_profile: payloadProfile.optional(),
   metrics: z.array(liveRow).default([]),
   inbox: z.array(liveRow).default([]),
+  agent_targets: z.array(liveRow).default([]),
+  risk_events: z.array(liveRow).default([]),
   approvals: z.array(liveRow).default([]),
   approval_summary: z.array(liveRow).default([]),
   agent_messages: z.array(liveRow).default([]),
@@ -72,6 +74,8 @@ export const MissionControlSchema = z.object({
   agent_worker_queue: z.array(liveRow).default([]),
   agent_worker_runs: z.array(liveRow).default([]),
   task_provider_gates: z.array(liveRow).default([]),
+  market_research_heartbeats: z.array(liveRow).default([]),
+  research_cases: z.array(liveRow).default([]),
   source_freshness: z.array(liveRow).default([]),
   filing_summary: z.array(liveRow).default([]),
   latest_filings: z.array(liveRow).default([]),
@@ -82,11 +86,37 @@ export const MissionControlSchema = z.object({
   market_quotes: z.array(liveRow).default([]),
   market_holidays: z.array(liveRow).default([]),
   watchlist: z.array(liveRow).default([]),
+  thesis_material_feed: z.array(liveRow).default([]),
   latest_reports: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 
 export type MissionControl = z.infer<typeof MissionControlSchema>;
+
+export const ResearchCaseTrackerSchema = z.object({
+  ...snapshotMeta,
+  storage_policy: z.object({
+    transaction_truth: z.string(),
+    artifact_root: z.string(),
+    private_data_egress_allowed: z.boolean(),
+    broker_write_allowed: z.boolean(),
+    external_write_allowed: z.boolean(),
+  }).passthrough(),
+  pagination: z.object({ page: z.number(), page_size: z.number(), total: z.number(), pages: z.number() }),
+  cases: z.array(liveRow).default([]),
+  selected_case_id: z.number().default(0),
+  agents: z.array(liveRow).default([]),
+  work_items: z.array(liveRow).default([]),
+  events: z.array(liveRow).default([]),
+  evidence: z.array(liveRow).default([]),
+  model_runs: z.array(liveRow).default([]),
+  source_jobs: z.array(liveRow).default([]),
+  blockers: z.array(liveRow).default([]),
+  sections: z.array(liveRow).default([]),
+  imported_research: z.array(liveRow).default([]),
+}).passthrough();
+
+export type ResearchCaseTracker = z.infer<typeof ResearchCaseTrackerSchema>;
 
 /* ============================================================
  * System Health
@@ -190,6 +220,14 @@ export const PortfolioOfficeSchema = z.object({
   performance_attribution: z.array(liveRow).default([]),
   client_report_delivery: z.array(liveRow).default([]),
   p2cursor_reconciliation: z.array(liveRow).default([]),
+  client_browser_captures: z.array(liveRow).default([]),
+  client_imports: z.array(liveRow).default([]),
+  client_import_exceptions: z.array(liveRow).default([]),
+  client_import_derived_holdings: z.array(liveRow).default([]),
+  client_import_reconciliation: z.array(liveRow).default([]),
+  client_import_holdings_comparison: z.array(liveRow).default([]),
+  client_import_workspace_status: z.array(liveRow).default([]),
+  client_import_realized_summary: z.array(liveRow).default([]),
   execution_control: z.array(executionControlRow).default([]),
 }).passthrough();
 
@@ -238,6 +276,7 @@ export const ResearchIdeasSchema = z.object({
   fundamental_intake: z.array(liveRow).default([]),
   fundamental_evidence: z.array(liveRow).default([]),
   fundamental_specialist_opinions: z.array(liveRow).default([]),
+  governance_forensic_observations: z.array(liveRow).default([]),
   fundamental_remediation_tasks: z.array(liveRow).default([]),
   investment_dossiers: z.array(liveRow).default([]),
   dossier_refresh_queue: z.array(liveRow).default([]),
@@ -247,6 +286,64 @@ export const ResearchIdeasSchema = z.object({
 }).passthrough();
 
 export type ResearchIdeas = z.infer<typeof ResearchIdeasSchema>;
+
+export const LongTermThesisWorkspaceSchema = z.object({
+  generated_at: z.string(),
+  workspace_profile: z.string(),
+  runtime_root: z.string().optional(),
+  vault_root: z.string().optional(),
+  privacy: liveRow,
+  pagination: liveRow.optional(),
+  theses: z.array(liveRow).default([]),
+  selected_thesis: liveRow.nullable(),
+  coverage: z.array(liveRow).default([]),
+  thesis_versions: z.array(liveRow).default([]),
+  dossier_sections: z.array(liveRow).default([]),
+  checklists: z.array(liveRow).default([]),
+  valuation_models: z.array(liveRow).default([]),
+  monte_carlo_runs: z.array(liveRow).default([]),
+  research_updates: z.array(liveRow).default([]),
+  financial_facts: z.array(liveRow).default([]),
+  financial_series: z.array(liveRow).default([]),
+  financial_quality: liveRow.optional(),
+  management_guidance: z.array(liveRow).default([]),
+  operational_kpis: z.array(liveRow).default([]),
+  industry_observations: z.array(liveRow).default([]),
+  market_share_observations: z.array(liveRow).default([]),
+  operating_peers: z.array(liveRow).default([]),
+  segment_facts: z.array(liveRow).default([]),
+  fundamental_evidence: z.array(liveRow).default([]),
+  research_cases: z.array(liveRow).default([]),
+  research_case_agents: z.array(liveRow).default([]),
+  research_case_work_items: z.array(liveRow).default([]),
+  financial_production_runs: z.array(liveRow).default([]),
+  financial_history: z.array(liveRow).default([]),
+  financial_segment_history: z.array(liveRow).default([]),
+  financial_history_gaps: z.array(liveRow).default([]),
+  financial_production_ratios: z.array(liveRow).default([]),
+  financial_validation_checks: z.array(liveRow).default([]),
+  research_case_evidence: z.array(liveRow).default([]),
+  research_case_events: z.array(liveRow).default([]),
+  model_run_preflights: z.array(liveRow).default([]),
+  research_case_model_runs: z.array(liveRow).default([]),
+  thesis_reports: z.array(liveRow).default([]),
+  specialist_opinions: z.array(liveRow).default([]),
+  governance_observations: z.array(liveRow).default([]),
+  filings: z.array(liveRow).default([]),
+  news: z.array(liveRow).default([]),
+  ir_sources: z.array(liveRow).default([]),
+  source_matrix: z.array(liveRow).default([]),
+  source_pipeline: z.array(liveRow).default([]),
+  cited_briefs: z.array(liveRow).default([]),
+  source_events: z.array(liveRow).default([]),
+  watchlist: z.array(liveRow).default([]),
+  committee: z.array(liveRow).default([]),
+  freshness: z.array(liveRow).default([]),
+  execution_control: z.array(executionControlRow).default([]),
+  issues: z.array(liveRow).default([]),
+}).passthrough();
+
+export type LongTermThesisWorkspace = z.infer<typeof LongTermThesisWorkspaceSchema>;
 
 /* ============================================================
  * Trading, Quant, Risk
@@ -318,6 +415,8 @@ export const SectorIntelligenceSchema = z.object({
   aggregates: z.array(liveRow).default([]),
   fundamental_coverage: z.array(liveRow).default([]),
   valuation_bands: z.array(liveRow).default([]),
+  valuation_history: z.array(liveRow).default([]),
+  underwrites: z.array(liveRow).default([]),
   flows: z.array(liveRow).default([]),
   ownership: z.array(liveRow).default([]),
   ownership_flow_coverage: z.array(liveRow).default([]),
@@ -464,6 +563,7 @@ export const GraphControlSnapshotSchema = z.object({
   waiting: z.array(liveRow).default([]),
   kronos_runs: z.array(liveRow).default([]),
   kronos_adapter: z.array(liveRow).default([]),
+  kronos_scores: z.array(liveRow).default([]),
   issues: z.array(liveRow).default([]),
 }).passthrough();
 
@@ -474,6 +574,7 @@ export type GraphControlSnapshot = z.infer<typeof GraphControlSnapshotSchema>;
  * ============================================================ */
 export const OfficeSnapshotSchema = z.object({
   generated_at: z.string(),
+  projection_meta: liveRow.optional().default({}),
   agents: z.array(liveRow).default([]),
   agent_messages: z.array(liveRow).default([]),
   committee_room_items: z.array(liveRow).default([]),

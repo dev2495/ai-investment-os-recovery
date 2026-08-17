@@ -36,6 +36,16 @@ def test_options_acceptance_covers_full_institutional_contract() -> None:
         assert f"('{gate}'" in source
 
 
+def test_volatility_gate_requires_each_category_without_double_counting_rank() -> None:
+    source = sql()
+    gate = source[source.index("('volatility_surface'"):source.index("('exposure_estimates'")]
+    assert "metric.metric_type IN ('iv_percentile','iv_rank')" in gate
+    assert "metric.metric_type='skew'" in gate
+    assert "metric.metric_type='term_structure'" in gate
+    assert "metric.valid_from<=p_window_end" in gate
+    assert "count(DISTINCT metric.metric_type)" not in gate
+
+
 def test_options_acceptance_is_read_only_over_market_evidence() -> None:
     normalized = " ".join(sql().lower().split())
     assert "insert into trading.option_chain_snapshot_batches" not in normalized

@@ -37,6 +37,8 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/launchd/aios-agent-daemon-service.sh" "${AIOS_BIN_DIR}/aios-agent-daemon-service.sh"
   cp -f "${RUNTIME_ROOT}/launchd/aios-ollama-service.sh" "${AIOS_BIN_DIR}/aios-ollama-service.sh"
   cp -f "${RUNTIME_ROOT}/api/ai_os_api_server.py" "${AIOS_SERVICE_DIR}/api/ai_os_api_server.py"
+  cp -f "${RUNTIME_ROOT}/api/client_import_api.py" "${AIOS_SERVICE_DIR}/api/client_import_api.py"
+  cp -f "${RUNTIME_ROOT}/api/ai_os_api_runtime.py" "${AIOS_SERVICE_DIR}/api/ai_os_api_runtime.py"
   cp -f "${RUNTIME_ROOT}/api/graph_control_plane.py" "${AIOS_SERVICE_DIR}/api/graph_control_plane.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_worker_once.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_message_daemon.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_message_daemon.py"
@@ -151,7 +153,7 @@ start_api() {
   AI_OS_API_HOST="${API_HOST}" AI_OS_API_PORT="${API_PORT}" AI_OS_RUNTIME_ROOT="${RUNTIME_ROOT}" \
     AI_OS_VAULT_ROOT="/Volumes/Devarsh SSD/Obsidian memory " AI_OS_WORKER_SCRIPT="${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" \
     AI_OS_EMBEDDING_MODEL="qwen3-embedding:0.6b" RUNTIME_ROOT="${RUNTIME_ROOT}" \
-    nohup bash -c 'cd "$RUNTIME_ROOT"; python3 -u api/ai_os_api_server.py; code=$?; printf "AI OS API exited with code %s\n" "$code" >&2; exit "$code"' \
+    nohup bash -c 'cd "$RUNTIME_ROOT"; python3 -u api/ai_os_api_runtime.py; code=$?; printf "AI OS API exited with code %s\n" "$code" >&2; exit "$code"' \
     > "${LOG_DIR}/ai_os_api.log" 2>&1 < /dev/null &
   echo $! > "${RUN_DIR}/ai_os_api.pid"
   wait_for_http "http://${API_HOST}:${API_PORT}/api/health" "AI OS API" "${LOG_DIR}/ai_os_api.log"

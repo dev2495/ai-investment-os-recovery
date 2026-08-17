@@ -13,8 +13,13 @@ mkdir -p "${LOG_ROOT}" "${RUN_ROOT}"
 SUPERVISOR_LOCK="${RUN_ROOT}/supervisor.lock"
 if ! mkdir "${SUPERVISOR_LOCK}" 2>/dev/null; then
   existing_pid="$(cat "${SUPERVISOR_LOCK}/pid" 2>/dev/null || true)"
+  existing_command=""
   if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
-    die "AI OS supervisor is already running as PID ${existing_pid}"
+    existing_command="$(ps -p "${existing_pid}" -o command= 2>/dev/null || true)"
+    if [[ "${existing_command}" == *"${SCRIPT_DIR}/supervisor.sh"* ]]; then
+      die "AI OS supervisor is already running as PID ${existing_pid}"
+    fi
+    log "Recovering stale supervisor lock: PID ${existing_pid} now belongs to ${existing_command:-an unrelated process}"
   fi
   rm -f "${SUPERVISOR_LOCK}/pid"
   rmdir "${SUPERVISOR_LOCK}" 2>/dev/null || die "Cannot recover stale supervisor lock"
@@ -39,7 +44,7 @@ stop_children() {
     kill "${pid}" 2>/dev/null || true
   done
   wait 2>/dev/null || true
-  rm -f "${RUN_ROOT}/api.pid" "${RUN_ROOT}/ui.pid" "${RUN_ROOT}/agent-daemon.pid"
+  rm -f "${RUN_ROOT}/api.pid" "${RUN_ROOT}/ui.pid" "${RUN_ROOT}/agent-daemon.pid" "${RUN_ROOT}/research-agent-daemon.pid"
   rm -f "${SUPERVISOR_LOCK}/pid"
   rmdir "${SUPERVISOR_LOCK}" 2>/dev/null || true
 }
@@ -214,6 +219,7 @@ export AI_OS_RUNTIME_ROOT="${AI_OS_REPO_ROOT}/_ai_os_runtime"
 export AI_OS_ARTIFACT_ROOT="${AI_OS_DATA_ROOT}/artifacts"
 export AI_OS_POSTGRES_HOST=127.0.0.1
 export AI_OS_PSQL_BIN="$(psql_bin)"
+export AI_OS_WORKLOAD_PSQL_MODE="docker"
 export AI_OS_QDRANT_URL="http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}"
 export AI_OS_OLLAMA_URL="http://127.0.0.1:${AI_OS_OLLAMA_PORT}"
 export AI_OS_MLX_URL="${AI_OS_MLX_URL:-http://100.75.156.32:11435/v1}"
@@ -227,11 +233,12 @@ export AI_OS_ALLOW_TOKENLESS_LOOPBACK
 export AI_OS_CHAT_MODEL_ROUTE="${AI_OS_CHAT_MODEL_ROUTE:-charlie_munger_orchestration}"
 
 stop_stale_pidfile "${RUN_ROOT}/agent-daemon.pid" "run_agent_message_daemon.py" "agent message daemon"
-stop_stale_listener "${AI_OS_API_PORT}" "ai_os_api_server.py" "AI OS API"
+stop_stale_pidfile "${RUN_ROOT}/research-agent-daemon.pid" "run_research_case_agent_daemon.py" "Research Case agent daemon"
+stop_stale_listener "${AI_OS_API_PORT}" "ai_os_api_runtime.py" "AI OS API"
 stop_stale_listener "${AI_OS_UI_PORT}" "serve_spa.py" "AI OS UI"
 
 log "Starting AI OS API"
-"$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_server.py" \
+"$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_runtime.py" \
   >>"${LOG_ROOT}/api.log" 2>>"${LOG_ROOT}/api.err" &
 children+=("$!")
 printf '%s\n' "$!" > "${RUN_ROOT}/api.pid"
@@ -245,12 +252,31 @@ children+=("$!")
 printf '%s\n' "$!" > "${RUN_ROOT}/ui.pid"
 
 if [[ "${AI_OS_ENABLE_AGENT_DAEMON:-1}" == "1" ]]; then
+  # Let the database complete recovery before the noncritical worker connects.
+  sleep 20
   log "Starting role-scoped agent message daemon"
   AI_OS_WORKLOAD_PSQL_MODE="${AI_OS_WORKLOAD_PSQL_MODE:-docker}" \
   "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_agent_message_daemon.py" \
     >>"${LOG_ROOT}/agent-daemon.log" 2>>"${LOG_ROOT}/agent-daemon.err" &
   children+=("$!")
   printf '%s\n' "$!" > "${RUN_ROOT}/agent-daemon.pid"
+fi
+
+if [[ "${AI_OS_ENABLE_RESEARCH_AGENT_DAEMON:-1}" == "1" ]]; then
+  RESEARCH_LOG_ROOT="${AI_OS_DATA_ROOT}/runtime/logs"
+  research_log_file="${RESEARCH_LOG_ROOT}/research-agent-daemon.log"
+  research_err_file="${RESEARCH_LOG_ROOT}/research-agent-daemon.err"
+  if mkdir -p "${RESEARCH_LOG_ROOT}" 2>/dev/null \
+    && touch "${research_log_file}" "${research_err_file}" 2>/dev/null; then
+    log "Starting approval-gated public Research Case agent daemon"
+    AI_OS_WORKLOAD_PSQL_MODE="${AI_OS_WORKLOAD_PSQL_MODE:-docker}" \
+    "$(runtime_python)" -u "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_research_case_agent_daemon.py" \
+      >>"${research_log_file}" 2>>"${research_err_file}" &
+    children+=("$!")
+    printf '%s\n' "$!" > "${RUN_ROOT}/research-agent-daemon.pid"
+  else
+    log "WARNING: Managed Research Case daemon skipped: LaunchAgent cannot write external-SSD logs at ${RESEARCH_LOG_ROOT}. No internal-disk fallback was used; start it from an approved user session after SSD permission repair."
+  fi
 fi
 
 wait_http "http://127.0.0.1:${AI_OS_API_PORT}/api/liveness" "AI OS API" 120

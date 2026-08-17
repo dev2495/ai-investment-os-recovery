@@ -12,15 +12,18 @@
  */
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { post } from "./client";
+import { post, uploadFile } from "./client";
 import type { LiveRow } from "./liveRow";
 
 /** Common query keys to invalidate (imported from queries.ts to avoid a cycle). */
 const Q = {
   missionControl: ["mission-control"],
+  researchCases: ["research-cases"],
   portfolioOffice: ["portfolio-office"],
   researchIdeas: ["research-ideas"],
+  longTermThesis: ["long-term-thesis"],
   tradingQuantRisk: ["trading-quant-risk"],
+  optionsDaily: ["options-daily"],
   sectorIntelligence: ["sector-intelligence"],
   strategyArsenal: ["strategy-arsenal"],
   reports: ["reports"],
@@ -31,6 +34,72 @@ const Q = {
   zerodhaMarket: ["zerodha-market"],
   companyIRSources: ["company-ir-sources"],
 } as const;
+
+export interface SecureClientReportUploadInput {
+  file: File;
+  client_code: string;
+  account_code: string;
+  report_kind: "aditya_birla_money_capital_gains" | "broker_transactions" | "holdings_statement" | "broker_ledger" | "contract_note" | "portfolio_snapshot" | "tax_report" | "other";
+  actor?: string;
+}
+
+export interface BrowserVisibleCaptureInput {
+  client_code: string;
+  account_code: string;
+  source_key: "aditya_birla_money_authenticated_portfolio" | "zerodha_authenticated_portfolio" | "authorized_broker_portfolio" | "authorized_portfolio_tracker";
+  page_title?: string;
+  captured_at: string;
+  content_type: "text/html" | "text/plain";
+  content: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useCaptureVisibleBrowserPortfolio() {
+  return useInvalidating<BrowserVisibleCaptureInput, LiveRow>(
+    "/api/client-browser-captures/submit",
+    [Q.portfolioOffice, Q.missionControl, Q.office],
+  );
+}
+
+export function useUploadSecureClientReport() {
+  const queryClient = useQueryClient();
+  return useMutation<LiveRow, Error, SecureClientReportUploadInput>({
+    mutationFn: async (input) => uploadFile(
+      "/api/client-imports/upload",
+      input.file,
+      undefined,
+      {
+        headers: {
+          "X-AI-OS-File-Name": input.file.name.replace(/[^\x20-\x7E]/g, "_"),
+          "X-AI-OS-Client-Code": input.client_code,
+          "X-AI-OS-Account-Code": input.account_code,
+          "X-AI-OS-Report-Kind": input.report_kind,
+          "X-AI-OS-Actor": input.actor ?? "Devarsh",
+        },
+      },
+    ) as Promise<LiveRow>,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: Q.portfolioOffice }),
+  });
+}
+
+export function useResolveSecureClientImportIdentity() {
+  return useInvalidating<{
+    import_key: string;
+    decision: "confirm" | "reject";
+    rationale: string;
+    operator_confirmed: true;
+    actor?: string;
+  }, LiveRow>("/api/client-imports/identity/resolve", [Q.portfolioOffice, Q.missionControl, Q.office]);
+}
+
+export function useReprocessSecureClientImport() {
+  return useInvalidating<{
+    import_key: string;
+    operator_confirmed: true;
+    actor?: string;
+  }, LiveRow>("/api/client-imports/reprocess", [Q.portfolioOffice, Q.missionControl, Q.office]);
+}
 
 export function useSyncZerodhaAccount() {
   return useInvalidating<{ datasets: string[]; actor?: string }, LiveRow>(
@@ -161,6 +230,21 @@ export function useReviewFundamentalEvidence() {
   );
 }
 
+export interface FundamentalOpinionReviewInput {
+  opinion_id: number;
+  decision: "reviewed" | "dissent" | "rejected";
+  rationale: string;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useReviewFundamentalOpinion() {
+  return useInvalidating<FundamentalOpinionReviewInput, LiveRow>(
+    "/api/research/fundamental-opinion/review",
+    [Q.researchIdeas, Q.portfolioOffice, Q.office, Q.reports]
+  );
+}
+
 export interface FundamentalRemediationSyncInput {
   holding_thesis_id: number;
   operator_confirmed: true;
@@ -214,6 +298,20 @@ export interface SectorOwnershipFlowSyncInput {
 export function useSyncSectorOwnershipFlows() {
   return useInvalidating<SectorOwnershipFlowSyncInput, LiveRow>(
     "/api/sector-intelligence/ownership-flows/sync",
+    [Q.sectorIntelligence, Q.office]
+  );
+}
+
+export interface SectorUnderwriteInput {
+  taxonomy_key: string;
+  as_of_date: string;
+  persist: boolean;
+  actor?: string;
+}
+
+export function useBuildSectorUnderwrite() {
+  return useInvalidating<SectorUnderwriteInput, LiveRow>(
+    "/api/sector-intelligence/underwrite/build",
     [Q.sectorIntelligence, Q.office]
   );
 }
@@ -290,7 +388,7 @@ export interface InstitutionalOptionsAnalyticsInput {
 export function useRunInstitutionalOptionsAnalytics() {
   return useInvalidating<InstitutionalOptionsAnalyticsInput, LiveRow>(
     "/api/options/institutional-analytics/run",
-    [Q.tradingQuantRisk, Q.office]
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
   );
 }
 
@@ -307,7 +405,7 @@ export interface OptionAcceptanceInput {
 export function useRunOptionAcceptance() {
   return useInvalidating<OptionAcceptanceInput, LiveRow>(
     "/api/options/institutional-analytics/acceptance/run",
-    [Q.tradingQuantRisk, Q.office]
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
   );
 }
 
@@ -320,7 +418,7 @@ export interface InstitutionalOptionsMaterializeInput {
 export function useMaterializeInstitutionalOptions() {
   return useInvalidating<InstitutionalOptionsMaterializeInput, LiveRow>(
     "/api/options/institutional-analytics/materialize",
-    [Q.tradingQuantRisk, Q.office]
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
   );
 }
 
@@ -332,20 +430,25 @@ export interface OptionValuationPolicyInput {
   model_family: "black_scholes_merton" | "black_76";
   risk_free_rate: number;
   dividend_yield: number;
-  rate_source: string;
-  rate_source_timestamp: string;
-  dividend_source: string;
-  dividend_source_timestamp: string;
-  source_artifact_ref: string;
+  rate_observation_id: number;
+  dividend_observation_id: number;
   effective_from: string;
   expires_at: string;
+  operator_confirmed: true;
   actor?: string;
 }
 
 export function useUpsertOptionValuationPolicy() {
   return useInvalidating<OptionValuationPolicyInput, LiveRow>(
     "/api/options/valuation-policy/upsert",
-    [Q.tradingQuantRisk, Q.office]
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
+  );
+}
+
+export function useRefreshOptionValuationSources() {
+  return useInvalidating<{ sources?: Array<"rate" | "dividends">; actor?: string }, LiveRow>(
+    "/api/options/valuation-sources/refresh",
+    [Q.tradingQuantRisk, Q.optionsDaily, Q.office]
   );
 }
 
@@ -397,6 +500,105 @@ export function useGenerateResearchPacket() {
   );
 }
 
+export interface ProposeResearchCaseInput {
+  request_text: string;
+  entity: string;
+  company_id?: number;
+  owner_agent?: string;
+  priority?: "low" | "normal" | "medium" | "high" | "critical";
+  horizon?: string;
+  mandate?: string;
+  create_distinct_confirmed?: boolean;
+  actor?: string;
+}
+
+export function useProposeResearchCase() {
+  return useInvalidating<ProposeResearchCaseInput, LiveRow>(
+    "/api/research/cases/propose",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases],
+  );
+}
+
+export interface StartResearchCaseInput {
+  research_case_id: number;
+  model_preflight_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useStartResearchCase() {
+  return useInvalidating<StartResearchCaseInput, LiveRow>(
+    "/api/research/cases/start",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office, Q.graphControl],
+  );
+}
+
+export interface PrepareResearchCaseResumeInput {
+  research_case_id: number;
+  actor?: string;
+}
+
+export function usePrepareResearchCaseResume() {
+  return useInvalidating<PrepareResearchCaseResumeInput, LiveRow>(
+    "/api/research/cases/resume-preflight",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office],
+  );
+}
+
+export interface RepairResearchCaseInput {
+  research_case_id: number;
+  model_preflight_id?: number;
+  force_new_iteration?: boolean;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRepairResearchCase() {
+  return useInvalidating<RepairResearchCaseInput, LiveRow>(
+    "/api/research/cases/repair",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office, Q.graphControl],
+  );
+}
+
+export interface ApproveResearchModelPreflightInput {
+  preflight_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useApproveResearchModelPreflight() {
+  return useInvalidating<ApproveResearchModelPreflightInput, LiveRow>(
+    "/api/research/model-runs/preflight/approve",
+    [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office],
+  );
+}
+
+export interface PreflightThesisReportInput {
+  holding_thesis_id: number;
+  actor?: string;
+}
+
+export function usePreflightThesisReport() {
+  return useInvalidating<PreflightThesisReportInput, LiveRow>(
+    "/api/portfolio/long-term-thesis/report/preflight",
+    [Q.longTermThesis],
+  );
+}
+
+export interface GenerateThesisReportInput {
+  holding_thesis_id: number;
+  report_preflight_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useGenerateThesisReport() {
+  return useInvalidating<GenerateThesisReportInput, LiveRow>(
+    "/api/portfolio/long-term-thesis/report",
+    [Q.longTermThesis, Q.researchIdeas, Q.reports],
+  );
+}
+
 export interface UpdateChecklistInput {
   holding_thesis_id: number;
   checklist_key: string;
@@ -425,6 +627,7 @@ export interface UpdateValuationInput {
   assumptions?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
   evidence?: unknown[];
+  operator_confirmed?: boolean;
   note_path?: string;
   actor?: string;
 }
@@ -895,6 +1098,24 @@ export function useIngestMarketNews() {
   );
 }
 
+export interface InvestorSourceInput {
+  feed_name: string;
+  provider?: string;
+  url: string;
+  geography?: string;
+  topics?: string[];
+  refresh_minutes?: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRegisterInvestorSource() {
+  return useInvalidating<InvestorSourceInput, LiveRow>(
+    "/api/research/investor-sources/register",
+    [Q.researchIdeas, Q.missionControl]
+  );
+}
+
 export interface PaperIngestInput {
   title: string;
   source_key: string;
@@ -1114,9 +1335,23 @@ export function useDelegateAgentTask() {
     subject?: string;
     priority?: "low" | "medium" | "high" | "critical";
     workspace?: string;
+    data_boundary?: "personal_private_local_only" | "client_private_local_only" | "trading_private_local_only" | "public_or_approved_internal" | "repository_private_local_only";
     actor?: string;
   }, LiveRow>(
     "/api/agents/delegate",
+    [Q.office, Q.missionControl]
+  );
+}
+
+export function useUpdateInboxItem() {
+  return useInvalidating<{
+    inbox_id: number;
+    action: "claim" | "reassign" | "resolve" | "block" | "reopen";
+    actor?: string;
+    resolution_note?: string;
+    owner_agent?: string;
+  }, LiveRow>(
+    "/api/inbox/items/update",
     [Q.office, Q.missionControl]
   );
 }
@@ -1236,4 +1471,11 @@ export function useRecordGraphCorrection() {
     owner_agent?: string;
     actor?: string;
   }, LiveRow>("/api/graphs/corrections", GRAPH_INVALIDATIONS);
+}
+
+export function useCalibrateKronosForecast() {
+  return useInvalidating<{ forecast_run_id: number; actor?: string }, LiveRow>(
+    "/api/kronos/forecasts/calibrate",
+    GRAPH_INVALIDATIONS
+  );
 }

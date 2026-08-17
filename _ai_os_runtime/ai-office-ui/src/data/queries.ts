@@ -13,9 +13,11 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { get, post, SNAPSHOT_REFETCH_MS } from "./client";
 import {
   MissionControlSchema,
+  ResearchCaseTrackerSchema,
   SystemHealthSchema,
   PortfolioOfficeSchema,
   ResearchIdeasSchema,
+  LongTermThesisWorkspaceSchema,
   TradingQuantRiskSchema,
   SectorIntelligenceSchema,
   StrategyArsenalSchema,
@@ -32,9 +34,11 @@ import {
 } from "./schemas";
 import type {
   MissionControl,
+  ResearchCaseTracker,
   SystemHealth,
   PortfolioOffice,
   ResearchIdeas,
+  LongTermThesisWorkspace,
   TradingQuantRisk,
   SectorIntelligence,
   StrategyArsenal,
@@ -55,10 +59,14 @@ import type { LiveRow } from "./liveRow";
  * ============================================================ */
 export const queryKeys = {
   missionControl: ["mission-control"] as const,
+  researchCases: (page: number, status: string, caseId: number) => ["research-cases", page, status || "all", caseId || "latest"] as const,
   systemHealth: ["system-health"] as const,
   portfolioOffice: ["portfolio-office"] as const,
   researchIdeas: ["research-ideas"] as const,
+  longTermThesis: (thesisId: number | null, factsPage: number, evidencePage: number) =>
+    ["long-term-thesis", thesisId ?? "default", factsPage, evidencePage] as const,
   tradingQuantRisk: ["trading-quant-risk"] as const,
+  optionsDaily: ["options-daily"] as const,
   sectorIntelligence: ["sector-intelligence"] as const,
   strategyArsenal: ["strategy-arsenal"] as const,
   reports: ["reports"] as const,
@@ -97,8 +105,22 @@ export function useMissionControl() {
   return useQuery<MissionControl>({
     queryKey: queryKeys.missionControl,
     queryFn: async () => {
-      const data = await get("/api/mission-control/snapshot");
+      const data = await get("/api/daily/command", { timeoutMs: 12_000 });
       return validateSnapshot(MissionControlSchema, data, "mission-control");
+    },
+    ...snapshotQueryOptions,
+  });
+}
+
+export function useResearchCases(filters: { page?: number; status?: string; caseId?: number } = {}) {
+  const page = filters.page ?? 1;
+  const status = filters.status ?? "";
+  const caseId = filters.caseId ?? 0;
+  return useQuery<ResearchCaseTracker>({
+    queryKey: queryKeys.researchCases(page, status, caseId),
+    queryFn: async () => {
+      const data = await get("/api/research/cases", { query: { page, page_size: 12, status: status || undefined, case_id: caseId || undefined } });
+      return validateSnapshot(ResearchCaseTrackerSchema, data, "research-cases");
     },
     ...snapshotQueryOptions,
   });
@@ -223,10 +245,38 @@ export function useResearchIdeas() {
   return useQuery<ResearchIdeas>({
     queryKey: queryKeys.researchIdeas,
     queryFn: async () => {
-      const data = await get("/api/research-ideas/snapshot");
+      const data = await get("/api/research/daily", { timeoutMs: 12_000 });
       return validateSnapshot(ResearchIdeasSchema, data, "research-ideas");
     },
     ...snapshotQueryOptions,
+  });
+}
+
+export function useLongTermThesisWorkspace(
+  thesisId: number | null,
+  factsPage = 1,
+  evidencePage = 1,
+  pageSize = 12,
+) {
+  return useQuery<LongTermThesisWorkspace>({
+    queryKey: queryKeys.longTermThesis(thesisId, factsPage, evidencePage),
+    queryFn: async () => {
+      const data = await get("/api/research/long-term-thesis", {
+        query: {
+          thesis_id: thesisId || undefined,
+          facts_page: factsPage,
+          evidence_page: evidencePage,
+          page_size: pageSize,
+          profile: "dashboard",
+        },
+        // The authenticated Tailscale bridge adds transport latency to a source-backed
+        // ten-year report; keep the loading state rather than aborting a valid response.
+        timeoutMs: 30_000,
+      });
+      return validateSnapshot(LongTermThesisWorkspaceSchema, data, "long-term-thesis");
+    },
+    ...snapshotQueryOptions,
+    refetchInterval: 60_000,
   });
 }
 
@@ -258,6 +308,21 @@ export function useTradingQuantRisk() {
       return validateSnapshot(TradingQuantRiskSchema, data, "trading-quant-risk");
     },
     ...snapshotQueryOptions,
+  });
+}
+
+export function useOptionsDaily(page = 1, pageSize = 48) {
+  return useQuery<TradingQuantRisk>({
+    queryKey: [...queryKeys.optionsDaily, page, pageSize],
+    queryFn: async () => {
+      const data = await get("/api/options/daily", {
+        query: { page, page_size: pageSize },
+        timeoutMs: 12_000,
+      });
+      return validateSnapshot(TradingQuantRiskSchema, data, "options-daily");
+    },
+    ...snapshotQueryOptions,
+    refetchInterval: 60_000,
   });
 }
 
@@ -314,8 +379,9 @@ export function useGraphControlSnapshot(runId?: number | null) {
   return useQuery<GraphControlSnapshot>({
     queryKey: queryKeys.graphControl(runId),
     queryFn: async () => {
-      const data = await get("/api/graph-control/snapshot", {
+      const data = await get("/api/graphs/daily", {
         query: runId ? { run_id: runId } : undefined,
+        timeoutMs: 12_000,
       });
       return validateSnapshot(GraphControlSnapshotSchema, data, "graph-control");
     },

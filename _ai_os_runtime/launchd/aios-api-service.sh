@@ -18,4 +18,4 @@ export AI_OS_LOCAL_OPENAI_MAX_TOKENS="${AI_OS_LOCAL_OPENAI_MAX_TOKENS:-1200}"
 export AI_OS_CHAT_MODEL_ROUTE="${AI_OS_CHAT_MODEL_ROUTE:-charlie_munger_orchestration}"
 
 cd "/Users/devarshthakkar/Library/Application Support/AIOS/service"
-exec python3 -u api/ai_os_api_server.py
+exec python3 -u api/ai_os_api_runtime.py

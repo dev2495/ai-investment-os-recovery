@@ -72,17 +72,17 @@ interface UIState {
   dismissToast: (id: string) => void;
 }
 
-const THEME_KEY = "aios-theme";
+const THEME_KEY = "aios-theme-v2";
 const DENSITY_KEY = "aios-density";
 
-/** Read initial theme: persisted choice, otherwise the operator-first dark theme. */
+/** Read the approved shell theme; the v1 black/teal preference is not carried forward. */
 function initialTheme(): ThemeMode {
-  if (typeof window === "undefined") return "dark";
+  if (typeof window === "undefined") return "light";
   try {
     const stored = window.localStorage.getItem(THEME_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch { /* ignore */ }
-  return "dark";
+  return "light";
 }
 
 function initialDensity(): Density {
@@ -153,6 +153,11 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "aios-ui",
+      version: 2,
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<UIState>;
+        return version < 2 ? { ...state, theme: "light" } as UIState : state as UIState;
+      },
       storage: createJSONStorage(() => localStorage),
       // Only persist what makes sense across sessions; not transient state.
       partialize: (state) => ({
@@ -180,4 +185,8 @@ export function applyInitialDomState(): void {
   const state = useUIStore.getState();
   applyThemeToDom(state.theme);
   applyDensityToDom(state.density);
+  // On a phone the assistant is a full-screen surface; begin with the requested page visible.
+  if (typeof window !== "undefined" && window.innerWidth <= 700 && state.assistantOpen) {
+    state.setAssistantOpen(false);
+  }
 }

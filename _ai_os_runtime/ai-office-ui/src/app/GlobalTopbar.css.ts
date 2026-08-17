@@ -80,6 +80,12 @@ export const GlobalTopbarCss = `
   color: var(--accent);
   background: var(--accent-soft);
 }
+.aios-topbar__mobile-nav {
+  display: none;
+  width: 132px;
+  min-width: 0;
+  height: 34px;
+}
 
 /* Actions */
 .aios-topbar__actions {
@@ -268,9 +274,16 @@ export const GlobalTopbarCss = `
 }
 @media (max-width: 900px) {
   .aios-topbar__nav { display: none; }
+  .aios-topbar__mobile-nav { display: block; }
   .aios-topbar__actions { margin-left: auto; }
   .aios-topbar__wordmark { display: none; }
   .aios-topbar__search { min-width: 40px; padding: 0 8px; justify-content: center; }
   .aios-topbar__kbd { display: none; }
+}
+@media (max-width: 520px) {
+  .aios-topbar { gap: var(--space-2); padding: 0 var(--space-2); }
+  .aios-topbar__brand { padding-right: 0; }
+  .aios-topbar__mobile-nav { width: 116px; }
+  .aios-topbar__zerodha { display: none; }
 }
 `;

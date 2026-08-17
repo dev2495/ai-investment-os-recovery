@@ -54,7 +54,7 @@ export default function Scanners({ defaultTab = "momentum" }: { defaultTab?: str
             Scanners
           </div>
           <Badge tone="accent">SCAN</Badge>
-          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>intraday + swing setups from live data</span>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>source-qualified intraday + swing setups; empty until accepted feeds are available</span>
         </div>
         <div className="aios-destination__subtitle">
           Momentum signals, breakout candidates, volume/OI spurts, generated ideas, and unusual options flow.

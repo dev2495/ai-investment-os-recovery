@@ -246,6 +246,7 @@ function Room({
             <span>{agents.length} employees · {workingCount} working{queuedCount ? ` · ${queuedCount} queued` : ""}</span>
             {blockedCount > 0 && <span className="office-room-label__pending">{blockedCount} blocked</span>}
           </div>
+          {room.workspaceState === "hidden" && <span className="office-room-label__gated">workspace gated</span>}
         </div>
       </Html>
 
@@ -573,8 +574,26 @@ export interface LiveOfficeProps {
   height?: number | string;
 }
 
+type OfficeRenderMode = "animated" | "static";
+
+function initialOfficeRenderMode(): OfficeRenderMode {
+  if (typeof window === "undefined") return "static";
+  try {
+    const saved = window.localStorage.getItem("aios-office-render-mode");
+    if (saved === "animated" || saved === "static") return saved;
+  } catch {
+    // Local preference is optional.
+  }
+  return window.matchMedia("(max-width: 850px)").matches ? "static" : "animated";
+}
+
+function isOfficeRedacted(row: LiveRow | null | undefined): boolean {
+  return text(row ?? {}, "office_visibility") === "redacted";
+}
+
 export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
-  const { data } = useOfficeSnapshot();
+  const officeQuery = useOfficeSnapshot();
+  const { data, isLoading, error } = officeQuery;
   const navigate = useNavigate();
   const cameraTarget = useUIStore((state) => state.cameraTarget);
   const focusRoom = useUIStore((state) => state.focusRoom);
@@ -584,6 +603,8 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   const [selectedAgent, setSelectedAgent] = React.useState<LiveRow | null>(null);
   const [errored, setErrored] = React.useState(false);
   const [webglOk, setWebglOk] = React.useState<boolean | null>(null);
+  const [renderMode, setRenderMode] = React.useState<OfficeRenderMode>(initialOfficeRenderMode);
+  const [reducedMotion, setReducedMotion] = React.useState(false);
 
   React.useEffect(() => {
     try {
@@ -592,7 +613,20 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     } catch {
       setWebglOk(false);
     }
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updateMotion = () => setReducedMotion(preference.matches);
+    updateMotion();
+    preference.addEventListener?.("change", updateMotion);
+    return () => preference.removeEventListener?.("change", updateMotion);
   }, []);
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem("aios-office-render-mode", renderMode);
+    } catch {
+      // The Office remains usable when storage is unavailable.
+    }
+  }, [renderMode]);
 
   const agents = React.useMemo(() => mergeAgents(data), [data]);
   const roomAgents = React.useMemo(() => {
@@ -618,9 +652,12 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     if ((data?.risk_events?.length ?? 0) > 0) rooms.add("risk");
     return rooms;
   }, [data?.risk_events, roomStats]);
+  const projectionMeta = (data?.projection_meta ?? {}) as LiveRow;
   const activeGraphRuns = data?.graph_runs?.length ?? 0;
   const workingAgents = agents.filter(isBusy).length;
-  const reducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const alertCount = (data?.graph_attention?.length ?? 0) + (data?.risk_events?.length ?? 0) + (data?.issues?.length ?? 0);
+  const forceStatic = webglOk !== true || reducedMotion || errored;
+  const showStatic = forceStatic || renderMode === "static";
 
   function selectAgent(agent: LiveRow) {
     setSelectedAgent(agent);
@@ -641,6 +678,10 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   }
 
   function inspectAgentTask(agent: LiveRow) {
+    if (isOfficeRedacted(agent)) {
+      navigate("/portfolio/imports");
+      return;
+    }
     const taskId = num(agent, "current_task_id");
     if (!taskId) return;
     openEvidence({
@@ -651,121 +692,224 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     });
   }
 
-  if (webglOk === false || reducedMotion || errored) {
-    return (
-      <OfficeFallback
-        height={height}
-        agents={agents}
-        roomAgents={roomAgents}
-        selectedRoom={cameraTarget.roomKey}
-        selectedAgent={selectedAgent}
-        onFocusRoom={focusRoom}
-        onSelectAgent={selectAgent}
-        onTalk={talkToAgent}
-        onDelegate={delegateToAgent}
-        onInspectTask={inspectAgentTask}
-        onNavigate={(path) => navigate(path)}
-      />
-    );
+  function inspectMessage(message: LiveRow) {
+    if (isOfficeRedacted(message)) return;
+    const messageId = num(message, "id");
+    if (!messageId) return;
+    openEvidence({
+      kind: "agent-message",
+      key: String(messageId),
+      title: text(message, "subject", "Agent handoff"),
+      subtitle: `${text(message, "from_agent", "Agent")} → ${text(message, "to_agent", "Agent")}`,
+    });
   }
+
+  function focusFloor(floor: number) {
+    const first = ROOMS.find((room) => room.floor === floor);
+    if (!first) return;
+    setSelectedAgent(null);
+    focusRoom(first.key);
+  }
+
+  function handleKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, a")) return;
+    if (event.key === "Escape" || event.key === "Home") {
+      event.preventDefault();
+      setSelectedAgent(null);
+      focusRoom(null);
+      return;
+    }
+    if (event.key === "1" || event.key === "2" || event.key === "3") {
+      event.preventDefault();
+      focusFloor(event.key === "1" ? -1 : event.key === "2" ? 0 : 1);
+      return;
+    }
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    const current = Math.max(0, ROOMS.findIndex((room) => room.key === cameraTarget.roomKey));
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+    const next = (current + step + ROOMS.length) % ROOMS.length;
+    setSelectedAgent(null);
+    focusRoom(ROOMS[next].key);
+  }
+
+  const common = {
+    height: "100%",
+    agents,
+    roomAgents,
+    selectedRoom: cameraTarget.roomKey,
+    selectedAgent,
+    onFocusRoom: focusRoom,
+    onSelectAgent: selectAgent,
+    onTalk: talkToAgent,
+    onDelegate: delegateToAgent,
+    onInspectTask: inspectAgentTask,
+    onNavigate: (path: string) => navigate(path),
+  };
 
   return (
     <>
       <style>{LiveOfficeCss}</style>
-      <div className="office-canvas-wrap" style={{ height }}>
-        <Canvas
-          shadows
-          dpr={[1, 1.65]}
-          camera={{ position: [0, 17, 29], fov: 43 }}
-          gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.12 }}
-          onError={() => setErrored(true)}
-        >
-          <React.Suspense fallback={null}>
-            <AdaptiveDpr pixelated />
-            <ambientLight intensity={0.7} color="#fff2dc" />
-            <hemisphereLight args={["#fff4e0", "#332a23", 0.65]} />
-            <directionalLight
-              position={[14, 23, 12]}
-              intensity={1.55}
-              color="#ffe8c4"
-              castShadow
-              shadow-mapSize={[2048, 2048]}
-              shadow-camera-left={-34}
-              shadow-camera-right={34}
-              shadow-camera-top={28}
-              shadow-camera-bottom={-28}
-              shadow-camera-near={0.5}
-              shadow-camera-far={70}
-              shadow-bias={-0.0004}
+      <section
+        className="office-spatial-shell"
+        style={{ height }}
+        tabIndex={0}
+        onKeyDown={handleKeyboard}
+        aria-label="Live spatial Office. Use arrow keys to move between rooms, number keys one to three for floors, and Home for the full firm view."
+      >
+        <header className="office-spatial-toolbar">
+          <div className="office-spatial-toolbar__identity">
+            <strong>Operational floor</strong>
+            <span>
+              Snapshot {formatRelative(data?.generated_at ?? "")}
+              {" · "}records {formatRelative(text(projectionMeta, "latest_record_at"))}
+            </span>
+          </div>
+          <div className="office-spatial-toolbar__status" role="status" aria-live="polite">
+            <span className={`office-signal office-signal--${text(projectionMeta, "source_status", error ? "error" : "loading")}`}>
+              {error ? "Source error" : text(projectionMeta, "source_status", isLoading ? "loading" : "no activity").replace(/_/g, " ")}
+            </span>
+            <span>{alertCount} alerts</span>
+            <span>{num(projectionMeta, "redacted_record_count")} private records hidden</span>
+            <span className="office-safety-lock">Broker writes locked</span>
+          </div>
+          <div className="office-spatial-toolbar__controls" aria-label="Office view controls">
+            <button type="button" onClick={() => { setSelectedAgent(null); focusRoom(null); }}>Overview</button>
+            <button type="button" onClick={() => focusFloor(-1)}>Infrastructure</button>
+            <button type="button" onClick={() => focusFloor(0)}>Dealing floor</button>
+            <button type="button" onClick={() => focusFloor(1)}>Mezzanine</button>
+            <button
+              type="button"
+              aria-label={showStatic ? "Use animated office" : "Use static office"}
+              aria-pressed={showStatic}
+              disabled={forceStatic}
+              title={reducedMotion ? "Static view is required by your reduced-motion preference." : webglOk === false ? "Static view is required because WebGL is unavailable." : undefined}
+              onClick={() => setRenderMode(showStatic ? "animated" : "static")}
+            >
+              {showStatic ? "Animated view" : "Static view"}
+            </button>
+          </div>
+        </header>
+
+        {error ? (
+          <div className="office-projection-state office-projection-state--error" role="alert">
+            <strong>Office source unavailable</strong>
+            <span>{error.message}</span>
+            <button type="button" onClick={() => officeQuery.refetch()}>Retry Office snapshot</button>
+          </div>
+        ) : isLoading && !data ? (
+          <div className="office-projection-state" role="status">
+            <strong>Loading source-backed Office state…</strong>
+            <span>No employee activity is shown until the warehouse snapshot arrives.</span>
+          </div>
+        ) : agents.length === 0 ? (
+          <div className="office-projection-state">
+            <strong>No employees or agents are configured</strong>
+            <span>The Office is intentionally empty; no activity has been fabricated.</span>
+          </div>
+        ) : showStatic ? (
+          <OfficeFallback {...common} />
+        ) : (
+          <div className="office-canvas-wrap">
+            <Canvas
+              shadows
+              dpr={[1, 1.65]}
+              camera={{ position: [0, 17, 29], fov: 43 }}
+              gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.12 }}
+              onError={() => setErrored(true)}
+            >
+              <React.Suspense fallback={null}>
+                <AdaptiveDpr pixelated />
+                <ambientLight intensity={0.7} color="#fff2dc" />
+                <hemisphereLight args={["#fff4e0", "#332a23", 0.65]} />
+                <directionalLight
+                  position={[14, 23, 12]}
+                  intensity={1.55}
+                  color="#ffe8c4"
+                  castShadow
+                  shadow-mapSize={[2048, 2048]}
+                  shadow-camera-left={-34}
+                  shadow-camera-right={34}
+                  shadow-camera-top={28}
+                  shadow-camera-bottom={-28}
+                  shadow-camera-near={0.5}
+                  shadow-camera-far={70}
+                  shadow-bias={-0.0004}
+                />
+                <pointLight position={[-13, 6, -8]} intensity={26} color="#ffd9a0" distance={28} decay={2} />
+                <pointLight position={[13, 6, 8]} intensity={22} color="#ffd9a0" distance={28} decay={2} />
+                <pointLight position={[0, 10, 0]} intensity={18} color="#fff4e0" distance={34} decay={2} />
+
+                <Floor floor={0} />
+                <Floor floor={1} />
+                <Floor floor={-1} />
+                <mesh position={[20.5, 2.2, 0]}>
+                  <boxGeometry args={[0.45, 4.6, 6]} />
+                  <meshStandardMaterial color="#82603f" roughness={0.72} />
+                </mesh>
+
+                {ROOMS.map((room) => (
+                  <Room
+                    key={room.key}
+                    room={room}
+                    agents={roomAgents.get(room.key) ?? []}
+                    stats={roomStats.get(room.key)}
+                    hasRisk={riskRooms.has(room.key)}
+                    isFocused={cameraTarget.roomKey === room.key}
+                    isHovered={hoveredRoom === room.key}
+                    committeeItems={data?.committee_room_items?.length ?? 0}
+                    activeGraphRuns={activeGraphRuns}
+                    selectedAgentName={text(selectedAgent, "agent_name")}
+                    onHover={(hovered) => setHoveredRoom(hovered ? room.key : null)}
+                    onClick={() => {
+                      setSelectedAgent(null);
+                      focusRoom(room.key);
+                    }}
+                    onSelectAgent={selectAgent}
+                  />
+                ))}
+
+                <DataFlows connections={connections} />
+                <CameraController focusTarget={cameraTarget.roomKey} />
+                <OrbitControls
+                  enablePan
+                  screenSpacePanning
+                  minDistance={7}
+                  maxDistance={42}
+                  minPolarAngle={0.12}
+                  maxPolarAngle={Math.PI / 2.04}
+                  target={[0, 1, 0]}
+                  makeDefault
+                />
+              </React.Suspense>
+            </Canvas>
+            <OfficeHud
+              focusedRoom={cameraTarget.roomKey}
+              selectedAgent={selectedAgent}
+              roomAgents={cameraTarget.roomKey ? roomAgents.get(cameraTarget.roomKey) ?? [] : []}
+              workingAgents={workingAgents}
+              totalAgents={agents.length}
+              activeGraphRuns={activeGraphRuns}
+              generatedAt={data?.generated_at ?? ""}
+              activity={data?.agent_messages ?? []}
+              onBack={() => {
+                setSelectedAgent(null);
+                focusRoom(null);
+              }}
+              onClearAgent={() => setSelectedAgent(null)}
+              onTalk={talkToAgent}
+              onDelegate={delegateToAgent}
+              onInspectTask={inspectAgentTask}
+              onInspectMessage={inspectMessage}
+              onNavigate={(path) => navigate(path)}
             />
-            <pointLight position={[-13, 6, -8]} intensity={26} color="#ffd9a0" distance={28} decay={2} />
-            <pointLight position={[13, 6, 8]} intensity={22} color="#ffd9a0" distance={28} decay={2} />
-            <pointLight position={[0, 10, 0]} intensity={18} color="#fff4e0" distance={34} decay={2} />
-
-            <Floor floor={0} />
-            <Floor floor={1} />
-            <Floor floor={-1} />
-
-            <mesh position={[20.5, 2.2, 0]}>
-              <boxGeometry args={[0.45, 4.6, 6]} />
-              <meshStandardMaterial color="#82603f" roughness={0.72} />
-            </mesh>
-
-            {ROOMS.map((room) => (
-              <Room
-                key={room.key}
-                room={room}
-                agents={roomAgents.get(room.key) ?? []}
-                stats={roomStats.get(room.key)}
-                hasRisk={riskRooms.has(room.key)}
-                isFocused={cameraTarget.roomKey === room.key}
-                isHovered={hoveredRoom === room.key}
-                committeeItems={data?.committee_room_items?.length ?? 0}
-                activeGraphRuns={activeGraphRuns}
-                selectedAgentName={text(selectedAgent, "agent_name")}
-                onHover={(hovered) => setHoveredRoom(hovered ? room.key : null)}
-                onClick={() => {
-                  setSelectedAgent(null);
-                  focusRoom(room.key);
-                }}
-                onSelectAgent={selectAgent}
-              />
-            ))}
-
-            <DataFlows connections={connections} />
-            <CameraController focusTarget={cameraTarget.roomKey} />
-            <OrbitControls
-              enablePan={false}
-              minDistance={7}
-              maxDistance={42}
-              minPolarAngle={0.12}
-              maxPolarAngle={Math.PI / 2.04}
-              target={[0, 1, 0]}
-              makeDefault
-            />
-          </React.Suspense>
-        </Canvas>
-
-        <OfficeHud
-          focusedRoom={cameraTarget.roomKey}
-          selectedAgent={selectedAgent}
-          roomAgents={cameraTarget.roomKey ? roomAgents.get(cameraTarget.roomKey) ?? [] : []}
-          workingAgents={workingAgents}
-          totalAgents={agents.length}
-          activeGraphRuns={activeGraphRuns}
-          generatedAt={data?.generated_at ?? ""}
-          activity={data?.agent_messages ?? []}
-          onBack={() => {
-            setSelectedAgent(null);
-            focusRoom(null);
-          }}
-          onClearAgent={() => setSelectedAgent(null)}
-          onTalk={talkToAgent}
-          onDelegate={delegateToAgent}
-          onInspectTask={inspectAgentTask}
-          onNavigate={(path) => navigate(path)}
-        />
-      </div>
+          </div>
+        )}
+        <p className="office-spatial-help">
+          Drag to rotate, scroll or pinch to zoom, shift-drag to pan. Keyboard: arrows move rooms, 1–3 select a floor, Home returns to overview.
+        </p>
+      </section>
     </>
   );
 }
@@ -795,6 +939,7 @@ function OfficeHud({
   onTalk,
   onDelegate,
   onInspectTask,
+  onInspectMessage,
   onNavigate,
 }: {
   focusedRoom: string | null;
@@ -810,6 +955,7 @@ function OfficeHud({
   onTalk: (agent: LiveRow) => void;
   onDelegate: (agent: LiveRow) => void;
   onInspectTask: (agent: LiveRow) => void;
+  onInspectMessage: (message: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
   const delegateTask = useDelegateAgentTask();
@@ -853,13 +999,22 @@ function OfficeHud({
           <div className="office-hud__hint">{totalAgents} employees · {workingAgents} working · {activeGraphRuns} graph runs · {formatRelative(generatedAt)}</div>
           {activity.length > 0 && (
             <div className="office-hud__activity" aria-label="Latest inter-agent handoffs">
-              {activity.slice(0, 3).map((item, index) => (
-                <div key={String(num(item, "id", index))}>
-                  <span>{text(item, "from_agent", "Agent")} → {text(item, "to_agent", "Agent")}</span>
-                  <b>{text(item, "subject", "Work handoff")}</b>
-                  <time>{formatRelative(text(item, "created_at"))}</time>
-                </div>
-              ))}
+              {activity.slice(0, 3).map((item, index) => {
+                const redacted = isOfficeRedacted(item);
+                return (
+                  <button
+                    type="button"
+                    key={String(num(item, "id", index))}
+                    disabled={redacted}
+                    onClick={() => onInspectMessage(item)}
+                    aria-label={redacted ? "Private handoff details hidden" : `Inspect handoff: ${text(item, "subject", "Work handoff")}`}
+                  >
+                    <span>{text(item, "from_agent", "Agent")} → {text(item, "to_agent", "Agent")}</span>
+                    <b>{text(item, "subject", "Work handoff")}</b>
+                    <time>{formatRelative(text(item, "created_at"))}</time>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -893,9 +1048,11 @@ function OfficeHud({
             <div className="office-hud__room-actions">
               <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
               <button className="office-hud__btn" onClick={() => setShowDelegate((open) => !open)}>Delegate task</button>
-              {num(selectedAgent, "current_task_id") > 0 && (
+              {isOfficeRedacted(selectedAgent) ? (
+                room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open private workspace</button>
+              ) : num(selectedAgent, "current_task_id") > 0 ? (
                 <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>
-              )}
+              ) : null}
               {room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open department</button>}
               <button className="office-hud__btn" onClick={onClearAgent}>Close employee</button>
             </div>
@@ -927,8 +1084,11 @@ function OfficeHud({
                 <span key={text(agent, "agent_name")}><b>{text(agent, "agent_name")}</b>{text(agent, "current_work_title", text(agent, "current_task_title", "Working"))}</span>
               ))}
             </div>
+            {room.workspaceState === "hidden" && (
+              <div className="office-hud__workspace-gate">{room.workspaceReason ?? "Workspace hidden until its real-source acceptance gate passes."}</div>
+            )}
             <div className="office-hud__room-actions">
-              {room.link && <button className="office-hud__btn office-hud__btn--primary" onClick={() => onNavigate(room.link!)}>Open department</button>}
+              {room.link && <button className="office-hud__btn office-hud__btn--primary" onClick={() => onNavigate(room.link!)}>Open accepted workspace</button>}
               <button className="office-hud__btn" onClick={onBack}>Firm overview</button>
             </div>
           </div>
@@ -983,8 +1143,10 @@ function OfficeFallback({
             <div className="office-hud__room-actions">
               <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
               <button className="office-hud__btn" onClick={() => onDelegate(selectedAgent)}>Delegate task</button>
-              {num(selectedAgent, "current_task_id") > 0 && <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>}
-              {selectedRoomDefinition?.link && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open department</button>}
+              {isOfficeRedacted(selectedAgent)
+                ? selectedRoomDefinition?.link && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open private workspace</button>
+                : num(selectedAgent, "current_task_id") > 0 && <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>}
+              {selectedRoomDefinition?.link && !isOfficeRedacted(selectedAgent) && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open accepted workspace</button>}
             </div>
           </section>
         )}
@@ -996,12 +1158,15 @@ function OfficeFallback({
                 <button className="office-fallback__room-button" onClick={() => onFocusRoom(room.key)}>
                   <span className="office-fallback__room-name">{room.label}</span>
                   <span className="office-fallback__room-dept">{occupants.length} employees · {occupants.filter(isBusy).length} working</span>
-                  <span className="office-fallback__room-floor">{room.floor === 1 ? "Mezzanine" : room.floor === -1 ? "Infrastructure" : "Dealing floor"}</span>
+                  <span className="office-fallback__room-floor">
+                    {room.floor === 1 ? "Mezzanine" : room.floor === -1 ? "Infrastructure" : "Dealing floor"}
+                    {" · "}{room.workspaceState === "ready" ? "workspace accepted" : "workspace gated"}
+                  </span>
                 </button>
                 {selectedRoom === room.key && occupants.slice(0, 12).map((agent) => (
                   <button key={text(agent, "agent_name")} className="office-fallback__agent" onClick={() => onSelectAgent(agent)}>
                     <span>{text(agent, "agent_name")}</span>
-                    <small>{text(agent, "current_work_title", liveState(agent))}</small>
+                    <small>{isOfficeRedacted(agent) ? "Private scoped work" : text(agent, "current_work_title", liveState(agent))}</small>
                   </button>
                 ))}
               </section>

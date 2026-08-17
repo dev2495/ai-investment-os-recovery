@@ -16,6 +16,7 @@ import sys
 import tempfile
 import zipfile
 from collections import Counter
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable
 from xml.etree import ElementTree
@@ -26,10 +27,10 @@ from runtime_storage import artifact_root
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
 INTAKE_ROOT = artifact_root("local_intake")
-BUNDLED_PYTHON = Path("/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3")
+BUNDLED_PYTHON = Path(os.environ.get("AI_OS_LOCAL_ARTIFACT_PYTHON") or "/Volumes/Devarsh SSD/AI OS Data/venvs/research-ingest/bin/python3")
 SOFFICE_BIN = Path("/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override/soffice")
 PARSER_VERSION = "local_artifact_v1"
-SUPPORTED_SUFFIXES = {".csv", ".tsv", ".xls", ".xlsx", ".pdf", ".docx", ".txt", ".md", ".json", ".png", ".jpg", ".jpeg", ".webp"}
+SUPPORTED_SUFFIXES = {".csv", ".tsv", ".xls", ".xlsx", ".pdf", ".docx", ".txt", ".md", ".json", ".html", ".htm", ".png", ".jpg", ".jpeg", ".webp"}
 TABULAR_SUFFIXES = {".csv", ".tsv", ".xls", ".xlsx"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 HEADER_KEYWORDS = {
@@ -52,8 +53,8 @@ def sql_jsonb(value: object) -> str:
 
 def run_psql(sql: str) -> list[dict[str, Any]]:
     commands = [
-        ["/opt/homebrew/opt/postgresql@15/bin/psql", "-h", "127.0.0.1", "-p", os.environ.get("AI_OS_POSTGRES_PORT", "54329"), "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"],
-        ["docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"],
+        ["/opt/homebrew/opt/postgresql@16/bin/psql", "-h", "127.0.0.1", "-p", os.environ.get("AI_OS_POSTGRES_PORT", "54329"), "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"],
+        ["/opt/homebrew/bin/docker", "exec", "-i", "ai_os_postgres", "psql", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "ai_os", "-d", "ai_os"],
     ]
     env = os.environ.copy()
     env.setdefault("PGPASSWORD", os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me"))
@@ -333,6 +334,31 @@ def parse_text(path: Path) -> tuple[str, str]:
     return clean_text(text), "text_stdlib"
 
 
+class _VisibleHTMLText(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hidden_depth = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "noscript", "template"}:
+            self.hidden_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript", "template"} and self.hidden_depth:
+            self.hidden_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden_depth and data.strip():
+            self.parts.append(data)
+
+
+def parse_html(path: Path) -> tuple[str, str]:
+    parser = _VisibleHTMLText()
+    parser.feed(path.read_text(encoding="utf-8", errors="replace"))
+    return clean_text("\n".join(parser.parts)), "html_parser_visible_text"
+
+
 def parse_image(path: Path) -> tuple[int, int, str]:
     from PIL import Image  # type: ignore
 
@@ -548,6 +574,10 @@ def main() -> int:
             profile["extracted_text"] = text
         elif suffix in {".txt", ".md", ".json"}:
             text, parser_name = parse_text(stored_path)
+            profile.update(parser_name=parser_name, status="extracted")
+            profile["extracted_text"] = text
+        elif suffix in {".html", ".htm"}:
+            text, parser_name = parse_html(stored_path)
             profile.update(parser_name=parser_name, status="extracted")
             profile["extracted_text"] = text
         elif suffix in IMAGE_SUFFIXES:

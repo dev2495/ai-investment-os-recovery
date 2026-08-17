@@ -64,7 +64,7 @@ class ModelRouterContractTest(unittest.TestCase):
 
     def test_registry_matches_hybrid_cost_and_privacy_policy(self) -> None:
         required_registry_fragments = (
-            "version: 5",
+            "version: 7",
             "model: mlx-community/Qwen3.5-9B-4bit",
             "production_fallback_model: prism-ml/Bonsai-27B-Q1_0",
             "status: production_conversation_only",
@@ -82,12 +82,18 @@ class ModelRouterContractTest(unittest.TestCase):
             "openrouter_sol_review:",
             "default_model: openai/gpt-5.6-sol",
             "monthly_soft_cap: 3000",
-            "monthly_hard_cap: 4500",
+            "monthly_hard_cap: 4000",
             "daily_hard_cap: 150",
             "heavy_route_reserve_pct: 20",
             "client_private_cloud: false",
             "broker_writes: false",
             "default_model: deterministic_research_compiler_v1",
+            "cloud.volume.default:",
+            "default_model: deepseek/deepseek-v4-flash",
+            "cloud.complex.escalation:",
+            "default_model: z-ai/glm-5.2",
+            "specialist.lead_engineer:",
+            "explicit_human_confirmation_before_live_execution: true",
         )
         for fragment in required_registry_fragments:
             with self.subTest(fragment=fragment):

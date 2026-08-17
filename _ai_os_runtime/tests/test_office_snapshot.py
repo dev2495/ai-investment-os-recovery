@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -37,6 +38,75 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertIn("output_artifact_count", agent_query)
         self.assertIn("assigned_model", agent_query)
         self.assertIn("missing_tools", agent_query)
+        self.assertEqual(snapshot["projection_meta"]["privacy_mode"], "shared_safe")
+        self.assertFalse(snapshot["projection_meta"]["client_detail_exposed"])
+        self.assertFalse(snapshot["projection_meta"]["broker_write_allowed"])
+
+    def test_shared_office_projection_redacts_private_work_before_response(self) -> None:
+        secret = "private-client-portfolio-name"
+        rows = {
+            "agents": [{
+                "agent_name": "Client Analyst",
+                "department_name": "Client Office",
+                "current_work_title": secret,
+                "current_work_detail": f"Review {secret}",
+            }],
+            "live_office_agent_activity": [{
+                "agent_name": "Portfolio Manager",
+                "department_key": "portfolio",
+                "current_task_id": 42,
+                "current_task_title": secret,
+                "current_work_title": secret,
+                "current_work_detail": f"Account {secret}",
+                "presence_title": secret,
+                "presence_detail": secret,
+                "latest_activity_at": "2026-08-10T13:00:00+00:00",
+            }],
+            "agent_messages": [{
+                "id": 7,
+                "from_agent": "Client Analyst",
+                "to_agent": "Portfolio Manager",
+                "subject": secret,
+                "body": f"Holdings for {secret}",
+                "metadata": {"privacy_scope": "client_private", "client_id": 99},
+                "created_at": "2026-08-10T13:00:00+00:00",
+            }],
+            "graph_runs": [{
+                "graph_run_id": 9,
+                "subject_type": "client_portfolio",
+                "subject_ref": secret,
+                "run_status": "waiting_approval",
+                "updated_at": "2026-08-10T13:00:00+00:00",
+            }],
+            "source_freshness": [{
+                "source_key": "portfolio_report",
+                "source_name": f"{secret} Holdings Report",
+                "status": "fresh",
+                "created_at": "2026-08-10T13:00:00+00:00",
+            }],
+            "execution_control": [{"global_execution_locked": True}],
+        }
+
+        def fake_batch(*_args, **_kwargs):
+            return rows
+
+        with mock.patch.object(ai_os_api_server, "run_psql_json_object", fake_batch):
+            snapshot = ai_os_api_server.build_office_snapshot()
+
+        serialized = json.dumps(snapshot)
+        self.assertNotIn(secret, serialized)
+        self.assertGreaterEqual(snapshot["projection_meta"]["redacted_record_count"], 5)
+        self.assertEqual(snapshot["agent_messages"][0]["subject"], "Private scoped handoff")
+        self.assertEqual(snapshot["graph_runs"][0]["subject_ref"], "private-workspace")
+        self.assertEqual(snapshot["source_freshness"][0]["source_name"], "Restricted source")
+        self.assertFalse(snapshot["projection_meta"]["client_detail_exposed"])
+
+    def test_shared_office_projection_does_not_treat_disabled_client_mutation_as_private(self) -> None:
+        self.assertFalse(ai_os_api_server._office_record_is_private({
+            "privacy_scope": "internal",
+            "client_record_mutation_allowed": False,
+            "broker_write_allowed": False,
+        }))
 
     def test_live_office_state_labels_match_runtime_semantics(self) -> None:
         runtime_root = Path(__file__).resolve().parents[1]
@@ -61,6 +131,17 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertIn("function agentRoomKey", live_office)
         self.assertIn('return roomByKey(department) ? department : "lobby"', live_office)
         self.assertIn(".office-fallback__selected", live_office_css)
+        self.assertIn("projection_meta", office_view)
+        self.assertIn("Shared Office Contract", office_view)
+        self.assertIn("Broker, capital and live writes locked", office_view)
+        self.assertIn("Use static office", live_office)
+        self.assertIn("Use animated office", live_office)
+        self.assertIn("handleKeyboard", live_office)
+        self.assertIn("prefers-reduced-motion: reduce", live_office)
+        self.assertIn("Private handoff details hidden", live_office)
+        self.assertIn("workspace gated", live_office)
+        self.assertIn("office-spatial-toolbar", live_office_css)
+        self.assertIn(".office-spatial-shell:focus-visible", live_office_css)
 
     def test_agent_roster_merges_live_activity_instead_of_showing_profile_idle_state(self) -> None:
         runtime_root = Path(__file__).resolve().parents[1]

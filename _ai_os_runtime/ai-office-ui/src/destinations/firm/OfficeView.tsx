@@ -6,10 +6,12 @@ import {
   GitBranch,
   Inbox,
   MessageSquare,
+  LockKeyhole,
   ShieldAlert,
   ShieldCheck,
   Users,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useOfficeSnapshot } from "../../data/queries";
 import { useRunOfficeOperabilityAcceptance } from "../../data/actions";
 import {
@@ -53,6 +55,7 @@ function employeeDepartment(row: LiveRow): string {
 
 export function OfficeView() {
   const { data, isLoading, error } = useOfficeSnapshot();
+  const navigate = useNavigate();
   const setAssistantScope = useUIStore((state) => state.setAssistantScope);
   const focusRoom = useUIStore((state) => state.focusRoom);
   const openEvidence = useUIStore((state) => state.openEvidence);
@@ -94,6 +97,9 @@ export function OfficeView() {
   const messages = data?.agent_messages ?? [];
   const latestAcceptance = data?.office_operability_acceptance?.[0];
   const acceptanceGates = value<LiveRow[]>(latestAcceptance, "gates", []);
+  const projectionMeta = (data?.projection_meta ?? {}) as LiveRow;
+  const sourceStatus = text(projectionMeta, "source_status", isLoading ? "loading" : "no_activity");
+  const projectionIssues = data?.issues ?? [];
 
   function runOperabilityAcceptance() {
     operability.mutate({ actor: "Devarsh" }, {
@@ -115,10 +121,10 @@ export function OfficeView() {
             <Boxes size={26} style={{ verticalAlign: "middle", marginRight: 10, color: "var(--accent)" }} />
             Live AI Office
           </div>
-          {data && <StatusPill tone="ok" dot>{formatRelative(data.generated_at)}</StatusPill>}
+          {data && <StatusPill status={sourceStatus} dot>{sourceStatus.replace(/_/g, " ")} · snapshot {formatRelative(data.generated_at)}</StatusPill>}
         </div>
         <div className="aios-destination__subtitle">
-          Live departments, employee work, governed workflow traffic, decisions, and risk state.
+          Source-backed departments, accountable work, governed handoffs and decisions. Client details are redacted from this shared surface.
         </div>
       </div>
 
@@ -130,6 +136,33 @@ export function OfficeView() {
         <MetricTile tone={graphRuns.length ? "ok" : "default"}><Metric label="Graph Runs" value={graphRuns.length} /></MetricTile>
         <MetricTile tone={graphAttention.length ? "warn" : "ok"}><Metric label="Graph Attention" value={graphAttention.length} /></MetricTile>
       </div>
+
+      <Panel icon={LockKeyhole} title="Shared Office Contract">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--space-3)", padding: "var(--space-1) 0" }}>
+          <div>
+            <div style={{ color: "var(--text-faint)", fontSize: "var(--text-2xs)", textTransform: "uppercase" }}>Underlying records</div>
+            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8 }}>
+              <StatusPill status={sourceStatus} />
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{formatRelative(text(projectionMeta, "latest_record_at"))}</span>
+            </div>
+          </div>
+          <div>
+            <div style={{ color: "var(--text-faint)", fontSize: "var(--text-2xs)", textTransform: "uppercase" }}>Privacy projection</div>
+            <strong style={{ display: "block", marginTop: 4 }}>Shared-safe · {num(projectionMeta, "redacted_record_count")} records hidden</strong>
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>Private client details require the authorized workspace.</span>
+          </div>
+          <div>
+            <div style={{ color: "var(--text-faint)", fontSize: "var(--text-2xs)", textTransform: "uppercase" }}>Financial actions</div>
+            <strong style={{ display: "block", marginTop: 4, color: "var(--status-warn)" }}>Broker, capital and live writes locked</strong>
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>The Office can observe, delegate and prepare evidence only.</span>
+          </div>
+          <div>
+            <div style={{ color: "var(--text-faint)", fontSize: "var(--text-2xs)", textTransform: "uppercase" }}>Snapshot queries</div>
+            <strong style={{ display: "block", marginTop: 4 }}>{projectionIssues.length === 0 ? "Complete" : projectionIssues.length + " source issue" + (projectionIssues.length === 1 ? "" : "s")}</strong>
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{projectionIssues.length === 0 ? "No Office query failures." : "Affected sections degrade to explicit empty states."}</span>
+          </div>
+        </div>
+      </Panel>
 
       <Panel icon={ShieldCheck} title="AI Office Operability" actions={<Button icon={ShieldCheck} onClick={runOperabilityAcceptance} disabled={operability.isPending}>{operability.isPending ? "Checking…" : "Run acceptance"}</Button>}>
         {!latestAcceptance ? (
@@ -203,13 +236,19 @@ export function OfficeView() {
             ) : (
               <div style={{ display: "grid", gap: "var(--space-2)" }}>
                 {graphRuns.slice(0, 12).map((run) => (
-                  <div key={num(run, "graph_run_id")} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "var(--space-2)", padding: "var(--space-2) 0", borderBottom: "1px solid var(--border-subtle)" }}>
-                    <div style={{ minWidth: 0 }}>
+                  <button
+                    type="button"
+                    key={num(run, "graph_run_id")}
+                    onClick={() => navigate("/firm/graphs?run=" + num(run, "graph_run_id"))}
+                    style={{ width: "100%", display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "var(--space-2)", padding: "var(--space-2) 0", color: "var(--text)", background: "none", border: 0, borderBottom: "1px solid var(--border-subtle)", textAlign: "left", cursor: "pointer" }}
+                    aria-label={"Open evidence for " + text(run, "graph_name") + " run " + num(run, "graph_run_id")}
+                  >
+                    <span style={{ minWidth: 0 }}>
                       <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--text-sm)" }}>{text(run, "graph_name")}</strong>
                       <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>#{num(run, "graph_run_id")} · {text(run, "subject_ref", "firm-wide")} · {num(run, "completed_node_count")}/{num(run, "completed_node_count") + num(run, "active_node_count") + num(run, "waiting_node_count") + num(run, "failed_node_count")}</span>
-                    </div>
+                    </span>
                     <StatusPill status={text(run, "run_status")} />
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -294,18 +333,24 @@ export function OfficeView() {
               {
                 key: "evidence",
                 header: "",
-                render: (row) => (
-                  <Button
-                    size="sm"
-                    icon={Activity}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openEvidence({ kind: "agent-message", key: String(num(row, "id")), title: text(row, "subject", "Agent handoff") });
-                    }}
-                  >
-                    Evidence
-                  </Button>
-                ),
+                render: (row) => {
+                  const redacted = text(row, "office_visibility") === "redacted";
+                  return (
+                    <Button
+                      size="sm"
+                      icon={redacted ? LockKeyhole : Activity}
+                      disabled={redacted}
+                      title={redacted ? "Private details are hidden on the shared Office surface." : undefined}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (redacted) return;
+                        openEvidence({ kind: "agent-message", key: String(num(row, "id")), title: text(row, "subject", "Agent handoff") });
+                      }}
+                    >
+                      {redacted ? "Private" : "Evidence"}
+                    </Button>
+                  );
+                },
               },
             ]}
             rows={messages}

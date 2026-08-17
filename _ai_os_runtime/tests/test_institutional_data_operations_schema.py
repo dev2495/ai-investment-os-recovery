@@ -4,12 +4,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "postgres" / "init" / "188_institutional_data_operations_v1.sql"
+SOURCE_MIGRATION = ROOT / "postgres" / "init" / "210_option_valuation_source_governance_v1.sql"
 
 
 class InstitutionalDataOperationsSchemaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.sql = MIGRATION.read_text(encoding="utf-8")
+        cls.source_sql = SOURCE_MIGRATION.read_text(encoding="utf-8")
 
     def test_governed_expiring_valuation_policy(self) -> None:
         for contract in (
@@ -37,6 +39,16 @@ class InstitutionalDataOperationsSchemaTests(unittest.TestCase):
         normalized = " ".join(self.sql.lower().split())
         self.assertNotIn("insert into trading.option_valuation_policies", normalized)
         self.assertNotIn("execution_allowed boolean not null default true", normalized)
+
+    def test_source_candidates_require_human_activation(self) -> None:
+        for contract in (
+            "trading.option_valuation_source_observations",
+            "trading.v_option_valuation_source_candidates",
+            "operator_confirmed BOOLEAN NOT NULL DEFAULT false",
+            "Collection never activates a policy",
+            "broker_order_allowed",
+        ):
+            self.assertIn(contract, self.source_sql)
 
 
 if __name__ == "__main__":

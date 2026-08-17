@@ -14,6 +14,8 @@ export interface RoomDef {
   color: string;
   desks: DeskDef[];
   link?: string;
+  workspaceState: "ready" | "hidden";
+  workspaceReason?: string;
 }
 
 export const OFFICE_SCALE = 0.6;
@@ -27,32 +29,45 @@ const room = (
   label: string,
   department: string,
   color: string,
-  link: string,
+  link?: string,
   size: [number, number] = [7.2, 5.2],
-): RoomDef => ({ key, floor, center, size, label, department, color, link, desks: [] });
+  workspaceReason?: string,
+): RoomDef => ({
+  key,
+  floor,
+  center,
+  size,
+  label,
+  department,
+  color,
+  link,
+  desks: [],
+  workspaceState: link ? "ready" : "hidden",
+  workspaceReason,
+});
 
 export const ROOMS: RoomDef[] = [
   room("lobby", 0, [0, 0], "Operations Lobby", "Firm-wide live state", "#0f766e", "/today", [8.2, 5.2]),
 
-  room("research", 0, [-12, -6], "Research Factory", "Research", "#2d7a4f", "/fundamental/theses"),
-  room("news", 0, [0, -6], "News Intelligence", "News", "#4f6d7a", "/macro/news"),
-  room("portfolio", 0, [12, -6], "Portfolio Office", "Portfolio", "#0f766e", "/portfolio/overview"),
-  room("quant", 0, [-12, 5], "Quantitative Strategies", "Quant", "#70508d", "/quant/lab"),
-  room("trading", 0, [0, 5], "Active Trading Desk", "Trading", "#c89222", "/trading/blotter"),
-  room("tactical", 0, [12, 5], "Tactical Investing", "Tactical", "#9a5c36", "/scanners/ideas"),
+  room("research", 0, [-12, -6], "Research Factory", "Research", "#2d7a4f", "/research/ingest"),
+  room("news", 0, [0, -6], "News Intelligence", "News", "#4f6d7a", "/today"),
+  room("portfolio", 0, [12, -6], "Portfolio Office", "Portfolio", "#0f766e", "/portfolio/imports"),
+  room("quant", 0, [-12, 5], "Quantitative Strategies", "Quant", "#70508d", undefined, [7.2, 5.2], "Hidden until the strategy evidence and validation workspace passes acceptance."),
+  room("trading", 0, [0, 5], "Active Trading Desk", "Trading", "#c89222", "/trading/tradingview"),
+  room("tactical", 0, [12, 5], "Tactical Investing", "Tactical", "#9a5c36", "/today"),
 
   room("executive", 1, [-12, -6], "Executive Office", "Executive", "#0f766e", "/firm/agents"),
-  room("committee", 1, [0, -6], "Committee Room", "Deliberation and human decisions", "#70508d", "/firm/committees", [8.2, 5.2]),
-  room("risk", 1, [12, -6], "Independent Risk", "Risk", "#b53c32", "/risk/dashboard"),
-  room("client", 1, [-12, 5], "Client Office", "Client", "#356b75", "/portfolio/clients"),
-  room("treasury", 1, [0, 5], "Treasury, Hedges & Macro", "Treasury", "#6c6545", "/macro/dashboard"),
+  room("committee", 1, [0, -6], "Committee Room", "Deliberation and human decisions", "#70508d", "/firm/graphs", [8.2, 5.2]),
+  room("risk", 1, [12, -6], "Independent Risk", "Risk", "#b53c32", "/trading/execution"),
+  room("client", 1, [-12, 5], "Client Office", "Client", "#356b75", "/portfolio/imports"),
+  room("treasury", 1, [0, 5], "Treasury, Hedges & Macro", "Treasury", "#6c6545", "/today"),
   room("automation", 1, [12, 5], "Automation Engineering", "Automation", "#4f6d7a", "/firm/system"),
 
   room("runtime", -1, [-12, -6], "Runtime Operations", "Runtime", "#4f6d7a", "/firm/system"),
   room("data", -1, [0, -6], "Data Engineering", "Data", "#42617a", "/firm/system"),
   room("knowledge", -1, [12, -6], "Knowledge & Memory", "Knowledge", "#2d7a4f", "/firm/library"),
   room("software", -1, [-6, 5], "Software Engineering", "Software", "#4a5d78", "/firm/system", [9.4, 5.2]),
-  room("sector", -1, [8, 5], "Sector Intelligence", "Sector", "#2f8f83", "/sector/overview", [9.4, 5.2]),
+  room("sector", -1, [8, 5], "Sector Intelligence", "Sector", "#2f8f83", undefined, [9.4, 5.2], "Hidden until sector sources and calculations pass acceptance."),
 ];
 
 export function floorY(floor: number): number {

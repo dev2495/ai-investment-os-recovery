@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -73,6 +74,11 @@ def sql_literal(value: object) -> str:
 
 def sql_jsonb(value: object) -> str:
     return f"{sql_literal(json.dumps(value, sort_keys=True, default=str))}::jsonb"
+
+
+def stable_fingerprint(value: object) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def parse_as_of(value: str) -> datetime:
@@ -264,6 +270,7 @@ class PsqlGateway:
                 'segment_fact_years', (SELECT count(DISTINCT fact.fiscal_year) FROM research.company_segment_facts fact JOIN target ON target.id = fact.company_id JOIN eligible_evidence evidence ON evidence.id = fact.evidence_id WHERE fact.available_at <= {cutoff}::timestamptz),
                 'operational_kpi_count', (SELECT count(DISTINCT observation.kpi_definition_id) FROM research.operational_kpi_observations observation JOIN target ON target.id = observation.company_id JOIN eligible_evidence evidence ON evidence.id = observation.evidence_id WHERE observation.available_at <= {cutoff}::timestamptz),
                 'market_share_series_count', (SELECT count(DISTINCT observation.market_key) FROM research.market_share_observations observation JOIN target ON target.id = observation.company_id JOIN eligible_evidence evidence ON evidence.id = observation.evidence_id WHERE observation.available_at <= {cutoff}::timestamptz),
+                'market_share_unavailability_count', (SELECT count(*) FROM research.industry_competitive_observations observation JOIN target ON target.id=observation.company_id JOIN eligible_evidence evidence ON evidence.id=observation.evidence_id WHERE observation.category='market_share' AND observation.metric_availability='not_disclosed' AND observation.available_at<={cutoff}::timestamptz AND observation.verification_status NOT IN ('rejected','superseded')),
                 'peer_count', (SELECT count(DISTINCT membership.peer_company_id) FROM research.peer_sets peer_set JOIN target ON target.id = peer_set.subject_company_id JOIN eligible_evidence set_evidence ON set_evidence.id = peer_set.evidence_id JOIN research.peer_set_memberships membership ON membership.peer_set_id = peer_set.id JOIN eligible_evidence member_evidence ON member_evidence.id = membership.evidence_id WHERE peer_set.valid_from <= {cutoff}::date AND (peer_set.valid_to IS NULL OR peer_set.valid_to >= {cutoff}::date) AND membership.valid_from <= {cutoff}::date AND (membership.valid_to IS NULL OR membership.valid_to >= {cutoff}::date)),
                 'management_communication_count', (SELECT count(*) FROM research.management_communications communication JOIN target ON target.id = communication.company_id JOIN eligible_evidence evidence ON evidence.id = communication.evidence_id WHERE communication.communication_date <= {cutoff}::date AND communication.transcript_status NOT IN ('rejected', 'superseded')),
                 'management_claim_count', (SELECT count(*) FROM research.management_claims claim JOIN target ON target.id = claim.company_id JOIN eligible_evidence evidence ON evidence.id = claim.evidence_id WHERE claim.claim_date <= {cutoff}::date),
@@ -352,6 +359,15 @@ class PsqlGateway:
                 holding_thesis_id = coalesce(EXCLUDED.holding_thesis_id, research.investment_dossiers.holding_thesis_id),
                 dossier_status = 'in_review', owner_agent = EXCLUDED.owner_agent, updated_at = now()
             RETURNING id, holding_thesis_id
+        ), matching_version AS (
+            SELECT existing.id, existing.dossier_id, existing.version_number
+            FROM dossier
+            JOIN research.investment_dossier_versions existing
+              ON existing.dossier_id = dossier.id
+             AND existing.source_cutoff_at = {sql_literal(plan['as_of'])}::timestamptz
+             AND existing.decision_summary ->> 'input_fingerprint' = {sql_literal(plan['input_fingerprint'])}
+            ORDER BY existing.id DESC
+            LIMIT 1
         ), next_version AS (
             SELECT dossier.id AS dossier_id, dossier.holding_thesis_id,
                    coalesce(max(existing.version_number), 0) + 1 AS version_number,
@@ -363,7 +379,7 @@ class PsqlGateway:
                 FROM research.investment_dossier_versions item WHERE item.dossier_id = dossier.id
             ) current ON true
             GROUP BY dossier.id, dossier.holding_thesis_id
-        ), version AS (
+        ), inserted_version AS (
             INSERT INTO research.investment_dossier_versions (
                 dossier_id, version_number, version_status, research_as_of, source_cutoff_at,
                 executive_conclusion, decision_summary, evidence_coverage, generated_by,
@@ -372,13 +388,22 @@ class PsqlGateway:
                      {sql_literal(plan['as_of'])}::timestamptz, {sql_literal(plan['as_of'])}::timestamptz,
                      {sql_literal(plan['executive_conclusion'])}, {sql_jsonb(plan['decision_summary'])},
                      {sql_jsonb(plan['evidence_coverage'])}, {sql_literal(plan['actor'])}, supersedes_version_id
-              FROM next_version RETURNING id, dossier_id, version_number
+              FROM next_version
+             WHERE NOT EXISTS (SELECT 1 FROM matching_version)
+             RETURNING id, dossier_id, version_number
+        ), version AS (
+            SELECT id, dossier_id, version_number, true AS version_reused
+            FROM matching_version
+            UNION ALL
+            SELECT id, dossier_id, version_number, false AS version_reused
+            FROM inserted_version
         ), updated AS (
             UPDATE research.investment_dossiers dossier
             SET current_version_number = version.version_number, updated_at = now()
             FROM version WHERE dossier.id = version.dossier_id RETURNING dossier.id
         )
         SELECT version.dossier_id, version.id AS dossier_version_id, version.version_number,
+               version.version_reused,
                next_version.holding_thesis_id, NULL::bigint AS acceptance_run_id
         FROM version JOIN next_version ON next_version.dossier_id = version.dossier_id;
 
@@ -389,7 +414,8 @@ class PsqlGateway:
           FROM (VALUES {section_values}) AS incoming(
             section_key, section_order, section_title, section_status,
             content_markdown, primary_evidence_id, evidence_as_of, generated_by
-          ) JOIN institutional_factory_context context ON true;
+          ) JOIN institutional_factory_context context ON true
+        ON CONFLICT (dossier_version_id, section_key) DO NOTHING;
 
         INSERT INTO research.investment_dossier_section_evidence (
             dossier_section_id, evidence_id, evidence_role, citation_note
@@ -453,6 +479,8 @@ class PsqlGateway:
         SELECT json_build_object(
             'dossier_id', context.dossier_id, 'dossier_version_id', context.dossier_version_id,
             'version_number', context.version_number, 'acceptance_run_id', context.acceptance_run_id,
+            'input_fingerprint', {sql_literal(plan['input_fingerprint'])},
+            'version_reused', context.version_reused,
             'acceptance_run_opened', context.acceptance_run_id IS NOT NULL,
             'acceptance_status', {sql_literal(plan['acceptance_status'])},
             'sections_written', {len(sections)}, 'specialist_opinions_cloned',
@@ -600,7 +628,7 @@ def evaluate_acceptance(
         _gate("statement_history", "Ten-year annual statement history", int(coverage.get("annual_statement_years") or 0) >= 10, int(coverage.get("annual_statement_years") or 0), 10, "Fewer than ten annual statement years are available at the cutoff."),
         _gate("segment_history", "Segment history is populated", int(coverage.get("segment_count") or 0) > 0 and int(coverage.get("segment_fact_years") or 0) >= 3, {"segments": int(coverage.get("segment_count") or 0), "years": int(coverage.get("segment_fact_years") or 0)}, {"segments_min": 1, "years_min": 3}, "Segment definitions or history are incomplete."),
         _gate("operational_kpis", "Operational KPI history is populated", int(coverage.get("operational_kpi_count") or 0) > 0, int(coverage.get("operational_kpi_count") or 0), 1, "No operational KPI series is available."),
-        _gate("market_share", "Market-share history is populated", int(coverage.get("market_share_series_count") or 0) > 0, int(coverage.get("market_share_series_count") or 0), 1, "No market-share series is available."),
+        _gate("market_share", "Market-share history or explicit primary-source unavailability is recorded", int(coverage.get("market_share_series_count") or 0) > 0 or int(coverage.get("market_share_unavailability_count") or 0) > 0, {"numeric_series": int(coverage.get("market_share_series_count") or 0), "explicit_unavailability": int(coverage.get("market_share_unavailability_count") or 0)}, {"numeric_series_or_explicit_unavailability": 1}, "Neither a numeric market-share series nor a page-cited primary-source unavailability assessment is available."),
         _gate("peer_set", "Point-in-time peer set is populated", int(coverage.get("peer_count") or 0) >= 2, int(coverage.get("peer_count") or 0), 2, "Fewer than two eligible peers are available."),
         _gate("management_intelligence", "Management communications and claims are tracked", int(coverage.get("management_communication_count") or 0) > 0 and int(coverage.get("management_claim_count") or 0) > 0, {"communications": int(coverage.get("management_communication_count") or 0), "claims": int(coverage.get("management_claim_count") or 0), "claims_with_outcomes": int(coverage.get("claims_with_outcomes") or 0)}, {"communications_min": 1, "claims_min": 1}, "Management communication or claim history is absent."),
         _gate("management_accountability", "Management claims have observed outcomes", int(coverage.get("claims_with_outcomes") or 0) > 0, int(coverage.get("claims_with_outcomes") or 0), 1, "No management claim has a point-in-time observed outcome."),
@@ -681,11 +709,16 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
     gates = evaluate_acceptance(company, evidence, opinions, sections, coverage, latest_dossier, committee, request.as_of)
     failed = [gate["gate_key"] for gate in gates if gate["gate_status"] != "passed"]
     specialists = sorted({str(row.get("specialist_key")) for row in opinions})
-    human_verified = any(row.get("verification_status") == "human_verified" for row in evidence)
+    identity_evidence_id = company.get("real_company_verification_evidence_id")
+    identity_human_verified = any(
+        row.get("id") == identity_evidence_id
+        and row.get("verification_status") == "human_verified"
+        for row in evidence
+    )
     thesis_id = latest_dossier.get("holding_thesis_id") or context.get("target_thesis_id")
     company_key = company.get("company_key") or company.get("primary_symbol") or company["id"]
     latest_cutoff = parse_timestamp(latest_dossier.get("source_cutoff_at"))
-    return {
+    plan = {
         "status": "planned" if request.dry_run else "ready_to_persist",
         "dry_run": request.dry_run,
         "run_key": request.run_key,
@@ -698,7 +731,7 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
         "sections": sections,
         "opinion_ids": [int(row["id"]) for row in opinions],
         "verification_evidence_id": int(company.get("real_company_verification_evidence_id") or evidence[0]["id"]),
-        "acceptance_eligible": human_verified > 0,
+        "acceptance_eligible": identity_human_verified,
         "executive_conclusion": "No capital action is authorized. Review the source-backed dossier sections, failed gates, specialist dissent, and committee record.",
         "decision_summary": {"acceptance_status": "passed" if not failed else "failed", "failed_gates": failed, "capital_action_allowed": False, "broker_execution_allowed": False},
         "evidence_coverage": {**coverage, "evidence_count": len(evidence), "specialists_present": specialists, "section_count": len(sections), "point_in_time_cutoff": request.as_of.isoformat()},
@@ -708,6 +741,18 @@ def build_plan(context: dict[str, Any], request: FactoryRequest) -> dict[str, An
         "acceptance_note": "Acceptance passed." if not failed else "Acceptance failed: " + ", ".join(failed),
         "execution_envelope": {"capital_action_allowed": False, "broker_execution_allowed": False, "research_only": True},
     }
+    plan["input_fingerprint"] = stable_fingerprint({
+        "company_id": plan["company_id"],
+        "holding_thesis_id": plan["holding_thesis_id"],
+        "as_of": plan["as_of"],
+        "sections": plan["sections"],
+        "decision_summary": plan["decision_summary"],
+        "evidence_coverage": plan["evidence_coverage"],
+        "refresh_triggers": plan["refresh_triggers"],
+        "acceptance_gates": plan["acceptance_gates"],
+    })
+    plan["decision_summary"]["input_fingerprint"] = plan["input_fingerprint"]
+    return plan
 
 
 def run_factory(request: FactoryRequest, gateway: FactoryGateway) -> dict[str, Any]:

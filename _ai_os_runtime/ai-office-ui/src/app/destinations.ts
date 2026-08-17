@@ -81,7 +81,7 @@ export interface TerminalFunction {
 export const FUNCTION_GROUPS: Array<{ key: FunctionGroup; label: string; icon: LucideIcon }> = [
   { key: "home", label: "Home", icon: LayoutDashboard },
   { key: "firm", label: "The Firm", icon: Building2 },
-  { key: "fundamental", label: "Fundamental Research", icon: BookOpen },
+  { key: "fundamental", label: "Company Research", icon: BookOpen },
   { key: "sector", label: "Sector Intelligence", icon: Layers },
   { key: "quant", label: "Quant & Strategy", icon: BarChart3 },
   { key: "trading", label: "Trading Desk", icon: TrendingUp },
@@ -99,7 +99,7 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
 
   /* ---- THE FIRM ---- */
   { code: "OFFICE", path: "/firm/office", label: "3D Live Office", icon: Boxes, description: "Walk the firm — every employee, assignment, graph handoff, and risk state", group: "firm", order: 0, status: "live" },
-  { code: "GRAPHS", path: "/firm/graphs", label: "Graph Studio", icon: GitBranch, description: "Launch, inspect, pause, decide, correct, and adapt governed agent workflows", group: "firm", order: 1, status: "live" },
+  { code: "GRAPHS", path: "/firm/graphs", label: "Graph & Loop Studio", icon: GitBranch, description: "Engineer, launch, inspect, pause, decide, correct, and adapt governed workflow loops", group: "firm", order: 1, status: "live" },
   { code: "AGENTS", path: "/firm/agents", label: "Agents & Employees", icon: Users, description: "The full agent roster, departments, skills, model routes", group: "firm", order: 1, status: "beta" },
   { code: "DEPTS", path: "/firm/departments", label: "Departments", icon: Building2, description: "Live departments, mandates, leads, and work queues", group: "firm", order: 2, status: "beta" },
   { code: "COMM", path: "/firm/committees", label: "Committee Room", icon: Gavel, description: "Packets, positions, synthesis, human decisions", group: "firm", order: 3, status: "beta" },
@@ -109,7 +109,7 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "LIBRARY", path: "/firm/library", label: "Knowledge Library", icon: Library, description: "Obsidian vault, Qdrant retrieval, note graph", group: "firm", order: 7, status: "beta" },
 
   /* ---- FUNDAMENTAL RESEARCH (Buffett school) ---- */
-  { code: "LTF", path: "/fundamental/theses", label: "Long-Term Theses", icon: BookOpen, description: "Buffett-style investment theses per holding — moat, management, quality", group: "fundamental", order: 0, status: "beta" },
+  { code: "LTF", path: "/fundamental/theses", label: "Company Thesis Dashboard", icon: BookOpen, description: "Source-backed investment theses — change log, moat, management, quality, valuation, evidence, and decisions", group: "fundamental", order: 0, status: "live" },
   { code: "SCOR", path: "/fundamental/scorecards", label: "Specialist Scorecards", icon: Microscope, description: "12 scorecards — business model, moat, governance, forensic, valuation, portfolio fit", group: "fundamental", order: 1, status: "beta" },
   { code: "VAL", path: "/fundamental/valuation", label: "Valuation Suite", icon: Calculator, description: "DCF, multiples, reverse DCF, Monte Carlo per holding", group: "fundamental", order: 2, status: "beta" },
   { code: "COV", path: "/fundamental/coverage", label: "Coverage & Checklists", icon: ClipboardCheck, description: "Coverage queue, theses checklists, review schedule", group: "fundamental", order: 3, status: "beta" },
@@ -147,7 +147,7 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "OPTS", path: "/options/desk", label: "Options Desk", icon: TrendingDown, description: "Options surface, chain, manual trade entry, the options agent", group: "options", order: 0, status: "beta" },
   { code: "OCHAIN", path: "/options/chain", label: "Option Chain", icon: BarChart3, description: "Live option prices, volume, open interest, and provider analytics when available", group: "options", order: 1, status: "beta" },
   { code: "OSURF", path: "/options/surface", label: "Vol Surface", icon: LineChart, description: "Implied vol smile, skew, and term structure when IV is available", group: "options", order: 2, status: "beta" },
-  { code: "OIA", path: "/options/oi-analysis", label: "OI & Straddles", icon: Activity, description: "OI buildup, strike walls, PCR, and live straddle curves", group: "options", order: 3, status: "beta" },
+  { code: "OIA", path: "/options/oi-analysis", label: "OI & Straddles", icon: Activity, description: "Source-qualified OI, strike walls, PCR, and straddle curves", group: "options", order: 3, status: "beta" },
   { code: "OSTRAT", path: "/options/strategies", label: "Strategy Builder", icon: Layers, description: "Construct live-chain option combinations and inspect expiry payoff", group: "options", order: 4, status: "beta" },
   { code: "OAGENT", path: "/options/agent", label: "Options Agent", icon: Brain, description: "Talk to the specialist options agent — strategies, risk, edge", group: "options", order: 5, status: "beta" },
 
@@ -163,9 +163,10 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "POS", path: "/portfolio/positions", label: "Positions", icon: PieChart, description: "Positions with book, purpose, thesis, horizon, exit criteria", group: "portfolio", order: 1, status: "beta" },
   { code: "BOOKS", path: "/portfolio/books", label: "Investment Books", icon: BookOpen, description: "Multi-book brain — mandates, allocations, cross-book conflicts", group: "portfolio", order: 2, status: "beta" },
   { code: "CLIENTS", path: "/portfolio/clients", label: "Clients", icon: Users, description: "Client registry, onboarding, suitability, NAV, performance", group: "portfolio", order: 3, status: "beta" },
-  { code: "NAV", path: "/portfolio/nav", label: "NAV & Cash", icon: DollarSign, description: "NAV snapshots, cash ledger, fee ledger, FIFO tax lots", group: "portfolio", order: 4, status: "beta" },
-  { code: "RECON", path: "/portfolio/reconciliation", label: "Reconciliation", icon: GitBranch, description: "Broker recon, p2cursor, legacy source readiness", group: "portfolio", order: 5, status: "beta" },
-  { code: "FOLIO", path: "/portfolio/trackers", label: "Folio Trackers", icon: Activity, description: "Ongoing per-folio watch — thesis adherence, drift, review cadence", group: "portfolio", order: 6, status: "beta" },
+  { code: "IMPORT", path: "/portfolio/imports", label: "Report Imports", icon: Download, description: "Private broker-report intake, provenance, exceptions, and cross-report reconciliation", group: "portfolio", order: 4, status: "beta" },
+  { code: "NAV", path: "/portfolio/nav", label: "NAV & Cash", icon: DollarSign, description: "NAV snapshots, cash ledger, fee ledger, FIFO tax lots", group: "portfolio", order: 5, status: "beta" },
+  { code: "RECON", path: "/portfolio/reconciliation", label: "Reconciliation", icon: GitBranch, description: "Broker recon, p2cursor, legacy source readiness", group: "portfolio", order: 6, status: "beta" },
+  { code: "FOLIO", path: "/portfolio/trackers", label: "Folio Trackers", icon: Activity, description: "Ongoing per-folio watch — thesis adherence, drift, review cadence", group: "portfolio", order: 7, status: "beta" },
 
   /* ---- MACRO & MARKETS ---- */
   { code: "MACRO", path: "/macro/dashboard", label: "Macro Dashboard", icon: Globe2, description: "Macro observations, regime, rates, FX, commodities, indices", group: "macro", order: 0, status: "beta" },
@@ -174,10 +175,11 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "CAL", path: "/macro/calendar", label: "Market Calendar", icon: Calendar, description: "Earnings, ex-dates, RBI, Fed, holidays", group: "macro", order: 3, status: "beta" },
 
   /* ---- RESEARCH & FILINGS ---- */
-  { code: "FIL", path: "/research/filings", label: "Filings", icon: FileText, description: "NSE/BSE/SEC filings, collector runs, PDF extraction", group: "research", order: 0, status: "beta" },
-  { code: "SPEC", path: "/research/special-situations", label: "Special Situations", icon: Target, description: "Arbitrage, demergers, buybacks, delistings — committee gates", group: "research", order: 1, status: "beta" },
-  { code: "PAPER", path: "/research/papers", label: "Research Papers", icon: BookOpen, description: "Ingest academic papers → strategy hypotheses", group: "research", order: 2, status: "beta" },
-  { code: "ING", path: "/research/ingest", label: "Research Ingest", icon: Download, description: "Ingest research pages, blogs, PDFs → strategy ideas", group: "research", order: 3, status: "beta" },
+  { code: "RCASE", path: "/research/cases", label: "Research Workstreams", icon: BookOpen, description: "Start and track durable company research cases, agents, sources and reports", group: "fundamental", order: 1, status: "live" },
+  { code: "FIL", path: "/research/filings", label: "Filings & Updates", icon: FileText, description: "NSE/BSE/SEC filings, collector runs, PDF extraction", group: "fundamental", order: 2, status: "beta" },
+  { code: "SPEC", path: "/research/special-situations", label: "Special Situations", icon: Target, description: "Arbitrage, demergers, buybacks, delistings — committee gates", group: "research", order: 2, status: "beta" },
+  { code: "PAPER", path: "/research/papers", label: "Research Papers", icon: BookOpen, description: "Ingest academic papers → strategy hypotheses", group: "research", order: 3, status: "beta" },
+  { code: "ING", path: "/research/ingest", label: "Research Library & Ingest", icon: Download, description: "Ingest research pages, blogs, PDFs → strategy ideas", group: "fundamental", order: 3, status: "beta" },
 
   /* ---- RISK & COMPLIANCE ---- */
   { code: "RISK", path: "/risk/dashboard", label: "Risk Dashboard", icon: ShieldAlert, description: "Live breaches, limit checks, concentration, drawdown", group: "risk", order: 0, status: "beta" },
@@ -189,9 +191,36 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
 /** Map of all functions by path. */
 export const FUNCTIONS_BY_PATH = new Map(TERMINAL_FUNCTIONS.map((f) => [f.path, f]));
 
-/** Get functions for a group, sorted. */
+/**
+ * Daily-driver spine. Every end-state route remains registered and reachable
+ * through Cmd-K/deep links, but shells never compete with accepted workflows.
+ */
+export const DAILY_DRIVER_PATHS = new Set([
+  "/today",
+  "/firm/graphs",
+  "/firm/agents",
+  "/firm/governance",
+  "/firm/models",
+  "/firm/system",
+  "/firm/library",
+  "/fundamental/theses",
+  "/portfolio/imports",
+  "/trading/tradingview",
+  "/trading/execution",
+  "/options/desk",
+  "/research/cases",
+  "/research/filings",
+  "/research/ingest",
+]);
+
+/** Get every registered function for command-palette and coverage use. */
 export function functionsForGroup(group: FunctionGroup): TerminalFunction[] {
   return TERMINAL_FUNCTIONS.filter((f) => f.group === group).sort((a, b) => a.order - b.order);
+}
+
+/** Get only browser-accepted daily surfaces for the primary navigation. */
+export function dailyFunctionsForGroup(group: FunctionGroup): TerminalFunction[] {
+  return functionsForGroup(group).filter((f) => DAILY_DRIVER_PATHS.has(f.path));
 }
 
 /** Get a function by its code mnemonic. */

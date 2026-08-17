@@ -26,7 +26,7 @@ def test_api_and_mcp_expose_publisher_without_execution_authority() -> None:
     mcp = MCP.read_text(encoding="utf-8")
     assert "def sync_sector_fundamentals" in api
     assert '"/api/sector-intelligence/fundamentals/sync"' in api
-    assert "run_acceptance_gates_v2" in api
+    assert "run_acceptance_gates_v4" in api
     assert '"ai_os_sync_sector_fundamentals"' in mcp
     assert "broker_write_allowed" in mcp
     assert "capital_action_allowed" in mcp

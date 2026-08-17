@@ -125,10 +125,23 @@ BEGIN
                   THEN 1 ELSE 0 END,1::numeric,'eq',
              jsonb_build_object('requires','at least two straddle points and populated OI analytics')), 
             ('volatility_surface','IV Rank Skew And Term Structure',
-             (SELECT count(DISTINCT metric.metric_type)::numeric FROM trading.option_volatility_metrics metric
-              JOIN eligible_batches batch ON batch.id=metric.batch_id
-              WHERE metric.quality_status IN ('passed','warning')
-                AND metric.metric_type IN ('iv_percentile','iv_rank','skew','term_structure')),3::numeric,'gte',
+             CASE WHEN EXISTS (
+                    SELECT 1 FROM trading.option_volatility_metrics metric
+                    JOIN eligible_batches batch ON batch.id=metric.batch_id
+                    WHERE metric.quality_status IN ('passed','warning')
+                      AND metric.valid_from<=p_window_end
+                      AND metric.metric_type IN ('iv_percentile','iv_rank')
+                  ) AND EXISTS (
+                    SELECT 1 FROM trading.option_volatility_metrics metric
+                    JOIN eligible_batches batch ON batch.id=metric.batch_id
+                    WHERE metric.quality_status IN ('passed','warning')
+                      AND metric.valid_from<=p_window_end AND metric.metric_type='skew'
+                  ) AND EXISTS (
+                    SELECT 1 FROM trading.option_volatility_metrics metric
+                    JOIN eligible_batches batch ON batch.id=metric.batch_id
+                    WHERE metric.quality_status IN ('passed','warning')
+                      AND metric.valid_from<=p_window_end AND metric.metric_type='term_structure'
+                  ) THEN 1 ELSE 0 END,1::numeric,'eq',
              jsonb_build_object('requires','IV percentile or rank, skew, and term structure')),
             ('exposure_estimates','GEX DEX Vanna Charm And Gamma Flip',
              (SELECT count(DISTINCT estimate.metric_name)::numeric FROM trading.option_exposure_estimates estimate

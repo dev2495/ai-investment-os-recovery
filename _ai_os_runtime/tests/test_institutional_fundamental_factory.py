@@ -144,6 +144,17 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         self.assertEqual(gates["market_share"]["gate_status"], "failed")
         self.assertIn("statement_history", plan["decision_summary"]["failed_gates"])
 
+    def test_acceptance_requires_the_designated_identity_evidence_to_be_human_verified(self) -> None:
+        context = complete_context()
+        context["evidence"][0]["verification_status"] = "machine_extracted"
+        context["evidence"][1]["verification_status"] = "human_verified"
+
+        plan = factory.build_plan(context, self.request())
+
+        self.assertFalse(plan["acceptance_eligible"])
+        evidence_gate = next(row for row in plan["acceptance_gates"] if row["gate_key"] == "evidence_quality")
+        self.assertEqual(evidence_gate["gate_status"], "passed")
+
     def test_missing_committee_valuation_or_challenge_blocks_acceptance(self) -> None:
         context = complete_context()
         context["committee"] = {}
@@ -209,6 +220,24 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
 
         self.assertEqual(plan["holding_thesis_id"], 41)
         self.assertEqual(plan["dossier_key"], "existing-reliance-dossier")
+
+    def test_input_fingerprint_is_stable_and_changes_with_evidence_state(self) -> None:
+        first = complete_context()
+        second = complete_context()
+
+        first_plan = factory.build_plan(first, self.request())
+        repeated_plan = factory.build_plan(second, self.request())
+        for opinion in second["opinions"]:
+            opinion["id"] += 1000
+        rekeyed_plan = factory.build_plan(second, self.request())
+        second["evidence"][1]["verification_status"] = "human_verified"
+        changed_plan = factory.build_plan(second, self.request())
+
+        self.assertRegex(first_plan["input_fingerprint"], r"^[0-9a-f]{64}$")
+        self.assertEqual(first_plan["input_fingerprint"], repeated_plan["input_fingerprint"])
+        self.assertEqual(first_plan["input_fingerprint"], rekeyed_plan["input_fingerprint"])
+        self.assertNotEqual(first_plan["input_fingerprint"], changed_plan["input_fingerprint"])
+        self.assertEqual(first_plan["decision_summary"]["input_fingerprint"], first_plan["input_fingerprint"])
 
     def test_dry_run_reads_but_never_persists(self) -> None:
         gateway = FakeGateway(complete_context())
@@ -280,10 +309,15 @@ class InstitutionalFundamentalFactoryTests(unittest.TestCase):
         captured: list[str] = []
         gateway._run_json = lambda sql: captured.append(sql) or {"dossier_version_id": 1}  # type: ignore[method-assign]
 
-        gateway.persist(factory.build_plan(context, self.request(dry_run=False)))
+        plan = factory.build_plan(context, self.request(dry_run=False))
+        gateway.persist(plan)
         sql = captured[0]
 
         self.assertIn("INSERT INTO research.investment_dossier_versions", sql)
+        self.assertIn("matching_version AS", sql)
+        self.assertIn("WHERE NOT EXISTS (SELECT 1 FROM matching_version)", sql)
+        self.assertIn("'version_reused', context.version_reused", sql)
+        self.assertIn(plan["input_fingerprint"], sql)
         self.assertIn("INSERT INTO research.investment_dossier_sections", sql)
         self.assertIn("INSERT INTO research.fundamental_specialist_opinions", sql)
         self.assertIn("INSERT INTO research.investment_dossier_refresh_triggers", sql)

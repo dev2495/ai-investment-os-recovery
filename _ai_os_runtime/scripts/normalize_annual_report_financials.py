@@ -333,7 +333,7 @@ def load_reports(symbol: str, exchange: str, limit: int) -> list[dict[str, Any]]
           WHERE filing.source_name='Company IR'
             AND upper(filing.symbol)={sql_literal(symbol)}
             AND upper(filing.exchange)={sql_literal(exchange)}
-            AND filing.extraction_status='extracted'
+            AND filing.extraction_status IN ('captured','extracted')
             AND filing.local_path IS NOT NULL
             AND filing.payload->>'fiscal_year_end' IS NOT NULL
           ORDER BY (filing.payload->>'fiscal_year_end')::int DESC

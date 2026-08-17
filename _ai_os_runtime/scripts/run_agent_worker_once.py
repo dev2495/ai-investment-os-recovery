@@ -98,7 +98,11 @@ def psql_text(sql: str) -> str:
     db_name = RUNTIME_ENV.get("AI_OS_POSTGRES_DB") or "ai_os"
     db_password = RUNTIME_ENV.get("AI_OS_POSTGRES_PASSWORD")
 
-    if Path(psql_bin).exists() and db_password:
+    # The supervisor deliberately uses Docker database access for this daemon.
+    # Respect that boundary so host-port credential drift cannot restart API/UI.
+    use_docker = str(RUNTIME_ENV.get('AI_OS_WORKLOAD_PSQL_MODE') or '').strip().lower() == 'docker'
+
+    if not use_docker and Path(psql_bin).exists() and db_password:
         command = [
             psql_bin,
             "-h",
@@ -121,7 +125,7 @@ def psql_text(sql: str) -> str:
         env["PGPASSWORD"] = db_password
         completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env, timeout=30)
     else:
-        docker_bin = shutil.which("docker") or "/usr/local/bin/docker"
+        docker_bin = next((candidate for candidate in (shutil.which("docker"), "/opt/homebrew/bin/docker", "/usr/local/bin/docker") if candidate and Path(candidate).exists()), "")
         if not Path(docker_bin).exists():
             raise RuntimeError("Neither psql nor docker is available for the agent worker")
         command = [
@@ -176,6 +180,13 @@ def get_queue(limit: int, include_completed: bool, task_id: int | None = None) -
         )
           {completed_filter}
           {task_filter}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM agent.agent_messages source_gate
+              WHERE source_gate.generated_task_id=queue.task_id
+                AND source_gate.metadata->>'source_qualified_worker_required'='true'
+                AND coalesce(source_gate.metadata->>'source_worker_authorized','false')<>'true'
+          )
         ORDER BY
             CASE WHEN EXISTS (
                 SELECT 1
@@ -345,6 +356,19 @@ def context_for(skill_key: str, widget_key: str | None, job: dict[str, Any] | No
         }
         message = base.get("agent_message") or {}
         message_metadata = message.get("metadata") or {}
+        graph_input = message_metadata.get("input_payload") or {}
+        if (
+            message_metadata.get("graph_key") == "research_to_investment_decision"
+            and isinstance(graph_input, dict)
+            and isinstance(graph_input.get("evidence_packet"), dict)
+        ):
+            base["market_research_packet"] = graph_input["evidence_packet"]
+            base["market_research_graph"] = {
+                "graph_run_id": message_metadata.get("graph_run_id"),
+                "graph_node_run_id": message_metadata.get("graph_node_run_id"),
+                "graph_key": message_metadata.get("graph_key"),
+                "node_key": message_metadata.get("node_key"),
+            }
         message_text = f"{message.get('subject') or ''} {message.get('body') or ''}".lower()
         paper_id = message_metadata.get("paper_id")
         if not str(paper_id or "").isdigit():
@@ -1020,12 +1044,219 @@ def run_kronos_adapter(job: dict[str, Any], context: dict[str, Any]) -> dict[str
     }
     return result
 
+
+def run_kronos_calibration(job: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    message = context.get("agent_message") or {}
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    graph_run_id = metadata.get("graph_run_id")
+    if not str(graph_run_id or "").isdigit():
+        raise ValueError("The Kronos calibration node is missing graph_run_id.")
+    forecast = psql_one(
+        f"""
+        SELECT id,run_key,status
+        FROM strategy.kronos_forecast_runs
+        WHERE graph_run_id={int(graph_run_id)}
+        ORDER BY created_at DESC,id DESC
+        LIMIT 1
+        """
+    )
+    if not forecast or forecast.get("status") != "completed":
+        raise RuntimeError("A completed Kronos forecast is required before realized calibration.")
+    command = [
+        sys.executable,
+        str(RUNTIME_ROOT / "scripts" / "calibrate_kronos_forecast.py"),
+        "--forecast-run-id",
+        str(int(forecast["id"])),
+        "--actor",
+        str(job.get("owner_agent") or "Data Scientist"),
+    ]
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+        env={**os.environ, "AI_OS_RUNTIME_ROOT": str(RUNTIME_ROOT)},
+    )
+    result: dict[str, Any] = {}
+    for raw_line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            result = candidate
+            break
+    if completed.returncode != 0:
+        detail = result.get("error") or completed.stderr.strip() or "Kronos calibration failed."
+        raise RuntimeError(str(detail))
+    context["kronos_calibration"] = result
+    context["execution_envelope"] = {
+        **(context.get("execution_envelope") or {}),
+        "mode": "deterministic_model_validation",
+        "capital_action_allowed": False,
+        "automatic_strategy_promotion_allowed": False,
+        "live_execution_allowed": False,
+        "broker_order_allowed": False,
+    }
+    return result
+
+def market_research_summary_for(skill_key: str, context: dict[str, Any]) -> tuple[str, list[str]]:
+    packet = context.get("market_research_packet") or {}
+    quality = packet.get("quality") or {}
+    news = list(packet.get("news") or [])
+    quotes = list(packet.get("quotes") or [])
+    events = list(packet.get("events") or [])
+    freshness = list(packet.get("freshness") or [])
+    subject = str(packet.get("subject") or "public market evidence review")
+    symbol = str(packet.get("symbol") or "").strip()
+
+    news_lines = [
+        f"- [{row.get('title') or 'Untitled source'}]({row.get('source_url')}) — "
+        f"{row.get('publisher') or row.get('source_name') or 'publisher unavailable'}, "
+        f"published `{row.get('published_at') or 'unknown'}`, captured `{row.get('captured_at') or 'unknown'}`; "
+        f"materiality={((row.get('materiality') or {}).get('score'))}."
+        for row in news
+    ]
+    quote_lines = [
+        f"- `{row.get('exchange') or ''}:{row.get('symbol') or row.get('provider_symbol') or ''}` "
+        f"last `{row.get('last_price')}`, change `{row.get('change_percent')}`, received `{row.get('received_at')}` "
+        f"from `{row.get('provider')}`; broker_write_allowed={bool(row.get('broker_write_allowed'))}."
+        for row in quotes
+    ]
+    event_lines = [
+        f"- `{row.get('event_date')}` {row.get('exchange') or ''}:{row.get('symbol') or ''} "
+        f"{row.get('event_type') or row.get('purpose') or 'event'}; "
+        f"source `{row.get('source_key')}`" + (f" ([evidence]({row.get('source_url')}))." if row.get('source_url') else ".")
+        for row in events
+    ]
+    freshness_lines = [
+        f"- `{row.get('source_key')}` status=`{row.get('status')}`, severity=`{row.get('severity')}`, "
+        f"staleness_minutes=`{row.get('staleness_minutes')}`, checked=`{row.get('latest_check_at')}`."
+        for row in freshness
+    ]
+    missing = [str(value) for value in quality.get("missing_evidence") or []]
+    warnings = [str(value) for value in quality.get("warnings") or []]
+    control_lines = [
+        f"- Packet `{packet.get('packet_version')}` fingerprint `{packet.get('source_fingerprint')}`.",
+        f"- Data-quality status: `{quality.get('status')}`; news={quality.get('news_count', 0)}, "
+        f"quotes={quality.get('quote_count', 0)}, events={quality.get('event_count', 0)}, freshness checks={quality.get('freshness_count', 0)}.",
+        "- Capital action allowed: false. Live execution allowed: false. Broker write allowed: false.",
+    ]
+
+    role_section: list[str]
+    next_actions: list[str]
+    if skill_key == "research_evidence_curation":
+        role_section = [
+            "### Evidence intake conclusion",
+            "- The packet is a frozen public-source snapshot for this graph run; downstream nodes must use this fingerprint.",
+            "- News headlines and quote rows are evidence of recorded source output, not proof that every reported claim is true.",
+        ]
+        next_actions = [
+            "Send the same packet to business, filing, bear-case, and valuation review; require each node to state missing evidence.",
+            "Pause the workflow if the source gate is blocked or the source fingerprint cannot be reproduced.",
+        ]
+    elif skill_key == "company_research_note":
+        role_section = [
+            "### Business review boundary",
+            "- The public items establish current topics and reported events only; they do not establish economics, moat, management quality, or intrinsic value.",
+            "- No company statement facts or accepted dossier were supplied by this packet.",
+        ]
+        next_actions = [
+            "Open the cited primary source for each material claim and request official company/exchange evidence before changing a thesis.",
+            "Keep portfolio sizing and trade recommendations blocked.",
+        ]
+    elif skill_key == "analyze_corporate_filing":
+        filing_rows = list(context.get("recent_filings") or [])
+        role_section = [
+            "### Filing review boundary",
+            *(
+                [f"- Stored official filing rows available to this node: {len(filing_rows)}; inspect their attachment/extraction status before relying on terms."]
+                if filing_rows
+                else ["- No accepted official filing row is available to this node. Reported terms in public news remain unverified."]
+            ),
+        ]
+        next_actions = [
+            "Revalidate and run the lawful official filing collector for the exact issuer/symbol before claiming filing terms.",
+            "Do not infer missing consideration, dates, approvals, or conditions from a headline.",
+        ]
+    elif skill_key == "long_term_bear_case_review":
+        role_section = [
+            "### Disconfirming-evidence review",
+            "- Source concentration, missing official filings/fundamentals, and absent valuation inputs are active risks, not footnotes.",
+            "- A public headline can be wrong, late, incomplete, promotional, or already reflected in price.",
+        ]
+        next_actions = [
+            "Seek a primary-source contradiction, adverse event, balance-sheet constraint, and thesis invalidation test.",
+            "Request more evidence rather than converting narrative momentum into a recommendation.",
+        ]
+    elif skill_key == "long_term_valuation_review":
+        role_section = [
+            "### Valuation gate",
+            "- No accepted company cash-flow, balance-sheet, share-count, segment, or forecast inputs are present in this public-market packet.",
+            "- Intrinsic value, target price, margin of safety, and position size are therefore unavailable.",
+        ]
+        next_actions = [
+            "Acquire versioned official financial inputs and explicit assumptions before running a valuation model.",
+            "Return a missing-evidence result; do not estimate from headlines or a last price.",
+        ]
+    elif skill_key == "risk_gate_review":
+        role_section = [
+            "### Independent risk gate",
+            "- This packet supports research triage only. It contains no reconciled portfolio, limits, liquidity model, stress result, or validated strategy evidence.",
+            "- Capital allocation, client action, paper promotion, staged live action, and broker execution remain blocked.",
+        ]
+        next_actions = [
+            "Route unresolved evidence gaps to accountable owners and keep the human decision framed as approve more research, defer, or reject.",
+            "Require a separate portfolio/risk gate before any action proposal.",
+        ]
+    else:
+        role_section = ["### Bounded review", "- Use only the cited packet and preserve every missing-evidence condition."]
+        next_actions = ["Route the packet to human review without creating a trade or external action."]
+
+    summary = "\n".join([
+        "## Public Market Research Evidence Brief",
+        f"- Subject: {subject}" + (f"; symbol `{symbol}`." if symbol else "."),
+        f"- Snapshot generated `{packet.get('generated_at')}` using `{packet.get('selection_mode')}` over {packet.get('lookback_hours')} hours.",
+        "",
+        "### Source controls",
+        *control_lines,
+        *([f"- Missing evidence: {value}" for value in missing] or ["- No blocking source-gate failure was recorded."]),
+        *([f"- Warning: {value}" for value in warnings] or []),
+        "",
+        "### Cited public news",
+        *(news_lines or ["- No cited public news rows were available."]),
+        "",
+        "### Read-only market observations",
+        *(quote_lines or ["- No matching read-only quote was available; no price-dependent conclusion is made."]),
+        "",
+        "### Stored corporate events",
+        *(event_lines or ["- No matching stored event was available."]),
+        "",
+        "### Freshness evidence",
+        *(freshness_lines or ["- No source-freshness evidence was available."]),
+        "",
+        *role_section,
+    ])
+    return summary, next_actions
+
+
 def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, Any], context: dict[str, Any]) -> tuple[str, list[str]]:
     skill_key = str(skill.get("skill_key") or job.get("suggested_skill_key") or "refresh_dashboard_widget")
     lines: list[str] = []
     next_actions: list[str] = []
 
-    if skill_key == "kronos_forecast_feature_generation" and context.get("kronos_forecast"):
+    if context.get("market_research_packet") and skill_key in {
+        "research_evidence_curation",
+        "company_research_note",
+        "analyze_corporate_filing",
+        "long_term_bear_case_review",
+        "long_term_valuation_review",
+        "risk_gate_review",
+    }:
+        summary, next_actions = market_research_summary_for(skill_key, context)
+        lines.append(summary)
+    elif skill_key == "kronos_forecast_feature_generation" and context.get("kronos_forecast"):
         forecast = context["kronos_forecast"]
         validation = forecast.get("validation") or {}
         terminal = ((forecast.get("features") or {}).get("terminal_return") or {})
@@ -1046,6 +1277,23 @@ def summary_for(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, A
         )
         next_actions.append("Run realized calibration, walk-forward cost-aware backtesting, and independent Model Risk review.")
         next_actions.append("Keep every forecast-derived feature out of signals, paper orders, and live orders until the graph's human decision gate.")
+    elif skill_key == "quant_data_science_review" and context.get("kronos_calibration"):
+        calibration = context["kronos_calibration"]
+        metrics = calibration.get("metrics") or {}
+        lines.append(
+            f"Scored Kronos forecast run {calibration.get('forecast_run_id')} against "
+            f"{metrics.get('realized_points')} of {metrics.get('expected_horizon')} canonical future bars."
+        )
+        lines.append(
+            f"Calibration status={calibration.get('status')}; interval coverage={metrics.get('interval_coverage')}; "
+            f"directional accuracy={metrics.get('directional_accuracy')}; CRPS={metrics.get('crps')}; "
+            f"timestamp match rate={metrics.get('timestamp_match_rate')}."
+        )
+        lines.append(
+            "This is one realized origin and cannot validate the model, promote a strategy, allocate capital, or create an order."
+        )
+        next_actions.append("Accumulate at least 20 non-overlapping matured origins and run walk-forward model review.")
+        next_actions.append("Repair source timestamp semantics when timestamp match rate is below one.")
     elif job.get("source_kind") == "committee_packet_position":
         position = committee_position_for(job, profile, context)
         packet = context.get("committee_packet") or {}
@@ -1467,6 +1715,18 @@ def write_note(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, An
             f"gap_type={gap.get('gap_type')} "
             f"source={gap.get('source_view')}:{gap.get('source_id')}"
         )
+    market_packet = context.get("market_research_packet") or {}
+    if market_packet:
+        evidence.append(
+            "market.public_evidence_packet "
+            f"fingerprint={market_packet.get('source_fingerprint')} "
+            f"quality={(market_packet.get('quality') or {}).get('status')}"
+        )
+        for item in market_packet.get("news") or []:
+            evidence.append(
+                "market.news_items "
+                f"id={item.get('id')} source={item.get('source_url')} captured_at={item.get('captured_at')}"
+            )
     body = [
         f"# Agent Worker Run - Task {job.get('task_id')}",
         "",
@@ -1573,6 +1833,21 @@ def complete_job(job: dict[str, Any], profile: dict[str, Any], skill: dict[str, 
             "source_view": gap.get("source_view"),
             "source_id": gap.get("source_id"),
             "owner_agent": gap.get("owner_agent"),
+        })
+    market_packet = context.get("market_research_packet") or {}
+    if market_packet:
+        evidence.append({
+            "source": "market.public_evidence_packet",
+            "packet_version": market_packet.get("packet_version"),
+            "source_fingerprint": market_packet.get("source_fingerprint"),
+            "quality_status": (market_packet.get("quality") or {}).get("status"),
+            "source_refs": [
+                {"table": "market.news_items", "id": item.get("id"), "source_url": item.get("source_url")}
+                for item in market_packet.get("news") or []
+            ],
+            "capital_action_allowed": False,
+            "live_execution_allowed": False,
+            "broker_write_allowed": False,
         })
     kronos_forecast = context.get("kronos_forecast")
     if isinstance(kronos_forecast, dict):
@@ -1802,6 +2077,17 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     "gate_ids": [],
                     "reason": "pinned local model adapter with independent tool readiness and no provider spend",
                 }
+            elif skill_key == "quant_data_science_review" and job.get("source_kind") == "agent_message":
+                message_metadata = (context_for(skill_key, job.get("widget_key"), job).get("agent_message") or {}).get("metadata") or {}
+                if message_metadata.get("graph_key") == "kronos_forecast_research":
+                    gate_result = {
+                        "overall_status": "passed",
+                        "next_task_status": "in_progress",
+                        "gate_ids": [],
+                        "reason": "deterministic realized calibration with no provider spend or execution authority",
+                    }
+                else:
+                    gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             else:
                 gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             if gate_result.get("overall_status") != "passed":
@@ -1821,8 +2107,22 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                 continue
             context = context_for(skill_key, job.get("widget_key"), job)
             context["execution_envelope"] = execution_envelope_for(profile, skill)
+            market_packet = context.get("market_research_packet") or {}
+            if (
+                skill_key == "research_evidence_curation"
+                and market_packet
+                and (market_packet.get("quality") or {}).get("status") == "blocked"
+            ):
+                missing = "; ".join(str(value) for value in (market_packet.get("quality") or {}).get("missing_evidence") or [])
+                raise RuntimeError("public market evidence gate blocked: " + (missing or "source evidence unavailable"))
             if skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
                 run_kronos_adapter(job, context)
+            if (
+                skill_key == "quant_data_science_review"
+                and job.get("source_kind") == "agent_message"
+                and ((context.get("agent_message") or {}).get("metadata") or {}).get("graph_key") == "kronos_forecast_research"
+            ):
+                run_kronos_calibration(job, context)
             summary, next_actions = summary_for(job, profile, skill, context)
             note_path = write_note(job, profile, skill, context, summary, next_actions)
             completed = complete_job(job, profile, skill, context, summary, note_path)

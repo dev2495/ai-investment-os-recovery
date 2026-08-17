@@ -12,12 +12,12 @@
  */
 
 import React from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Search, Sparkles, Sun, Moon, Bell, Command, RefreshCw, Database, Radio, ShieldCheck } from "lucide-react";
 import { useUIStore } from "../store";
 import { useBeginZerodhaAuth, useExchangeZerodhaCallbackUrl, useMissionControl, useZerodhaAuthStatus, useZerodhaMarketStatus } from "../data/queries";
 import { useSyncZerodhaAccount, useSyncZerodhaMarket } from "../data/actions";
-import { Button, Drawer, IconButton, StatusPill, TextArea } from "../system/primitives";
+import { Button, Drawer, IconButton, Select, StatusPill, TextArea } from "../system/primitives";
 import { bool, num, text, value } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { GlobalTopbarCss } from "./GlobalTopbar.css";
@@ -28,17 +28,19 @@ import { GlobalTopbarCss } from "./GlobalTopbar.css";
  */
 const TOPBAR_NAV = [
   { path: "/today", label: "Today" },
-  { path: "/firm/office", label: "Office" },
-  { path: "/fundamental/theses", label: "Fundamental" },
-  { path: "/quant/lab", label: "Quant" },
-  { path: "/trading/blotter", label: "Trading" },
-  { path: "/portfolio/overview", label: "Portfolio" },
-  { path: "/macro/dashboard", label: "Macro" },
-  { path: "/risk/dashboard", label: "Risk" },
+  { path: "/firm/agents", label: "Agents" },
+  { path: "/portfolio/imports", label: "Portfolio" },
+  { path: "/fundamental/theses", label: "Theses" },
+  { path: "/research/cases", label: "Research" },
+  { path: "/firm/graphs", label: "Loops" },
+  { path: "/options/desk", label: "Options" },
+  { path: "/trading/tradingview", label: "Charts" },
+  { path: "/firm/system", label: "System" },
 ];
 
 export function GlobalTopbar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const togglePalette = useUIStore((s) => s.togglePalette);
   const toggleAssistant = useUIStore((s) => s.toggleAssistant);
   const theme = useUIStore((s) => s.theme);
@@ -52,13 +54,15 @@ export function GlobalTopbar() {
   const exchangeCallback = useExchangeZerodhaCallbackUrl();
   const syncAccount = useSyncZerodhaAccount();
   const syncMarket = useSyncZerodhaMarket();
-  const approvalCount = mission?.approvals?.length ?? 0;
-  const riskEvents = mission?.execution_control?.filter(
-    (r) => text(r, "kind") === "risk_event" || text(r, "control_key") === "global_kill_switch"
-  ) ?? [];
-  const riskCount = riskEvents.length;
+  const approvalCount = mission?.approvals?.filter((row) =>
+    ["pending", "requested", "needs_review"].includes(text(row, "status").toLowerCase())
+  ).length ?? 0;
+  const riskCount = mission?.risk_events?.length ?? 0;
+  const openWorkCount = mission?.inbox?.filter((row) =>
+    !["done", "resolved", "closed", "cancelled"].includes(text(row, "status").toLowerCase())
+  ).length ?? 0;
 
-  const totalAttention = approvalCount + (riskCount > 0 ? 1 : 0);
+  const totalAttention = approvalCount + riskCount + openWorkCount;
 
 
   const reconnectZerodha = () => {
@@ -92,6 +96,16 @@ export function GlobalTopbar() {
             <span className="aios-topbar__wordmark-line2">Office</span>
           </div>
         </div>
+
+        <Select
+          className="aios-topbar__mobile-nav"
+          aria-label="Open primary workspace"
+          value={TOPBAR_NAV.some((item) => item.path === location.pathname) ? location.pathname : ""}
+          onChange={(event) => event.target.value && navigate(event.target.value)}
+        >
+          <option value="">Workspaces</option>
+          {TOPBAR_NAV.map((item) => <option key={item.path} value={item.path}>{item.label}</option>)}
+        </Select>
 
         {/* Domain nav — the full function list is in the left sidebar */}
         <nav className="aios-topbar__nav">
@@ -147,7 +161,7 @@ export function GlobalTopbar() {
             <button
               className={`aios-topbar__attention ${riskCount > 0 ? "aios-topbar__attention--risk" : "aios-topbar__attention--warn"}`}
               onClick={() => navigate("/today")}
-              title={`${approvalCount} approval${approvalCount === 1 ? "" : "s"}${riskCount > 0 ? `, ${riskCount} risk alert${riskCount === 1 ? "" : "s"}` : ""}`}
+              title={`${openWorkCount} open work item${openWorkCount === 1 ? "" : "s"}, ${approvalCount} approval${approvalCount === 1 ? "" : "s"}, ${riskCount} risk alert${riskCount === 1 ? "" : "s"}`}
             >
               <Bell size={14} />
               <span className="aios-topbar__attention-count">{totalAttention}</span>
@@ -177,7 +191,7 @@ export function GlobalTopbar() {
         market={zerodhaMarket}
         reconnect={reconnectZerodha}
         reconnectPending={beginZerodha.isPending}
-        exchangeCallback={(url) => exchangeCallback.mutate(url)}
+        exchangeCallback={(url, onSuccess) => exchangeCallback.mutate(url, { onSuccess })}
         exchangePending={exchangeCallback.isPending}
         exchangeComplete={exchangeCallback.isSuccess}
         refresh={() => refreshZerodhaMarket()}
@@ -199,7 +213,7 @@ function BrokerSessionDrawer(props: {
   market?: LiveRow;
   reconnect: () => void;
   reconnectPending: boolean;
-  exchangeCallback: (url: string) => void;
+  exchangeCallback: (url: string, onSuccess: () => void) => void;
   exchangePending: boolean;
   exchangeComplete: boolean;
   refresh: () => void;
@@ -245,7 +259,7 @@ function BrokerSessionDrawer(props: {
           />
           <Button
             icon={ShieldCheck}
-            onClick={() => props.exchangeCallback(callbackUrl.trim())}
+            onClick={() => props.exchangeCallback(callbackUrl.trim(), () => setCallbackUrl(""))}
             disabled={!callbackUrl.trim() || props.exchangePending}
           >
             {props.exchangePending ? "Connecting session…" : props.exchangeComplete ? "Session connected" : "Use pasted login URL"}

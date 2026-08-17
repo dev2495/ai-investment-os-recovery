@@ -26,6 +26,7 @@ import {
   useOpenLongTermCommittee, useUpsertWatchlist,
   useRunInstitutionalFundamentalFactory,
   useReviewFundamentalEvidence,
+  useReviewFundamentalOpinion,
   useSyncFundamentalRemediation,
   useSyncFundamentalCompanyIntake,
   useRegisterCompanyIRSource,
@@ -39,6 +40,7 @@ import {
 import { AreaSeriesChart, DonutChart } from "../../system/charts";
 import { text, num, bool, timestamp, value, formatRelative, formatCompact, formatPercent, formatCurrency } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
+import LongTermThesisWorkspace from "./LongTermThesisWorkspace";
 
 const TABS = [
   { key: "theses", label: "Long-Term Theses", icon: BookOpen },
@@ -56,6 +58,10 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
 
   function setTab(key: string) {
     navigate(`/fundamental/${key}`);
+  }
+
+  if (tab === "theses") {
+    return <LongTermThesisWorkspace />;
   }
 
   return (
@@ -80,7 +86,6 @@ export default function FundamentalResearch({ defaultTab = "theses" }: { default
 
       <FundamentalFactoryControl />
 
-      {tab === "theses" && <ThesesView />}
       {tab === "scorecards" && <ScorecardsView />}
       {tab === "valuation" && <ValuationView />}
       {tab === "coverage" && <CoverageView />}
@@ -409,9 +414,11 @@ function ScorecardsView() {
   const checklists = data?.long_term_checklists ?? [];
   const theses = data?.long_term_theses ?? [];
   const opinions = data?.fundamental_specialist_opinions ?? [];
+  const governanceObservations = data?.governance_forensic_observations ?? [];
   const remediationTasks = data?.fundamental_remediation_tasks ?? [];
   const [selectedThesis, setSelectedThesis] = React.useState<string>("");
   const [selectedChecklist, setSelectedChecklist] = React.useState<LiveRow | null>(null);
+  const [selectedOpinion, setSelectedOpinion] = React.useState<LiveRow | null>(null);
 
   function runAll() {
     if (!selectedThesis) {
@@ -446,6 +453,11 @@ function ScorecardsView() {
   const selectedOpinions = selectedThesis
     ? opinions.filter((row) => num(row, "holding_thesis_id") === Number(selectedThesis))
     : opinions;
+  const selectedThesisRow = theses.find((row) => num(row, "holding_thesis_id", num(row, "id")) === Number(selectedThesis));
+  const selectedSymbol = selectedThesisRow ? text(selectedThesisRow, "symbol", text(selectedThesisRow, "holding_symbol")) : "";
+  const selectedGovernanceObservations = selectedSymbol
+    ? governanceObservations.filter((row) => text(row, "primary_symbol").toUpperCase() === selectedSymbol.toUpperCase())
+    : governanceObservations;
 
   return (
     <>
@@ -500,8 +512,31 @@ function ScorecardsView() {
             { key: "conclusion", header: "Current conclusion", render: (row) => text(row, "conclusion") },
             { key: "followups", header: "Required follow-ups", render: (row) => compactJson(value(row, "required_followups", [])) },
             { key: "evidence", header: "Evidence", render: (row) => <StatusPill status={text(row, "evidence_verification_status")} /> },
+          ]} onRowClick={setSelectedOpinion} />
+        )}
+      </Panel>
+
+      <Panel icon={Gavel} title="Governance & Forensic Evidence" actions={<Badge tone={selectedGovernanceObservations.some((row) => ["high", "critical"].includes(text(row, "severity"))) ? "risk" : "ok"}>{selectedGovernanceObservations.length} cited observations</Badge>}>
+        {selectedGovernanceObservations.length === 0 ? (
+          <Empty icon={Search} title="No structured governance review" description="Run the annual-report governance extractor after a primary report is retained." />
+        ) : (
+          <DataTable rows={selectedGovernanceObservations} rowKey={(row, index) => text(row, "id", String(index))} columns={[
+            { key: "issue", header: "Observation", render: (row) => <div><strong>{text(row, "observation_key").replace(/_/g, " ")}</strong><div className="micro">{text(row, "category").replace(/_/g, " ")}</div></div> },
+            { key: "severity", header: "Severity", render: (row) => <StatusPill status={text(row, "severity")} /> },
+            { key: "status", header: "Disclosure", render: (row) => <StatusPill status={text(row, "observation_status")} /> },
+            { key: "conclusion", header: "Conclusion", render: (row) => text(row, "conclusion") },
+            { key: "page", header: "Page", align: "right", render: (row) => num(row, "source_page") },
+            { key: "source", header: "Source", render: (row) => {
+              const url = text(row, "source_url");
+              return /^https?:\/\//i.test(url) ? <a href={url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>Open report</a> : text(row, "source_title");
+            } },
           ]} />
         )}
+        {selectedGovernanceObservations.length > 0 ? (
+          <div style={{ padding: "var(--space-3)", borderTop: "1px solid var(--border-subtle)", color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>
+            Machine extraction completes the checklist but does not clear an issue. Open the cited report and use the evidence review workflow before marking evidence human verified.
+          </div>
+        ) : null}
       </Panel>
 
       <Panel icon={Send} title="Fundamental Remediation Queue" actions={<Badge tone={remediationTasks.some((row) => ["queued", "in_progress", "needs_review"].includes(text(row, "status"))) ? "warn" : "ok"}>{remediationTasks.length} tasks</Badge>}>
@@ -537,7 +572,67 @@ function ScorecardsView() {
       </Panel>
 
       <ChecklistReviewDrawer checklist={selectedChecklist} onClose={() => setSelectedChecklist(null)} />
+      <FundamentalOpinionReviewDrawer opinion={selectedOpinion} onClose={() => setSelectedOpinion(null)} />
     </>
+  );
+}
+
+function FundamentalOpinionReviewDrawer({ opinion, onClose }: { opinion: LiveRow | null; onClose: () => void }) {
+  const mutation = useReviewFundamentalOpinion();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [rationale, setRationale] = React.useState("");
+
+  React.useEffect(() => {
+    setRationale("");
+    mutation.reset();
+  }, [opinion?.id]);
+
+  function review(decision: "reviewed" | "dissent" | "rejected") {
+    if (!opinion || rationale.trim().length < 12) return;
+    mutation.mutate({
+      opinion_id: num(opinion, "id"),
+      decision,
+      rationale: rationale.trim(),
+      operator_confirmed: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => {
+        pushToast({
+          title: decision === "reviewed" ? "Specialist opinion reviewed" : decision === "dissent" ? "Dissent preserved" : "Specialist opinion rejected",
+          message: text(opinion, "specialist_key").replace(/_/g, " "),
+          tone: decision === "reviewed" ? "ok" : "warn",
+          duration: 5000,
+        });
+        onClose();
+      },
+      onError: (error) => pushToast({ title: "Opinion review failed", message: error.message, tone: "risk", duration: 6500 }),
+    });
+  }
+
+  const sourceUrl = opinion ? text(opinion, "source_url") : "";
+  return (
+    <Drawer open={Boolean(opinion)} onClose={onClose} title="Review Specialist Opinion" subtitle={opinion ? `${text(opinion, "primary_exchange")}:${text(opinion, "primary_symbol")} / ${text(opinion, "specialist_key").replace(/_/g, " ")}` : ""} icon={Microscope} width={760}>
+      {opinion ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Panel title={text(opinion, "agent_name")}>
+            <KeyValue label="Opinion status" value={text(opinion, "opinion_status")} />
+            <KeyValue label="Evidence status" value={text(opinion, "evidence_verification_status")} />
+            <KeyValue label="Conclusion" value={text(opinion, "conclusion")} />
+            <KeyValue label="Disconfirming evidence" value={text(opinion, "disconfirming_evidence", "None recorded")} />
+            <KeyValue label="Required follow-ups" value={compactJson(value(opinion, "required_followups", []))} />
+            {/^https?:\/\//i.test(sourceUrl) ? <a href={sourceUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontSize: "var(--text-sm)" }}>Open supporting source</a> : null}
+          </Panel>
+          <Field label="Operator review rationale" required>
+            <TextArea rows={5} value={rationale} onChange={(event) => setRationale(event.target.value)} placeholder="Record whether the conclusion is supported, what remains unresolved, and why this review status is appropriate." />
+          </Field>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", justifyContent: "flex-end" }}>
+            <Button variant="ghost" icon={AlertTriangle} onClick={() => review("rejected")} disabled={rationale.trim().length < 12 || mutation.isPending}>Reject</Button>
+            <Button variant="subtle" icon={TrendingDown} onClick={() => review("dissent")} disabled={rationale.trim().length < 12 || mutation.isPending}>Preserve dissent</Button>
+            <Button variant="primary" icon={ShieldCheck} onClick={() => review("reviewed")} disabled={rationale.trim().length < 12 || mutation.isPending}>{mutation.isPending ? "Saving review..." : "Mark reviewed"}</Button>
+          </div>
+        </div>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -753,6 +848,7 @@ function ValuationModelDrawer({ model, onClose }: { model: LiveRow | null; onClo
       assumptions,
       outputs,
       evidence,
+      operator_confirmed: form.status === "reviewed",
       actor: "Devarsh",
     }, {
       onSuccess: () => { pushToast({ title: "Valuation model persisted", message: text(model, "model_name", modelKey), tone: "ok", duration: 3500 }); onClose(); },

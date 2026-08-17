@@ -599,6 +599,8 @@ def _dispatch_task_node(
     owner = str(node_run.get("owner_agent") or "Jarvis")
     skill_key = str(node_run.get("skill_key") or "route_user_request")
     configuration = node_run.get("configuration") if isinstance(node_run.get("configuration"), dict) else {}
+    source_qualified_worker_required = configuration.get("source_qualified_worker_required") is True
+    dispatch_status = "needs_review" if source_qualified_worker_required else "queued"
     priority = str(configuration.get("priority") or "medium").lower()
     if priority not in {"low", "normal", "medium", "high", "critical"}:
         priority = "medium"
@@ -615,6 +617,7 @@ def _dispatch_task_node(
         "node_key": node_run.get("node_key"),
         "skill_key": skill_key,
         "input_payload": run.get("input_payload") or {},
+        "source_qualified_worker_required": source_qualified_worker_required,
     }
     rows = statement(
         f"""
@@ -631,7 +634,7 @@ def _dispatch_task_node(
                 source_kind,source_ref,output_format,evidence
             )
             SELECT selected.node_name,{sql_literal(objective)},selected.owner_agent,
-                   'queued',{sql_literal(priority)},false,'agent_message',selected.id::TEXT,
+                   {sql_literal(dispatch_status)},{sql_literal(priority)},{str(source_qualified_worker_required).lower()},'agent_message',selected.id::TEXT,
                    'graph_node_result',jsonb_build_array(jsonb_build_object(
                        'source_table','agent.graph_node_runs','graph_run_id',selected.graph_run_id,
                        'graph_node_run_id',selected.id,'node_key',selected.node_key,
@@ -642,8 +645,8 @@ def _dispatch_task_node(
             INSERT INTO agent.inbox_items (
                 task_id,title,owner_agent,status,priority,recommended_action,evidence,target_workspace
             )
-            SELECT task.id,task.title,task.owner_agent,'queued',{sql_literal(priority)},
-                   'Complete the graph node with evidence; stop and report if a required source or permission is missing.',
+            SELECT task.id,task.title,task.owner_agent,{sql_literal(dispatch_status)},{sql_literal(priority)},
+                   {sql_literal('Assign a source-qualified worker and complete the graph node with company-scoped citations; generic task receipts do not satisfy this lane.' if source_qualified_worker_required else 'Complete the graph node with evidence; stop and report if a required source or permission is missing.')},
                    jsonb_build_array(jsonb_build_object(
                        'source_table','agent.graph_node_runs','graph_node_run_id',{node_run_id}
                    )),coalesce(nullif(profile.department,''),'command')
@@ -659,13 +662,13 @@ def _dispatch_task_node(
                    CASE WHEN EXISTS (SELECT 1 FROM agent.profiles WHERE agent_name={sql_literal(actor)} AND status='active')
                         THEN {sql_literal(actor)} ELSE 'Charlie Munger' END,
                    task.owner_agent,task.title,task.objective,{sql_literal(priority)},
-                   'routed_to_task',task.id,{sql_literal(skill_key)},{sql_jsonb(metadata)},
-                   'routed_to_task',now(),task.id,inbox.id
+                   {sql_literal('needs_review' if source_qualified_worker_required else 'routed_to_task')},task.id,{sql_literal(skill_key)},{sql_jsonb(metadata)},
+                   {sql_literal('needs_review' if source_qualified_worker_required else 'routed_to_task')},now(),task.id,inbox.id
             FROM task_insert task JOIN inbox_insert inbox ON inbox.task_id=task.id
             RETURNING id,generated_task_id,generated_inbox_id
         ), node_update AS (
             UPDATE agent.graph_node_runs node_run
-            SET status='queued',task_id=message.generated_task_id,message_id=message.id,
+            SET status={sql_literal('waiting_approval' if source_qualified_worker_required else 'queued')},task_id=message.generated_task_id,message_id=message.id,
                 started_at=coalesce(started_at,now()),updated_at=now()
             FROM message_insert message WHERE node_run.id={node_run_id}
             RETURNING node_run.id,node_run.graph_run_id,node_run.task_id,node_run.message_id
@@ -673,16 +676,18 @@ def _dispatch_task_node(
             INSERT INTO agent.graph_events (
                 graph_run_id,graph_node_run_id,event_type,severity,actor,event_payload
             )
-            SELECT node_update.graph_run_id,node_update.id,'node_dispatched','info',
+            SELECT node_update.graph_run_id,node_update.id,{sql_literal('source_worker_assignment_required' if source_qualified_worker_required else 'node_dispatched')},{sql_literal('warning' if source_qualified_worker_required else 'info')},
                    {sql_literal(actor)},jsonb_build_object(
                        'task_id',node_update.task_id,'message_id',node_update.message_id,
-                       'owner_agent',{sql_literal(owner)},'skill_key',{sql_literal(skill_key)}
+                       'owner_agent',{sql_literal(owner)},'skill_key',{sql_literal(skill_key)},
+                       'source_qualified_worker_required',{str(source_qualified_worker_required).lower()}
                    )
             FROM node_update RETURNING id
         )
         SELECT jsonb_build_array(jsonb_build_object(
             'node_run_id',node_update.id,'task_id',node_update.task_id,
-            'message_id',node_update.message_id
+            'message_id',node_update.message_id,
+            'source_qualified_worker_required',{str(source_qualified_worker_required).lower()}
         ))::TEXT FROM node_update
         """
     )
@@ -842,6 +847,45 @@ def _dispatch_approval_node(
         raise RuntimeError(f"approval node could not be dispatched: {node_run_id}")
 
 
+
+def _source_qualified_worker_validation(
+    run: dict[str, Any],
+    worker: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """Reject transport receipts that do not carry case-scoped, cited research evidence."""
+    input_payload = run.get("input_payload") if isinstance(run.get("input_payload"), dict) else {}
+    expected_case_id = int(input_payload.get("research_case_id") or 0)
+    expected_company_id = int(input_payload.get("company_id") or 0)
+    expected_ticker = str(input_payload.get("ticker") or "").strip().upper()
+    evidence = worker.get("evidence") if isinstance(worker.get("evidence"), list) else []
+    reasons: list[str] = []
+    qualified = []
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        item_case_id = int(item.get("research_case_id") or 0)
+        item_company_id = int(item.get("company_id") or 0)
+        item_ticker = str(item.get("ticker") or item.get("symbol") or "").strip().upper()
+        case_match = bool(expected_case_id and item_case_id == expected_case_id)
+        company_match = bool(expected_company_id and item_company_id == expected_company_id)
+        ticker_match = bool(expected_ticker and item_ticker == expected_ticker)
+        identity_match = case_match and (not expected_company_id or company_match) and (not expected_ticker or not item_ticker or ticker_match)
+        has_source = bool(item.get("source_url") or item.get("local_artifact_path") or item.get("source_identifier"))
+        has_locator = bool(item.get("citation_locator") or item.get("source_locator"))
+        validation_status = str(item.get("validation_status") or "").lower()
+        validated = validation_status in {"machine_validated", "human_validated", "validated", "human_reviewed"}
+        if identity_match and has_source and has_locator and validated:
+            qualified.append(item)
+    note_path = str(worker.get("output_note_path") or "")
+    ssd_backed_path = note_path.startswith("/Volumes/Devarsh SSD/") or note_path.startswith("ai memory/")
+    if not ssd_backed_path:
+        reasons.append("artifact is not stored under the external-SSD vault")
+    if not qualified:
+        reasons.append("no company-scoped cited evidence passed case, source, locator and validation checks")
+    if not str(worker.get("output_summary") or "").strip():
+        reasons.append("research artifact summary is empty")
+    return not reasons, reasons
+
 def _sync_external_nodes(
     query: QueryFn,
     statement: StatementFn,
@@ -851,7 +895,7 @@ def _sync_external_nodes(
     progressed = False
     for node_run in _fetch_node_runs(query, int(run["graph_run_id"])):
         status = str(node_run.get("status") or "")
-        if status == "waiting_approval":
+        if status == "waiting_approval" and node_run.get("approval_id"):
             requested_action = (
                 node_run.get("approval_requested_action")
                 if isinstance(node_run.get("approval_requested_action"), dict)
@@ -907,7 +951,7 @@ def _sync_external_nodes(
                     "committee_packet_id": node_run.get("committee_packet_id"),
                 })
                 progressed = True
-        elif status in {"queued", "running"} and node_run.get("task_id"):
+        elif status in {"queued", "running", "waiting_approval"} and node_run.get("task_id"):
             task_status = str(node_run.get("task_status") or "").lower()
             if task_status == "in_progress" and status != "running":
                 statement(
@@ -945,6 +989,89 @@ def _sync_external_nodes(
                     "output_note_path": worker.get("output_note_path") or node_run.get("output_note_path"),
                 }
                 evidence = worker.get("evidence") if isinstance(worker.get("evidence"), list) else []
+                configuration = node_run.get("configuration") if isinstance(node_run.get("configuration"), dict) else {}
+                source_qualification_required = (
+                    configuration.get("source_qualified_worker_required") is True
+                    or str(run.get("graph_key") or "") == "company_research_case"
+                )
+                if source_qualification_required:
+                    valid, reasons = _source_qualified_worker_validation(run, worker)
+                    if not valid:
+                        statement(
+                            f"""
+                            WITH task_update AS (
+                                UPDATE agent.tasks SET status='needs_review',approval_required=true,updated_at=now()
+                                WHERE id={int(node_run['task_id'])} RETURNING id
+                            ), inbox_update AS (
+                                UPDATE agent.inbox_items SET status='needs_review',
+                                    recommended_action='Source validation blocked. Assign a source-qualified worker; generic task receipts do not satisfy this research lane.',
+                                    updated_at=now()
+                                WHERE task_id={int(node_run['task_id'])} RETURNING id
+                            ), node_update AS (
+                                UPDATE agent.graph_node_runs SET status='waiting_approval',
+                                    worker_run_id={int(worker['id']) if worker.get('id') else 'NULL'},
+                                    error=jsonb_build_object('kind','source_validation_blocked','reasons',{sql_jsonb(reasons)}),
+                                    updated_at=now()
+                                WHERE id={int(node_run['graph_node_run_id'])} RETURNING id,graph_run_id
+                            ), graph_event AS (
+                                INSERT INTO agent.graph_events (
+                                    graph_run_id,graph_node_run_id,event_type,severity,actor,event_payload
+                                ) SELECT graph_run_id,id,'source_validation_blocked','warning',{sql_literal(actor)},
+                                         jsonb_build_object('task_id',{int(node_run['task_id'])},'reasons',{sql_jsonb(reasons)})
+                                FROM node_update RETURNING id
+                            )
+                            SELECT jsonb_build_array(jsonb_build_object(
+                                'blocked',EXISTS(SELECT 1 FROM node_update)
+                            ))::TEXT
+                            """
+                        )
+                        if str(run.get("graph_key") or "") == "company_research_case":
+                            research_case_id = int((run.get("input_payload") or {}).get("research_case_id") or 0)
+                            if research_case_id:
+                                statement(
+                                    f"""
+                                    WITH agent_update AS (
+                                        UPDATE research.research_case_agent_runs
+                                        SET status='needs_validation',
+                                            exceptions=jsonb_build_array(jsonb_build_object(
+                                                'kind','source_validation_blocked',
+                                                'summary','Generic task completion did not provide company-scoped, cited, validated research evidence.',
+                                                'reasons',{sql_jsonb(reasons)},
+                                                'task_id',{int(node_run['task_id'])},
+                                                'worker_run_id',{int(worker['id']) if worker.get('id') else 'NULL'}
+                                            )),updated_at=now()
+                                        WHERE research_case_id={research_case_id}
+                                          AND graph_node_run_id={int(node_run['graph_node_run_id'])}
+                                        RETURNING id
+                                    ), case_update AS (
+                                        UPDATE research.research_cases SET status='blocked',
+                                            exception_count=(
+                                                SELECT count(*) FROM research.research_case_agent_runs
+                                                WHERE research_case_id={research_case_id}
+                                                  AND jsonb_array_length(exceptions)>0
+                                            ),updated_at=now()
+                                        WHERE id={research_case_id} RETURNING id
+                                    ), case_event AS (
+                                        INSERT INTO research.research_case_events (
+                                            research_case_id,event_type,event_status,event_summary,actor,event_payload
+                                        ) SELECT {research_case_id},'source_validation_blocked','blocked',
+                                                 'A specialist lane produced a transport receipt without case-qualified cited evidence.',
+                                                 {sql_literal(actor)},jsonb_build_object(
+                                                     'graph_run_id',{int(run['graph_run_id'])},
+                                                     'graph_node_run_id',{int(node_run['graph_node_run_id'])},
+                                                     'task_id',{int(node_run['task_id'])},
+                                                     'reasons',{sql_jsonb(reasons)}
+                                                 )
+                                        WHERE EXISTS (SELECT 1 FROM agent_update)
+                                        RETURNING id
+                                    )
+                                    SELECT jsonb_build_array(jsonb_build_object(
+                                        'case_blocked',EXISTS(SELECT 1 FROM case_update)
+                                    ))::TEXT
+                                    """
+                                )
+                        progressed = True
+                        continue
                 _complete_node(query, statement, run, node_run, actor, output, evidence)
                 progressed = True
             elif task_status in {"blocked", "failed", "cancelled"}:
@@ -1146,6 +1273,15 @@ def cancel_graph_run(query: QueryFn, statement: StatementFn, payload: dict[str, 
             UPDATE agent.graph_runs SET run_status='cancelled',finished_at=now(),
                 failure=jsonb_build_object('kind','operator_cancelled','reason',{sql_literal(reason)}),updated_at=now()
             WHERE id={run_id} AND run_status NOT IN ('completed','failed','cancelled') RETURNING id
+        ), approval_update AS (
+            UPDATE agent.approvals approval SET status='cancelled',decided_by={sql_literal(actor)},
+                decided_at=now(),rationale=concat_ws(E'\n',nullif(approval.rationale,''),
+                    'Cancelled with graph run: ' || {sql_literal(reason)})
+            FROM agent.graph_node_runs node_run, updated
+            WHERE node_run.graph_run_id=updated.id
+              AND node_run.approval_id=approval.id
+              AND approval.status='pending'
+            RETURNING approval.id
         ), node_update AS (
             UPDATE agent.graph_node_runs node_run SET status='cancelled',finished_at=now(),updated_at=now()
             FROM updated WHERE node_run.graph_run_id=updated.id

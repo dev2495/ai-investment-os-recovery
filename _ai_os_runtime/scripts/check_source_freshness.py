@@ -75,13 +75,18 @@ def source_rows(source_key: str | None, limit: int) -> list[dict[str, Any]]:
                 latest_check.sample_payload,
                 latest_ok.latest_ok_at,
                 latest_quote.latest_quote_at,
-                EXTRACT(EPOCH FROM (
-                    now() - GREATEST(
-                        coalesce(latest_quote.latest_quote_at, '-infinity'::timestamptz),
-                        coalesce(latest_ok.latest_ok_at, '-infinity'::timestamptz),
-                        coalesce(latest_check.checked_at, '-infinity'::timestamptz)
-                    )
-                )) / 60 AS staleness_minutes
+                CASE
+                    WHEN latest_quote.latest_quote_at IS NULL
+                     AND latest_ok.latest_ok_at IS NULL
+                     AND latest_check.checked_at IS NULL THEN NULL
+                    ELSE EXTRACT(EPOCH FROM (
+                        now() - GREATEST(
+                            coalesce(latest_quote.latest_quote_at, '-infinity'::timestamptz),
+                            coalesce(latest_ok.latest_ok_at, '-infinity'::timestamptz),
+                            coalesce(latest_check.checked_at, '-infinity'::timestamptz)
+                        )
+                    )) / 60
+                END AS staleness_minutes
             FROM core.data_source_registry ds
             LEFT JOIN latest_check ON latest_check.source_key = ds.source_key
             LEFT JOIN latest_ok ON latest_ok.source_key = ds.source_key

@@ -117,6 +117,63 @@ class ZerodhaAuthSecurityTests(unittest.TestCase):
                 "callback_url": "https://example.test/?action=login&status=success&request_token=secret",
             })
 
+    def test_reused_callback_reconciles_only_to_a_valid_bound_session(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "exchange_zerodha_request_token",
+                side_effect=RuntimeError("HTTPError: HTTP Error 403: Forbidden"),
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "zerodha_auth_status",
+                return_value={
+                    "daily_access_token_available": True,
+                    "profile_validated": True,
+                    "account_match": True,
+                    "access_token_expires_at": "2026-08-09T06:00:00+05:30",
+                },
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "restart_zerodha_stream_async",
+                return_value={"status": "restart_requested"},
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "start_zerodha_post_login_sync",
+                return_value={"status": "started", "jobs": {}, "broker_write_allowed": False},
+            ) as refresh,
+            mock.patch.object(ai_os_api_server, "audit_api_write"),
+        ):
+            result = ai_os_api_server.exchange_zerodha_callback_url({
+                "callback_url": "https://kite.zerodha.com/?action=login&status=success&request_token=used-secret",
+                "actor": "Devarsh",
+            })
+
+        self.assertEqual(result["status"], "already_connected")
+        self.assertTrue(result["account_match"])
+        self.assertEqual(result["post_login_sync"]["status"], "started")
+        refresh.assert_called_once()
+
+    def test_reused_callback_fails_when_no_current_bound_session_exists(self) -> None:
+        with (
+            mock.patch.object(
+                ai_os_api_server,
+                "exchange_zerodha_request_token",
+                side_effect=RuntimeError("HTTPError: HTTP Error 403: Forbidden"),
+            ),
+            mock.patch.object(
+                ai_os_api_server,
+                "zerodha_auth_status",
+                return_value={"daily_access_token_available": False},
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Start a new login"):
+                ai_os_api_server.exchange_zerodha_callback_url({
+                    "callback_url": "https://kite.zerodha.com/?action=login&status=success&request_token=expired-secret",
+                })
+
     def test_post_login_sync_reports_spawn_failure_without_failing_login(self) -> None:
         with mock.patch.object(
             ai_os_api_server.subprocess,

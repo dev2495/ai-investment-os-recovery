@@ -20,11 +20,34 @@ export const AppShellCss = `
   position: relative;
 }
 
+.aios-topbar,
+.aios-sidebar,
+.aios-assistant {
+  --surface: var(--shell-bg);
+  --surface-soft: var(--shell-soft);
+  --surface-elevated: var(--shell-elevated);
+  --bg-sunken: color-mix(in srgb, var(--shell-bg) 82%, #ffffff);
+  --text: var(--shell-text);
+  --text-secondary: var(--shell-text-secondary);
+  --text-muted: var(--shell-text-muted);
+  --text-faint: var(--shell-text-faint);
+  --border: var(--shell-border);
+  --border-strong: color-mix(in srgb, var(--shell-border) 72%, #ffffff);
+  --border-subtle: color-mix(in srgb, var(--shell-border) 70%, transparent);
+  --accent: var(--shell-accent);
+  --accent-hover: #e4be87;
+  --accent-soft: var(--shell-accent-soft);
+  --accent-soft-strong: var(--shell-accent-strong);
+  background: var(--shell-bg);
+  color: var(--shell-text);
+}
+
 .aios-app-content {
   flex: 1;
   min-width: 0;
   overflow: auto;
   position: relative;
+  background: var(--bg);
 }
 
 /* Destination container */
@@ -150,6 +173,14 @@ export const AppShellCss = `
 .aios-sidebar__item-status--preview { background: var(--status-warn); }
 .aios-sidebar__item-status--beta { background: var(--status-info); }
 .aios-sidebar__item-status--live { background: var(--status-ok); }
+.aios-sidebar__coverage-note {
+  margin: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+}
 
 /* Sidebar collapse on small screens */
 @media (max-width: 1000px) {
@@ -157,7 +188,8 @@ export const AppShellCss = `
   .aios-sidebar__item-label,
   .aios-sidebar__item-code,
   .aios-sidebar__item-status,
-  .aios-sidebar__group-head span { display: none; }
+  .aios-sidebar__group-head span,
+  .aios-sidebar__coverage-note { display: none; }
   .aios-sidebar__item { justify-content: center; }
   .aios-sidebar__group-head { justify-content: center; }
 }

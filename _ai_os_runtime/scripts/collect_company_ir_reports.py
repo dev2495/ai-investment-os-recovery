@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.parse
 from html.parser import HTMLParser
 from pathlib import Path
@@ -61,16 +62,35 @@ def fetch_bytes(url: str, accept: str, timeout: int = 60) -> bytes:
 
 def fiscal_year(text: str) -> tuple[int, int] | None:
     normalized = re.sub(r"[_–—]", "-", urllib.parse.unquote(text))
-    match = re.search(r"(?:20)?(\d{2})\s*-\s*(?:20)?(\d{2})", normalized)
-    if not match:
-        return None
-    start = int(match.group(1))
-    end = int(match.group(2))
-    start += 2000 if start < 80 else 1900
-    end += 2000 if end < 80 else 1900
-    if end != start + 1 or not 2000 <= start <= 2100:
-        return None
-    return start, end
+    # Prefer an explicit fiscal-year range. The former loose two-digit
+    # matcher could read pairs from cache-busting filename prefixes and
+    # silently classify a current report as an old fiscal year.
+    match = re.search(r"\b((?:19|20)\d{2})\s*-\s*((?:19|20)?\d{2})\b", normalized)
+    if match:
+        start = int(match.group(1))
+        raw_end = match.group(2)
+        end = int(raw_end) if len(raw_end) == 4 else (start // 100) * 100 + int(raw_end)
+        if end < start:
+            end += 100
+        if end == start + 1 and 2000 <= start <= 2100:
+            return start, end
+    # Some issuer files carry only the fiscal year end (SBCL_AR_2026 or
+    # Shivalik_AR2024). Accept it only beside an annual-report marker.
+    single = re.search(
+        r"(?:annual[\s-]*report|(?:^|-)ar)(?:[\s-]*(?:final|file))?[\s-]*((?:19|20)\d{2})\b",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not single:
+        single = re.search(
+            r"\b((?:19|20)\d{2})\b(?=[\s-]*(?:annual[\s-]*report|ar)\b)",
+            normalized,
+            re.IGNORECASE,
+        )
+    if single:
+        end = int(single.group(1))
+        return end - 1, end
+    return None
 
 
 def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> list[dict[str, Any]]:
@@ -89,7 +109,10 @@ def discover_reports(page_url: str, include_subsidiaries: bool, limit: int) -> l
             continue
         if not include_subsidiaries and any(word in haystack for word in ("subsidiary", "subsidiaries", "subsidairy", "subsidiairies")):
             continue
-        if not re.search(r"annual[\s_-]+report", document_name):
+        if not (
+            re.search(r"annual[\s_-]*report", document_name)
+            or re.search(r"(?:^|[_-])ar(?:[_-]|\d)", document_name)
+        ):
             continue
         if any(term in document_name for term in NON_ANNUAL_REPORT_TERMS):
             continue
@@ -133,6 +156,18 @@ def download_report(report: dict[str, Any], symbol: str) -> dict[str, Any]:
     target_dir = ARTIFACT_ROOT / symbol.lower() / f"fy-{report['fiscal_year_start']}-{report['fiscal_year_end']}"
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / "annual-report.pdf"
+    if target.is_file():
+        cached = target.read_bytes()
+        if cached.startswith(b"%PDF"):
+            return {
+                **report,
+                "local_path": str(target),
+                "content_hash": hashlib.sha256(cached).hexdigest(),
+                "bytes_downloaded": 0,
+                "cached_bytes": len(cached),
+                "cache_hit": True,
+                "published_at": None,
+            }
     data = fetch_bytes(report["url"], "application/pdf,*/*", timeout=120)
     if not data.startswith(b"%PDF"):
         raise ValueError(f"source did not return a PDF: {report['url']}")
@@ -142,6 +177,8 @@ def download_report(report: dict[str, Any], symbol: str) -> dict[str, Any]:
         "local_path": str(target),
         "content_hash": hashlib.sha256(data).hexdigest(),
         "bytes_downloaded": len(data),
+        "cached_bytes": 0,
+        "cache_hit": False,
         "published_at": None,
     }
 
@@ -195,7 +232,34 @@ def upsert_report(run_id: int, report: dict[str, Any], symbol: str, exchange: st
         SELECT coalesce(json_agg(row_to_json(filing)), '[]'::json)::text FROM filing
         """
     )
-    return int(rows[0]["id"])
+    filing_id = int(rows[0]["id"])
+    # A captured filing is not usable by the financial normalizer until it is
+    # attached to the verified company evidence graph. Keep this evidence at
+    # captured/unverified status; page extraction and validation advance it.
+    run_psql_text(
+        f"""
+        INSERT INTO research.fundamental_evidence (
+          company_id,corporate_filing_id,raw_artifact_id,source_type,source_name,
+          source_url,source_title,published_at,retrieved_at,source_as_of_date,
+          content_hash,extraction_method,verification_status,source_locator,metadata
+        )
+        SELECT company.id,filing.id,filing.raw_artifact_id,'annual_report','Company IR',
+          filing.source_url,filing.title,filing.filed_at,now(),
+          make_date({int(report['fiscal_year_end'])},3,31),filing.content_hash,
+          'captured_official_pdf','unverified',
+          {sql_jsonb({'fiscal_year_start': report['fiscal_year_start'], 'fiscal_year_end': report['fiscal_year_end'], 'investor_relations_page': page_url})},
+          {sql_jsonb({'collector_run_id': run_id, 'public_source': True, 'broker_write_allowed': False})}
+        FROM research.companies company
+        JOIN research.corporate_filings filing ON filing.id={filing_id}
+        WHERE company.primary_symbol={sql_literal(symbol)}
+          AND company.primary_exchange={sql_literal(exchange)}
+          AND NOT EXISTS (
+            SELECT 1 FROM research.fundamental_evidence existing
+            WHERE existing.company_id=company.id AND existing.corporate_filing_id=filing.id
+          )
+        """
+    )
+    return filing_id
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
@@ -240,6 +304,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 item = download_report(report, symbol)
                 downloaded.append(item)
                 filing_ids.append(upsert_report(run_id, item, symbol, exchange, company_name, source_url))
+                if not item.get("cache_hit"):
+                    time.sleep(1.0)
         total_bytes = sum(int(row["bytes_downloaded"]) for row in downloaded)
         summary = {
             "ok": True,

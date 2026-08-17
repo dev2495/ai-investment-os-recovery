@@ -83,7 +83,7 @@ function AppShell() {
               ))}
               {/* Legacy compat redirects */}
               <Route path="/portfolio" element={<Navigate to="/portfolio/overview" replace />} />
-              <Route path="/research" element={<Navigate to="/research/filings" replace />} />
+              <Route path="/research" element={<Navigate to="/research/cases" replace />} />
               <Route path="/risk-trading" element={<Navigate to="/risk/dashboard" replace />} />
               <Route path="/firm" element={<Navigate to="/firm/office" replace />} />
               <Route path="*" element={<Navigate to="/today" replace />} />
@@ -177,6 +177,7 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/portfolio/positions": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/books": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/clients": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
+    "/portfolio/imports": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/nav": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/reconciliation": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/trackers": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
@@ -186,6 +187,7 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/risk/institutional": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
     "/risk/capital": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
     // Research & filings
+    "/research/cases": () => import("../destinations/research/ResearchCases").then((m) => ({ default: m.default })),
     "/research/filings": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/special-situations": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/papers": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),

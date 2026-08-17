@@ -1,7 +1,118 @@
 export const LiveOfficeCss = `
+.office-spatial-shell {
+  width: 100%;
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #17130f;
+  border-radius: var(--radius-md);
+  outline: none;
+}
+.office-spatial-shell:focus-visible {
+  box-shadow: 0 0 0 3px rgba(100, 209, 186, 0.42);
+}
+.office-spatial-toolbar {
+  position: relative;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(280px, 1.4fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 10px 12px;
+  color: #f2ede5;
+  background: #211c17;
+  border-bottom: 1px solid rgba(232, 220, 200, 0.18);
+}
+.office-spatial-toolbar__identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.office-spatial-toolbar__identity strong {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+}
+.office-spatial-toolbar__identity span {
+  overflow: hidden;
+  color: rgba(242, 237, 229, 0.58);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.office-spatial-toolbar__status,
+.office-spatial-toolbar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.office-spatial-toolbar__status span {
+  padding: 4px 7px;
+  color: rgba(242, 237, 229, 0.72);
+  background: rgba(242, 237, 229, 0.06);
+  border: 1px solid rgba(242, 237, 229, 0.1);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.office-spatial-toolbar__status .office-signal--fresh { color: #8ed9b6; border-color: rgba(72, 168, 121, 0.38); }
+.office-spatial-toolbar__status .office-signal--partial,
+.office-spatial-toolbar__status .office-signal--stale { color: #efc45c; border-color: rgba(215, 165, 54, 0.42); }
+.office-spatial-toolbar__status .office-signal--error { color: #f08c84; border-color: rgba(217, 86, 76, 0.46); }
+.office-spatial-toolbar__status .office-safety-lock { color: #f2cf86; border-color: rgba(242, 207, 134, 0.35); }
+.office-spatial-toolbar__controls { justify-content: flex-end; }
+.office-spatial-toolbar__controls button,
+.office-projection-state button {
+  padding: 5px 8px;
+  color: rgba(242, 237, 229, 0.82);
+  background: rgba(242, 237, 229, 0.07);
+  border: 1px solid rgba(242, 237, 229, 0.16);
+  border-radius: 4px;
+  font: 550 10px var(--font-sans);
+  cursor: pointer;
+}
+.office-spatial-toolbar__controls button:hover,
+.office-projection-state button:hover { background: rgba(242, 237, 229, 0.14); }
+.office-spatial-toolbar__controls button:focus-visible,
+.office-projection-state button:focus-visible,
+.office-hud__btn:focus-visible,
+.office-fallback button:focus-visible {
+  outline: 2px solid #64d1ba;
+  outline-offset: 2px;
+}
+.office-spatial-toolbar__controls button:disabled { cursor: not-allowed; opacity: 0.48; }
+.office-projection-state {
+  flex: 1;
+  min-height: 360px;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: var(--space-6);
+  color: rgba(242, 237, 229, 0.7);
+  text-align: center;
+}
+.office-projection-state strong { color: #f2ede5; font-family: var(--font-display); font-size: var(--text-lg); }
+.office-projection-state button { justify-self: center; margin-top: 6px; }
+.office-projection-state--error strong { color: #f08c84; }
+.office-spatial-help {
+  position: relative;
+  z-index: 40;
+  margin: 0;
+  padding: 6px 12px;
+  color: rgba(242, 237, 229, 0.5);
+  background: #211c17;
+  border-top: 1px solid rgba(232, 220, 200, 0.12);
+  font: 9px var(--font-mono);
+  text-align: center;
+}
 .office-canvas-wrap {
   position: relative;
   width: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   background: #17130f;
   border-radius: var(--radius-md);
@@ -47,6 +158,12 @@ export const LiveOfficeCss = `
 .office-room-label__dot--ok { background: #48a879; }
 .office-room-label__dot--risk { background: #e05c52; animation: aios-risk-pulse 1.4s ease-in-out infinite; }
 .office-room-label__pending { color: #efc45c; }
+.office-room-label__gated {
+  color: #efc45c;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
 
 .office-agent-popover {
   width: 220px;
@@ -128,7 +245,7 @@ export const LiveOfficeCss = `
   gap: 3px;
   margin-top: 8px;
 }
-.office-hud__activity > div {
+.office-hud__activity > button {
   display: grid;
   grid-template-columns: minmax(90px, 0.6fr) minmax(140px, 1fr) auto;
   gap: 8px;
@@ -137,8 +254,12 @@ export const LiveOfficeCss = `
   color: rgba(246, 241, 232, 0.7);
   background: rgba(22, 19, 16, 0.78);
   border-left: 2px solid rgba(100, 209, 186, 0.7);
+  width: 100%;
   font-size: 9px;
+  text-align: left;
+  cursor: pointer;
 }
+.office-hud__activity > button:disabled { cursor: not-allowed; opacity: 0.68; }
 .office-hud__activity span,
 .office-hud__activity b {
   overflow: hidden;
@@ -271,6 +392,16 @@ export const LiveOfficeCss = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.office-hud__workspace-gate {
+  width: 100%;
+  padding: 7px 9px;
+  color: #efc45c;
+  background: rgba(215, 165, 54, 0.08);
+  border: 1px solid rgba(215, 165, 54, 0.22);
+  border-radius: 4px;
+  font-size: 10px;
+  text-align: left;
+}
 .office-hud__room-actions {
   display: flex;
   flex-wrap: wrap;
@@ -301,6 +432,8 @@ export const LiveOfficeCss = `
 }
 
 .office-fallback {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: var(--space-5);
   background: var(--bg-sunken);
@@ -388,7 +521,16 @@ export const LiveOfficeCss = `
   white-space: nowrap;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .office-room-label__dot--risk { animation: none; }
+}
 @media (max-width: 850px) {
+  .office-spatial-shell { min-height: 620px; }
+  .office-spatial-toolbar { grid-template-columns: 1fr; align-items: start; }
+  .office-spatial-toolbar__controls { justify-content: flex-start; }
+  .office-spatial-toolbar__status { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .office-spatial-toolbar__status span { flex: 0 0 auto; }
+  .office-spatial-help { text-align: left; }
   .office-hud { padding: var(--space-2); }
   .office-hud__activity { display: none; }
   .office-hud__legend { display: none; }

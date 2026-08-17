@@ -13,15 +13,16 @@ import {
   TrendingDown, BarChart3, LineChart, Brain, Activity, Plus,
   AlertTriangle, Layers, Flame, Play, RefreshCw, Database, ShieldCheck,
 } from "lucide-react";
-import { useTradingQuantRisk } from "../../data/queries";
+import { useOptionsDaily } from "../../data/queries";
 import {
   useMaterializeInstitutionalOptions, useRecordManualTrade,
-  useRunInstitutionalOptionsAnalytics, useRunOptionAcceptance, useUpsertOptionValuationPolicy,
+  useRefreshOptionValuationSources, useRunInstitutionalOptionsAnalytics,
+  useRunOptionAcceptance, useUpsertOptionValuationPolicy,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
-  Button, Tabs, Drawer, Field, TextInput, TextArea, Select,
+  Button, Tabs, Drawer, Field, TextInput, TextArea, Select, Checkbox,
 } from "../../system/primitives";
 import { BarSeriesChart, LineSeriesChart, AreaSeriesChart } from "../../system/charts";
 import { text, num, raw, formatCurrency, formatCompact, formatPercent, formatRelative } from "../../data/liveRow";
@@ -39,6 +40,9 @@ const TABS = [
 export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: string }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const gate = useOptionsDaily();
+  const acceptance = gate.data?.option_acceptance ?? [];
+  const accepted = acceptance.some((row) => text(row, "status").toLowerCase() === "passed");
   const tab = location.pathname.split("/").filter(Boolean).slice(-1)[0] ?? defaultTab;
   function setTab(key: string) { navigate(`/options/${key}`); }
 
@@ -51,30 +55,86 @@ export default function OptionsDesk({ defaultTab = "desk" }: { defaultTab?: stri
             Options Desk
           </div>
           <Badge tone="accent">OPTS</Badge>
-          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>manual trading · full OI analytics · strategy builder</span>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>read-only chain · source-qualified OI analytics · paper strategy builder</span>
         </div>
         <div className="aios-destination__subtitle">
-          Real-time option chain, OI buildup analysis, provider-qualified vol analytics, straddle curves, max pain,
+          Source-qualified option chain, OI buildup, volatility analytics, straddle curves, max pain,
           strategy builder with payoff. NSE index + equity options via Zerodha.
         </div>
-        <Tabs tabs={TABS} active={tab} onChange={setTab} />
+        {accepted ? <Tabs tabs={TABS} active={tab} onChange={setTab} /> : null}
       </div>
-      {tab === "desk" ? <OptionsDataOperationsControl /> : null}
-      {tab === "desk" ? <OptionsAcceptanceControl /> : null}
-      <OptionsAnalyticsControl />
-
-      {tab === "desk" && <DeskView />}
-      {tab === "chain" && <ChainView />}
-      {tab === "surface" && <SurfaceView />}
-      {tab === "oi-analysis" && <OiAnalysisView />}
-      {tab === "strategies" && <StrategiesView />}
-      {tab === "agent" && <AgentView />}
+      {!accepted ? <OptionsGateWorkspace query={gate} /> : (
+        <>
+          {tab === "desk" ? <OptionsDataOperationsControl /> : null}
+          {tab === "desk" ? <OptionsAcceptanceControl /> : null}
+          <OptionsAnalyticsControl />
+          {tab === "desk" && <DeskView />}
+          {tab === "chain" && <ChainView />}
+          {tab === "surface" && <SurfaceView />}
+          {tab === "oi-analysis" && <OiAnalysisView />}
+          {tab === "strategies" && <StrategiesView />}
+          {tab === "agent" && <AgentView />}
+        </>
+      )}
     </div>
   );
 }
 
+function OptionsGateWorkspace({ query }: { query: ReturnType<typeof useOptionsDaily> }) {
+  const data = query.data;
+  const acceptance = data?.option_acceptance ?? [];
+  const readiness = data?.option_analytics_readiness ?? [];
+  const pipeline = data?.institutional_option_pipeline_runs ?? [];
+  const contracts = data?.institutional_option_chain ?? [];
+  const latestAcceptance = acceptance[0];
+  const latestPipeline = pipeline[0];
+  const latestSourceAt = contracts.map((row) => text(row, "source_timestamp", text(row, "minute_ts"))).filter(Boolean).sort().slice(-1)[0] ?? "";
+  const passed = num(latestAcceptance, "passed_count");
+  const gates = num(latestAcceptance, "gate_count");
+  const blocked = num(latestAcceptance, "blocked_count");
+
+  if (query.isLoading) {
+    return <Panel icon={Database} title="Loading source-backed Options status"><Skeleton style={{ height: 160 }} /></Panel>;
+  }
+  if (query.error) {
+    return <Panel variant="risk" icon={AlertTriangle} title="Options status unavailable"><div role="alert" style={{ padding: "var(--space-4)" }}>{query.error.message}</div></Panel>;
+  }
+  return (
+    <>
+      <Panel icon={ShieldCheck} title="Options Desk acceptance underway" variant="warn"
+        actions={<StatusPill tone="warn">gated · read only</StatusPill>}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
+          <MetricTile><Metric label="Current page" value={contracts.length} sub="progressive contract rows" /></MetricTile>
+          <MetricTile><Metric label="Qualified series" value={readiness.length} sub={latestSourceAt ? `latest ${formatRelative(latestSourceAt)}` : "source timestamp unavailable"} /></MetricTile>
+          <MetricTile tone={blocked ? "warn" : "default"}><Metric label="Acceptance" value={gates ? `${passed}/${gates}` : "Not run"} sub={blocked ? `${blocked} source gates blocked` : "awaiting qualified run"} /></MetricTile>
+          <MetricTile tone={text(latestPipeline, "status") === "completed" ? "ok" : "warn"}><Metric label="Materializer" value={text(latestPipeline, "status", "Not run")} sub={latestPipeline ? `${num(latestPipeline, "rows_read")} read · ${num(latestPipeline, "calculations_completed")} calculations` : "no pipeline evidence"} /></MetricTile>
+        </div>
+        <div role="status" style={{ marginTop: "var(--space-4)", color: "var(--text-secondary)", lineHeight: 1.55 }}>
+          The desk is visible but analytical subviews remain closed until the 11-gate source, replay,
+          paper-attribution and browser acceptance contract passes. Current records are preserved as
+          read-only evidence; no broker order or client mutation is available here.
+        </div>
+      </Panel>
+      <Panel icon={Database} title="Current source evidence">
+        {readiness.length === 0 ? (
+          <Empty icon={AlertTriangle} title="No qualified option batch" description="The provider capture or materializer has not produced an accepted current batch." />
+        ) : (
+          <DataTable dense columns={[
+            { key: "series", header: "Series", render: (row) => <strong>{text(row, "underlying")} · {text(row, "expiry").slice(0, 10)}</strong> },
+            { key: "provider", header: "Provider", render: (row) => text(row, "provider", "Unavailable") },
+            { key: "contracts", header: "Contracts", align: "right", render: (row) => num(row, "contract_count") },
+            { key: "freshness", header: "Freshness", render: (row) => <StatusPill status={text(row, "freshness_status", "unknown")} /> },
+            { key: "quality", header: "Quality", render: (row) => <StatusPill status={text(row, "batch_quality_status", "unreviewed")} /> },
+            { key: "analytics", header: "Analytics", render: (row) => <StatusPill status={text(row, "analytics_readiness", "blocked")} /> },
+          ]} rows={readiness} rowKey={(row, index) => `${text(row, "underlying", index)}-${text(row, "expiry")}`} />
+        )}
+      </Panel>
+    </>
+  );
+}
+
 function OptionsAcceptanceControl() {
-  const { underlyings, expiries } = useChain();
+  const { underlyings, parsed } = useChain();
   const mutation = useRunOptionAcceptance();
   const pushToast = useUIStore((state) => state.pushToast);
   const defaultEnd = React.useMemo(() => optionsLocalDateTimeInputValue(), []);
@@ -91,15 +151,25 @@ function OptionsAcceptanceControl() {
     window_end: defaultEnd,
   });
 
-  React.useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      underlying: current.underlying || underlyings[0] || "",
-      expiry_date: current.expiry_date || expiries[0]?.slice(0, 10) || "",
-    }));
-  }, [underlyings, expiries]);
+  const availableExpiries = React.useMemo(
+    () => Array.from(new Set(parsed.filter((contract) => contract.symbol === form.underlying).map((contract) => contract.expiry.slice(0, 10)))).sort(),
+    [parsed, form.underlying],
+  );
+  const selectedContracts = React.useMemo(
+    () => parsed.filter((contract) => contract.symbol === form.underlying && contract.expiry.slice(0, 10) === form.expiry_date),
+    [parsed, form.underlying, form.expiry_date],
+  );
+  const freshBatchReady = selectedContracts.some(isFreshOptionContract);
 
-  const ready = Boolean(form.underlying && form.expiry_date && form.window_start && form.window_end && new Date(form.window_start) < new Date(form.window_end));
+  React.useEffect(() => {
+    setForm((current) => {
+      const underlying = current.underlying || underlyings[0] || "";
+      const expiries = Array.from(new Set(parsed.filter((contract) => contract.symbol === underlying).map((contract) => contract.expiry.slice(0, 10)))).sort();
+      return { ...current, underlying, expiry_date: expiries.includes(current.expiry_date) ? current.expiry_date : expiries[0] || "" };
+    });
+  }, [underlyings, parsed]);
+
+  const ready = Boolean(form.underlying && availableExpiries.includes(form.expiry_date) && freshBatchReady && form.window_start && form.window_end && new Date(form.window_start) < new Date(form.window_end));
   function run() {
     if (!ready) return;
     mutation.mutate({
@@ -123,15 +193,16 @@ function OptionsAcceptanceControl() {
   return (
     <Panel icon={ShieldCheck} title="Run Live-Window Acceptance" actions={<Badge tone={mutation.isError ? "risk" : mutation.isPending ? "warn" : "accent"}>{mutation.isPending ? "Checking" : "11 gates"}</Badge>}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
-        <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} placeholder="NIFTY" /></Field>
+        <Field label="Underlying" required><Select value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value, expiry_date: "" })}><option value="">Select source-backed underlying</option>{underlyings.map((underlying) => <option key={underlying} value={underlying}>{underlying}</option>)}</Select></Field>
         <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
-        <Field label="Expiry" required><TextInput type="date" value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })} /></Field>
+        <Field label="Expiry" required><Select value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })}><option value="">Select qualified expiry</option>{availableExpiries.map((expiry) => <option key={expiry} value={expiry}>{expiry}</option>)}</Select></Field>
         <Field label="Window start" required><TextInput type="datetime-local" value={form.window_start} onChange={(event) => setForm({ ...form, window_start: event.target.value })} /></Field>
         <Field label="Window end" required><TextInput type="datetime-local" value={form.window_end} onChange={(event) => setForm({ ...form, window_end: event.target.value })} /></Field>
         <Button variant="primary" icon={ShieldCheck} onClick={run} disabled={!ready || mutation.isPending}>{mutation.isPending ? "Evaluating…" : "Run acceptance"}</Button>
       </div>
       <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Evaluates only immutable stored batches inside the selected window. Missing analytics remain blocked; broker writes remain zero.</div>
       {!underlyings.length ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Materialize real Zerodha option snapshots before running acceptance.</div> : null}
+      {underlyings.length > 0 && !freshBatchReady ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Acceptance is disabled until this exact source-qualified series has a fresh batch (at most 120 seconds old).</div> : null}
       {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
     </Panel>
   );
@@ -144,6 +215,8 @@ interface ParsedContract {
   symbol: string; expiry: string; strike: number; type: "CE" | "PE";
   ltp: number; oi: number; oiChange: number | null; iv: number | null; volume: number; spot: number;
   delta: number | null; gamma: number | null; theta: number | null; vega: number | null;
+  bid: number | null; ask: number | null; spreadBps: number | null;
+  provider: string; observedAt: string; freshness: string; quality: string; liquidity: string;
 }
 
 function optionalNum(row: LiveRow, key: string): number | null {
@@ -163,7 +236,7 @@ function ivPercent(iv: number): number {
 }
 
 function useChain() {
-  const { data, isLoading } = useTradingQuantRisk();
+  const { data, isLoading } = useOptionsDaily();
   return React.useMemo(() => {
     const institutional = data?.institutional_option_chain ?? [];
     const raw = institutional.length > 0 ? institutional : data?.option_chain ?? [];
@@ -175,6 +248,9 @@ function useChain() {
     );
     const parsed: ParsedContract[] = raw.map((r) => {
       const greeksValidated = booleanValue(r, "greeks_validated");
+      const bid = optionalNum(r, "bid_price");
+      const ask = optionalNum(r, "ask_price");
+      const midpoint = bid !== null && ask !== null ? (bid + ask) / 2 : 0;
       return ({
       symbol: text(r, "underlying", text(r, "symbol", "")),
       expiry: text(r, "expiry", text(r, "expiry_date", "")),
@@ -190,13 +266,25 @@ function useChain() {
       gamma: greeksValidated ? optionalNum(r, "gamma") : null,
       theta: greeksValidated ? optionalNum(r, "theta") : null,
       vega: greeksValidated ? optionalNum(r, "vega") : null,
+      bid,
+      ask,
+      spreadBps: midpoint > 0 && ask !== null && bid !== null ? ((ask - bid) / midpoint) * 10_000 : null,
+      provider: text(r, "provider", "Unknown source"),
+      observedAt: text(r, "source_timestamp", text(r, "minute_ts", text(r, "observed_at", ""))),
+      freshness: text(r, "current_freshness_status", text(r, "staleness_status", text(r, "batch_freshness_status", "unknown"))),
+      quality: text(r, "calculation_quality_status", text(r, "batch_quality_status", "unvalidated")),
+      liquidity: text(r, "liquidity_status", "not_evaluated"),
     });
     });
     return { parsed, isLoading, underlyings: Array.from(new Set(parsed.map((p) => p.symbol))).sort(), expiries: Array.from(new Set(parsed.map((p) => p.expiry))).sort() };
   }, [data?.institutional_option_chain, data?.option_chain, data?.option_oi_change, isLoading]);
 }
+
+function isFreshOptionContract(contract: ParsedContract): boolean {
+  return contract.freshness.toLowerCase() === "fresh";
+}
 function OptionsAnalyticsControl() {
-  const { underlyings, expiries } = useChain();
+  const { underlyings, parsed } = useChain();
   const mutation = useRunInstitutionalOptionsAnalytics();
   const pushToast = useUIStore((state) => state.pushToast);
   const [form, setForm] = React.useState({
@@ -211,15 +299,25 @@ function OptionsAnalyticsControl() {
     min_volume: 0,
   });
 
-  React.useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      underlying: current.underlying || underlyings[0] || "",
-      expiry_date: current.expiry_date || expiries[0]?.slice(0, 10) || "",
-    }));
-  }, [underlyings, expiries]);
+  const availableExpiries = React.useMemo(
+    () => Array.from(new Set(parsed.filter((contract) => contract.symbol === form.underlying).map((contract) => contract.expiry.slice(0, 10)))).sort(),
+    [parsed, form.underlying],
+  );
+  const selectedContracts = React.useMemo(
+    () => parsed.filter((contract) => contract.symbol === form.underlying && contract.expiry.slice(0, 10) === form.expiry_date),
+    [parsed, form.underlying, form.expiry_date],
+  );
+  const freshBatchReady = selectedContracts.some(isFreshOptionContract);
 
-  const ready = Boolean(form.underlying.trim() && form.expiry_date && form.as_of);
+  React.useEffect(() => {
+    setForm((current) => {
+      const underlying = current.underlying || underlyings[0] || "";
+      const expiries = Array.from(new Set(parsed.filter((contract) => contract.symbol === underlying).map((contract) => contract.expiry.slice(0, 10)))).sort();
+      return { ...current, underlying, expiry_date: expiries.includes(current.expiry_date) ? current.expiry_date : expiries[0] || "" };
+    });
+  }, [underlyings, parsed]);
+
+  const ready = Boolean(form.underlying.trim() && availableExpiries.includes(form.expiry_date) && freshBatchReady && form.as_of);
 
   function run() {
     if (!ready) return;
@@ -255,9 +353,9 @@ function OptionsAnalyticsControl() {
       actions={<Badge tone={mutation.isPending ? "warn" : mutation.isError ? "risk" : mutation.isSuccess ? "ok" : "accent"}>{mutation.isPending ? "Running" : mutation.isError ? "Failed" : mutation.isSuccess ? "Complete" : "Operator"}</Badge>}
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
-        <Field label="Underlying" hint={underlyings.length ? "Live: " + underlyings.slice(0, 4).join(", ") : "Use a symbol present in the stored chain"} required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} placeholder="NIFTY" /></Field>
+        <Field label="Underlying" hint={underlyings.length ? "Qualified: " + underlyings.slice(0, 4).join(", ") : "No stored chain"} required><Select value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value, expiry_date: "" })}><option value="">Select source-backed underlying</option>{underlyings.map((underlying) => <option key={underlying} value={underlying}>{underlying}</option>)}</Select></Field>
         <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
-        <Field label="Expiry" required><TextInput type="date" value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })} /></Field>
+        <Field label="Expiry" required><Select value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })}><option value="">Select qualified expiry</option>{availableExpiries.map((expiry) => <option key={expiry} value={expiry}>{expiry}</option>)}</Select></Field>
         <Field label="Valuation cutoff" required><TextInput type="datetime-local" value={form.as_of} onChange={(event) => setForm({ ...form, as_of: event.target.value })} /></Field>
         <Field label="Pricing model" required><Select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value as typeof form.model })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76 futures options</option></Select></Field>
         <Field label="Max quote age (sec)" required><TextInput type="number" min="1" value={form.max_age_seconds} onChange={(event) => setForm({ ...form, max_age_seconds: Number(event.target.value) })} /></Field>
@@ -269,6 +367,7 @@ function OptionsAnalyticsControl() {
       <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
         Dry run is the default. The engine reads stored chain snapshots, rejects stale or illiquid contracts, and calculates paper analytics only. It never submits a broker order.
       </div>
+      {underlyings.length > 0 && !freshBatchReady ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Validation is disabled until this exact source-qualified series has a fresh batch (at most 120 seconds old).</div> : null}
       {mutation.isError ? <div role="alert" style={{ marginTop: "var(--space-3)", color: "var(--status-risk)", fontSize: "var(--text-sm)" }}>{mutation.error.message}</div> : null}
       {mutation.isSuccess ? <div role="status" style={{ marginTop: "var(--space-3)", color: "var(--status-ok)", fontSize: "var(--text-sm)" }}>{text(mutation.data, "status", text(mutation.data, "engine", "Completed"))} · {text(mutation.data, "message", "No records or orders were written.")}</div> : null}
     </Panel>
@@ -281,13 +380,47 @@ function optionsLocalDateTimeInputValue() {
   return now.toISOString().slice(0, 16);
 }
 
+const SELECTABLE_CANDIDATE_STATUSES = new Set(["passed", "warning"]);
+
+function valuationCandidateRows(source: unknown): LiveRow[] {
+  if (!source || typeof source !== "object") return [];
+  const row = source as LiveRow;
+  const candidates = raw(row, "option_valuation_source_candidates") ?? raw(row, "candidates");
+  return Array.isArray(candidates)
+    ? candidates.filter((candidate): candidate is LiveRow => Boolean(candidate) && typeof candidate === "object")
+    : [];
+}
+
+function valuationCandidateUsable(candidate: LiveRow): boolean {
+  const validUntil = new Date(text(candidate, "candidate_valid_until")).getTime();
+  return num(candidate, "rate_observation_id") > 0
+    && num(candidate, "dividend_observation_id") > 0
+    && optionalNum(candidate, "risk_free_rate") !== null
+    && optionalNum(candidate, "dividend_yield") !== null
+    && SELECTABLE_CANDIDATE_STATUSES.has(text(candidate, "rate_quality_status").toLowerCase())
+    && SELECTABLE_CANDIDATE_STATUSES.has(text(candidate, "dividend_quality_status").toLowerCase())
+    && Number.isFinite(validUntil) && validUntil > Date.now()
+    && Boolean(text(candidate, "source_artifact_ref"));
+}
+
+function localDateTimeValue(value: string): string {
+  const parsed = new Date(value);
+  if (!value || Number.isNaN(parsed.getTime())) return "";
+  parsed.setMinutes(parsed.getMinutes() - parsed.getTimezoneOffset());
+  return parsed.toISOString().slice(0, 16);
+}
+
 function OptionsDataOperationsControl() {
-  const { data } = useTradingQuantRisk();
+  const { data } = useOptionsDaily();
   const materialize = useMaterializeInstitutionalOptions();
   const savePolicy = useUpsertOptionValuationPolicy();
+  const refreshSources = useRefreshOptionValuationSources();
   const pushToast = useUIStore((state) => state.pushToast);
   const readiness = data?.option_analytics_readiness ?? [];
   const pipeline = data?.institutional_option_pipeline_runs ?? [];
+  const snapshotCandidates = React.useMemo(() => valuationCandidateRows(data), [data]);
+  const [refreshedCandidates, setRefreshedCandidates] = React.useState<LiveRow[] | null>(null);
+  const candidates = refreshedCandidates ?? snapshotCandidates;
   const now = React.useMemo(() => optionsLocalDateTimeInputValue(), []);
   const tomorrow = React.useMemo(() => {
     const value = new Date();
@@ -301,32 +434,83 @@ function OptionsDataOperationsControl() {
     exchange: "NFO" as "NFO" | "BFO",
     underlying: "NIFTY",
     model_family: "black_scholes_merton" as "black_scholes_merton" | "black_76",
-    risk_free_rate: 0.06,
-    dividend_yield: 0,
-    rate_source: "",
-    rate_source_timestamp: now,
-    dividend_source: "",
-    dividend_source_timestamp: now,
-    source_artifact_ref: "",
+    risk_free_rate: "",
+    dividend_yield: "",
     effective_from: now,
     expires_at: tomorrow,
   });
+  const [selectedCandidate, setSelectedCandidate] = React.useState<LiveRow | null>(null);
+  const [operatorConfirmed, setOperatorConfirmed] = React.useState(false);
+  const visibleCandidates = candidates.filter((candidate) => text(candidate, "underlying").toUpperCase() === form.underlying.trim().toUpperCase());
+  const selectedRateId = selectedCandidate ? num(selectedCandidate, "rate_observation_id") : 0;
+  const selectedDividendId = selectedCandidate ? num(selectedCandidate, "dividend_observation_id") : 0;
   const policyReady = Boolean(
-    form.policy_key && form.underlying && form.rate_source && form.dividend_source
-    && form.source_artifact_ref && form.effective_from && form.expires_at
+    form.policy_key && form.underlying && form.risk_free_rate !== "" && form.dividend_yield !== ""
+    && form.effective_from && form.expires_at
+    && selectedRateId > 0 && selectedDividendId > 0 && operatorConfirmed
+    && new Date(form.effective_from) < new Date(form.expires_at)
   );
+
+  function resetCandidateSelection(patch: Partial<typeof form>) {
+    setSelectedCandidate(null);
+    setOperatorConfirmed(false);
+    setForm((current) => ({
+      ...current,
+      ...patch,
+      risk_free_rate: "",
+      dividend_yield: "",
+    }));
+  }
+
+  function selectCandidate(candidate: LiveRow) {
+    if (!valuationCandidateUsable(candidate)) return;
+    setSelectedCandidate(candidate);
+    setOperatorConfirmed(false);
+    setForm((current) => ({
+      ...current,
+      underlying: text(candidate, "underlying").toUpperCase(),
+      risk_free_rate: String(optionalNum(candidate, "risk_free_rate")),
+      dividend_yield: String(optionalNum(candidate, "dividend_yield")),
+      expires_at: localDateTimeValue(text(candidate, "candidate_valid_until")),
+    }));
+  }
+
+  function refreshOfficialInputs() {
+    refreshSources.mutate({ sources: ["rate", "dividends"], actor: "Devarsh" }, {
+      onSuccess: (result) => {
+        const refreshed = valuationCandidateRows(result);
+        setRefreshedCandidates(refreshed);
+        setSelectedCandidate(null);
+        setOperatorConfirmed(false);
+        pushToast({
+          title: "Official valuation inputs refreshed",
+          message: refreshed.length ? refreshed.length + " governed candidate pairs returned for review." : "No governed candidate pairs were returned. No values were assumed.",
+          tone: refreshed.length ? "ok" : "warn",
+          duration: 5500,
+        });
+      },
+      onError: (error) => pushToast({ title: "Official input refresh failed", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
 
   function storePolicy() {
     if (!policyReady) return;
-    savePolicy.mutate({
-      ...form,
+    const payload = {
+      policy_key: form.policy_key,
+      provider: form.provider,
+      exchange: form.exchange,
       underlying: form.underlying.trim().toUpperCase(),
-      rate_source_timestamp: new Date(form.rate_source_timestamp).toISOString(),
-      dividend_source_timestamp: new Date(form.dividend_source_timestamp).toISOString(),
+      model_family: form.model_family,
+      risk_free_rate: Number(form.risk_free_rate),
+      dividend_yield: Number(form.dividend_yield),
       effective_from: new Date(form.effective_from).toISOString(),
       expires_at: new Date(form.expires_at).toISOString(),
+      rate_observation_id: selectedRateId,
+      dividend_observation_id: selectedDividendId,
+      operator_confirmed: true as const,
       actor: "Devarsh",
-    }, {
+    };
+    savePolicy.mutate(payload, {
       onSuccess: () => pushToast({ title: "Valuation policy active", message: "Source-evidenced inputs are available to the deterministic options engine.", tone: "ok", duration: 5000 }),
       onError: (error) => pushToast({ title: "Policy rejected", message: error.message, tone: "risk", duration: 7000 }),
     });
@@ -371,27 +555,90 @@ function OptionsDataOperationsControl() {
         </MetricTile>
       </div>
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: "var(--space-4)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)", fontWeight: 650 }}><ShieldCheck size={16} /> Source-evidenced valuation policy</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-2)", marginBottom: "var(--space-3)", fontWeight: 650 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}><ShieldCheck size={16} /> Source-evidenced valuation policy</span>
+          <Button size="sm" icon={RefreshCw} onClick={refreshOfficialInputs} disabled={refreshSources.isPending}>
+            {refreshSources.isPending ? "Refreshing official inputs..." : "Refresh official inputs"}
+          </Button>
+        </div>
+        <ValuationCandidateCards candidates={visibleCandidates} selectedRateId={selectedRateId} selectedDividendId={selectedDividendId} onSelect={selectCandidate} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
           <Field label="Policy key" required><TextInput value={form.policy_key} onChange={(event) => setForm({ ...form, policy_key: event.target.value })} /></Field>
-          <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => setForm({ ...form, underlying: event.target.value.toUpperCase() })} /></Field>
-          <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => setForm({ ...form, exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
-          <Field label="Model" required><Select value={form.model_family} onChange={(event) => setForm({ ...form, model_family: event.target.value as typeof form.model_family })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76</option></Select></Field>
-          <Field label="Risk-free rate" hint="Decimal, e.g. 0.06" required><TextInput type="number" step="0.0001" value={form.risk_free_rate} onChange={(event) => setForm({ ...form, risk_free_rate: Number(event.target.value) })} /></Field>
-          <Field label="Dividend yield" hint="Decimal, explicit zero allowed" required><TextInput type="number" step="0.0001" value={form.dividend_yield} onChange={(event) => setForm({ ...form, dividend_yield: Number(event.target.value) })} /></Field>
-          <Field label="Rate source" required><TextInput value={form.rate_source} onChange={(event) => setForm({ ...form, rate_source: event.target.value })} placeholder="RBI / yield source" /></Field>
-          <Field label="Rate observed" required><TextInput type="datetime-local" value={form.rate_source_timestamp} onChange={(event) => setForm({ ...form, rate_source_timestamp: event.target.value })} /></Field>
-          <Field label="Dividend source" required><TextInput value={form.dividend_source} onChange={(event) => setForm({ ...form, dividend_source: event.target.value })} placeholder="Index factsheet / verified source" /></Field>
-          <Field label="Dividend observed" required><TextInput type="datetime-local" value={form.dividend_source_timestamp} onChange={(event) => setForm({ ...form, dividend_source_timestamp: event.target.value })} /></Field>
-          <Field label="Evidence reference" hint="URL, artifact ID or content hash" required><TextInput value={form.source_artifact_ref} onChange={(event) => setForm({ ...form, source_artifact_ref: event.target.value })} /></Field>
+          <Field label="Underlying" required><TextInput value={form.underlying} onChange={(event) => resetCandidateSelection({ underlying: event.target.value.toUpperCase() })} /></Field>
+          <Field label="Exchange" required><Select value={form.exchange} onChange={(event) => resetCandidateSelection({ exchange: event.target.value as typeof form.exchange })}><option value="NFO">NFO</option><option value="BFO">BFO</option></Select></Field>
+          <Field label="Model" required><Select value={form.model_family} onChange={(event) => resetCandidateSelection({ model_family: event.target.value as typeof form.model_family })}><option value="black_scholes_merton">Black-Scholes-Merton</option><option value="black_76">Black-76</option></Select></Field>
+          <Field label="Risk-free rate" hint="Selected governed observation" required><TextInput aria-label="Risk-free rate" type="number" step="0.0001" value={form.risk_free_rate} readOnly /></Field>
+          <Field label="Dividend yield" hint="Selected governed observation" required><TextInput aria-label="Dividend yield" type="number" step="0.0001" value={form.dividend_yield} readOnly /></Field>
           <Field label="Effective from" required><TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm({ ...form, effective_from: event.target.value })} /></Field>
-          <Field label="Expires at" required><TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} /></Field>
+          <Field label="Expires at" hint="Cannot exceed candidate validity" required><TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} /></Field>
+          <Field label="Operator approval" required>
+            <Checkbox checked={operatorConfirmed} onChange={setOperatorConfirmed} disabled={!selectedRateId || !selectedDividendId} label="I confirm these exact source observations." />
+          </Field>
           <Button variant="primary" icon={ShieldCheck} onClick={storePolicy} disabled={!policyReady || savePolicy.isPending}>{savePolicy.isPending ? "Saving…" : "Validate policy"}</Button>
         </div>
       </div>
       {materialize.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{materialize.error.message}</div> : null}
+      {refreshSources.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{refreshSources.error.message}</div> : null}
       {savePolicy.isError ? <div role="alert" style={{ color: "var(--status-risk)", marginTop: "var(--space-3)" }}>{savePolicy.error.message}</div> : null}
     </Panel>
+  );
+}
+
+function ValuationCandidateCards({
+  candidates,
+  selectedRateId,
+  selectedDividendId,
+  onSelect,
+}: {
+  candidates: LiveRow[];
+  selectedRateId: number;
+  selectedDividendId: number;
+  onSelect: (candidate: LiveRow) => void;
+}) {
+  return (
+    <div aria-label="Governed valuation candidates" style={{ marginBottom: "var(--space-4)" }}>
+      {candidates.length === 0 ? (
+        <Empty icon={Database} title="No governed candidates" description="Refresh official inputs. No fallback value will be assumed." />
+      ) : candidates.map((candidate, index) => {
+        const rateId = num(candidate, "rate_observation_id");
+        const dividendId = num(candidate, "dividend_observation_id");
+        const rate = optionalNum(candidate, "risk_free_rate");
+        const dividend = optionalNum(candidate, "dividend_yield");
+        const usable = valuationCandidateUsable(candidate);
+        const selected = selectedRateId === rateId && selectedDividendId === dividendId;
+        return (
+          <div key={rateId + "-" + dividendId + "-" + index} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "var(--space-3)", marginTop: index ? "var(--space-3)" : 0, minWidth: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--space-3)", alignItems: "flex-start" }}>
+              <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                <div style={{ fontWeight: 650 }}>{text(candidate, "underlying", "Unknown underlying")}</div>
+                <div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", overflowWrap: "anywhere" }}>
+                  Valid until {text(candidate, "candidate_valid_until") || "unavailable"} | {text(candidate, "source_artifact_ref", "evidence reference unavailable")}
+                </div>
+              </div>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Risk-free rate</div>
+                <div style={{ fontWeight: 650 }}>{rate === null ? "Unavailable" : formatPercent(rate)}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Observation #{rateId || "unavailable"} | {text(candidate, "rate_instrument_identifier", "instrument unavailable")}</div>
+                <StatusPill status={text(candidate, "rate_quality_status", "unreviewed")} />
+              </div>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Dividend yield</div>
+                <div style={{ fontWeight: 650 }}>{dividend === null ? "Unavailable" : formatPercent(dividend)}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Observation #{dividendId || "unavailable"}</div>
+                <StatusPill status={text(candidate, "dividend_quality_status", "unreviewed")} />
+              </div>
+              <div style={{ minWidth: 200, flex: "1 1 240px" }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflowWrap: "anywhere" }}>Rate source: {text(candidate, "rate_source_url", "unavailable")}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflowWrap: "anywhere" }}>Dividend source: {text(candidate, "dividend_source_url", "unavailable")}</div>
+                <Button size="sm" variant={selected ? "primary" : "default"} icon={ShieldCheck} onClick={() => onSelect(candidate)} disabled={!usable} style={{ marginTop: "var(--space-2)" }}>
+                  {selected ? "Selected" : usable ? "Use candidate" : "Not selectable"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -402,7 +649,7 @@ function OptionsDataOperationsControl() {
  * ============================================================ */
 function DeskView() {
   const { parsed, underlyings, isLoading } = useChain();
-  const { data: tradingData } = useTradingQuantRisk();
+  const { data: tradingData } = useOptionsDaily();
   const [showTicket, setShowTicket] = React.useState(false);
   const analytics = React.useMemo(() => computeAnalytics(parsed), [parsed]);
   const validIv = parsed.map((contract) => contract.iv).filter((iv): iv is number => iv !== null && iv > 0);
@@ -410,6 +657,10 @@ function DeskView() {
   const openAnalyticsAlerts = (tradingData?.option_analytics_alerts ?? []).filter((row) => text(row, "status") === "open");
   const specialistObservations = tradingData?.option_specialist_observations ?? [];
   const replaySessions = tradingData?.option_replays ?? [];
+  const staleContracts = parsed.filter((contract) => !isFreshOptionContract(contract));
+  const liquidContracts = parsed.filter((contract) => ["liquid", "passed", "acceptable"].includes(contract.liquidity.toLowerCase()));
+  const latestObservedAt = parsed.map((contract) => contract.observedAt).filter(Boolean).sort().slice(-1)[0] ?? "";
+  const providers = Array.from(new Set(parsed.map((contract) => contract.provider).filter(Boolean))).join(", ");
   const optionTrades = React.useMemo(
     () => [
       ...(tradingData?.trade_activity ?? []).filter((row) => {
@@ -443,12 +694,23 @@ function DeskView() {
         <MetricTile><Metric label="Contracts" value={parsed.length} /></MetricTile>
         <MetricTile><Metric label="Total OI" value={formatCompact(parsed.reduce((a, c) => a + c.oi, 0))} /></MetricTile>
         <MetricTile><Metric label="Avg IV" value={validIv.length ? `${(validIv.reduce((sum, iv) => sum + ivPercent(iv), 0) / validIv.length).toFixed(1)}%` : "Unavailable"} sub={validIv.length ? undefined : "Kite quotes do not supply IV"} /></MetricTile>
+        <MetricTile tone={staleContracts.length ? "warn" : "ok"}><Metric label="Fresh contracts" value={`${parsed.length - staleContracts.length}/${parsed.length}`} sub={latestObservedAt ? `Latest ${formatRelative(latestObservedAt)}` : "No source timestamp"} /></MetricTile>
+        <MetricTile><Metric label="Liquid contracts" value={`${liquidContracts.length}/${parsed.length}`} sub="Provider-qualified spread, OI & volume" /></MetricTile>
       </div>
+
+      <Panel icon={Database} title="Market Data Provenance" actions={<Badge tone={staleContracts.length ? "warn" : "ok"}>{staleContracts.length ? "Stale / mixed" : "Current"}</Badge>}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "var(--space-3)" }}>
+          <MetricTile><Metric label="Provider" value={providers || "Unavailable"} /></MetricTile>
+          <MetricTile><Metric label="Last source observation" value={latestObservedAt ? formatRelative(latestObservedAt) : "Unavailable"} sub={latestObservedAt || "No source timestamp"} /></MetricTile>
+          <MetricTile tone={staleContracts.length ? "warn" : "ok"}><Metric label="Stale / unqualified" value={staleContracts.length} sub="Never silently treated as live" /></MetricTile>
+          <MetricTile><Metric label="Execution" value="Read only" sub="Paper analytics; broker writes locked" /></MetricTile>
+        </div>
+      </Panel>
 
       <Panel icon={AlertTriangle} title="Institutional Analytics Readiness">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
           <MetricTile tone={acceptance.some((row) => text(row, "status") === "passed") ? "ok" : "warn"}>
-            <Metric label="Acceptance Runs" value={acceptance.length} sub={acceptance.length ? text(acceptance[0], "status", "pending") : "not yet demonstrated"} />
+            <Metric label="Acceptance Runs" value={acceptance.length} sub={acceptance.length ? `${text(acceptance[0], "status", "pending")} · ${num(acceptance[0], "passed_count")}/${num(acceptance[0], "gate_count")} gates` : "not yet demonstrated"} />
           </MetricTile>
           <MetricTile tone={openAnalyticsAlerts.length ? "warn" : "default"}>
             <Metric label="Open Alerts" value={openAnalyticsAlerts.length} sub="evidence-backed analytics alerts" />
@@ -470,21 +732,22 @@ function DeskView() {
           <DataTable
             columns={[
               { key: "symbol", header: "Underlying", render: (r) => <strong>{text(r, "symbol")}</strong> },
+              { key: "expiry", header: "Expiry", render: (r) => text(r, "expiry") },
               { key: "spot", header: "Spot", align: "right", render: (r) => num(r, "spot", 0).toFixed(2) },
               { key: "atm", header: "ATM IV", align: "right", render: (r) => optionalNum(r, "atm_iv") === null ? "—" : `${ivPercent(optionalNum(r, "atm_iv")!).toFixed(1)}%` },
-              { key: "pcr", header: "PCR", align: "right", render: (r) => <span style={{ color: num(r, "pcr", 0) > 1.2 ? "var(--status-warn)" : num(r, "pcr", 0) < 0.8 ? "var(--status-info)" : "var(--text)" }}>{num(r, "pcr", 0).toFixed(2)}</span> },
-              { key: "maxpain", header: "Max Pain", align: "right", render: (r) => num(r, "max_pain", 0).toFixed(0) },
+              { key: "pcr", header: "PCR", align: "right", render: (r) => num(r, "total_call_oi") > 0 ? num(r, "pcr", 0).toFixed(2) : "—" },
+              { key: "maxpain", header: "Max Pain", align: "right", render: (r) => optionalNum(r, "max_pain") === null ? "—" : optionalNum(r, "max_pain")!.toFixed(0) },
               { key: "callwall", header: "Call Wall", align: "right", render: (r) => num(r, "call_wall", 0).toFixed(0) },
               { key: "putwall", header: "Put Wall", align: "right", render: (r) => num(r, "put_wall", 0).toFixed(0) },
             ]}
             rows={analytics}
-            rowKey={(r, i) => text(r, "symbol", `a-${i}`)}
+            rowKey={(r, i) => `${text(r, "symbol", `a-${i}`)}-${text(r, "expiry")}`}
           />
         )}
       </Panel>
 
       <Panel icon={TrendingDown} title="Options Blotter"
-        actions={<Button size="sm" variant="primary" icon={Plus} onClick={() => setShowTicket(true)}>New Option Trade</Button>}
+        actions={<Button size="sm" variant="primary" icon={Plus} onClick={() => setShowTicket(true)}>Record Trade Evidence</Button>}
       >
         {optionTrades.length === 0 ? (
           <Empty icon={TrendingDown} title="No option trades recorded" description="Record a manual option trade - it flows into the blotter and journal." action={<Button size="sm" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>} />
@@ -521,13 +784,16 @@ function DeskView() {
 }
 
 function computeAnalytics(chain: ParsedContract[]): LiveRow[] {
-  const bySymbol = new Map<string, ParsedContract[]>();
+  const bySeries = new Map<string, ParsedContract[]>();
   for (const c of chain) {
-    if (!bySymbol.has(c.symbol)) bySymbol.set(c.symbol, []);
-    bySymbol.get(c.symbol)!.push(c);
+    const key = `${c.symbol}|${c.expiry}`;
+    if (!bySeries.has(key)) bySeries.set(key, []);
+    bySeries.get(key)!.push(c);
   }
   const out: LiveRow[] = [];
-  for (const [symbol, contracts] of bySymbol) {
+  for (const contracts of bySeries.values()) {
+    const symbol = contracts[0]?.symbol ?? "";
+    const expiry = contracts[0]?.expiry ?? "";
     const spot = contracts[0]?.spot || 0;
     const calls = contracts.filter((c) => c.type === "CE");
     const puts = contracts.filter((c) => c.type === "PE");
@@ -547,7 +813,7 @@ function computeAnalytics(chain: ParsedContract[]): LiveRow[] {
     }
     const callWall = calls.reduce((best, c) => c.oi > best.oi ? c : best, calls[0]);
     const putWall = puts.reduce((best, c) => c.oi > best.oi ? c : best, puts[0]);
-    out.push({ symbol, spot, atm_iv: atm?.iv ?? null, pcr, max_pain: maxPain, call_wall: callWall?.strike ?? 0, put_wall: putWall?.strike ?? 0, total_call_oi: totalCallOi, total_put_oi: totalPutOi } as LiveRow);
+    out.push({ symbol, expiry, spot, atm_iv: atm?.iv ?? null, pcr, max_pain: totalCallOi > 0 && totalPutOi > 0 ? maxPain : null, call_wall: callWall?.strike ?? null, put_wall: putWall?.strike ?? null, total_call_oi: totalCallOi, total_put_oi: totalPutOi } as LiveRow);
   }
   return out;
 }
@@ -556,13 +822,19 @@ function computeAnalytics(chain: ParsedContract[]): LiveRow[] {
  * CHAIN
  * ============================================================ */
 function ChainView() {
-  const { parsed, underlyings, expiries, isLoading } = useChain();
+  const { parsed, underlyings, isLoading } = useChain();
   const [symbol, setSymbol] = React.useState("");
   const [expiry, setExpiry] = React.useState("");
+  const symbolExpiries = React.useMemo(
+    () => Array.from(new Set(parsed.filter((contract) => contract.symbol === symbol).map((contract) => contract.expiry))).sort(),
+    [parsed, symbol],
+  );
   React.useEffect(() => {
-    if (!symbol && underlyings.length) setSymbol(underlyings[0]);
-    if (!expiry && expiries.length) setExpiry(expiries[0]);
-  }, [underlyings, expiries, symbol, expiry]);
+    if (underlyings.length && !underlyings.includes(symbol)) setSymbol(underlyings[0]);
+  }, [underlyings, symbol]);
+  React.useEffect(() => {
+    if (symbolExpiries.length && !symbolExpiries.includes(expiry)) setExpiry(symbolExpiries[0]);
+  }, [symbolExpiries, expiry]);
 
   const filtered = parsed.filter((c) => (!symbol || c.symbol === symbol) && (!expiry || c.expiry === expiry));
   const spot = filtered[0]?.spot ?? 0;
@@ -573,7 +845,7 @@ function ChainView() {
       <Panel icon={BarChart3} title="Option Chain"
         actions={<>
           <Select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ width: 120 }}>{underlyings.map((u) => <option key={u}>{u}</option>)}</Select>
-          <Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{expiries.map((e) => <option key={e}>{e}</option>)}</Select>
+          <Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{symbolExpiries.map((e) => <option key={e}>{e}</option>)}</Select>
         </>}
       >
         {isLoading ? <SkeletonRows n={6} /> : filtered.length === 0 ? (
@@ -584,6 +856,9 @@ function ChainView() {
               { key: "strike", header: "Strike", align: "right", render: (r) => <strong style={{ color: num(r, "strike", 0) === atmStrike ? "var(--accent)" : "var(--text)" }}>{num(r, "strike", 0)}</strong> },
               { key: "type", header: "Type", render: (r) => <StatusPill status={text(r, "type")} /> },
               { key: "ltp", header: "LTP", align: "right", render: (r) => formatCurrency(num(r, "ltp", 0)) },
+              { key: "bid", header: "Bid", align: "right", render: (r) => optionalNum(r, "bid") === null ? "—" : formatCurrency(optionalNum(r, "bid")!) },
+              { key: "ask", header: "Ask", align: "right", render: (r) => optionalNum(r, "ask") === null ? "—" : formatCurrency(optionalNum(r, "ask")!) },
+              { key: "spread", header: "Spread", align: "right", render: (r) => optionalNum(r, "spreadBps") === null ? "—" : `${optionalNum(r, "spreadBps")!.toFixed(0)} bps` },
               { key: "oi", header: "OI", align: "right", render: (r) => formatCompact(num(r, "oi", 0)) },
               { key: "oichg", header: "OI Chg", align: "right", render: (r) => optionalNum(r, "oiChange") === null ? "—" : <span style={{ color: optionalNum(r, "oiChange")! >= 0 ? "var(--status-ok)" : "var(--status-risk)" }}>{optionalNum(r, "oiChange")! >= 0 ? "+" : ""}{formatCompact(optionalNum(r, "oiChange")!)}</span> },
               { key: "iv", header: "IV", align: "right", render: (r) => optionalNum(r, "iv") === null ? "—" : `${ivPercent(optionalNum(r, "iv")!).toFixed(1)}%` },
@@ -592,6 +867,8 @@ function ChainView() {
               { key: "theta", header: "Theta", align: "right", render: (r) => optionalNum(r, "theta")?.toFixed(2) ?? "—" },
               { key: "vega", header: "Vega", align: "right", render: (r) => optionalNum(r, "vega")?.toFixed(2) ?? "—" },
               { key: "vol", header: "Vol", align: "right", render: (r) => formatCompact(num(r, "volume", 0)) },
+              { key: "liquidity", header: "Liquidity", render: (r) => <StatusPill status={text(r, "liquidity", "not_evaluated")} /> },
+              { key: "freshness", header: "Freshness", render: (r) => <><StatusPill status={text(r, "freshness", "unknown")} /><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{formatRelative(text(r, "observedAt"))}</div></> },
             ]}
             rows={filtered as unknown as LiveRow[]}
             rowKey={(r, i) => `${text(r, "type")}-${num(r, "strike", 0)}-${i}`}
@@ -608,13 +885,19 @@ function ChainView() {
  * SURFACE — IV smile
  * ============================================================ */
 function SurfaceView() {
-  const { parsed, underlyings, expiries, isLoading } = useChain();
+  const { parsed, underlyings, isLoading } = useChain();
   const [symbol, setSymbol] = React.useState("");
   const [expiry, setExpiry] = React.useState("");
+  const symbolExpiries = React.useMemo(
+    () => Array.from(new Set(parsed.filter((contract) => contract.symbol === symbol).map((contract) => contract.expiry))).sort(),
+    [parsed, symbol],
+  );
   React.useEffect(() => {
-    if (!symbol && underlyings.length) setSymbol(underlyings[0]);
-    if (!expiry && expiries.length) setExpiry(expiries[0]);
-  }, [underlyings, expiries, symbol, expiry]);
+    if (underlyings.length && !underlyings.includes(symbol)) setSymbol(underlyings[0]);
+  }, [underlyings, symbol]);
+  React.useEffect(() => {
+    if (symbolExpiries.length && !symbolExpiries.includes(expiry)) setExpiry(symbolExpiries[0]);
+  }, [symbolExpiries, expiry]);
 
   const filtered = parsed.filter((c) => c.symbol === symbol && c.expiry === expiry && c.iv !== null && c.iv > 0);
   const spot = filtered[0]?.spot ?? 0;
@@ -633,7 +916,7 @@ function SurfaceView() {
       <Panel icon={LineChart} title={`Implied Volatility Smile — ${symbol} ${expiry}`}
         actions={<>
           <Select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ width: 120 }}>{underlyings.map((u) => <option key={u}>{u}</option>)}</Select>
-          <Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{expiries.map((e) => <option key={e}>{e}</option>)}</Select>
+          <Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{symbolExpiries.map((e) => <option key={e}>{e}</option>)}</Select>
         </>}
       >
         {isLoading ? <Skeleton style={{ height: 280 }} /> : aggregated.length === 0 ? (
@@ -647,7 +930,9 @@ function SurfaceView() {
         )}
       </Panel>
       <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center" }}>
-        Spot: <strong>{spot.toFixed(2)}</strong> · Steep put skew (left side elevated) = demand for downside protection.
+        {aggregated.length > 0 && spot > 0
+          ? <>Spot: <strong>{spot.toFixed(2)}</strong> · Compare call and put IV by strike; directional interpretation requires accepted depth, liquidity, and underlying context.</>
+          : "No source-backed volatility conclusion is available until an accepted option chain with valid spot and IV is loaded."}
       </div>
     </>
   );
@@ -657,13 +942,19 @@ function SurfaceView() {
  * OI ANALYSIS — OI by strike, OI buildup, straddle curve
  * ============================================================ */
 function OiAnalysisView() {
-  const { parsed, underlyings, expiries, isLoading } = useChain();
+  const { parsed, underlyings, isLoading } = useChain();
   const [symbol, setSymbol] = React.useState("");
   const [expiry, setExpiry] = React.useState("");
+  const symbolExpiries = React.useMemo(
+    () => Array.from(new Set(parsed.filter((contract) => contract.symbol === symbol).map((contract) => contract.expiry))).sort(),
+    [parsed, symbol],
+  );
   React.useEffect(() => {
-    if (!symbol && underlyings.length) setSymbol(underlyings[0]);
-    if (!expiry && expiries.length) setExpiry(expiries[0]);
-  }, [underlyings, expiries, symbol, expiry]);
+    if (underlyings.length && !underlyings.includes(symbol)) setSymbol(underlyings[0]);
+  }, [underlyings, symbol]);
+  React.useEffect(() => {
+    if (symbolExpiries.length && !symbolExpiries.includes(expiry)) setExpiry(symbolExpiries[0]);
+  }, [symbolExpiries, expiry]);
 
   const filtered = parsed.filter((c) => c.symbol === symbol && c.expiry === expiry);
   const oiByStrike = React.useMemo(() => {
@@ -675,7 +966,7 @@ function OiAnalysisView() {
     }
     return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
   }, [filtered]);
-  const oiChange = React.useMemo(() => parsed.some((contract) => contract.oiChange !== null) ? oiByStrike.map((d) => ({ strike: d.strike, CE: d.ceChg, PE: d.peChg })) : [], [oiByStrike, parsed]);
+  const oiChange = React.useMemo(() => filtered.some((contract) => contract.oiChange !== null) ? oiByStrike.map((d) => ({ strike: d.strike, CE: d.ceChg, PE: d.peChg })) : [], [oiByStrike, filtered]);
   const straddle = React.useMemo(() => {
     const map = new Map<number, { strike: number; straddle: number }>();
     for (const c of filtered) {
@@ -695,13 +986,13 @@ function OiAnalysisView() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
         <MetricTile><Metric label="Total Call OI" value={formatCompact(totalCallOi)} /></MetricTile>
         <MetricTile><Metric label="Total Put OI" value={formatCompact(totalPutOi)} /></MetricTile>
-        <MetricTile tone={pcr > 1.2 ? "warn" : pcr < 0.8 ? "ok" : "default"}><Metric label="Put/Call Ratio" value={pcr.toFixed(2)} sub={pcr > 1.2 ? "bearish tilt" : pcr < 0.8 ? "bullish tilt" : "balanced"} /></MetricTile>
+        <MetricTile><Metric label="Put/Call Ratio" value={totalCallOi > 0 ? pcr.toFixed(2) : "—"} sub={totalCallOi > 0 ? "Source-backed ratio; no standalone direction claim" : "No accepted call OI denominator"} /></MetricTile>
       </div>
 
       <Panel icon={BarChart3} title={`Open Interest by Strike — ${symbol} ${expiry}`}
-        actions={<><Select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ width: 120 }}>{underlyings.map((u) => <option key={u}>{u}</option>)}</Select><Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{expiries.map((e) => <option key={e}>{e}</option>)}</Select></>}
+        actions={<><Select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ width: 120 }}>{underlyings.map((u) => <option key={u}>{u}</option>)}</Select><Select value={expiry} onChange={(e) => setExpiry(e.target.value)} style={{ width: 130 }}>{symbolExpiries.map((e) => <option key={e}>{e}</option>)}</Select></>}
       >
-        {isLoading || oiByStrike.length === 0 ? <Skeleton style={{ height: 300 }} /> : (
+        {isLoading ? <Skeleton style={{ height: 300 }} /> : oiByStrike.length === 0 ? <Empty icon={BarChart3} title="No accepted open-interest data" description="Sync and validate a source-qualified option chain before drawing OI conclusions." /> : (
           <BarSeriesChart data={oiByStrike as unknown as Record<string, number | string>[]} bars={[{ key: "CE", name: "Call OI", color: "#c94f49" }, { key: "PE", name: "Put OI", color: "#2d8b69" }]} xKey="strike" height={300} />
         )}
       </Panel>
@@ -710,14 +1001,14 @@ function OiAnalysisView() {
         {oiChange.length === 0 ? <Empty icon={Flame} title="No OI change data" /> : (
           <BarSeriesChart data={oiChange as unknown as Record<string, number | string>[]} bars={[{ key: "CE", name: "Call OI Chg", color: "#c94f49" }, { key: "PE", name: "Put OI Chg", color: "#2d8b69" }]} xKey="strike" height={260} />
         )}
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center", marginTop: "var(--space-2)" }}>Positive bars = OI being added. Call buildup = resistance forming; Put buildup = support forming.</div>
+        {oiChange.length > 0 ? <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center", marginTop: "var(--space-2)" }}>Positive bars mean reported OI increased. Direction, support, and resistance require price, volume, liquidity, and source-quality confirmation.</div> : null}
       </Panel>
 
       <Panel icon={Activity} title="Straddle Curve (CE + PE premium by strike)">
         {straddle.length === 0 ? <Empty icon={Activity} title="No straddle data" /> : (
           <AreaSeriesChart data={straddle as unknown as Record<string, number | string>[]} series={[{ key: "straddle", name: "Straddle" }]} xKey="strike" height={240} />
         )}
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center", marginTop: "var(--space-2)" }}>The straddle minimum marks the market's expected settlement — often near max pain.</div>
+        {straddle.length > 0 ? <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center", marginTop: "var(--space-2)" }}>The minimum is descriptive of current accepted premiums; it is not a settlement forecast or trade signal.</div> : null}
       </Panel>
     </>
   );
@@ -750,7 +1041,7 @@ function StrategiesView() {
     () => parsed.filter((contract) => contract.symbol === symbol && contract.expiry === expiry),
     [parsed, symbol, expiry],
   );
-  const spot = activeContracts.find((contract) => contract.spot > 0)?.spot ?? 0;
+  const spot = activeContracts.find((contract) => isFreshOptionContract(contract) && contract.spot > 0)?.spot ?? 0;
   const strikes = Array.from(new Set(activeContracts.map((contract) => contract.strike))).sort((a, b) => a - b);
   const atmIndex = spot > 0 && strikes.length
     ? strikes.reduce((best, strike, index) => Math.abs(strike - spot) < Math.abs(strikes[best] - spot) ? index : best, 0)
@@ -816,7 +1107,7 @@ function StrategiesView() {
     }
   }
 
-  const liveChainReady = spot > 0 && activeContracts.some((contract) => contract.ltp > 0);
+  const liveChainReady = spot > 0 && activeContracts.some((contract) => isFreshOptionContract(contract) && contract.ltp > 0);
 
   return (
     <>
@@ -855,7 +1146,7 @@ function StrategiesView() {
       {legs.length > 0 && (
         <Panel icon={LineChart} title="Payoff at Expiry">
           <AreaSeriesChart data={payoff as unknown as Record<string, number | string>[]} series={[{ key: "pnl", name: "P&L", color: "#0f766e" }]} xKey="spot" height={300} yFormat={(v) => formatCompact(v)} />
-          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center", marginTop: "var(--space-2)" }}>Spot at <strong>{spot.toFixed(0)}</strong>. Breakevens where the curve crosses zero.</div>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textAlign: "center", marginTop: "var(--space-2)" }}>Illustrative paper payoff per quantity unit at expiry, before lot multiplier, fees, slippage, taxes, and interim volatility. Spot snapshot: <strong>{spot.toFixed(0)}</strong>. No order is created.</div>
         </Panel>
       )}
 
@@ -892,8 +1183,13 @@ function AddLegDrawer({ open, onClose, onAdd, defaultStrike }: { open: boolean; 
  * AGENT
  * ============================================================ */
 function AgentView() {
+  const { parsed, underlyings, isLoading } = useChain();
   const setAssistantScope = useUIStore((s) => s.setAssistantScope);
   const setAssistantOpen = useUIStore((s) => s.setAssistantOpen);
+  const latestObservedAt = parsed.map((contract) => contract.observedAt).filter(Boolean).sort().slice(-1)[0] ?? "";
+  const providers = Array.from(new Set(parsed.map((contract) => contract.provider).filter(Boolean)));
+  const freshContracts = parsed.filter(isFreshOptionContract);
+  const ready = freshContracts.length > 0 && underlyings.length > 0 && Boolean(latestObservedAt);
   const prompts = [
     "Analyze the NIFTY OI buildup — where is resistance and support forming?",
     "What's the max pain for this week's BANKNIFTY expiry?",
@@ -906,14 +1202,22 @@ function AgentView() {
       <div style={{ padding: "var(--space-6)", textAlign: "center" }}>
         <div style={{ width: 72, height: 72, borderRadius: "50%", margin: "0 auto var(--space-4)", background: "var(--accent-soft)", color: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center" }}><Brain size={32} /></div>
         <h3 style={{ marginBottom: "var(--space-1)" }}>Options Specialist</h3>
-        <p style={{ color: "var(--text-muted)", maxWidth: 420, margin: "0 auto var(--space-5)" }}>OI analysis, vol surface reading, strategy construction, and edge identification. Talks you through the Greeks and the flow.</p>
+        <p style={{ color: "var(--text-muted)", maxWidth: 520, margin: "0 auto var(--space-4)" }}>Evidence-linked OI, volatility, liquidity, and paper-strategy analysis. Every answer must cite the stored chain and retain the human review gate.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "var(--space-3)", maxWidth: 680, margin: "0 auto var(--space-5)" }}>
+          <MetricTile tone={ready ? "ok" : "warn"}><Metric label="Source status" value={isLoading ? "Loading" : ready ? "Fresh" : parsed.length ? "Stale" : "Blocked"} /></MetricTile>
+          <MetricTile><Metric label="Fresh contracts" value={`${freshContracts.length}/${parsed.length}`} sub={underlyings.join(", ") || "No underlying"} /></MetricTile>
+          <MetricTile><Metric label="Provider" value={providers.join(", ") || "Unavailable"} sub={latestObservedAt ? formatRelative(latestObservedAt) : "No source timestamp"} /></MetricTile>
+          <MetricTile><Metric label="Execution" value="Locked" sub="analysis and drafts only" /></MetricTile>
+        </div>
+        {!ready ? <div role="status" style={{ maxWidth: 520, margin: "0 auto var(--space-4)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>The agent is unavailable until a source-qualified option batch is present. It will not infer live flow from an empty or stale chain.</div> : null}
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", maxWidth: 480, margin: "0 auto" }}>
           {prompts.map((p) => (
             <button key={p} onClick={() => { setAssistantScope({ agentKey: "options_agent", agentName: "Options Agent" }); setAssistantOpen(true); sessionStorage.setItem("aios:pending-charlie-question", p); }}
-              style={{ padding: "var(--space-3)", background: "var(--surface-soft)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: "var(--text-sm)", color: "var(--text-secondary)", textAlign: "left" }}>{p}</button>
+              disabled={!ready}
+              style={{ padding: "var(--space-3)", background: "var(--surface-soft)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", cursor: ready ? "pointer" : "not-allowed", opacity: ready ? 1 : 0.55, fontSize: "var(--text-sm)", color: "var(--text-secondary)", textAlign: "left" }}>{p}</button>
           ))}
         </div>
-        <Button variant="primary" icon={Brain} style={{ marginTop: "var(--space-5)" }} onClick={() => { setAssistantScope({ agentKey: "options_agent", agentName: "Options Agent" }); setAssistantOpen(true); }}>Open options agent chat</Button>
+        <Button variant="primary" icon={Brain} style={{ marginTop: "var(--space-5)" }} disabled={!ready} onClick={() => { setAssistantScope({ agentKey: "options_agent", agentName: "Options Agent" }); setAssistantOpen(true); }}>Open options agent chat</Button>
       </div>
     </Panel>
   );
@@ -962,12 +1266,12 @@ function OptionTicketDrawer({ open, onClose }: { open: boolean; onClose: () => v
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <Field label="Underlying" required><TextInput value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })} placeholder="e.g. NIFTY" /></Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--space-3)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 130px), 1fr))", gap: "var(--space-3)" }}>
           <Field label="Type"><Select value={form.option_type} onChange={(e) => setForm({ ...form, option_type: e.target.value })}><option>CE</option><option>PE</option></Select></Field>
           <Field label="Strike" required><TextInput type="number" value={form.strike} onChange={(e) => setForm({ ...form, strike: Number(e.target.value) })} /></Field>
           <Field label="Expiry" required><TextInput type="date" value={form.expiry_date} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} /></Field>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "var(--space-3)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 120px), 1fr))", gap: "var(--space-3)" }}>
           <Field label="Side"><Select value={form.side} onChange={(e) => setForm({ ...form, side: e.target.value as "buy" | "sell" })}><option value="buy">Buy</option><option value="sell">Sell</option></Select></Field>
           <Field label="Lots" required><TextInput type="number" min={1} value={form.lot_count} onChange={(e) => setForm({ ...form, lot_count: Number(e.target.value) })} /></Field>
           <Field label="Lot size" required><TextInput type="number" min={1} value={form.lot_size} onChange={(e) => setForm({ ...form, lot_size: Number(e.target.value) })} placeholder="From contract" /></Field>

@@ -26,7 +26,7 @@ import {
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select, KeyValue,
 } from "../../system/primitives";
 import { BarSeriesChart } from "../../system/charts";
-import { text, num, formatRelative, formatCurrency, formatPercent } from "../../data/liveRow";
+import { text, num, bool, formatRelative, formatCurrency, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -610,25 +610,25 @@ function SignalsView() {
 function ExecutionView() {
   const { data, isLoading } = useTradingQuantRisk();
   const controls = data?.execution_control ?? [];
-  const killSwitch = controls.find((r) => String(text(r, "control_key", text(r, "kind"))).includes("kill_switch"));
-  const armed = killSwitch && String(text(killSwitch, "status", text(killSwitch, "state"))).toLowerCase().includes("armed");
+  const control = controls[0];
+  const globalLiveLocked = !control || bool(control, "global_execution_locked", true) || !bool(control, "live_broker_writes_allowed", false);
+  const paperAllowed = Boolean(control && bool(control, "paper_trading_allowed", false));
   const limitedLive = data?.limited_live_requests ?? [];
   const orderIntents = data?.order_intents ?? [];
 
   return (
     <>
-      {/* Kill-switch — prominent */}
-      <Panel variant={armed ? "risk" : "default"} icon={ShieldCheck} title="Global Kill-Switch"
-        actions={armed ? <Badge tone="risk" dot pulse>ARMED</Badge> : <Badge tone="ok" dot>SAFE</Badge>}
+      <Panel variant={globalLiveLocked ? "warn" : "risk"} icon={ShieldCheck} title="Execution Authority"
+        actions={globalLiveLocked ? <Badge tone="warn" dot>GLOBAL LIVE WRITES LOCKED</Badge> : <Badge tone="risk" dot pulse>STAGED LIVE AUTHORITY PRESENT</Badge>}
       >
         <div style={{ padding: "var(--space-4)" }}>
           <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "var(--space-3)" }}>
-            {armed
-              ? "🛑 Kill-switch is ARMED. All automated trading is halted. No new orders will be placed until you disengage it."
-              : "Kill-switch is safe. Automated trading systems (when enabled) can operate within approved limits."}
+            {globalLiveLocked
+              ? `Global live broker writes are locked. Research, drafts, and ${paperAllowed ? "paper trading" : "paper requests"} may continue only within their own controls; AI OS cannot send a live order.`
+              : "A limited-live authority record is present. Every specific order still requires independent risk gates and explicit human confirmation; this page does not execute orders."}
           </div>
           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
-            Engaging the kill-switch requires explicit confirmation and is audit-logged. Disengaging requires governance review.
+            Progression remains read-only → research/report → draft → paper → staged live → explicit human confirmation. Every authority change is audit-logged.
           </div>
         </div>
       </Panel>

@@ -47,6 +47,9 @@ class FundamentalEvidenceGovernanceTests(unittest.TestCase):
         self.assertIn("WHERE evidence.id = 19", sql)
         self.assertIn("'human_verified'", sql)
         self.assertIn("operator_confirmed", sql)
+        self.assertIn("company_identity_review AS", sql)
+        self.assertIn("real_company_verification_evidence_id", sql)
+        self.assertIn("selected_for_company_identity", sql)
         self.assertIn("json_agg(row_to_json(result_rows))", sql)
         self.assertFalse(result["broker_write_allowed"])
         self.assertNotIn("request_token", repr(audit.call_args))
@@ -60,6 +63,48 @@ class FundamentalEvidenceGovernanceTests(unittest.TestCase):
         self.assertIn("Human Evidence Review", terminal)
         self.assertIn("Acceptance Gate Detail", terminal)
         self.assertIn("operator_confirmed: true", terminal)
+
+    def test_opinion_review_is_explicit_audited_and_execution_locked(self) -> None:
+        reviewed = {
+            "opinion_id": 36,
+            "opinion_status": "reviewed",
+            "reviewed_by": "Devarsh",
+            "capital_action_allowed": False,
+            "broker_write_allowed": False,
+        }
+        with (
+            mock.patch.object(ai_os_api_server, "run_psql_json_statement", return_value=[reviewed]) as execute,
+            mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
+        ):
+            result = ai_os_api_server.review_fundamental_opinion({
+                "opinion_id": 36,
+                "decision": "reviewed",
+                "rationale": "Conclusion is supported while the listed follow-ups remain open.",
+                "operator_confirmed": True,
+                "actor": "Devarsh",
+            })
+
+        sql = execute.call_args.args[0]
+        self.assertIn("WHERE opinion.id = 36", sql)
+        self.assertIn("review_rationale", sql)
+        self.assertIn("false AS capital_action_allowed", sql)
+        self.assertFalse(result["broker_write_allowed"])
+        self.assertEqual(audit.call_args.args[0], "ai_os_api_review_fundamental_opinion")
+
+    def test_opinion_review_rejects_unconfirmed_or_unsupported_decisions(self) -> None:
+        with self.assertRaisesRegex(ValueError, "operator_confirmed"):
+            ai_os_api_server.review_fundamental_opinion({
+                "opinion_id": 36,
+                "decision": "reviewed",
+                "rationale": "This rationale is long enough.",
+            })
+        with self.assertRaisesRegex(ValueError, "reviewed, dissent, or rejected"):
+            ai_os_api_server.review_fundamental_opinion({
+                "opinion_id": 36,
+                "decision": "approved",
+                "rationale": "This rationale is long enough.",
+                "operator_confirmed": True,
+            })
 
     def test_remediation_sync_is_bounded_idempotent_and_execution_locked(self) -> None:
         synced = {
@@ -102,6 +147,9 @@ class FundamentalEvidenceGovernanceTests(unittest.TestCase):
         self.assertIn("Institutional Specialist Opinions", terminal)
         self.assertIn("Fundamental Remediation Queue", terminal)
         self.assertIn("Monte Carlo Review", terminal)
+        self.assertIn('/api/research/fundamental-opinion/review', actions)
+        self.assertIn("Review Specialist Opinion", terminal)
+        self.assertIn("Preserve dissent", terminal)
 
 
 if __name__ == "__main__":

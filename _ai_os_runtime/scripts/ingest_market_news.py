@@ -26,6 +26,7 @@ USER_AGENT = os.environ.get(
     "AI_OS_PUBLIC_CHECK_USER_AGENT",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AI-OS-Research/0.1",
 )
+MAX_FEED_BYTES = 8_000_000
 
 MATERIAL_KEYWORDS: list[tuple[str, float, float, str]] = [
     ("demerger", 0.82, 0.58, "special_situation"),
@@ -103,7 +104,7 @@ def active_feeds(limit: int, feed_keys: list[str]) -> list[dict[str, Any]]:
                symbols, topics, status, owner_agent, metadata
         FROM research.feed_registry
         WHERE status = 'active'
-          AND feed_type IN ('news_rss', 'rss', 'rss_http')
+          AND feed_type IN ('news_rss', 'investor_blog_rss', 'rss', 'rss_http')
           AND url IS NOT NULL
           {key_filter}
         ORDER BY feed_name
@@ -122,6 +123,8 @@ def symbol_universe() -> list[str]:
             SELECT normalized_symbol AS symbol FROM trading.instrument_watchlist WHERE normalized_symbol IS NOT NULL
             UNION ALL
             SELECT base_asset AS symbol FROM trading.instrument_watchlist WHERE base_asset IS NOT NULL
+            UNION ALL
+            SELECT symbol FROM research.v_watchlist_board WHERE status='active' AND symbol IS NOT NULL
             UNION ALL
             SELECT symbol FROM portfolio.positions WHERE symbol IS NOT NULL
         ) symbols
@@ -174,7 +177,9 @@ def read_feed(url: str, per_feed: int, timeout: int) -> tuple[int | None, list[d
         try:
             with urllib.request.urlopen(request, timeout=max(5, timeout)) as response:
                 status = int(getattr(response, "status", 200))
-                body = response.read(2_000_000)
+                body = response.read(MAX_FEED_BYTES + 1)
+                if len(body) > MAX_FEED_BYTES:
+                    return status, [], "FeedTooLarge: response exceeded 8 MB safety limit", int((time.monotonic() - started) * 1000)
             last_error = None
             break
         except urllib.error.HTTPError as exc:

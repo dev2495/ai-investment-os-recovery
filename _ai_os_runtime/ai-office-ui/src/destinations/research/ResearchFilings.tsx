@@ -12,12 +12,14 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   FileText, Target, BookOpen, Download, Play, Sparkles, ChevronRight,
-  ExternalLink, Microscope,
+  ExternalLink, Microscope, Newspaper, Activity, Star, RefreshCw,
+  AlertTriangle, Plus, ShieldCheck,
 } from "lucide-react";
-import { useResearchIdeas } from "../../data/queries";
+import { useMissionControl, useResearchIdeas } from "../../data/queries";
 import {
   useRunFilingCollector, useGenerateSpecialMemo,
-  useIngestResearchPaper, useIngestResearchSource,
+  useIngestResearchPaper, useIngestResearchSource, useIngestMarketNews,
+  useRegisterInvestorSource,
 } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
@@ -302,8 +304,15 @@ function IngestView() {
   const pushToast = useUIStore((s) => s.pushToast);
   const openEvidence = useUIStore((s) => s.openEvidence);
   const { data, isLoading } = useResearchIdeas();
+  const { data: mission } = useMissionControl();
   const ingest = useIngestResearchSource();
+  const refreshFeeds = useIngestMarketNews();
+  const registerSource = useRegisterInvestorSource();
   const [lastResult, setLastResult] = React.useState<LiveRow | null>(null);
+  const [showSourceForm, setShowSourceForm] = React.useState(false);
+  const [sourceForm, setSourceForm] = React.useState({
+    feed_name: "", provider: "", url: "", geography: "India", topics: "", refresh_minutes: "60",
+  });
   const [form, setForm] = React.useState({
     title: "",
     source_url: "",
@@ -317,7 +326,89 @@ function IngestView() {
   const papers = data?.research_papers ?? [];
   const hypotheses = data?.paper_strategy_hypotheses ?? [];
   const cycles = data?.research_cycles ?? [];
+  const feeds = data?.feed_registry ?? [];
+  const watchlist = data?.watchlist ?? [];
+  const quotes = data?.market_quotes ?? [];
+  const latestNews = data?.latest_news ?? [];
+  const filings = data?.filing_intelligence ?? [];
+  const sourceChecks = data?.news_source_checks ?? [];
+  const heartbeats = mission?.market_research_heartbeats ?? [];
+  const sourceFreshness = mission?.source_freshness ?? [];
+  const activeFeeds = feeds.filter((row) => text(row, "status") === "active");
+  const sourceAttention = sourceFreshness.filter((row) => {
+    const status = text(row, "status", text(row, "freshness_status")).toLowerCase();
+    return ["stale", "missing", "error", "overdue"].some((flag) => status.includes(flag));
+  });
+  const sortedQuoteTimes = quotes.map((row) => text(row, "quote_ts")).filter(Boolean).sort();
+  const latestQuoteAt = sortedQuoteTimes[sortedQuoteTimes.length - 1] ?? "";
+  const quoteBySymbol = React.useMemo(() => new Map(
+    quotes.map((row) => [text(row, "symbol").toUpperCase(), row]),
+  ), [quotes]);
+  const intelligenceTimeline = React.useMemo(() => {
+    const combined = [
+      ...latestNews.map((row) => ({ ...row, timeline_kind: "News", timeline_at: text(row, "published_at", text(row, "captured_at")) })),
+      ...filings.map((row) => ({ ...row, timeline_kind: "Filing", timeline_at: text(row, "filed_at") })),
+    ];
+    const seen = new Set<string>();
+    return combined
+      .sort((left, right) => Date.parse(text(right, "timeline_at")) - Date.parse(text(left, "timeline_at")))
+      .filter((row) => {
+        const key = text(row, "source_url") || text(row, "title").toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 24);
+  }, [filings, latestNews]);
   const activeIntakes = papers.filter((row) => !["reviewed", "closed"].includes(text(row, "intake_status", text(row, "review_status")).toLowerCase()));
+
+  function investigate(row: LiveRow) {
+    const kind = text(row, "timeline_kind", "source").toLowerCase();
+    setForm((current) => ({
+      ...current,
+      title: text(row, "title"),
+      source_url: text(row, "source_url"),
+      research_objective: "Verify the source claims, map affected companies and risks, and prepare a cited decision brief.",
+      priority: kind === "filing" ? "high" : current.priority,
+    }));
+    document.getElementById("research-intake-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function refreshPublicFeeds() {
+    refreshFeeds.mutate({ actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({
+        title: "Public research feeds refreshed",
+        message: num(result, "items_upserted", 0) + " source-linked item(s) updated.",
+        tone: "ok",
+        duration: 4500,
+      }),
+      onError: (error) => pushToast({ title: "Feed refresh failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+
+  function addInvestorSource() {
+    if (!sourceForm.feed_name.trim() || !sourceForm.url.trim()) {
+      pushToast({ title: "Investor or firm name and RSS URL are required", tone: "warn", duration: 3500 });
+      return;
+    }
+    registerSource.mutate({
+      feed_name: sourceForm.feed_name.trim(),
+      provider: sourceForm.provider.trim() || sourceForm.feed_name.trim(),
+      url: sourceForm.url.trim(),
+      geography: sourceForm.geography.trim() || "Global",
+      topics: sourceForm.topics.split(",").map((value) => value.trim()).filter(Boolean),
+      refresh_minutes: Number(sourceForm.refresh_minutes) || 60,
+      operator_confirmed: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: () => {
+        pushToast({ title: "Source added for review", message: "It remains gated until its public feed and policy are reviewed.", tone: "ok", duration: 5000 });
+        setSourceForm({ feed_name: "", provider: "", url: "", geography: "India", topics: "", refresh_minutes: "60" });
+        setShowSourceForm(false);
+      },
+      onError: (error) => pushToast({ title: "Source registration rejected", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
 
   function submit() {
     if (!form.source_url.trim() && !form.pasted_text.trim()) {
@@ -354,13 +445,84 @@ function IngestView() {
 
   return (
     <>
+      <Panel
+        icon={Activity}
+        title="Research & Market Heartbeat"
+        actions={<Button size="sm" variant="ghost" icon={RefreshCw} onClick={refreshPublicFeeds} disabled={refreshFeeds.isPending}>{refreshFeeds.isPending ? "Refreshing public feeds…" : "Refresh public feeds"}</Button>}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+          <MetricTile><Metric label="Watchlist" value={watchlist.length} sub="thesis-linked items" /></MetricTile>
+          <MetricTile tone={quotes.length ? "default" : "warn"}><Metric label="Market quotes" value={quotes.length} sub={latestQuoteAt ? formatRelative(latestQuoteAt) : "No accepted quote"} /></MetricTile>
+          <MetricTile><Metric label="Source-linked news" value={latestNews.length} sub={sourceChecks.length + " RSS checks"} /></MetricTile>
+          <MetricTile><Metric label="Filing intelligence" value={filings.length} sub="exchange evidence" /></MetricTile>
+          <MetricTile tone={sourceAttention.length ? "warn" : "ok"}><Metric label="Feed attention" value={sourceAttention.length} sub={sourceAttention.length ? "stale, missing, or failed" : "accepted checks healthy"} /></MetricTile>
+          <MetricTile><Metric label="Autonomous heartbeats" value={heartbeats.length} sub="durable monitored runs" /></MetricTile>
+        </div>
+        <div style={{ marginTop: "var(--space-3)", display: "flex", gap: "var(--space-3)", flexWrap: "wrap", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+          <span>{activeFeeds.length} active lawful feeds · {feeds.filter((row) => text(row, "status") !== "active").length} visibly gated</span>
+          <strong style={{ color: "var(--status-ok)" }}>Research and drafts only · no automatic trading action</strong>
+        </div>
+      </Panel>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={Star} title="Source-backed Watchlist" actions={<Badge tone="ok">{watchlist.length} active</Badge>}>
+          {watchlist.length === 0 ? <Empty icon={Star} title="No watchlist items" description="Add a thesis-linked item from Charlie or the watchlist workflow." /> : <DataTable dense columns={[
+            { key: "symbol", header: "Security", render: (row) => <><strong>{text(row, "symbol")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "exchange", "NSE")} · {text(row, "priority", "medium")}</div></> },
+            { key: "market", header: "Latest accepted quote", align: "right", render: (row) => {
+              const quote = quoteBySymbol.get(text(row, "symbol").toUpperCase());
+              return quote ? <><div>{num(quote, "price", 0).toLocaleString()}</div><div style={{ color: num(quote, "change_percent", 0) >= 0 ? "var(--status-ok)" : "var(--status-risk)", fontSize: "var(--text-xs)" }}>{num(quote, "change_percent", 0).toFixed(2)}% · {formatRelative(text(quote, "quote_ts"))}</div></> : <span style={{ color: "var(--status-warn)" }}>No matched quote</span>;
+            } },
+            { key: "thesis", header: "Thesis / catalyst", render: (row) => <><div>{text(row, "thesis", "No thesis recorded")}</div><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 3 }}>{text(row, "catalyst", "No catalyst recorded")}</div></> },
+            { key: "review", header: "Review", render: (row) => text(row, "review_on", "Not scheduled") },
+            { key: "evidence", header: "Evidence", render: (row) => <Button size="sm" variant="ghost" onClick={() => openEvidence({ kind: "artifact", key: String(text(row, "id")), title: text(row, "symbol") + " watchlist evidence" })}>Open</Button> },
+          ]} rows={watchlist} rowKey={(row, index) => String(text(row, "id", index))} />}
+        </Panel>
+
+        <Panel icon={Newspaper} title="Deduplicated Intelligence Timeline" actions={<Badge tone="accent">source linked</Badge>}>
+          {intelligenceTimeline.length === 0 ? <Empty icon={Newspaper} title="No accepted intelligence items" description="Public sources are empty or unavailable; no narrative has been invented." /> : <DataTable dense columns={[
+            { key: "kind", header: "Type", render: (row) => <StatusPill status={text(row, "timeline_kind", "source").toLowerCase()} /> },
+            { key: "item", header: "Item", render: (row) => <><strong>{text(row, "title")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", marginTop: 3 }}>{text(row, "publisher", text(row, "source_name", "Public source"))}</div></> },
+            { key: "scope", header: "Companies / themes", render: (row) => text(row, "symbol", text(row, "symbols", text(row, "topics", "—"))) },
+            { key: "when", header: "Source time", render: (row) => formatRelative(text(row, "timeline_at")) },
+            { key: "source", header: "Original", render: (row) => text(row, "source_url") ? <a href={text(row, "source_url")} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>Open <ExternalLink size={12} /></a> : <span style={{ color: "var(--status-warn)" }}>URL unavailable</span> },
+            { key: "action", header: "Action", render: (row) => <Button size="sm" variant="ghost" icon={Sparkles} onClick={() => investigate(row)}>Investigate</Button> },
+          ]} rows={intelligenceTimeline} rowKey={(row, index) => text(row, "source_url", text(row, "title", index))} />}
+        </Panel>
+      </div>
+
+      <Panel icon={ShieldCheck} title="Investor & Public Source Registry" actions={<Button size="sm" variant="ghost" icon={Plus} onClick={() => setShowSourceForm((value) => !value)}>{showSourceForm ? "Close" : "Add source"}</Button>}>
+        <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+          Only public RSS/Atom or explicitly authorized connectors are collected. Social or credential-bound sources remain visibly gated; claims require corroboration before investment use.
+        </div>
+        {showSourceForm ? <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--space-3)", alignItems: "end", marginBottom: "var(--space-4)", padding: "var(--space-3)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+          <Field label="Investor / firm" required><TextInput value={sourceForm.feed_name} onChange={(event) => setSourceForm({ ...sourceForm, feed_name: event.target.value })} /></Field>
+          <Field label="Provider"><TextInput value={sourceForm.provider} onChange={(event) => setSourceForm({ ...sourceForm, provider: event.target.value })} /></Field>
+          <Field label="Public HTTPS RSS / Atom URL" required><TextInput value={sourceForm.url} onChange={(event) => setSourceForm({ ...sourceForm, url: event.target.value })} placeholder="https://example.com/feed" /></Field>
+          <Field label="Topics"><TextInput value={sourceForm.topics} onChange={(event) => setSourceForm({ ...sourceForm, topics: event.target.value })} placeholder="value investing, results" /></Field>
+          <Field label="Refresh minutes"><TextInput value={sourceForm.refresh_minutes} onChange={(event) => setSourceForm({ ...sourceForm, refresh_minutes: event.target.value })} /></Field>
+          <Button variant="primary" icon={ShieldCheck} onClick={addInvestorSource} disabled={registerSource.isPending || !sourceForm.feed_name.trim() || !sourceForm.url.trim()}>{registerSource.isPending ? "Registering…" : "Add for policy review"}</Button>
+          <div style={{ gridColumn: "1 / -1", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>New sources are saved as planned and are not fetched until their public endpoint and terms are reviewed.</div>
+        </div> : null}
+        {feeds.length === 0 ? <Empty icon={AlertTriangle} title="No source registry" description="No feed is collected until an approved source is registered." /> : <DataTable dense columns={[
+          { key: "source", header: "Source", render: (row) => <><strong>{text(row, "feed_name")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "feed_type").replace(/_/g, " ")} · {text(row, "provider", "—")}</div></> },
+          { key: "scope", header: "Scope", render: (row) => text(row, "topics", text(row, "geography", "—")) },
+          { key: "status", header: "Collection", render: (row) => <StatusPill status={text(row, "status", "planned")} /> },
+          { key: "check", header: "Latest check", render: (row) => {
+            const check = sourceChecks.find((item) => text(item, "source_key") === text(row, "feed_key"));
+            return check ? <><StatusPill status={text(check, "status", "unknown")} /><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{formatRelative(text(check, "checked_at"))}</div></> : <span style={{ color: "var(--status-warn)" }}>Not checked</span>;
+          } },
+          { key: "owner", header: "Accountable agent", render: (row) => text(row, "owner_agent", "Research Agent") },
+          { key: "url", header: "Source", render: (row) => text(row, "url") ? <a href={text(row, "url")} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>Open feed <ExternalLink size={12} /></a> : "Connector gated" },
+        ]} rows={feeds} rowKey={(row, index) => text(row, "feed_key", index)} />}
+      </Panel>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
         <MetricTile><Metric label="Sources" value={papers.length} /></MetricTile>
         <MetricTile tone={activeIntakes.length ? "warn" : "ok"}><Metric label="Active Intakes" value={activeIntakes.length} /></MetricTile>
         <MetricTile><Metric label="Hypotheses" value={hypotheses.length} /></MetricTile>
         <MetricTile><Metric label="Research Cycles" value={cycles.length} /></MetricTile>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 0.95fr) minmax(560px, 1.35fr)", gap: "var(--space-4)", alignItems: "start" }}>
+      <div id="research-intake-form" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "var(--space-4)", alignItems: "start", scrollMarginTop: 88 }}>
         <Panel icon={Download} title="Start Research Cycle" actions={<Badge tone={ingest.isPending ? "warn" : "ok"}>{ingest.isPending ? "Extracting" : "Ready"}</Badge>}>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
             <Field label="Public article, blog, paper, or GitHub URL"><TextInput value={form.source_url} onChange={(event) => setForm({ ...form, source_url: event.target.value })} placeholder="https://…" /></Field>
@@ -368,7 +530,7 @@ function IngestView() {
             <Field label="Title (auto-detected when blank)"><TextInput value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
             <Field label="What should the team determine?" required><TextArea value={form.research_objective} onChange={(event) => setForm({ ...form, research_objective: event.target.value })} rows={3} placeholder="Verify the claims, map affected companies or factors, and decide whether a testable edge exists…" /></Field>
             <Field label="Hypothesis to test (optional)"><TextArea value={form.hypothesis} onChange={(event) => setForm({ ...form, hypothesis: event.target.value })} rows={3} placeholder="Example: rising FPI sector allocation predicts relative 20-day outperformance after costs…" /></Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.7fr", gap: "var(--space-3)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: "var(--space-3)" }}>
               <Field label="Universe"><TextInput value={form.target_universe} onChange={(event) => setForm({ ...form, target_universe: event.target.value })} /></Field>
               <Field label="Timeframe"><TextInput value={form.timeframe} onChange={(event) => setForm({ ...form, timeframe: event.target.value })} placeholder="20 days" /></Field>
               <Field label="Priority"><Select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as typeof form.priority })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></Select></Field>

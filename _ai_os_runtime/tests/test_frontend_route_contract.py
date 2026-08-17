@@ -243,6 +243,27 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("WHERE id = {thesis_id}", backend)
         self.assertIn("symbol does not match holding_thesis_id", backend)
 
+    def test_long_term_thesis_workspace_is_bounded_source_backed_and_locked(self) -> None:
+        query_source = (
+            self.runtime_root / "ai-office-ui" / "src" / "data" / "queries.ts"
+        ).read_text(encoding="utf-8")
+        terminal = (
+            self.runtime_root / "ai-office-ui" / "src" / "destinations" /
+            "fundamental" / "LongTermThesisWorkspace.tsx"
+        ).read_text(encoding="utf-8")
+        backend = (self.runtime_root / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+        read_model = (self.runtime_root / "api" / "long_term_thesis_workspace.py").read_text(encoding="utf-8")
+
+        self.assertIn('"/api/research/long-term-thesis"', query_source)
+        self.assertIn('request_path == "/api/research/long-term-thesis"', backend)
+        self.assertIn('page_size = bounded("page_size", 12, 6, 24)', read_model)
+        self.assertIn("filings_extracted", read_model)
+        self.assertIn("private_data_egress_allowed", read_model)
+        self.assertIn("No section-level source is linked", terminal)
+        self.assertIn("Restated/superseded rows excluded", terminal)
+        self.assertIn("It authorizes no broker, client, or external write", terminal)
+        self.assertNotIn("mock", terminal.lower())
+
 
 
     def test_signal_and_paper_monitor_contracts_use_canonical_fields(self) -> None:
@@ -266,6 +287,69 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn("AS direction", signal_query)
         self.assertIn("AS signal_type", signal_query)
         self.assertIn("AS strength", signal_query)
+
+    def test_research_daily_driver_uses_governed_public_sources(self) -> None:
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "research"
+            / "ResearchFilings.tsx"
+        ).read_text(encoding="utf-8")
+        actions = (self.runtime_root / "ai-office-ui" / "src" / "data" / "actions.ts").read_text(encoding="utf-8")
+        backend = (self.runtime_root / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+        collector = (self.runtime_root / "scripts" / "ingest_market_news.py").read_text(encoding="utf-8")
+
+        self.assertIn("Research & Market Heartbeat", terminal)
+        self.assertIn("Source-backed Watchlist", terminal)
+        self.assertIn("Deduplicated Intelligence Timeline", terminal)
+        self.assertIn("Investor & Public Source Registry", terminal)
+        self.assertIn("no automatic trading action", terminal)
+        self.assertIn("Add for policy review", terminal)
+        self.assertIn("useRegisterInvestorSource", actions)
+        self.assertIn("/api/research/investor-sources/register", actions)
+        self.assertIn("def register_investor_source", backend)
+        self.assertIn("pending_source_review", backend)
+        self.assertIn("approved_for_fetch", backend)
+        self.assertIn("investor_blog_rss", collector)
+
+    def test_options_reject_future_quotes_and_use_latest_qualified_batch(self) -> None:
+        terminal = (
+            self.runtime_root
+            / "ai-office-ui"
+            / "src"
+            / "destinations"
+            / "options"
+            / "OptionsDesk.tsx"
+        ).read_text(encoding="utf-8")
+        backend = (self.runtime_root / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+        collector = (self.runtime_root / "scripts" / "sync_zerodha_market_data.py").read_text(encoding="utf-8")
+        materializer = (self.runtime_root / "scripts" / "materialize_institutional_options.py").read_text(encoding="utf-8")
+
+        self.assertIn('ZoneInfo("Asia/Kolkata")', collector)
+        self.assertIn("def zerodha_timestamp_utc", collector)
+        self.assertIn("source_observed_at = zerodha_timestamp_utc(source_timestamp)", collector)
+        self.assertIn("legacy.observed_at <= now() + interval '5 minutes'", materializer)
+        self.assertIn("ORDER BY source.minute_ts::timestamptz DESC", materializer)
+        self.assertGreaterEqual(backend.count("<= now() + interval '5 minutes'"), 4)
+        self.assertIn("dense_rank() OVER", backend)
+        self.assertIn("batch_recency_rank=1", backend)
+        self.assertIn("END AS current_freshness_status", backend)
+        self.assertIn("interval '120 seconds'", backend)
+        self.assertIn("source-qualified OI analytics", terminal)
+        self.assertIn("function isFreshOptionContract", terminal)
+        self.assertIn("no standalone direction claim", terminal)
+        self.assertIn("No source-backed volatility conclusion", terminal)
+        self.assertIn("Source status", terminal)
+        self.assertIn("analysis and drafts only", terminal)
+        self.assertIn("disabled={!ready}", terminal)
+        self.assertIn("No order is created", terminal)
+        self.assertIn("Record Trade Evidence", terminal)
+        self.assertGreaterEqual(terminal.count("const symbolExpiries"), 4)
+        self.assertIn("const bySeries = new Map", terminal)
+        self.assertIn("const key = `${c.symbol}|${c.expiry}`", terminal)
+        self.assertIn('header: "Expiry"', terminal)
 
 if __name__ == "__main__":
     unittest.main()

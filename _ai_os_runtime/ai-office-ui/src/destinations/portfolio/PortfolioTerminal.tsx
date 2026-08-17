@@ -1,7 +1,7 @@
 /**
  * Portfolio & Clients Terminal
  *
- * Routes: /portfolio/overview | /positions | /books | /clients |
+ * Routes: /portfolio/overview | /positions | /books | /clients | /imports |
  *         /nav | /reconciliation | /trackers
  *
  * Multi-client portfolio intelligence — NAV, exposure, allocation, positions
@@ -13,17 +13,22 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Briefcase, PieChart, BookOpen, Users, DollarSign, GitBranch, Activity,
-  Plus, Save,
+  Plus, Save, Upload, FileSpreadsheet, ShieldCheck, Search, AlertTriangle,
 } from "lucide-react";
 import { usePortfolioOffice } from "../../data/queries";
-import { useRunBrokerReconciliation, useRunP2CursorReconciliation, useStageClientOnboarding, useStageHoldingUpdate } from "../../data/actions";
+import {
+  useCaptureVisibleBrowserPortfolio, useReprocessSecureClientImport, useResolveSecureClientImportIdentity,
+  useRunBrokerReconciliation, useRunP2CursorReconciliation,
+  useStageClientOnboarding, useStageHoldingUpdate, useUploadSecureClientReport,
+} from "../../data/actions";
+import { get } from "../../data/client";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select, KeyValue,
 } from "../../system/primitives";
 import { DonutChart, Treemap } from "../../system/charts";
-import { text, num, bool, formatRelative, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
+import { text, num, bool, raw, formatRelative, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -31,6 +36,7 @@ const TABS = [
   { key: "positions", label: "Positions", icon: PieChart },
   { key: "books", label: "Books", icon: BookOpen },
   { key: "clients", label: "Clients", icon: Users },
+  { key: "imports", label: "Report Imports", icon: FileSpreadsheet },
   { key: "nav", label: "NAV & Cash", icon: DollarSign },
   { key: "reconciliation", label: "Reconciliation", icon: GitBranch },
   { key: "trackers", label: "Folio Trackers", icon: Activity },
@@ -62,6 +68,7 @@ export default function PortfolioTerminal({ defaultTab = "overview" }: { default
       {tab === "positions" && <PositionsView />}
       {tab === "books" && <BooksView />}
       {tab === "clients" && <ClientsView />}
+      {tab === "imports" && <ClientImportsView />}
       {tab === "nav" && <NavView />}
       {tab === "reconciliation" && <ReconView />}
       {tab === "trackers" && <TrackersView />}
@@ -342,6 +349,428 @@ function ClientsView() {
       <ClientOnboardingDrawer open={showOnboarding} onClose={() => setShowOnboarding(false)} />
     </>
   );
+}
+
+/* ============================================================
+ * SECURE CLIENT REPORT IMPORTS
+ * ============================================================ */
+function ClientImportsView() {
+  const { data, isLoading } = usePortfolioOffice();
+  const upload = useUploadSecureClientReport();
+  const capture = useCaptureVisibleBrowserPortfolio();
+  const reprocess = useReprocessSecureClientImport();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const clients = data?.clients ?? [];
+  const accounts = data?.client_accounts ?? [];
+  const allImports = data?.client_imports ?? [];
+  const allBrowserCaptures = data?.client_browser_captures ?? [];
+  const allExceptions = data?.client_import_exceptions ?? [];
+  const allDerivedHoldings = data?.client_import_derived_holdings ?? [];
+  const allCrossReportReconciliation = data?.client_import_reconciliation ?? [];
+  const allHoldingsComparison = data?.client_import_holdings_comparison ?? [];
+  const workspaceStatuses = data?.client_import_workspace_status ?? [];
+  const allRealizedSummaries = data?.client_import_realized_summary ?? [];
+  const [file, setFile] = React.useState<File | null>(null);
+  const [clientCode, setClientCode] = React.useState("");
+  const [accountCode, setAccountCode] = React.useState("");
+  const [reportKind, setReportKind] = React.useState<"aditya_birla_money_capital_gains" | "broker_transactions" | "holdings_statement" | "broker_ledger" | "contract_note" | "portfolio_snapshot" | "tax_report" | "other">("aditya_birla_money_capital_gains");
+  const [evidenceKey, setEvidenceKey] = React.useState<string | null>(null);
+  const [identityKey, setIdentityKey] = React.useState<string | null>(null);
+  const [captureSource, setCaptureSource] = React.useState<"aditya_birla_money_authenticated_portfolio" | "zerodha_authenticated_portfolio" | "authorized_broker_portfolio" | "authorized_portfolio_tracker">("aditya_birla_money_authenticated_portfolio");
+  const [captureTitle, setCaptureTitle] = React.useState("");
+  const [captureContent, setCaptureContent] = React.useState("");
+  const [captureContentType, setCaptureContentType] = React.useState<"text/html" | "text/plain">("text/plain");
+  const [captureConsent, setCaptureConsent] = React.useState(false);
+  React.useEffect(() => {
+    if (clientCode || clients.length === 0) return;
+    const importedClientCode = text(allImports[0] ?? {}, "client_code");
+    const fallbackClientCode = text(clients[0] ?? {}, "client_code");
+    setClientCode(importedClientCode || fallbackClientCode);
+  }, [allImports, clientCode, clients]);
+  const imports = clientCode ? allImports.filter((row) => text(row, "client_code") === clientCode) : [];
+  const browserCaptures = clientCode ? allBrowserCaptures.filter((row) => text(row, "client_code") === clientCode) : [];
+  const exceptions = clientCode ? allExceptions.filter((row) => text(row, "client_code") === clientCode) : [];
+  const derivedHoldings = clientCode ? allDerivedHoldings.filter((row) => text(row, "client_code") === clientCode) : [];
+  const crossReportReconciliation = clientCode ? allCrossReportReconciliation.filter((row) => text(row, "client_code") === clientCode) : [];
+  const holdingsComparison = clientCode ? allHoldingsComparison.filter((row) => text(row, "client_code") === clientCode) : [];
+  const realizedSummaries = clientCode ? allRealizedSummaries.filter((row) => text(row, "client_code") === clientCode) : [];
+  const workspaceStatus = workspaceStatuses.find((row) => text(row, "client_code") === clientCode);
+  const historicalTransactionRows = imports.filter((row) => text(row, "report_kind") === "broker_transactions").reduce((total, row) => total + num(row, "transaction_count", 0), 0);
+  const historicalCapitalLots = imports.filter((row) => ["aditya_birla_money_capital_gains", "tax_report"].includes(text(row, "report_kind"))).reduce((total, row) => total + num(row, "lot_count", 0), 0);
+  const historicalOpenLots = derivedHoldings.reduce((total, row) => total + num(row, "open_lot_count", 0), 0);
+  const historicalStarts = imports.map((row) => text(row, "source_period_start", "")).filter(Boolean).sort();
+  const historicalEnds = imports.map((row) => text(row, "source_period_end", "")).filter(Boolean).sort();
+  const historicalWindow = historicalStarts.length && historicalEnds.length ? `${historicalStarts[0]} → ${historicalEnds[historicalEnds.length - 1]}` : "No imported period";
+  const scopedAccounts = accounts.filter((row) => !clientCode || text(row, "client_code") === clientCode);
+
+  function submit() {
+    if (!file || !clientCode || !accountCode) {
+      pushToast({ title: "Choose the report and folio", message: "A file, client, and account are required.", tone: "warn", duration: 4500 });
+      return;
+    }
+    upload.mutate({ file, client_code: clientCode, account_code: accountCode, report_kind: reportKind, actor: "Devarsh" }, {
+      onSuccess: (result) => {
+        pushToast({
+          title: "Report preserved and inspected",
+          message: `${num(result, "normalized_rows", 0)} evidence rows · ${num(result, "exception_count", 0)} exception(s) · identity ${text(result, "identity_status", "review")}`,
+          tone: num(result, "exception_count", 0) ? "warn" : "ok",
+          duration: 7000,
+        });
+        setFile(null);
+      },
+      onError: (error) => pushToast({ title: "Report intake failed", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  function acceptBrowserPaste(event: React.ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const rich = event.clipboardData.getData("text/html");
+    const plain = event.clipboardData.getData("text/plain");
+    if (rich && /<table[\s>]/i.test(rich)) {
+      setCaptureContent(rich);
+      setCaptureContentType("text/html");
+    } else {
+      setCaptureContent(plain);
+      setCaptureContentType("text/plain");
+    }
+  }
+
+  function submitBrowserCapture() {
+    if (!clientCode || !accountCode || !captureContent || !captureConsent) {
+      pushToast({ title: "Complete the governed capture", message: "Choose the authorized folio, paste the selected visible table, and confirm consent.", tone: "warn", duration: 5500 });
+      return;
+    }
+    capture.mutate({
+      client_code: clientCode,
+      account_code: accountCode,
+      source_key: captureSource,
+      page_title: captureTitle,
+      captured_at: new Date().toISOString(),
+      content_type: captureContentType,
+      content: captureContent,
+      operator_confirmed: true,
+      actor: "Devarsh",
+    }, {
+      onSuccess: (result) => {
+        pushToast({
+          title: "Visible portfolio evidence captured",
+          message: `${num(result, "normalized_rows", 0)} normalized row(s) · ${num(result, "exception_count", 0)} exception(s) · read-only`,
+          tone: num(result, "exception_count", 0) ? "warn" : "ok",
+          duration: 7000,
+        });
+        setCaptureContent("");
+        setCaptureConsent(false);
+      },
+      onError: (error) => pushToast({ title: "Browser capture rejected", message: error.message, tone: "risk", duration: 7000 }),
+    });
+  }
+
+  function rerun(importKey: string) {
+    reprocess.mutate({ import_key: importKey, operator_confirmed: true, actor: "Devarsh" }, {
+      onSuccess: (result) => pushToast({ title: "Report rechecked", message: `${num(result, "normalized_rows", 0)} evidence rows · ${num(result, "exception_count", 0)} exception(s)`, tone: "ok", duration: 5000 }),
+      onError: (error) => pushToast({ title: "Recheck failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+
+  return (
+    <>
+      <Panel icon={ShieldCheck} title="Authorized Client Evidence Workspace" actions={<Badge tone="ok">Private scope · read only</Badge>}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.25fr) repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+          <Field label="Client workspace" required>
+            <Select value={clientCode} onChange={(event) => { setClientCode(event.target.value); setAccountCode(""); }}>
+              <option value="">Select authorized client</option>
+              {clients.map((row, index) => <option key={text(row, "client_code", index)} value={text(row, "client_code")}>{text(row, "display_name", "Client")}</option>)}
+            </Select>
+          </Field>
+          <MetricTile tone={text(workspaceStatus ?? {}, "historical_status") === "source_backed" ? "default" : "warn"}>
+            <Metric label="Historical evidence" value={text(workspaceStatus ?? {}, "historical_status", "not loaded").replace(/_/g, " ")} sub={num(workspaceStatus ?? {}, "historical_transaction_rows", 0).toLocaleString() + " transactions · " + num(workspaceStatus ?? {}, "capital_gain_lot_rows", 0).toLocaleString() + " gain lots"} />
+          </MetricTile>
+          <MetricTile><Metric label="Period-derived lots" value={num(workspaceStatus ?? {}, "open_lot_rows", 0).toLocaleString()} sub="Buy dates and FIFO cost · not current" /></MetricTile>
+          <MetricTile tone="warn"><Metric label="Current holdings" value={text(workspaceStatus ?? {}, "current_holdings_status", "pending").replace(/_/g, " ")} sub={text(workspaceStatus ?? {}, "latest_capture_at") ? formatRelative(text(workspaceStatus ?? {}, "latest_capture_at")) : "Awaiting authorized capture"} /></MetricTile>
+          <MetricTile tone="warn"><Metric label="Current cash" value={text(workspaceStatus ?? {}, "current_cash_status", "pending").replace(/_/g, " ")} sub="No estimate is substituted" /></MetricTile>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
+          <div style={{ padding: "var(--space-3)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+            <strong>Performance / CAGR</strong>
+            <div style={{ color: "var(--status-warn)", marginTop: "var(--space-1)" }}>{text(workspaceStatus ?? {}, "performance_status", "not calculated").replace(/_/g, " ")}</div>
+            <small style={{ color: "var(--text-muted)" }}>Calculated only after current holdings, cash, opening history, and corporate actions reconcile.</small>
+          </div>
+          <div style={{ padding: "var(--space-3)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+            <strong>Portfolio risk</strong>
+            <div style={{ color: "var(--status-warn)", marginTop: "var(--space-1)" }}>{text(workspaceStatus ?? {}, "risk_status", "not calculated").replace(/_/g, " ")}</div>
+            <small style={{ color: "var(--text-muted)" }}>Final exposure and risk require current positions and source-backed prices.</small>
+          </div>
+          <div style={{ padding: "var(--space-3)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+            <strong>Open evidence exceptions</strong>
+            <div style={{ color: num(workspaceStatus ?? {}, "blocking_exception_count", 0) ? "var(--status-risk)" : "var(--status-warn)", marginTop: "var(--space-1)" }}>{num(workspaceStatus ?? {}, "open_exception_count", 0)} open · {num(workspaceStatus ?? {}, "blocking_exception_count", 0)} blocking</div>
+            <small style={{ color: "var(--text-muted)" }}>Exceptions stay visible; derived values are never silently promoted.</small>
+          </div>
+        </div>
+        <div style={{ marginTop: "var(--space-3)", display: "flex", justifyContent: "space-between", gap: "var(--space-3)", flexWrap: "wrap", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+          <span>{text(workspaceStatus ?? {}, "methodology", "Select an authorized client to load its source contract.")}</span>
+          <strong style={{ color: "var(--status-ok)" }}>Broker writes and client-record mutation locked</strong>
+        </div>
+      </Panel>
+
+      <Panel icon={Upload} title="Secure Broker Report Intake" actions={<Badge tone="ok">Private · checksum locked</Badge>}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+          <Field label="Client" required>
+            <Select value={clientCode} onChange={(event) => { setClientCode(event.target.value); setAccountCode(""); }}>
+              <option value="">Select authorized client</option>
+              {clients.map((row, index) => <option key={text(row, "client_code", index)} value={text(row, "client_code")}>{text(row, "display_name", "Client")}</option>)}
+            </Select>
+          </Field>
+          <Field label="Folio / account" required>
+            <Select value={accountCode} onChange={(event) => setAccountCode(event.target.value)}>
+              <option value="">Select account</option>
+              {scopedAccounts.map((row, index) => <option key={text(row, "account_code", index)} value={text(row, "account_code")}>{text(row, "account_name", "Broker account")} · {text(row, "broker", "Broker")}</option>)}
+            </Select>
+          </Field>
+          <Field label="Report type" required>
+            <Select value={reportKind} onChange={(event) => setReportKind(event.target.value as typeof reportKind)}>
+              <option value="aditya_birla_money_capital_gains">Aditya Birla Money capital gains</option>
+              <option value="broker_transactions">Transaction report</option>
+              <option value="holdings_statement">Holdings statement</option>
+              <option value="broker_ledger">Cash / fund ledger</option>
+              <option value="contract_note">Contract note</option>
+              <option value="portfolio_snapshot">Portfolio snapshot</option>
+              <option value="tax_report">Tax report</option>
+              <option value="other">Other broker report</option>
+            </Select>
+          </Field>
+          <Field label="Excel, CSV, or PDF" required>
+            <input
+              aria-label="Choose broker report"
+              type="file"
+              accept=".xls,.xlsx,.csv,.tsv,.pdf"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              style={{ width: "100%", color: "var(--text)", fontSize: "var(--text-sm)" }}
+            />
+          </Field>
+          <Button variant="primary" icon={Upload} onClick={submit} disabled={!file || !clientCode || !accountCode || upload.isPending}>{upload.isPending ? "Preserving & checking…" : "Import report"}</Button>
+        </div>
+        <div style={{ marginTop: "var(--space-3)", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+          The original file is stored once with an immutable SHA-256 checksum. Excel/CSV rows are staged for identity review and reconciliation; nothing is promoted into final holdings, cash, NAV, or trades automatically.
+        </div>
+        {file?.name.toLowerCase().endsWith(".pdf") ? <div role="status" style={{ marginTop: "var(--space-2)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>PDF will be preserved as evidence. Use the Excel export for deterministic lot-level import.</div> : null}
+      </Panel>
+
+      <Panel icon={FileSpreadsheet} title="Historical Broker Evidence" actions={<Badge tone="ok">Primary historical record · active</Badge>}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "var(--space-3)" }}>
+          <MetricTile><Metric label="Imported transactions" value={historicalTransactionRows.toLocaleString()} sub={historicalWindow} /></MetricTile>
+          <MetricTile><Metric label="Capital-gain lots" value={historicalCapitalLots.toLocaleString()} sub="Purchase/sale dates and realized-gain evidence" /></MetricTile>
+          <MetricTile><Metric label="Period-derived open lots" value={historicalOpenLots.toLocaleString()} sub="FIFO cost and buy dates; not current-state confirmation" /></MetricTile>
+          <MetricTile tone={browserCaptures.length > 0 ? "default" : "warn"}><Metric label="Current broker state" value={browserCaptures.length > 0 ? "Captured for review" : "Pending confirmation"} sub="Current holdings and cash are a separate freshness layer" /></MetricTile>
+        </div>
+        <div style={{ marginTop: "var(--space-3)", color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
+          The supplied broker transaction and capital-gain exports remain the primary historical evidence and are usable now for transaction history, lot dates, source cost, realized-gain evidence, and period FIFO analysis. Safari capture complements this record with current holdings or funds/cash; it does not replace or diminish the imported documents.
+        </div>
+        {realizedSummaries.length > 0 ? <div style={{ marginTop: "var(--space-4)" }}><DataTable dense columns={[
+          { key: "period", header: "Capital-gain evidence period", render: (row) => text(row, "source_period_start", "—") + " → " + text(row, "source_period_end", "—") },
+          { key: "lots", header: "Source lots", align: "right", render: (row) => num(row, "realized_lot_rows", 0) },
+          { key: "realized", header: "Source-reported gain", align: "right", render: (row) => formatCurrency(num(row, "source_realized_gain", 0)) },
+          { key: "dates", header: "Buy / sale evidence", render: (row) => text(row, "earliest_purchase_date", "—") + " → " + text(row, "latest_sale_date", "—") },
+          { key: "proof", header: "Provenance", render: (row) => <><span style={{ fontFamily: "var(--font-mono)" }}>{text(row, "checksum_prefix", "—")}</span><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "methodology", "Source values")}</div></> },
+        ]} rows={realizedSummaries} rowKey={(row, index) => text(row, "import_key", index)} /></div> : null}
+      </Panel>
+
+      <Panel icon={Search} title="Authenticated Browser Capture" actions={<Badge tone="ok">User-initiated · read only</Badge>}>
+        <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-3)" }}>
+          In Safari, select and copy only the visible holdings, transactions, or funds table for the authorized folio. Paste it below. AI OS keeps a checksum-locked sanitized snapshot and excludes URLs, cookies, form fields, scripts, hidden content, and broker actions.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "var(--space-3)", alignItems: "end" }}>
+          <Field label="Authenticated source" required>
+            <Select value={captureSource} onChange={(event) => setCaptureSource(event.target.value as typeof captureSource)}>
+              <option value="aditya_birla_money_authenticated_portfolio">Aditya Birla Money portfolio</option>
+              <option value="zerodha_authenticated_portfolio">Zerodha portfolio</option>
+              <option value="authorized_broker_portfolio">Other authorized broker</option>
+              <option value="authorized_portfolio_tracker">Authorized portfolio tracker</option>
+            </Select>
+          </Field>
+          <Field label="Page label (optional)"><TextInput value={captureTitle} onChange={(event) => setCaptureTitle(event.target.value)} placeholder="Holdings / Funds / Transactions" /></Field>
+          <div
+            role="textbox"
+            aria-label="Paste copied visible portfolio table"
+            tabIndex={0}
+            onPaste={acceptBrowserPaste}
+            style={{ minHeight: 74, padding: "var(--space-3)", border: "1px dashed var(--border)", borderRadius: "var(--radius-md)", background: "var(--surface-raised)", color: captureContent ? "var(--status-ok)" : "var(--text-muted)", cursor: "text" }}
+          >
+            {captureContent ? `Visible table received (${captureContent.length.toLocaleString()} characters). Raw content is not echoed here.` : "Click here, then paste the selected visible table from Safari."}
+          </div>
+          <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-start", fontSize: "var(--text-sm)" }}>
+            <input type="checkbox" checked={captureConsent} onChange={(event) => setCaptureConsent(event.target.checked)} />
+            <span>I selected this visible content for the chosen client and authorize a read-only evidence capture.</span>
+          </label>
+          <Button variant="primary" icon={ShieldCheck} onClick={submitBrowserCapture} disabled={!clientCode || !accountCode || !captureContent || !captureConsent || capture.isPending}>{capture.isPending ? "Sanitizing & reconciling…" : "Capture copied page read-only"}</Button>
+        </div>
+        {!clientCode || !accountCode ? <div role="status" style={{ marginTop: "var(--space-2)", color: "var(--status-warn)", fontSize: "var(--text-sm)" }}>Choose the authorized client and folio in Secure Broker Report Intake above before capturing.</div> : null}
+        {browserCaptures.length > 0 ? <div style={{ marginTop: "var(--space-4)" }}><DataTable dense columns={[
+          { key: "source", header: "Source", render: (row) => text(row, "source_key", "authorized source").replace(/_/g, " ") },
+          { key: "folio", header: "Client / folio", render: (row) => <><strong>{text(row, "display_name", "Client")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "account_name", "Authorized account")}</div></> },
+          { key: "captured", header: "Captured", render: (row) => formatRelative(text(row, "captured_at")) },
+          { key: "checksum", header: "Evidence", render: (row) => <span style={{ fontFamily: "var(--font-mono)" }}>{text(row, "checksum_prefix", "—")}</span> },
+          { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", "needs_review")} /> },
+          { key: "exceptions", header: "Exceptions", align: "right", render: (row) => num(row, "exception_count", 0) },
+          { key: "safety", header: "Boundary", render: () => <Badge tone="ok">No credentials · no writes</Badge> },
+          { key: "actions", header: "Review", render: (row) => <div style={{ display: "flex", gap: "var(--space-1)" }}>
+            <Button size="sm" variant="ghost" icon={Search} onClick={() => setEvidenceKey(text(row, "import_key"))}>Preview</Button>
+            <Button size="sm" variant="ghost" onClick={() => rerun(text(row, "import_key"))} disabled={reprocess.isPending}>Retry</Button>
+          </div> },
+        ]} rows={browserCaptures} rowKey={(row, index) => text(row, "capture_key", `capture-${index}`)} /></div> : null}
+      </Panel>
+
+      <Panel icon={FileSpreadsheet} title="Import & Reconciliation Ledger">
+        {isLoading ? <SkeletonGrid rows={4} /> : imports.length === 0 ? (
+          <Empty icon={FileSpreadsheet} title="No client reports imported" description="Export a broker report, choose the authorized folio above, and import it here." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "client", header: "Client / folio", render: (row) => <><strong>{text(row, "display_name", "Client")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "account_name", text(row, "broker", "Account"))}</div></> },
+              { key: "source", header: "Source", render: (row) => <><span>{text(row, "broker", "Broker")}</span><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "report_kind").replace(/_/g, " ")}</div></> },
+              { key: "period", header: "Source period", render: (row) => `${text(row, "source_period_start", "—")} → ${text(row, "source_period_end", "—")}` },
+              { key: "rows", header: "Evidence", align: "right", render: (row) => `${num(row, "transaction_count", 0)} rows / ${num(row, "lot_count", 0)} lots` },
+              { key: "exceptions", header: "Exceptions", align: "right", render: (row) => <span style={{ color: num(row, "exception_count", 0) ? "var(--status-warn)" : "var(--status-ok)" }}>{num(row, "exception_count", 0)}</span> },
+              { key: "identity", header: "Identity", render: (row) => <StatusPill status={text(row, "identity_status", "unresolved")} /> },
+              { key: "recon", header: "Reconciliation", render: (row) => <StatusPill status={text(row, "reconciliation_status", "not_run")} /> },
+              { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", "quarantined")} /> },
+              { key: "checksum", header: "Provenance", render: (row) => <><span style={{ fontFamily: "var(--font-mono)" }}>{text(row, "checksum_prefix", "—")}</span><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{formatRelative(text(row, "received_at"))}</div></> },
+              { key: "actions", header: "Actions", render: (row) => <div style={{ display: "flex", gap: "var(--space-1)", flexWrap: "wrap" }}>
+                <Button size="sm" variant="ghost" icon={Search} onClick={() => setEvidenceKey(text(row, "import_key"))}>Evidence</Button>
+                {text(row, "identity_status") === "needs_review" ? <Button size="sm" variant="ghost" icon={ShieldCheck} onClick={() => setIdentityKey(text(row, "import_key"))}>Resolve</Button> : null}
+                <Button size="sm" variant="ghost" onClick={() => rerun(text(row, "import_key"))} disabled={reprocess.isPending}>Recheck</Button>
+              </div> },
+            ]}
+            rows={imports}
+            rowKey={(row, index) => text(row, "import_key", `import-${index}`)}
+          />
+        )}
+      </Panel>
+
+      <Panel icon={ShieldCheck} title="Cross-report Reconciliation" actions={<Badge tone="warn">Review before promotion</Badge>}>
+        {crossReportReconciliation.length === 0 ? (
+          <Empty icon={ShieldCheck} title="No paired reports reconciled" description="Import a transaction report and capital-gain report for the same approved folio. Matching runs only after identity confirmation." />
+        ) : <DataTable dense columns={[
+          { key: "account", header: "Authorized folio", render: (row) => text(row, "client_code", "Client folio") },
+          { key: "lots", header: "Capital-gain lots", align: "right", render: (row) => num(row, "capital_gain_lot_rows", 0) },
+          { key: "matched", header: "Matched", align: "right", render: (row) => <span style={{ color: "var(--status-ok)" }}>{num(row, "matched_rows", 0)}</span> },
+          { key: "ambiguous", header: "Ambiguous", align: "right", render: (row) => <span style={{ color: "var(--status-warn)" }}>{num(row, "ambiguous_rows", 0)}</span> },
+          { key: "unmatched", header: "Unmatched", align: "right", render: (row) => <span style={{ color: num(row, "unmatched_rows", 0) ? "var(--status-risk)" : "var(--status-ok)" }}>{num(row, "unmatched_rows", 0)}</span> },
+          { key: "difference", header: "Absolute difference", align: "right", render: (row) => formatCurrency(num(row, "absolute_value_difference", 0)) },
+          { key: "method", header: "Method", render: (row) => <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "methodology", "Date, quantity, and value tolerance")}</span> },
+        ]} rows={crossReportReconciliation} rowKey={(row, index) => `${text(row, "capital_gain_import_key", index)}:${text(row, "transaction_import_key", "none")}`} />}
+      </Panel>
+
+      <Panel icon={FileSpreadsheet} title="Derived Holdings for Imported Period" actions={<Badge tone="warn">Not broker-confirmed</Badge>}>
+        <div style={{ marginBottom: "var(--space-3)", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+          These quantities and costs use FIFO over the report's covered period. Missing opening history, corporate actions, current prices, and cash are never estimated; resolve exceptions and compare a current holdings statement before treating this as the portfolio of record.
+        </div>
+        {derivedHoldings.length === 0 ? (
+          <Empty icon={FileSpreadsheet} title="No period-derived holdings" description="A confirmed transaction export is required before FIFO lots can be derived." />
+        ) : <DataTable dense columns={[
+          { key: "client", header: "Client / source accounts", render: (row) => <><strong>{text(row, "display_name", "Client")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>Import: {text(row, "imported_accounts", "—")} · Warehouse: {text(row, "canonical_accounts", "—")}</div></> },
+          { key: "security", header: "Security", render: (row) => <strong>{text(row, "symbol", "—")}</strong> },
+          { key: "quantity", header: "Derived units", align: "right", render: (row) => num(row, "derived_quantity", 0) },
+          { key: "basis", header: "Derived cost", align: "right", render: (row) => formatCurrency(num(row, "derived_cost_basis", 0)) },
+          { key: "average", header: "Average cost", align: "right", render: (row) => formatCurrency(num(row, "derived_average_cost", 0)) },
+          { key: "dates", header: "Open buy dates", render: (row) => `${text(row, "earliest_open_buy_date", "—")} → ${text(row, "latest_open_buy_date", "—")}` },
+          { key: "period", header: "Source period", render: (row) => `${text(row, "source_period_start", "—")} → ${text(row, "source_period_end", "—")}` },
+          { key: "quality", header: "Quality", render: (row) => <StatusPill status={text(row, "quality_status", "incomplete")} /> },
+        ]} rows={derivedHoldings} rowKey={(row, index) => `${text(row, "import_key", index)}:${text(row, "symbol", index)}`} />}
+      </Panel>
+
+      <Panel icon={GitBranch} title="Imported vs Current Warehouse Holdings" actions={<Badge tone={holdingsComparison.some((row) => text(row, "comparison_status") !== "matched") ? "warn" : "ok"}>Read-only comparison</Badge>}>
+        <div style={{ marginBottom: "var(--space-3)", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+          This compares source-period FIFO quantities with the latest existing warehouse snapshot. Breaks prove that more evidence or reconciliation is required; this view never changes either source.
+        </div>
+        {holdingsComparison.length === 0 ? <Empty icon={GitBranch} title="No comparable holdings" description="Import a confirmed transaction report and retain a current warehouse position snapshot for the same authorized account." /> : <DataTable dense columns={[
+          { key: "client", header: "Client / folio", render: (row) => <><strong>{text(row, "display_name", "Client")}</strong><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>{text(row, "account_name", "Approved account")}</div></> },
+          { key: "symbol", header: "Security", render: (row) => <strong>{text(row, "symbol", "—")}</strong> },
+          { key: "imported", header: "Imported-period units", align: "right", render: (row) => row.derived_quantity === null || row.derived_quantity === undefined ? "—" : num(row, "derived_quantity", 0) },
+          { key: "warehouse", header: "Warehouse units", align: "right", render: (row) => row.canonical_quantity === null || row.canonical_quantity === undefined ? "—" : num(row, "canonical_quantity", 0) },
+          { key: "difference", header: "Difference", align: "right", render: (row) => row.quantity_difference === null || row.quantity_difference === undefined ? "—" : num(row, "quantity_difference", 0) },
+          { key: "status", header: "Result", render: (row) => <StatusPill status={text(row, "comparison_status", "not_comparable")} /> },
+          { key: "freshness", header: "Evidence dates", render: (row) => <><div>Import to {text(row, "source_period_end", "—")}</div><div style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>Warehouse {formatRelative(text(row, "canonical_as_of"))}</div></> },
+        ]} rows={holdingsComparison} rowKey={(row, index) => `${text(row, "client_code", index)}:${text(row, "symbol", index)}`} />}
+      </Panel>
+
+      {exceptions.length > 0 ? (
+        <Panel variant="warn" icon={AlertTriangle} title="Open Import Exceptions">
+          <DataTable columns={[
+            { key: "client", header: "Client", render: (row) => text(row, "client_code", "Authorized client") },
+            { key: "row", header: "Source row", align: "right", render: (row) => num(row, "row_number", 0) || "Report" },
+            { key: "issue", header: "Issue", render: (row) => <strong>{text(row, "exception_code").replace(/_/g, " ")}</strong> },
+            { key: "severity", header: "Severity", render: (row) => <StatusPill status={text(row, "severity", "warning")} /> },
+            { key: "action", header: "Required review", render: (row) => text(row, "message", "Review source evidence") },
+          ]} rows={exceptions.slice(0, 100)} rowKey={(row, index) => String(text(row, "id", index))} />
+        </Panel>
+      ) : null}
+
+      <ClientImportEvidenceDrawer importKey={evidenceKey} onClose={() => setEvidenceKey(null)} />
+      <ClientImportIdentityDrawer importKey={identityKey} onClose={() => setIdentityKey(null)} />
+    </>
+  );
+}
+
+function ClientImportEvidenceDrawer({ importKey, onClose }: { importKey: string | null; onClose: () => void }) {
+  const [payload, setPayload] = React.useState<LiveRow | null>(null);
+  const [error, setError] = React.useState("");
+  const [offset, setOffset] = React.useState(0);
+  const pageSize = 100;
+  React.useEffect(() => setOffset(0), [importKey]);
+  React.useEffect(() => {
+    if (!importKey) { setPayload(null); setError(""); return; }
+    const controller = new AbortController();
+    setPayload(null);
+    get<LiveRow>("/api/client-imports/evidence", { query: { import_key: importKey, limit: pageSize, offset }, signal: controller.signal })
+      .then(setPayload)
+      .catch((cause: Error) => { if (!controller.signal.aborted) setError(cause.message); });
+    return () => controller.abort();
+  }, [importKey, offset]);
+  const rows = Array.isArray(raw(payload ?? {}, "rows")) ? raw(payload ?? {}, "rows") as LiveRow[] : [];
+  const exceptions = Array.isArray(raw(payload ?? {}, "exceptions")) ? raw(payload ?? {}, "exceptions") as LiveRow[] : [];
+  const totalRows = num(payload ?? {}, "total_rows", rows.length);
+  const hasMore = bool(payload ?? {}, "has_more", false);
+  return <Drawer open={Boolean(importKey)} onClose={onClose} title="Normalized Transaction Evidence" icon={Search} width={980}>
+    {error ? <div role="alert" style={{ color: "var(--status-risk)" }}>{error}</div> : !payload ? <SkeletonGrid rows={5} /> : <>
+      <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-3)", alignItems: "center", flexWrap: "wrap" }}>
+        <Badge tone="accent">Raw payload hidden</Badge><Badge tone="ok">Broker writes locked</Badge><Badge tone={exceptions.length ? "warn" : "ok"}>{exceptions.length} exceptions</Badge>
+        <span style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)", marginLeft: "auto" }}>{totalRows ? (offset + 1) + "–" + Math.min(offset + rows.length, totalRows) + " of " + totalRows + " evidence rows" : "No evidence rows"}</span>
+        <Button size="sm" variant="ghost" onClick={() => setOffset(Math.max(0, offset - pageSize))} disabled={offset === 0}>Previous</Button>
+        <Button size="sm" variant="ghost" onClick={() => setOffset(offset + pageSize)} disabled={!hasMore}>Next</Button>
+      </div>
+      {rows.length === 0 ? <Empty icon={Search} title="No structured rows" description="The source is preserved, but a structured Excel/CSV export is required." /> : <DataTable dense columns={[
+        { key: "row", header: "Row", align: "right", render: (row) => num(row, "row_number", 0) },
+        { key: "security", header: "Security", render: (row) => <strong>{text(row, "symbol", text(row, "instrument_name", "—"))}</strong> },
+        { key: "buy", header: "Purchase", render: (row) => `${text(row, "purchase_date", "—")} · ${formatCurrency(num(row, "buy_value", 0))}` },
+        { key: "sale", header: "Sale", render: (row) => `${text(row, "sale_date", text(row, "transaction_date", "—"))} · ${formatCurrency(num(row, "sell_value", 0))}` },
+        { key: "qty", header: "Units", align: "right", render: (row) => num(row, "quantity", 0) },
+        { key: "gain", header: "Source gain", align: "right", render: (row) => formatCurrency(num(row, "realized_gain", num(row, "taxable_gain", 0))) },
+        { key: "held", header: "Held", align: "right", render: (row) => num(row, "holding_period_days", 0) ? `${num(row, "holding_period_days", 0)}d` : "—" },
+        { key: "proof", header: "Evidence hash", render: (row) => <span style={{ fontFamily: "var(--font-mono)" }}>{text(row, "evidence_hash", "—")}</span> },
+      ]} rows={rows} rowKey={(row, index) => `${text(row, "evidence_hash", index)}:${text(row, "layer")}`} />}
+    </>}
+  </Drawer>;
+}
+
+function ClientImportIdentityDrawer({ importKey, onClose }: { importKey: string | null; onClose: () => void }) {
+  const mutation = useResolveSecureClientImportIdentity();
+  const pushToast = useUIStore((state) => state.pushToast);
+  const [rationale, setRationale] = React.useState("");
+  function decide(decision: "confirm" | "reject") {
+    if (!importKey || rationale.trim().length < 10) {
+      pushToast({ title: "Explain the identity check", message: "Record how the report was matched to this folio.", tone: "warn", duration: 4500 });
+      return;
+    }
+    mutation.mutate({ import_key: importKey, decision, rationale: rationale.trim(), operator_confirmed: true, actor: "Devarsh" }, {
+      onSuccess: () => { pushToast({ title: decision === "confirm" ? "Folio identity confirmed" : "Import rejected", message: "The decision and rationale were written to the audit trail.", tone: decision === "confirm" ? "ok" : "warn", duration: 5000 }); setRationale(""); onClose(); },
+      onError: (error) => pushToast({ title: "Identity review failed", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
+  return <Drawer open={Boolean(importKey)} onClose={onClose} title="Resolve Report Identity" icon={ShieldCheck} width={560}
+    footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => decide("reject")} disabled={mutation.isPending}>Reject</Button><Button variant="primary" icon={ShieldCheck} onClick={() => decide("confirm")} disabled={mutation.isPending}>Confirm folio match</Button></div>}>
+    <p style={{ color: "var(--text-muted)", marginTop: 0 }}>Confirm only after matching the broker report header to the selected client and folio. This unlocks reconciliation review, not trading or automatic promotion.</p>
+    <Field label="Identity evidence and rationale" required><TextArea rows={5} value={rationale} onChange={(event) => setRationale(event.target.value)} placeholder="Matched the broker account name and masked identifier to the approved client record…" /></Field>
+  </Drawer>;
 }
 
 function ClientOnboardingDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {

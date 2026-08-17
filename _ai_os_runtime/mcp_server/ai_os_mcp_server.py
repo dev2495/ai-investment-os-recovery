@@ -164,6 +164,17 @@ def materialize_agent_schedules(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/agents/schedules/run", payload))
 
 
+def calibrate_kronos_forecast(arguments: dict) -> dict:
+    forecast_run_id = arguments.get("forecast_run_id")
+    if forecast_run_id is None:
+        raise ValueError("forecast_run_id is required")
+    payload = {
+        "forecast_run_id": int(forecast_run_id),
+        "actor": str(arguments.get("actor") or "Model Validation Agent"),
+    }
+    return tool_result(post_api_json("/api/kronos/forecasts/calibrate", payload, timeout=180.0))
+
+
 def list_open_tasks(arguments: dict) -> dict:
     limit = limit_arg(arguments)
     return tool_result(
@@ -4367,6 +4378,21 @@ def sync_sector_ownership_flows(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/sector-intelligence/ownership-flows/sync", payload, timeout=920))
 
 
+def build_sector_underwrite(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Portfolio Manager")
+    payload.setdefault("persist", True)
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/underwrite/build", payload, timeout=1220))
+
+
 def run_sector_acceptance(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
@@ -4434,13 +4460,23 @@ def materialize_institutional_options(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/options/institutional-analytics/materialize", payload, timeout=320))
 
 
+def refresh_option_valuation_sources(arguments: dict) -> dict:
+    payload = {
+        "sources": arguments.get("sources") or ["rate", "dividends"],
+        "actor": arguments.get("actor") or "Options Data Quality Agent",
+        "broker_write_allowed": False,
+        "capital_action_allowed": False,
+    }
+    return tool_result(post_api_json("/api/options/valuation-sources/refresh", payload, timeout=200))
+
+
 def upsert_option_valuation_policy(arguments: dict) -> dict:
     payload = {
         key: arguments[key]
         for key in (
             "policy_key", "provider", "exchange", "underlying", "model_family", "risk_free_rate",
-            "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
-            "dividend_source_timestamp", "source_artifact_ref", "effective_from", "expires_at",
+            "dividend_yield", "rate_observation_id", "dividend_observation_id",
+            "effective_from", "expires_at", "operator_confirmed",
             "day_count_convention", "expiry_local_time", "expiry_timezone", "assumptions", "actor",
         )
         if key in arguments
@@ -6023,6 +6059,34 @@ TOOLS = {
         },
         "handler": sync_sector_ownership_flows,
     },
+    "ai_os_build_sector_underwrite": {
+        "description": "Build a paper-only institutional sector underwrite from official ten-year point-in-time valuation history, stored fundamentals, ownership, flows and portfolio evidence. It records independent dissent and evidence gaps and cannot authorize capital, execution, or broker orders.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": build_sector_underwrite,
+    },
+    "ai_os_calibrate_kronos_forecast": {
+        "description": "Score one completed Kronos forecast against canonical realized OHLCV. The result is model-risk evidence only and cannot promote a strategy, allocate capital, or create a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "forecast_run_id": {"type": "integer", "minimum": 1},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Model Validation Agent"},
+            },
+            "required": ["forecast_run_id"],
+        },
+        "handler": calibrate_kronos_forecast,
+    },
     "ai_os_run_sector_acceptance": {
         "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",
         "inputSchema": {
@@ -6121,13 +6185,11 @@ TOOLS = {
                 "model_family": {"type": "string", "enum": ["black_scholes_merton", "black_76"]},
                 "risk_free_rate": {"type": "number", "minimum": -0.2, "maximum": 1},
                 "dividend_yield": {"type": "number", "minimum": -0.2, "maximum": 1},
-                "rate_source": {"type": "string", "minLength": 1},
-                "rate_source_timestamp": {"type": "string", "format": "date-time"},
-                "dividend_source": {"type": "string", "minLength": 1},
-                "dividend_source_timestamp": {"type": "string", "format": "date-time"},
-                "source_artifact_ref": {"type": "string", "minLength": 1},
+                "rate_observation_id": {"type": "integer", "minimum": 1},
+                "dividend_observation_id": {"type": "integer", "minimum": 1},
                 "effective_from": {"type": "string", "format": "date-time"},
                 "expires_at": {"type": "string", "format": "date-time"},
+                "operator_confirmed": {"type": "boolean", "const": True},
                 "day_count_convention": {"type": "string", "default": "ACT/365F"},
                 "expiry_local_time": {"type": "string", "default": "15:30:00"},
                 "expiry_timezone": {"type": "string", "default": "Asia/Kolkata"},
@@ -6135,10 +6197,22 @@ TOOLS = {
                 "actor": {"type": "string", "minLength": 1, "maxLength": 120},
             },
             "required": ["policy_key", "provider", "exchange", "underlying", "risk_free_rate",
-                         "dividend_yield", "rate_source", "rate_source_timestamp", "dividend_source",
-                         "dividend_source_timestamp", "source_artifact_ref", "effective_from", "expires_at"],
+                         "dividend_yield", "rate_observation_id", "dividend_observation_id",
+                         "effective_from", "expires_at", "operator_confirmed"],
         },
         "handler": upsert_option_valuation_policy,
+    },
+    "ai_os_refresh_option_valuation_sources": {
+        "description": "Collect official read-only rate and index dividend-yield evidence as review candidates. This never activates a policy or permits execution.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "sources": {"type": "array", "items": {"type": "string", "enum": ["rate", "dividends"]}, "minItems": 1, "uniqueItems": True},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        "handler": refresh_option_valuation_sources,
     },
     "ai_os_import_sector_intelligence_package": {
         "description": "Validate or atomically import an evidence-backed licensed export or primary-source sector package containing taxonomy, memberships, metrics and custom indices.",
