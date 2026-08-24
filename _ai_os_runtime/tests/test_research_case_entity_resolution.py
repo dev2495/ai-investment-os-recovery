@@ -91,8 +91,10 @@ class ResearchCaseEntityResolutionTests(unittest.TestCase):
         for command, expected in examples.items():
             with self.subTest(command=command):
                 self.assertEqual(extract_research_entity(command), expected)
+        self.assertEqual(extract_research_entity("Shivalik Bimetal too latest filings n news n more"), "Shivalik Bimetal")
         self.assertIsNone(extract_research_entity("What research do we have on Infosys?"))
         self.assertIsNone(extract_research_entity("Summarize Infosys"))
+        self.assertIsNone(extract_research_entity("Infosys also looks interesting"))
 
     def test_nested_client_command_is_unwrapped_before_entity_resolution(self):
         seen_sql = []

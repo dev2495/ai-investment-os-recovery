@@ -48,6 +48,23 @@ _RESEARCH_LAUNCH_RE = re.compile(
 )
 
 
+_RESEARCH_ENTITY_FIRST_RE = re.compile(
+    r"""
+    ^\s*
+    (?P<entity>[A-Za-z0-9&().,'/:+\-\s]{2,120}?)
+    \s+(?:too|also|with|for|covering|including)\s+
+    (?P<scope>.+?)
+    \s*$
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+_RESEARCH_SCOPE_RE = re.compile(
+    r"\b(?:latest|filings?|annual\s+reports?|news|results?|earnings|financials?|"
+    r"moat|valuation|reverse\s+dcf|dcf|peers?|risk|catalysts?|research)\b",
+    flags=re.IGNORECASE,
+)
+
+
 def _clean_entity_candidate(value):
     candidate = re.sub(r"\s+", " ", str(value or "")).strip()
     candidate = candidate.strip(" \t\r\n.,:;-–—!?")
@@ -74,7 +91,13 @@ def extract_research_entity(command):
         if not nested or nested == candidate:
             break
         candidate = nested
-    return candidate if matched and candidate else None
+    if matched and candidate:
+        return candidate
+    entity_first = _RESEARCH_ENTITY_FIRST_RE.match(candidate)
+    if entity_first and _RESEARCH_SCOPE_RE.search(entity_first.group("scope")):
+        entity = _clean_entity_candidate(entity_first.group("entity"))
+        return entity or None
+    return None
 
 
 def _slug(value):
