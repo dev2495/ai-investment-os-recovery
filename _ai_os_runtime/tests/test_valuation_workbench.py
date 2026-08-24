@@ -38,9 +38,29 @@ def test_calculated_model_remains_unreviewed_and_stale_price_blocks_decision():
     assert any(blocker["key"] == "human_review" for blocker in result["blockers"])
 
 
-def test_agent_draft_price_is_visible_but_unverified():
+def test_agent_draft_price_is_never_used_as_a_market_quote():
     selected = {"symbol": "TEST", "exchange": "NSE", "legal_name": "Test Limited", "research_pack": {"forecasts_valuation": {"summary": "Current market price is available at INR 1,027.75.", "citation_ids": ["market:x"]}}}
     result = build_valuation_workbench(selected, {"financial_history": _history(), "financial_validation_checks": []})
-    assert result["current_price"]["value"] == 1027.75
-    assert result["current_price"]["verification_status"] == "captured_unverified"
+    assert result["current_price"] is None
+    assert any(blocker["key"] == "market_price" for blocker in result["blockers"])
+
+
+def test_incomplete_debt_scope_never_claims_net_cash():
+    selected = {"symbol": "TEST", "exchange": "NSE", "legal_name": "Test Limited", "research_pack": {}}
+    result = build_valuation_workbench(selected, {"financial_history": _history(), "financial_validation_checks": []})
+    assert result["equity_bridge"]["status"] == "partial"
+    assert result["equity_bridge"]["net_debt_crore"] is None
+    assert "non_current_borrowings" in result["equity_bridge"]["missing_components"]
+
+
+def test_recent_persisted_model_price_is_lineage_only_not_decision_usable():
+    selected = {"symbol": "TEST", "exchange": "NSE", "legal_name": "Test Limited", "research_pack": {}}
+    model = {"id": 2, "model_type": "dcf", "status": "complete", "fair_value_low": 80, "fair_value_base": 100, "fair_value_high": 130,
+             "assumptions": {"current_price": 90, "current_price_source": {"price": 90, "provider": "Persisted read-only snapshot", "quote_ts": "2099-01-01T00:00:00+00:00"}},
+             "outputs": {}, "updated_at": "2099-01-01T00:00:00+00:00"}
+    result = build_valuation_workbench(selected, {"financial_history": _history(), "valuation_models": [model], "financial_validation_checks": []})
+    assert result["current_price"]["source_class"] == "persisted_model_input"
+    assert result["current_price"]["freshness_status"] == "stale"
+    assert result["current_price"]["decision_usable"] is False
+    assert result["current_price"]["broker_write_allowed"] is False
     assert any(blocker["key"] == "market_price" for blocker in result["blockers"])

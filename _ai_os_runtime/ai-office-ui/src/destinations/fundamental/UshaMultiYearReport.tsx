@@ -495,8 +495,9 @@ export function UshaMultiYearReport({
   const multiples =
     models.find((row) => text(row, "model_type") === "multiples") ?? {};
   const assumptions = rec(dcf.assumptions),
-    priceSource = rec(assumptions.current_price_source),
-    price = num(assumptions, "current_price", 0);
+    priceSource = rec(rec(data.valuation_workbench).current_price),
+    observedPrice = num(priceSource, "value", 0),
+    price = priceSource.decision_usable === true ? observedPrice : 0;
   const dcfScenarios = rec(assumptions.scenarios);
   const baseScenario = rec(dcfScenarios.base);
   const storedShares = num(
@@ -1531,19 +1532,19 @@ export function UshaMultiYearReport({
             expectations and uncertainty.
           </h2>
           <p>
-            Stored quote as of {text(priceSource, "quote_ts", "unknown date")};
-            refresh is required before any decision. Every control below runs
+            Canonical read-only quote status: {text(priceSource, "freshness_status", "unavailable")} as of {text(priceSource, "quote_timestamp", text(priceSource, "as_of", "unknown date"))}.
+            A stale or unavailable quote blocks reverse-DCF and market comparisons. Every control below runs
             locally in the browser and is neither persisted nor approved.
           </p>
         </header>
         <div className="ltw-history-valuations">
           <article>
-            <span>Market reference · stored</span>
+            <span>Market reference · {price > 0 ? "current" : "blocked"}</span>
             <strong>
-              {price > 0 ? `₹${price.toLocaleString("en-IN")}` : "Missing"}
+              {price > 0 ? `₹${price.toLocaleString("en-IN")}` : observedPrice > 0 ? `₹${observedPrice.toLocaleString("en-IN")} stale` : "Missing"}
             </strong>
             <small>
-              {text(priceSource, "provider_symbol", "BSE:USHAMART")}
+              {text(priceSource, "provider", "Zerodha unavailable")} · {text(priceSource, "provider_symbol", "NSE:USHAMART")} · {text(priceSource, "delay_status", text(priceSource, "freshness_status", "missing"))}
             </small>
           </article>
           <article>
@@ -1577,12 +1578,12 @@ export function UshaMultiYearReport({
           </article>
         </div>
         <div className="ltw-valuation-explainer">
-          <strong>Why the conservative DCF can sit far below the quote</strong>
+          <strong>{price > 0 ? "Why the conservative DCF can sit far below the quote" : "Intrinsic-value scenarios remain usable; market comparisons are blocked"}</strong>
           <p>
             The starting FCFF is {valuationInputs.normalizedFcf.toFixed(1)}{" "}
             crore, a normalized historical cash-flow basis rather than the
             unusually strong FY2026 FCF of {money(fcf[9])} crore. At the base
-            assumptions, the market price requires{" "}
+            assumptions, {price > 0 ? "the market price requires" : "a fresh canonical quote is required before solving"}{" "}
             {impliedGrowth === null
               ? "an out-of-range growth rate"
               : `${pct(impliedGrowth * 100)} annual FCFF growth`}{" "}
@@ -1677,7 +1678,7 @@ export function UshaMultiYearReport({
               {interactiveDcf !== null && price > 0
                 ? `This case is ${pct((interactiveDcf / price - 1) * 100)} versus the stored quote.`
                 : "A current quote and valid discount/terminal spread are required."}{" "}
-              Reverse DCF solves only the explicit growth rate; all other inputs
+              Reverse DCF solves only the explicit growth rate after a fresh canonical quote is available; all other inputs
               stay visible and unchanged.
             </p>
             <div className="ltw-sensitivity">
@@ -1737,7 +1738,7 @@ export function UshaMultiYearReport({
               triangular distributions.{" "}
               {belowMarketProbability === null
                 ? "A market comparison is unavailable."
-                : `${pct(belowMarketProbability * 100)} of paths fall below the stored quote.`}
+                : `${pct(belowMarketProbability * 100)} of paths fall below the current canonical quote.`}
             </p>
             <small>
               Seed 20260815 makes results reproducible. This is scenario

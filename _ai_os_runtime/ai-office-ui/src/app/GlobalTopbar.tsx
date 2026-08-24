@@ -30,8 +30,7 @@ const TOPBAR_NAV = [
   { path: "/today", label: "Today" },
   { path: "/firm/agents", label: "Agents" },
   { path: "/portfolio/imports", label: "Portfolio" },
-  { path: "/fundamental/theses", label: "Theses" },
-  { path: "/research/cases", label: "Research" },
+  { path: "/research/desk", label: "Research" },
   { path: "/firm/graphs", label: "Loops" },
   { path: "/options/desk", label: "Options" },
   { path: "/trading/tradingview", label: "Charts" },
@@ -47,9 +46,11 @@ export function GlobalTopbar() {
   const toggleTheme = useUIStore((s) => s.toggleTheme);
   const [brokerOpen, setBrokerOpen] = React.useState(false);
 
-  const { data: mission } = useMissionControl();
-  const { data: zerodha } = useZerodhaAuthStatus();
-  const { data: zerodhaMarket, refetch: refreshZerodhaMarket, isFetching: marketRefreshing } = useZerodhaMarketStatus();
+  // The shell does not hydrate large snapshots. Today owns mission control, and
+  // broker status is queried only after the operator opens its drawer.
+  const { data: mission } = useMissionControl({ enabled: location.pathname === "/today", refetchInterval: false });
+  const { data: zerodha } = useZerodhaAuthStatus(brokerOpen);
+  const { data: zerodhaMarket, refetch: refreshZerodhaMarket, isFetching: marketRefreshing } = useZerodhaMarketStatus(brokerOpen);
   const beginZerodha = useBeginZerodhaAuth();
   const exchangeCallback = useExchangeZerodhaCallbackUrl();
   const syncAccount = useSyncZerodhaAccount();
@@ -144,12 +145,14 @@ export function GlobalTopbar() {
                 ? "Creating a secure Zerodha login challenge"
                 : beginZerodha.isError
                   ? `Zerodha reconnect failed: ${beginZerodha.error.message}`
+                  : !zerodha
+                  ? "Open to check the read-only Zerodha session"
                   : bool(zerodha, "daily_access_token_available")
                     ? "Zerodha connected. Reconnect today's session"
                     : "Reconnect Zerodha for today's live data"
             }
           >
-            <span className={bool(zerodha, "daily_access_token_available") ? "aios-topbar__broker-dot aios-topbar__broker-dot--ok" : "aios-topbar__broker-dot aios-topbar__broker-dot--warn"} />
+            <span className={!zerodha ? "aios-topbar__broker-dot aios-topbar__broker-dot--idle" : bool(zerodha, "daily_access_token_available") ? "aios-topbar__broker-dot aios-topbar__broker-dot--ok" : "aios-topbar__broker-dot aios-topbar__broker-dot--warn"} />
             <RefreshCw size={13} />
             <span className="aios-topbar__zerodha-label">
               {beginZerodha.isPending ? "Connecting…" : beginZerodha.isSuccess ? "Login opened" : "Zerodha"}

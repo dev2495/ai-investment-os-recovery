@@ -87,6 +87,11 @@ except ImportError:  # Direct script execution on the iMac.
     from research_monitor_runtime import run_company_research_monitor_once  # type: ignore
 
 try:
+    from .market_price_resolver import resolve_market_price
+except ImportError:  # Direct script execution on the iMac.
+    from market_price_resolver import resolve_market_price  # type: ignore
+
+try:
     from .reporting_helpers import generate_thesis_report as generate_thesis_report_helper
 except ImportError:  # Direct script execution on the iMac.
     from reporting_helpers import generate_thesis_report as generate_thesis_report_helper  # type: ignore
@@ -94,6 +99,14 @@ except ImportError:  # Direct script execution on the iMac.
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT", Path(__file__).resolve().parents[1]))
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT", RUNTIME_ROOT.parent))
+SCRIPT_ROOT = RUNTIME_ROOT / "scripts"
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+from governed_pdf_runtime import governed_pdf_python  # noqa: E402
+from services.scanner_engine.service import FundamentalScannerService, ScannerValidationError  # noqa: E402
+
 INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
 POSTGRES_PASSWORD = os.environ.get("AI_OS_POSTGRES_PASSWORD", "ai_os_local_dev_change_me")
 POSTGRES_PORT = os.environ.get("AI_OS_POSTGRES_PORT", "54329")
@@ -135,12 +148,7 @@ ALLOWED_ORIGINS = {
 OPERATOR_TOKEN = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
 ALLOW_TOKENLESS_LOOPBACK = os.environ.get("AI_OS_ALLOW_TOKENLESS_LOOPBACK", "1").strip().lower() in {"1", "true", "yes"}
 ZERODHA_AUTH_CHALLENGE_TTL_SECONDS = max(60, min(900, int(os.environ.get("AI_OS_ZERODHA_AUTH_CHALLENGE_TTL_SECONDS", "300"))))
-DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-NODE_PDF_PYTHON = Path.home() / "AI_OS_NODE/runtime/python/bin/python3"
-PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or next(
-    (str(candidate) for candidate in (NODE_PDF_PYTHON, DEFAULT_PDF_PYTHON) if candidate.exists()),
-    sys.executable,
-)
+RESEARCH_DESK_SCOPE_KEY = os.environ.get("AI_OS_RESEARCH_SCOPE_KEY", "owner:devarsh").strip() or "owner:devarsh"
 
 CHARLIE_TRUTH_SYSTEM_PROMPT = (
     "You are Charlie Munger, the evidence-bound orchestrator for a private AI portfolio office. "
@@ -432,6 +440,46 @@ def run_psql_json_object(
 def run_psql_json_statement(sql: str) -> list[dict]:
     output = run_psql_text(sql)
     return json.loads(output or "[]")
+
+
+def run_research_scoped_json(query: str) -> list[dict]:
+    """Run a bounded Research Desk query under the non-login RLS runtime role."""
+    output = run_psql_text(
+        f"""
+        BEGIN;
+        SET LOCAL ROLE ai_os_research_runtime;
+        SET LOCAL ai_os.scope_key = {sql_literal(RESEARCH_DESK_SCOPE_KEY)};
+        SELECT coalesce(json_agg(row_to_json(scoped_rows)), '[]'::json)::text
+        FROM ({query}) scoped_rows;
+        COMMIT;
+        """
+    )
+    return json.loads(output or "[]")
+
+
+def run_research_scoped_statement(sql: str) -> list[dict]:
+    """Run a Research Desk mutation under RLS; scope is never accepted from JSON."""
+    output = run_psql_text(
+        f"""
+        BEGIN;
+        SET LOCAL ROLE ai_os_research_runtime;
+        SET LOCAL ai_os.scope_key = {sql_literal(RESEARCH_DESK_SCOPE_KEY)};
+        {sql}
+        COMMIT;
+        """
+    )
+    return json.loads(output or "[]")
+
+
+def research_scanner_service() -> FundamentalScannerService:
+    return FundamentalScannerService(
+        run_rows=run_research_scoped_json,
+        run_statement=run_research_scoped_statement,
+        run_control_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+        scope_key=RESEARCH_DESK_SCOPE_KEY,
+    )
 
 
 _OFFICE_PRIVATE_FIELDS = {
@@ -2707,10 +2755,14 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
           coalesce(source_job_stats.pending,0)::int source_job_pending,
           coalesce(source_job_stats.blocked,0)::int source_job_blocked,
           coalesce(blocker_stats.open_count,0)::int open_blocker_count,
+          coalesce(blocker_stats.high_count,0)::int high_blocker_count,
+          coalesce(blocker_stats.user_action_count,0)::int blocker_user_action_count,
           coalesce(section_stats.total,0)::int section_total,
           coalesce(section_stats.ready,0)::int section_ready,
           latest_report.id report_id,latest_report.report_version,latest_report.report_status,
           latest_report.html_path report_html_path,latest_report.pdf_path report_pdf_path,
+          latest_report.as_of_date report_as_of_date,latest_report.source_cutoff_at report_source_cutoff_at,
+          latest_report.created_at report_created_at,latest_report.coverage_snapshot report_coverage_snapshot,
           preflight.id preflight_id,preflight.status preflight_status,
           preflight.source_count preflight_source_count,
           preflight.estimated_cost_usd,preflight.hard_max_cost_usd,
@@ -2753,12 +2805,14 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
           count(*) FILTER (WHERE status IN ('queued','running','retry_wait')) pending,
           count(*) FILTER (WHERE status='blocked') blocked
           FROM research.research_case_source_jobs WHERE research_case_id=case_row.id) source_job_stats ON true
-        LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE status IN ('open','retrying')) open_count
+        LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE status IN ('open','retrying')) open_count,
+          count(*) FILTER (WHERE status IN ('open','retrying') AND severity IN ('critical','high')) high_count,
+          count(*) FILTER (WHERE status IN ('open','retrying') AND user_action IS NOT NULL) user_action_count
           FROM research.research_case_blockers WHERE research_case_id=case_row.id) blocker_stats ON true
         LEFT JOIN LATERAL (SELECT count(*) total,
           count(*) FILTER (WHERE status IN ('reviewed','complete')) ready
           FROM research.research_pack_sections WHERE research_case_id=case_row.id AND version=1) section_stats ON true
-        LEFT JOIN LATERAL (SELECT id,report_version,report_status,html_path,pdf_path
+        LEFT JOIN LATERAL (SELECT id,report_version,report_status,html_path,pdf_path,as_of_date,source_cutoff_at,created_at,coverage_snapshot
           FROM research.research_case_reports WHERE research_case_id=case_row.id
           ORDER BY report_version DESC,id DESC LIMIT 1) latest_report ON true
         LEFT JOIN LATERAL (SELECT id,status,source_count,estimated_cost_usd,hard_max_cost_usd,
@@ -2797,7 +2851,7 @@ def build_research_case_tracker(query: dict[str, list[str]]) -> dict:
     evidence = run_psql_json(f"""SELECT id,research_case_id,source_kind,source_identifier,source_url,
       publication_date,effective_date,captured_at,parser_status,validation_status,citation_locator,created_by
       FROM research.research_case_evidence {detail_filter} ORDER BY captured_at DESC,id DESC LIMIT 40""")
-    model_runs = run_psql_json(f"""SELECT id,research_case_id,role_key,agent_name,status,route_name,provider,
+    model_runs = run_psql_json(f"""SELECT id,research_case_id,preflight_id,role_key,agent_name,status,route_name,provider,
       model_name,iteration,attempt,artifact_path,artifact_hash,output_summary,validation_result,cited_source_ids,
       actual_cost_usd,latency_ms,exception_detail,started_at,finished_at
       FROM research.research_case_model_runs {detail_filter} ORDER BY iteration DESC,attempt DESC,id DESC LIMIT 60""")
@@ -10702,6 +10756,437 @@ def register_investor_source(payload: dict) -> dict:
     return result
 
 
+def _bounded_query_int(query: dict[str, list[str]], key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int((query.get(key) or [str(default)])[0])
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def build_research_knowledge_v1(query: dict[str, list[str]]) -> dict:
+    limit = _bounded_query_int(query, "limit", 30, 1, 100)
+    cursor = _bounded_query_int(query, "cursor", 0, 0, 1_000_000)
+    search = re.sub(r"\s+", " ", str((query.get("q") or query.get("query") or [""])[0]).strip())[:240]
+    node_type = re.sub(r"[^a-zA-Z0-9_ -]+", "", str((query.get("node_type") or [""])[0]).strip())[:80]
+    search_filter = ""
+    if search:
+        search_filter = (
+            f"AND (node.label ILIKE {sql_literal('%' + search + '%')} "
+            f"OR node.node_key ILIKE {sql_literal('%' + search + '%')} "
+            f"OR node.metadata::text ILIKE {sql_literal('%' + search + '%')})"
+        )
+    type_filter = f"AND node.node_type={sql_literal(node_type)}" if node_type else ""
+    nodes = run_research_scoped_json(
+        f"""
+        SELECT node.id,node.node_key,node.node_type,node.label,node.company_id,node.privacy_class,
+               node.authority,node.effective_at,node.available_at,node.source_schema,node.source_table,
+               node.source_pk,node.metadata,node.updated_at
+        FROM knowledge.graph_nodes node
+        WHERE node.deleted_at IS NULL {search_filter} {type_filter}
+        ORDER BY node.updated_at DESC,node.id DESC
+        LIMIT {limit + 1} OFFSET {cursor}
+        """
+    )
+    selected_nodes = nodes[:limit]
+    node_ids = [int(row["id"]) for row in selected_nodes if row.get("id") is not None]
+    edges: list[dict] = []
+    if node_ids:
+        ids = ",".join(str(value) for value in node_ids)
+        edges = run_research_scoped_json(
+            f"""
+            SELECT edge.id,edge.edge_key,edge.from_node_id,edge.to_node_id,edge.edge_type,
+                   edge.source_kind,edge.source_ref,edge.citation_locator,edge.valid_from,
+                   edge.valid_to,edge.available_at,edge.confidence,edge.metadata,
+                   source.label AS from_label,target.label AS to_label
+            FROM knowledge.graph_edges edge
+            JOIN knowledge.graph_nodes source ON source.id=edge.from_node_id
+            JOIN knowledge.graph_nodes target ON target.id=edge.to_node_id
+            WHERE edge.deleted_at IS NULL
+              AND (edge.from_node_id IN ({ids}) OR edge.to_node_id IN ({ids}))
+            ORDER BY edge.available_at DESC,edge.id DESC
+            LIMIT 200
+            """
+        )
+    note_filter = ""
+    if search:
+        note_filter = (
+            f"AND (note.title ILIKE {sql_literal('%' + search + '%')} "
+            f"OR note.note_path ILIKE {sql_literal('%' + search + '%')} "
+            f"OR coalesce(note.body_summary,'') ILIKE {sql_literal('%' + search + '%')})"
+        )
+    notes = run_psql_json(
+        f"""
+        SELECT note.id,note.note_key,note.note_path,note.title,note.note_type,note.tags,
+               note.body_summary,note.privacy_class,note.scope_key,note.last_modified_at,note.indexed_at
+        FROM knowledge.obsidian_notes note
+        WHERE note.deleted_at IS NULL
+          AND note.scope_key IN ({sql_literal(RESEARCH_DESK_SCOPE_KEY)},'legacy:local')
+          {note_filter}
+        ORDER BY note.last_modified_at DESC NULLS LAST,note.id DESC
+        LIMIT {limit}
+        """
+    )
+    unresolved = run_research_scoped_json(
+        """
+        SELECT id,raw_target,normalized_target,reason,status,last_seen_at,occurrence_count
+        FROM knowledge.unresolved_links
+        WHERE status='open'
+        ORDER BY last_seen_at DESC,id DESC
+        LIMIT 25
+        """
+    )
+    return {
+        "scope_key": RESEARCH_DESK_SCOPE_KEY,
+        "query": search,
+        "items": selected_nodes,
+        "nodes": selected_nodes,
+        "edges": edges,
+        "notes": notes,
+        "unresolved_links": unresolved,
+        "page": {
+            "limit": limit,
+            "cursor": cursor,
+            "next_cursor": cursor + limit if len(nodes) > limit else None,
+        },
+        "privacy": "local_private",
+        "broker_write_allowed": False,
+        "external_write_allowed": False,
+    }
+
+
+def build_research_following_v1(query: dict[str, list[str]]) -> dict:
+    limit = _bounded_query_int(query, "limit", 30, 1, 100)
+    cursor = _bounded_query_int(query, "cursor", 0, 0, 1_000_000)
+    sources = run_research_scoped_json(
+        f"""
+        SELECT source.id,source.source_key,source.status,source.priority,source.followed_reason,
+               source.last_refresh_at,source.next_refresh_at,source.created_at,source.updated_at,
+               version.source_type,version.adapter_key,version.source_url,version.trust_tier,
+               version.authority,version.topics,version.sectors,version.ingestion_mode,
+               version.copyright_policy,version.prompt_injection_policy,version.status version_status,
+               refresh.id latest_refresh_run_id,refresh.status latest_refresh_status,
+               refresh.items_upserted latest_items_upserted,refresh.quarantined_items latest_quarantined_items,
+               refresh.error_class latest_error_class,refresh.error_message latest_error_message,
+               refresh.started_at latest_refresh_started_at,refresh.finished_at latest_refresh_finished_at
+        FROM research.followed_sources source
+        LEFT JOIN research.followed_source_versions version
+          ON version.id=source.current_version_id AND version.scope_key=source.scope_key
+        LEFT JOIN LATERAL (
+          SELECT selected.id,selected.status,selected.items_upserted,selected.quarantined_items,
+                 selected.error_class,selected.error_message,selected.started_at,selected.finished_at
+          FROM research.followed_source_refresh_runs selected
+          WHERE selected.scope_key=source.scope_key AND selected.followed_source_id=source.id
+          ORDER BY selected.started_at DESC,selected.id DESC LIMIT 1
+        ) refresh ON true
+        WHERE source.status<>'retired'
+        ORDER BY source.priority DESC,source.updated_at DESC,source.id DESC
+        LIMIT {limit + 1} OFFSET {cursor}
+        """
+    )
+    feed = run_research_scoped_json(
+        f"""
+        SELECT * FROM research.v_following_feed
+        ORDER BY coalesce(published_at,captured_at) DESC,source_item_id DESC
+        LIMIT {limit}
+        """
+    )
+    ideas = run_research_scoped_json(
+        f"""
+        SELECT * FROM research.v_idea_inbox
+        ORDER BY updated_at DESC,id DESC
+        LIMIT {limit}
+        """
+    )
+    quarantine = run_research_scoped_json(
+        """
+        SELECT item.id,item.title,item.canonical_url,item.quarantine_status,
+               item.prompt_injection_status,item.parser_status,item.captured_at,source.source_key
+        FROM research.followed_source_items item
+        JOIN research.followed_sources source
+          ON source.scope_key=item.scope_key AND source.id=item.followed_source_id
+        WHERE item.quarantine_status NOT IN ('clear','reviewed_safe')
+        ORDER BY item.captured_at DESC,item.id DESC
+        LIMIT 25
+        """
+    )
+    return {
+        "scope_key": RESEARCH_DESK_SCOPE_KEY,
+        "sources": sources[:limit],
+        "items": feed,
+        "ideas": ideas,
+        "quarantine": quarantine,
+        "page": {
+            "limit": limit,
+            "cursor": cursor,
+            "next_cursor": cursor + limit if len(sources) > limit else None,
+        },
+        "broker_write_allowed": False,
+        "external_write_allowed": False,
+    }
+
+
+def follow_research_source_v1(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before a public source is followed")
+    registered = register_investor_source({**payload, "operator_confirmed": True, "actor": "Devarsh"})
+    feed_key = str(registered.get("feed_key") or "")
+    feed_rows = run_psql_json(
+        f"""
+        SELECT id,feed_key,feed_name,feed_type,provider,url,topics,metadata
+        FROM research.feed_registry WHERE feed_key={sql_literal(feed_key)} LIMIT 1
+        """
+    )
+    if not feed_rows:
+        raise RuntimeError("the governed feed registry did not return the new source")
+    feed = feed_rows[0]
+    source_url = str(feed.get("url") or "")
+    definition = {
+        "feed_registry_id": feed["id"],
+        "feed_key": feed_key,
+        "source_url": source_url,
+        "adapter_key": "rss_http",
+        "ingestion_mode": "metadata_and_permitted_excerpt",
+        "prompt_injection_policy": "quarantine_and_review",
+        "copyright_policy": "metadata and a bounded permitted excerpt only",
+    }
+    result_rows = run_research_scoped_statement(
+        f"""
+        WITH source AS (
+          INSERT INTO research.followed_sources
+            (scope_key,source_key,feed_registry_id,status,priority,followed_by,followed_reason,metadata)
+          VALUES ({sql_literal(RESEARCH_DESK_SCOPE_KEY)},{sql_literal(feed_key)},{int(feed['id'])},
+                  'active',{sql_literal(str(payload.get('priority') or 'normal'))},'Devarsh',
+                  {sql_literal(payload.get('followed_reason') or payload.get('reason') or 'Operator-confirmed research source')},
+                  {sql_jsonb({'broker_write_allowed': False, 'external_write_allowed': False})})
+          ON CONFLICT (scope_key,source_key) DO UPDATE SET
+            status='active',priority=EXCLUDED.priority,followed_reason=EXCLUDED.followed_reason,updated_at=now()
+          RETURNING *
+        ), next_version AS (
+          SELECT coalesce(max(version),0)+1 version
+          FROM research.followed_source_versions
+          WHERE followed_source_id=(SELECT id FROM source)
+        ), version AS (
+          INSERT INTO research.followed_source_versions
+            (scope_key,followed_source_id,version,definition_hash,source_type,adapter_key,
+             source_url,trust_tier,authority,topics,ingestion_mode,entity_resolution_mode,
+             idea_generation_enabled,portfolio_mapping_enabled,requires_login,copyright_policy,
+             prompt_injection_policy,retention_policy,public_model_eligible,status,approved_by,
+             approved_at,config,created_by)
+          SELECT {sql_literal(RESEARCH_DESK_SCOPE_KEY)},source.id,next_version.version,
+                 {sql_literal(hashlib.sha256(json.dumps(definition,sort_keys=True).encode()).hexdigest())},
+                 {sql_literal(feed.get('feed_type') or 'rss')},'rss_http',{sql_literal(source_url)},
+                 'unrated','secondary',{sql_text_array(feed.get('topics') or [])},
+                 'metadata_and_permitted_excerpt','reviewed',true,true,false,
+                 'metadata and a bounded permitted excerpt only','quarantine_and_review',
+                 'local_ssd',false,'active','Devarsh',now(),
+                 {sql_jsonb({'provider': feed.get('provider'), 'feed_name': feed.get('feed_name')})},'Devarsh'
+          FROM source,next_version
+          ON CONFLICT (scope_key,followed_source_id,version) DO NOTHING
+          RETURNING *
+        ), current_version AS (
+          SELECT * FROM version
+          UNION ALL
+          SELECT existing.* FROM research.followed_source_versions existing
+          WHERE existing.scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)}
+            AND existing.followed_source_id=(SELECT id FROM source)
+            AND existing.status='active'
+          ORDER BY version DESC LIMIT 1
+        ), updated AS (
+          UPDATE research.followed_sources
+          SET current_version_id=(SELECT id FROM current_version),updated_at=now()
+          WHERE id=(SELECT id FROM source) AND scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)}
+          RETURNING *
+        )
+        SELECT jsonb_build_array(jsonb_build_object(
+          'source',(SELECT to_jsonb(updated) FROM updated),
+          'version',(SELECT to_jsonb(current_version) FROM current_version),
+          'broker_write_allowed',false,
+          'external_write_allowed',false
+        ))::text
+        """
+    )
+    run_psql_json_statement(
+        f"""
+        WITH updated AS (
+          UPDATE research.feed_registry
+          SET status='active',
+              metadata=metadata || '{{"approved_for_fetch":true,"approval_state":"operator_confirmed","broker_write_allowed":false}}'::jsonb,
+              updated_at=now()
+          WHERE id={int(feed['id'])}
+          RETURNING id
+        )
+        SELECT coalesce(json_agg(row_to_json(updated)),'[]'::json)::text FROM updated
+        """
+    )
+    return result_rows[0] if result_rows else {}
+
+
+def _followed_item_injection_status(title: str, excerpt: str) -> tuple[str, str]:
+    lowered = (title + " " + excerpt).lower()
+    risky = (
+        "ignore previous instruction",
+        "system prompt",
+        "developer message",
+        "reveal your secret",
+        "execute this command",
+        "send credentials",
+    )
+    if any(term in lowered for term in risky):
+        return "quarantined", "suspected"
+    return "clear", "none_detected"
+
+
+def refresh_research_source_v1(payload: dict) -> dict:
+    try:
+        followed_source_id = int(payload.get("followed_source_id") or payload.get("source_id"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("followed_source_id is required") from exc
+    sources = run_research_scoped_json(
+        f"""
+        SELECT source.id,source.source_key,source.feed_registry_id,version.id source_version_id
+        FROM research.followed_sources source
+        JOIN research.followed_source_versions version
+          ON version.scope_key=source.scope_key AND version.id=source.current_version_id
+        WHERE source.id={followed_source_id} AND source.status='active' LIMIT 1
+        """
+    )
+    if not sources:
+        raise ValueError("active followed source was not found")
+    source = sources[0]
+    command = [
+        sys.executable,
+        str(SCRIPT_ROOT / "ingest_market_news.py"),
+        "--feed-keys",
+        str(source["source_key"]),
+        "--feed-limit",
+        "1",
+        "--per-feed",
+        str(max(1, min(20, int(payload.get("per_feed") or 8)))),
+        "--timeout",
+        str(max(5, min(30, int(payload.get("timeout") or 12)))),
+        "--actor",
+        "Research Source Monitor",
+    ]
+    completed = subprocess.run(command, cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=180)
+    try:
+        ingestion = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        ingestion = {"status": "failed", "error": (completed.stderr or completed.stdout)[-2000:]}
+    if completed.returncode != 0:
+        raise RuntimeError(str(ingestion.get("error") or ingestion.get("errors") or "bounded RSS refresh failed"))
+    news = run_psql_json(
+        f"""
+        SELECT id,title,source_url,publisher,published_at,captured_at,symbols,topics,relevance_score,
+               left(coalesce(raw_payload->>'summary',''),4000) permitted_excerpt
+        FROM market.news_items
+        WHERE raw_payload->>'feed_key'={sql_literal(source['source_key'])}
+        ORDER BY coalesce(published_at,captured_at) DESC,id DESC
+        LIMIT 50
+        """
+    )
+    persisted: list[dict] = []
+    for item in news:
+        title = str(item.get("title") or "")[:500]
+        excerpt = str(item.get("permitted_excerpt") or "")[:4000]
+        quarantine_status, injection_status = _followed_item_injection_status(title, excerpt)
+        item_key = "followed:" + hashlib.sha256(
+            f"{source['source_key']}|{item.get('source_url')}|{title}".encode("utf-8")
+        ).hexdigest()[:32]
+        item_hash = hashlib.sha256((title + "\n" + excerpt).encode("utf-8")).hexdigest()
+        rows = run_research_scoped_statement(
+            f"""
+            WITH item AS (
+              INSERT INTO research.followed_source_items
+                (scope_key,item_key,idempotency_key,followed_source_id,source_version_id,
+                 provider_item_key,canonical_url,title,published_at,captured_at,content_sha256,
+                 permitted_excerpt,quarantine_status,prompt_injection_status,parser_status,
+                 authority,trust_score,public_model_eligible,metadata)
+              VALUES ({sql_literal(RESEARCH_DESK_SCOPE_KEY)},{sql_literal(item_key)},{sql_literal(item_key)},
+                      {followed_source_id},{int(source['source_version_id'])},{sql_literal(str(item.get('id')))},
+                      {sql_literal(item.get('source_url'))},{sql_literal(title)},
+                      {sql_literal(item.get('published_at'))}::timestamptz,
+                      {sql_literal(item.get('captured_at'))}::timestamptz,{sql_literal(item_hash)},
+                      {sql_literal(excerpt)},{sql_literal(quarantine_status)},{sql_literal(injection_status)},
+                      'metadata_only','secondary',{float(item.get('relevance_score') or 0.35)},false,
+                      {sql_jsonb({'symbols': item.get('symbols') or [], 'topics': item.get('topics') or [], 'market_news_item_id': item.get('id')})})
+              ON CONFLICT (scope_key,idempotency_key) DO UPDATE SET
+                title=EXCLUDED.title,published_at=EXCLUDED.published_at,captured_at=EXCLUDED.captured_at,
+                content_sha256=EXCLUDED.content_sha256,permitted_excerpt=EXCLUDED.permitted_excerpt,
+                quarantine_status=EXCLUDED.quarantine_status,prompt_injection_status=EXCLUDED.prompt_injection_status,
+                parser_status=EXCLUDED.parser_status,metadata=EXCLUDED.metadata,updated_at=now()
+              RETURNING *
+            )
+            SELECT jsonb_build_array(to_jsonb(item))::text FROM item
+            """
+        )
+        if rows:
+            persisted.append(rows[0])
+    run_research_scoped_statement(
+        f"""
+        WITH updated AS (
+          UPDATE research.followed_sources
+          SET last_refresh_at=now(),next_refresh_at=now()+interval '1 hour',updated_at=now()
+          WHERE id={followed_source_id} RETURNING id
+        )
+        SELECT coalesce(jsonb_agg(to_jsonb(updated)),'[]'::jsonb)::text FROM updated
+        """
+    )
+    return {
+        "source": source,
+        "ingestion": ingestion,
+        "items_upserted": len(persisted),
+        "quarantined": sum(1 for item in persisted if item.get("quarantine_status") == "quarantined"),
+        "broker_write_allowed": False,
+        "external_write_allowed": False,
+    }
+
+
+def build_fundamental_scanners_v1(query: dict[str, list[str]]) -> dict:
+    service = research_scanner_service()
+    return service.list_scanners(
+        limit=(query.get("limit") or ["25"])[0],
+        cursor=(query.get("cursor") or ["0"])[0],
+    )
+
+
+def get_fundamental_scanner_v1(scanner_id: int) -> dict:
+    return research_scanner_service().get_scanner(scanner_id)
+
+
+def get_fundamental_scanner_run_v1(run_id: int, query: dict[str, list[str]]) -> dict:
+    service = research_scanner_service()
+    return service.list_results(
+        run_id,
+        limit=(query.get("limit") or ["50"])[0],
+        after_rank=(query.get("after_rank") or ["0"])[0],
+    )
+
+
+def create_fundamental_scanner_v1(payload: dict) -> dict:
+    return research_scanner_service().create_draft({**payload, "actor": "Devarsh"})
+
+
+def create_fundamental_scanner_from_text_v1(payload: dict) -> dict:
+    return research_scanner_service().create_from_natural_language({**payload, "actor": "Devarsh"})
+
+
+def validate_fundamental_scanner_v1(scanner_id: int, payload: dict) -> dict:
+    return research_scanner_service().validate_scanner(scanner_id, {**payload, "actor": "Devarsh"})
+
+
+def request_fundamental_scanner_publish_v1(scanner_id: int, payload: dict) -> dict:
+    return research_scanner_service().request_publish(scanner_id, {**payload, "actor": "Devarsh"})
+
+
+def publish_fundamental_scanner_v1(scanner_id: int, payload: dict) -> dict:
+    return research_scanner_service().publish_scanner(scanner_id, payload)
+
+
+def run_fundamental_scanner_v1(scanner_id: int, payload: dict) -> dict:
+    return research_scanner_service().run_scanner(scanner_id, {**payload, "actor": "Devarsh"})
+
+
 def begin_zerodha_auth(payload: dict) -> dict:
     session = zerodha_auth_status()
     base_login_url = str(session.get("login_url") or "").strip()
@@ -11053,7 +11538,120 @@ def _run_zerodha_market_adapter(arguments: list[str], timeout: int = 300) -> dic
     return result
 
 
-def zerodha_market_status() -> dict:
+def zerodha_company_market_health(
+    symbol: str, exchange: str, *, now: datetime | None = None
+) -> dict:
+    wanted_symbol = str(symbol or "").strip().upper()
+    wanted_exchange = str(exchange or "").strip().upper()
+    if not wanted_symbol or not wanted_exchange:
+        return {
+            "status": "invalid_request",
+            "message": "symbol and exchange are both required",
+            "decision_usable": False,
+            "broker_write_allowed": False,
+        }
+    symbol_sql = sql_literal(wanted_symbol)
+    exchange_sql = sql_literal(wanted_exchange)
+    candidates = run_psql_json(f"""
+      WITH live_quotes AS (
+        SELECT live.instrument_token AS id,'zerodha_live_quote_state'::text AS source_key,
+               live.provider,live.provider_symbol,live.symbol,live.exchange,'INR'::text currency,
+               live.last_price AS price,
+               coalesce(live.exchange_timestamp,live.last_trade_timestamp,live.received_at) quote_ts,
+               live.received_at,'primary_zerodha_live'::text source_class,1 source_priority,
+               (instrument.instrument_token IS NOT NULL) approved_for_valuation,
+               true provider_entitled,'zerodha_canonical'::text provider_entitlement_key,
+               live.instrument_token,live.source_mode,live.broker_write_allowed,
+               CASE WHEN instrument.instrument_token IS NOT NULL THEN 'verified_zerodha_instrument'
+                    ELSE 'unmapped_zerodha_instrument' END mapping_status,
+               CASE WHEN live.exchange_timestamp IS NOT NULL THEN 'exchange_timestamp'
+                    WHEN live.last_trade_timestamp IS NOT NULL THEN 'last_trade_local_ist'
+                    ELSE 'receipt_utc' END timestamp_basis
+        FROM market.live_quote_state live
+        LEFT JOIN market.zerodha_instruments instrument
+          ON instrument.instrument_token=live.instrument_token AND instrument.active
+         AND upper(instrument.exchange)=upper(live.exchange)
+         AND upper(instrument.trading_symbol)=upper(live.symbol)
+        WHERE lower(live.provider)='zerodha' AND upper(live.symbol)={symbol_sql}
+          AND upper(live.exchange)={exchange_sql} AND live.last_price>0
+      ), stored_quotes AS (
+        SELECT quote.id,quote.source_key,quote.provider,quote.provider_symbol,
+               quote.symbol,quote.exchange,quote.currency,quote.price,quote.quote_ts,
+               quote.created_at received_at,'zerodha_stored_quote'::text source_class,
+               2 source_priority,(instrument.instrument_token IS NOT NULL) approved_for_valuation,
+               true provider_entitled,'zerodha_canonical'::text provider_entitlement_key,
+               instrument.instrument_token,'bounded_read_only_snapshot'::text source_mode,
+               false broker_write_allowed,
+               CASE WHEN instrument.instrument_token IS NOT NULL THEN 'verified_zerodha_instrument'
+                    ELSE 'unmapped_zerodha_instrument' END mapping_status,
+               coalesce(quote.raw_payload->>'ai_os_timestamp_basis','unknown') timestamp_basis
+        FROM market.price_quotes quote
+        LEFT JOIN LATERAL (
+          SELECT mapping.instrument_token FROM market.zerodha_instruments mapping
+          WHERE mapping.active AND upper(mapping.exchange)=upper(quote.exchange)
+            AND upper(mapping.trading_symbol)=upper(quote.symbol)
+          ORDER BY mapping.last_seen_at DESC LIMIT 1
+        ) instrument ON true
+        WHERE lower(quote.provider)='zerodha' AND upper(quote.symbol)={symbol_sql}
+          AND upper(quote.exchange)={exchange_sql} AND quote.price>0
+      )
+      SELECT * FROM (SELECT * FROM live_quotes UNION ALL SELECT * FROM stored_quotes) rows
+      ORDER BY source_priority,quote_ts DESC,id DESC LIMIT 16
+    """)
+    holidays = run_psql_json(f"""
+      SELECT exchange,holiday_date,session_status FROM market.exchange_holidays
+      WHERE upper(exchange)={exchange_sql}
+        AND holiday_date BETWEEN current_date-14 AND current_date+14
+      ORDER BY holiday_date
+    """)
+    state_rows = run_psql_json(f"""
+      WITH mapped AS (
+        SELECT instrument_token FROM market.zerodha_instruments
+        WHERE active AND upper(exchange)={exchange_sql} AND upper(trading_symbol)={symbol_sql}
+        ORDER BY last_seen_at DESC LIMIT 1
+      )
+      SELECT (SELECT instrument_token FROM mapped) instrument_token,
+             EXISTS (SELECT 1 FROM research.v_watchlist_board
+                     WHERE status='active' AND upper(exchange)={exchange_sql}
+                       AND upper(symbol)={symbol_sql}) followed,
+             EXISTS (SELECT 1 FROM portfolio.positions
+                     WHERE upper(coalesce(exchange,'NSE'))={exchange_sql}
+                       AND upper(symbol)={symbol_sql} AND coalesce(quantity,0)<>0
+                       AND as_of >= (SELECT max(as_of)-interval '1 day' FROM portfolio.positions)) positioned,
+             EXISTS (SELECT 1 FROM market.live_quote_state live
+                     JOIN mapped ON mapped.instrument_token=live.instrument_token
+                     WHERE lower(live.provider)='zerodha' AND upper(live.exchange)={exchange_sql}
+                       AND upper(live.symbol)={symbol_sql}) live_quote_observed
+    """)
+    state = state_rows[0] if state_rows else {}
+    resolved = resolve_market_price(
+        candidates, symbol=wanted_symbol, exchange=wanted_exchange, holidays=holidays, now=now
+    )
+    mapped = state.get("instrument_token") not in (None, "")
+    requested = bool(state.get("followed") or state.get("positioned"))
+    if not mapped:
+        subscription_status = "unmapped"
+    elif not requested:
+        subscription_status = "not_requested"
+    elif state.get("live_quote_observed"):
+        subscription_status = "observed_live"
+    else:
+        subscription_status = "eligible_waiting_for_tick"
+    return {
+        "status": "qualified" if resolved and resolved.get("decision_usable") else "not_valuation_ready",
+        "symbol": wanted_symbol, "exchange": wanted_exchange,
+        "instrument_token": state.get("instrument_token"),
+        "mapping_status": "verified_zerodha_instrument" if mapped else "unmapped_zerodha_instrument",
+        "followed": bool(state.get("followed")), "positioned": bool(state.get("positioned")),
+        "subscription_status": subscription_status,
+        "quote": resolved,
+        "freshness_status": (resolved or {}).get("freshness_status") or "unavailable",
+        "decision_usable": bool(resolved and resolved.get("decision_usable")),
+        "broker_write_allowed": False,
+    }
+
+
+def zerodha_market_status(query: dict[str, list[str]] | None = None) -> dict:
     status = dict(_run_zerodha_market_adapter(["--check-config"], 30))
     auth = zerodha_auth_status()
     current_session = bool(auth.get("daily_access_token_available"))
@@ -11087,6 +11685,11 @@ def zerodha_market_status() -> dict:
             "live_count": 0,
         }
     status["stream"] = stream
+    requested = query or {}
+    symbol = str((requested.get("symbol") or [""])[0]).strip()
+    exchange = str((requested.get("exchange") or [""])[0]).strip()
+    if symbol or exchange:
+        status["company_quote"] = zerodha_company_market_health(symbol, exchange)
     status["broker_write_allowed"] = False
     return status
 
@@ -11883,7 +12486,7 @@ def run_filing_pdf_extractor(payload: dict) -> dict:
     limit = max(1, min(limit, 25))
     actor = str(payload.get("actor") or "Filings Analyst").strip() or "Filings Analyst"
     command = [
-        PDF_PYTHON,
+        governed_pdf_python(verify_import=True),
         str(RUNTIME_ROOT / "scripts" / "extract_filing_pdfs.py"),
         "--limit",
         str(limit),
@@ -11928,7 +12531,7 @@ def ingest_research_source(payload: dict) -> dict:
         ],
     }
     completed = subprocess.run(
-        [PDF_PYTHON, str(RUNTIME_ROOT / "scripts" / "ingest_research_source.py")],
+        [governed_pdf_python(verify_import=True), str(RUNTIME_ROOT / "scripts" / "ingest_research_source.py")],
         input=json.dumps(normalized, default=str),
         cwd=VAULT_ROOT,
         text=True,
@@ -12083,7 +12686,7 @@ def ingest_research_paper(payload: dict) -> dict:
         raise ValueError("title is required")
     actor = str(payload.get("actor") or "Research Librarian").strip() or "Research Librarian"
     command = [
-        PDF_PYTHON,
+        governed_pdf_python(verify_import=True),
         str(RUNTIME_ROOT / "scripts" / "ingest_research_paper.py"),
         "--title", title,
         "--source-key", str(payload.get("source_key") or payload.get("sourceKey") or "local"),
@@ -14785,9 +15388,7 @@ def refresh_option_valuation_sources(payload: dict) -> dict:
     sources = payload.get("sources") or ["rate", "dividends"]
     if not isinstance(sources, list) or not sources or any(item not in {"rate", "dividends"} for item in sources):
         raise ValueError("sources must contain rate and/or dividends")
-    managed_python = Path(os.environ.get("AI_OS_PDF_PYTHON") or (Path.home() / "AI_OS_NODE" / "runtime" / "python" / "bin" / "python3"))
-    python_executable = str(managed_python) if managed_python.is_file() else sys.executable
-    command = [python_executable, str(RUNTIME_ROOT / "scripts" / "collect_option_valuation_sources.py"),
+    command = [governed_pdf_python(verify_import=True), str(RUNTIME_ROOT / "scripts" / "collect_option_valuation_sources.py"),
                "--actor", actor, "--sources", *sources]
     completed = subprocess.run(command, cwd=RUNTIME_ROOT, text=True, capture_output=True, check=False, timeout=180)
     result = _parse_engine_json(completed, "option valuation source collector")
@@ -20653,6 +21254,108 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             "status",
         )
 
+    scanner_intent = bool(
+        re.search(r"\b(?:scanner|screener|fundamental screen)\b", normalized)
+        or (
+            re.search(r"\bfind\b[^\n]{0,80}\bcompan(?:y|ies)\b", normalized)
+            and any(term in normalized for term in ("cagr", "roce", "roe", "debt to equity", "cfo/pat"))
+        )
+    )
+    scanner_id_match = re.search(r"\bscanner\s*#?(\d+)\b", normalized)
+    if scanner_intent and scanner_id_match:
+        scanner_id = int(scanner_id_match.group(1))
+        if re.search(r"\bvalidate\b", normalized):
+            invoke(
+                "validate_fundamental_scanner",
+                lambda: validate_fundamental_scanner_v1(scanner_id, {}),
+                "status",
+            )
+        elif re.search(r"\brequest\b[^\n]{0,40}\bpublication\b", normalized):
+            invoke(
+                "request_fundamental_scanner_publication",
+                lambda: request_fundamental_scanner_publish_v1(scanner_id, {}),
+                "status",
+            )
+        elif re.search(r"\brun\b", normalized):
+            invoke(
+                "run_fundamental_scanner",
+                lambda: run_fundamental_scanner_v1(scanner_id, {}),
+                "run_id",
+            )
+        elif re.search(r"\bpublish\b", normalized):
+            approval_match = re.search(r"\bapproval\s*#?(\d+)\b", normalized)
+            if not approval_match:
+                results.append({
+                    "tool": "publish_fundamental_scanner",
+                    "status": "awaiting_explicit_approval",
+                    "detail": (
+                        f"Scanner #{scanner_id} was not published. Approve its scanner-publication request, "
+                        "then say 'publish scanner #"
+                        f"{scanner_id} with approval #<id>'."
+                    ),
+                })
+            else:
+                approval_id = int(approval_match.group(1))
+                invoke(
+                    "publish_fundamental_scanner",
+                    lambda: publish_fundamental_scanner_v1(scanner_id, {"approval_id": approval_id}),
+                    "approval_id",
+                )
+        else:
+            invoke(
+                "inspect_fundamental_scanner",
+                lambda: get_fundamental_scanner_v1(scanner_id),
+                "version_status",
+            )
+    elif scanner_intent and re.search(r"\b(?:create|build|make|find|screen)\b", normalized):
+        try:
+            created_scanner = create_fundamental_scanner_from_text_v1({
+                "instruction": message,
+                "name": re.sub(r"\s+", " ", message).strip()[:120],
+            })
+            created_definition = created_scanner.get("scanner") or {}
+            scanner_id = int(created_definition.get("id") or 0)
+            interpretation = created_scanner.get("interpretation") or {}
+            results.append({
+                "tool": "create_fundamental_scanner_draft",
+                "status": str(interpretation.get("status") or "draft"),
+                "detail": (
+                    f"Scanner draft #{scanner_id} was created. Review its exact metric interpretation and "
+                    "coverage, then validate it; publication and execution remain separately gated."
+                ),
+                "scanner_id": scanner_id,
+                "href": f"/research/scanners?scanner_id={scanner_id}",
+                "result": created_scanner,
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({
+                "tool": "create_fundamental_scanner_draft",
+                "status": "needs_input",
+                "detail": f"{type(exc).__name__}: {exc}"[:500],
+            })
+    elif scanner_intent and re.search(r"\b(?:show|list|which|what)\b", normalized):
+        invoke(
+            "list_fundamental_scanners",
+            lambda: build_fundamental_scanners_v1({"limit": ["12"], "cursor": ["0"]}),
+        )
+
+    knowledge_intent = bool(
+        any(term in normalized for term in ("research knowledge", "knowledge graph", "obsidian", "memory notes"))
+        and re.search(r"\b(?:show|search|find|list|what|where)\b", normalized)
+    )
+    if knowledge_intent:
+        knowledge_query = re.sub(
+            r"\b(?:show|search|find|list|what|where|in|our|the|research|knowledge|graph|obsidian|memory|notes|for|about)\b",
+            " ",
+            message,
+            flags=re.IGNORECASE,
+        )
+        knowledge_query = re.sub(r"\s+", " ", knowledge_query).strip()[:240]
+        invoke(
+            "search_research_knowledge",
+            lambda: build_research_knowledge_v1({"q": [knowledge_query], "limit": ["8"], "cursor": ["0"]}),
+        )
+
     graph_command = infer_graph_control_command(message)
     graph_action = str((graph_command or {}).get("action") or "")
     if graph_command:
@@ -20719,6 +21422,38 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
         url.rstrip(".,;:!?")
         for url in re.findall(r"https://[^\s<>\]\[()]+", message)
     ))[:5]
+    follow_intent = bool(source_urls and re.search(r"\bfollow\b[^\n]{0,80}\b(?:source|feed|rss|atom)?\b", normalized))
+    if follow_intent:
+        explicitly_confirmed = bool(
+            re.search(r"\b(?:confirm|approve)\b[^\n]{0,60}\bfollow\b", normalized)
+            or re.search(r"\bfollow\b[^\n]{0,60}\b(?:confirmed|approved)\b", normalized)
+        )
+        for source_url in source_urls:
+            if explicitly_confirmed:
+                invoke(
+                    "follow_research_source",
+                    lambda url=source_url: follow_research_source_v1({
+                        "url": url,
+                        "feed_name": (urllib.parse.urlsplit(url).hostname or "Research source")[:120],
+                        "provider": (urllib.parse.urlsplit(url).hostname or "Public HTTPS source")[:120],
+                        "operator_confirmed": True,
+                        "followed_reason": "Explicitly confirmed in Charlie chat",
+                        "priority": "normal",
+                    }),
+                    "source_key",
+                )
+            else:
+                results.append({
+                    "tool": "follow_research_source",
+                    "status": "awaiting_explicit_confirmation",
+                    "detail": (
+                        f"{source_url} was not followed or fetched. Review the public HTTPS source and say "
+                        f"'confirm follow source {source_url}' to approve bounded metadata/excerpt collection."
+                    ),
+                    "source_url": source_url,
+                    "broker_write_allowed": False,
+                    "external_write_allowed": False,
+                })
     source_intent = bool(
         re.search(
             r"\b(?:ingest|read|analy[sz]e|review|extract|summari[sz]e|study|research)\b",
@@ -20732,7 +21467,7 @@ def execute_charlie_safe_tools(message: str, actor: str = "Charlie Munger") -> l
             normalized,
         )
     )
-    if source_urls and source_intent and not source_intent_negated:
+    if source_urls and source_intent and not source_intent_negated and not follow_intent:
         explicit_hypothesis = _explicit_hypothesis_from_message(message)
         for source_index, source_url in enumerate(source_urls):
             source_payload = {
@@ -21245,12 +21980,60 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
            WHERE status='new' ORDER BY CASE materiality WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
                     effective_at DESC,id DESC LIMIT 5"""
     )
+    scanner_rows = run_psql_json(
+        f"""
+        SELECT count(*)::integer scanner_count,
+               count(*) FILTER (WHERE version.status='published')::integer published_count,
+               count(*) FILTER (WHERE version.status='validated')::integer validated_count,
+               (SELECT max(run.as_of_cutoff_at) FROM market.scanner_runs run
+                WHERE run.scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)}) last_run_as_of
+        FROM market.scanner_definitions definition
+        LEFT JOIN LATERAL (
+          SELECT selected.status FROM market.scanner_versions selected
+          WHERE selected.scanner_definition_id=definition.id ORDER BY selected.version DESC LIMIT 1
+        ) version ON true
+        WHERE definition.scope_key IN ({sql_literal(RESEARCH_DESK_SCOPE_KEY)},'global:public')
+        """
+    )
+    scanner_row = scanner_rows[0] if scanner_rows else {}
+    following_rows = run_psql_json(
+        f"""
+        SELECT count(*)::integer source_count,
+               count(*) FILTER (WHERE status='active')::integer active_count,
+               count(*) FILTER (WHERE status='active' AND next_refresh_at<=now())::integer due_count,
+               max(last_refresh_at) last_refresh_at
+        FROM research.followed_sources
+        WHERE scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)}
+        """
+    )
+    following_row = following_rows[0] if following_rows else {}
+    knowledge_rows = run_psql_json(
+        f"""
+        SELECT
+          (SELECT count(*) FROM knowledge.graph_nodes WHERE scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)} AND deleted_at IS NULL)::integer node_count,
+          (SELECT count(*) FROM knowledge.graph_edges WHERE scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)} AND deleted_at IS NULL)::integer edge_count,
+          (SELECT count(*) FROM knowledge.obsidian_notes WHERE scope_key IN ({sql_literal(RESEARCH_DESK_SCOPE_KEY)},'legacy:local') AND deleted_at IS NULL)::integer note_count,
+          (SELECT count(*) FROM knowledge.unresolved_links WHERE scope_key={sql_literal(RESEARCH_DESK_SCOPE_KEY)} AND status='open')::integer unresolved_count
+        """
+    )
+    knowledge_row = knowledge_rows[0] if knowledge_rows else {}
+    zerodha_rows = run_psql_json("SELECT * FROM market.v_zerodha_stream_health LIMIT 1")
+    zerodha_row = zerodha_rows[0] if zerodha_rows else {}
     ssd_root = Path("/Volumes/Devarsh SSD")
     lines = [
         f"AI OS is online; the external Devarsh SSD is {'mounted' if ssd_root.is_mount() else 'not mounted'}, and broker/client/external writes remain locked.",
         f"Company Research has {len(rows)} recent durable cases in this bounded view.",
         daemon_summary,
         f"Monitoring covers {int(monitoring_row.get('followed_count') or 0)} followed companies; {int(monitoring_row.get('filing_changes_7d') or 0)} have a filing and {int(monitoring_row.get('news_changes_7d') or 0)} have authorized news in the last seven days.",
+        f"Research Following has {int(following_row.get('active_count') or 0)} active operator-approved public sources; {int(following_row.get('due_count') or 0)} are due for a bounded refresh.",
+        f"Fundamental Scanners has {int(scanner_row.get('scanner_count') or 0)} definitions: {int(scanner_row.get('published_count') or 0)} published and {int(scanner_row.get('validated_count') or 0)} validated but not published.",
+        f"The local research graph has {int(knowledge_row.get('node_count') or 0)} nodes, {int(knowledge_row.get('edge_count') or 0)} edges and {int(knowledge_row.get('note_count') or 0)} indexed Obsidian notes; {int(knowledge_row.get('unresolved_count') or 0)} links need review.",
+        (
+            "Zerodha remains the primary read-only live-quote provider: "
+            f"stream {zerodha_row.get('health_status') or zerodha_row.get('connection_state') or 'not reported'}, "
+            f"{int(zerodha_row.get('live_count') or 0)} fresh/live quotes of {int(zerodha_row.get('quote_count') or 0)} subscribed quotes; "
+            "stale prices are never silently accepted for valuation and broker_write_allowed=false."
+        ),
     ]
     for row in rows[:6]:
         status = str(row.get("status") or "unknown")
@@ -21299,6 +22082,10 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
             {"source_table": "research.research_cases", "row_count": len(rows)},
             {"source_table": "research.v_company_research_monitoring", "row_count": int(monitoring_row.get('followed_count') or 0)},
             {"source_table": "research.v_company_research_update_feed", "row_count": len(update_rows)},
+            {"source_table": "research.followed_sources", "row_count": int(following_row.get('source_count') or 0)},
+            {"source_table": "market.scanner_definitions", "row_count": int(scanner_row.get('scanner_count') or 0)},
+            {"source_table": "knowledge.graph_nodes", "row_count": int(knowledge_row.get('node_count') or 0)},
+            {"source_table": "market.v_zerodha_stream_health", "row_count": len(zerodha_rows)},
         ], "missing_evidence": []},
     }
 
@@ -22292,6 +23079,23 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if request_path == "/api/research/runtime-repairs":
                 self._send_json(build_research_runtime_repairs(query))
                 return
+            if request_path in {"/api/research/knowledge", "/v1/research/knowledge"}:
+                self._send_json(build_research_knowledge_v1(query))
+                return
+            if request_path in {"/api/research/following", "/v1/research/following"}:
+                self._send_json(build_research_following_v1(query))
+                return
+            if request_path in {"/api/fundamental-scanners", "/v1/fundamental-scanners"}:
+                self._send_json(build_fundamental_scanners_v1(query))
+                return
+            scanner_match = re.fullmatch(r"/(?:api|v1)/fundamental-scanners/(\d+)", request_path)
+            if scanner_match:
+                self._send_json(get_fundamental_scanner_v1(int(scanner_match.group(1))))
+                return
+            scanner_run_match = re.fullmatch(r"/(?:api|v1)/fundamental-scanner-runs/(\d+)", request_path)
+            if scanner_run_match:
+                self._send_json(get_fundamental_scanner_run_v1(int(scanner_run_match.group(1)), query))
+                return
             if request_path == "/api/portfolio-office/snapshot":
                 self._send_json(build_portfolio_office_snapshot())
                 return
@@ -22310,14 +23114,34 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 report_rows = run_psql_json(f"SELECT html_path,pdf_path FROM research.research_case_reports WHERE id={report_id} LIMIT 1")
                 if not report_rows:
                     raise ValueError("research case report was not found")
+                report_row = report_rows[0]
                 ssd_root = Path("/Volumes/Devarsh SSD").resolve()
-                selected = Path(str(report_rows[0].get("pdf_path") if action == "download" and report_rows[0].get("pdf_path") else report_rows[0].get("html_path") or "")).resolve()
-                if not ssd_root.is_mount() or ssd_root not in selected.parents or not selected.is_file():
-                    raise PermissionError("research case report is outside the mounted Devarsh SSD or missing")
-                if selected.suffix.lower() == ".pdf":
-                    self._send_artifact(selected,"application/pdf",f'attachment; filename="{selected.name}"')
+                if action == "download" and not report_row.get("pdf_path"):
+                    self._send_json({
+                        "error": "report_not_ready",
+                        "message": "The PDF report is not ready. Open the HTML view while local PDF delivery retries.",
+                        "report_id": report_id,
+                        "html_view_available": bool(report_row.get("html_path")),
+                    }, 409)
+                    return
+                selected_value = report_row.get("pdf_path") if action == "download" else report_row.get("html_path")
+                selected = Path(str(selected_value or "")).resolve()
+                if not ssd_root.is_mount() or ssd_root not in selected.parents:
+                    raise PermissionError("research case report is outside the mounted Devarsh SSD")
+                if not selected.is_file():
+                    if action == "download":
+                        self._send_json({
+                            "error": "report_not_ready",
+                            "message": "The PDF report is not ready. Open the HTML view while local PDF delivery retries.",
+                            "report_id": report_id,
+                            "html_view_available": bool(report_row.get("html_path")),
+                        }, 409)
+                        return
+                    raise PermissionError("research case report HTML is missing")
+                if action == "download":
+                    self._send_artifact(selected, "application/pdf", "attachment")
                 else:
-                    self._send_artifact(selected,"text/html; charset=utf-8",f'inline; filename="{selected.name}"')
+                    self._send_artifact(selected, "text/html; charset=utf-8", "inline")
                 return
             report_delivery_match = re.fullmatch(r"/api/research/thesis-reports/(\d+)/(view|download)", request_path)
             if report_delivery_match:
@@ -22430,7 +23254,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(live_price_history(query))
                 return
             if request_path == "/api/zerodha/market/status":
-                self._send_json(zerodha_market_status())
+                self._send_json(zerodha_market_status(query))
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)
         except PermissionError as exc:
@@ -22441,10 +23265,42 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             self._authorize_request(write=True)
-            if urllib.parse.urlparse(self.path).path == "/api/artifacts/local/upload":
+            request_path = urllib.parse.urlparse(self.path).path
+            if request_path == "/api/artifacts/local/upload":
                 self._send_json(receive_local_artifact_upload(self), 201)
                 return
             payload = self._read_body()
+            if request_path in {"/api/research/following", "/v1/research/following"}:
+                self._send_json(follow_research_source_v1(payload), 201)
+                return
+            if request_path in {"/api/research/following/refresh", "/v1/research/following/refresh"}:
+                self._send_json(refresh_research_source_v1(payload), 200)
+                return
+            if request_path in {"/api/fundamental-scanners", "/v1/fundamental-scanners"}:
+                self._send_json(create_fundamental_scanner_v1(payload), 201)
+                return
+            if request_path in {
+                "/api/fundamental-scanners/from-natural-language",
+                "/v1/fundamental-scanners/from-natural-language",
+            }:
+                self._send_json(create_fundamental_scanner_from_text_v1(payload), 201)
+                return
+            scanner_action_match = re.fullmatch(
+                r"/(?:api|v1)/fundamental-scanners/(\d+)/(validate|publish-request|publish|run)",
+                request_path,
+            )
+            if scanner_action_match:
+                scanner_id = int(scanner_action_match.group(1))
+                scanner_action = scanner_action_match.group(2)
+                if scanner_action == "validate":
+                    self._send_json(validate_fundamental_scanner_v1(scanner_id, payload), 200)
+                elif scanner_action == "publish-request":
+                    self._send_json(request_fundamental_scanner_publish_v1(scanner_id, payload), 201)
+                elif scanner_action == "publish":
+                    self._send_json(publish_fundamental_scanner_v1(scanner_id, payload), 200)
+                else:
+                    self._send_json(run_fundamental_scanner_v1(scanner_id, payload), 201)
+                return
             if self.path == "/api/tradingview/tasks":
                 self._send_json(create_tradingview_task(payload), 201)
                 return

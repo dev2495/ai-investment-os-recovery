@@ -23,6 +23,24 @@ class ResearchModelRuntimeTest(unittest.TestCase):
         self.assertNotIn("portfolio", packet)
         self.assertNotIn("browse", packet.replace("do not browse", ""))
 
+    def test_disabled_route_blocks_preflight(self):
+        rows = [{
+            "route_name": "disabled", "default_provider": "openrouter",
+            "default_model": "model", "max_cost_tier": "cloud_low", "enabled": False,
+            "daily_cap_usd": 1, "monthly_cap_usd": 10,
+            "cloud_requires_approval": True, "autonomous_cloud_allowed": False,
+            "agent_status": "active", "rate_id": 1,
+            "input_usd_per_1m_tokens": 0.1, "output_usd_per_1m_tokens": 0.2,
+            "rate_source": "test", "effective_at": "2026-08-24T00:00:00Z",
+        }]
+        plan, reasons = runtime._route_plan(
+            {"runs": [{"agent_name": "Company Analyst", "route_name": "disabled",
+                        "prompt_tokens_est": 100, "completion_tokens_max": 100, "max_calls": 1}]},
+            Mock(return_value=rows), repr,
+        )
+        self.assertEqual(len(plan), 1)
+        self.assertIn("route_disabled:disabled", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

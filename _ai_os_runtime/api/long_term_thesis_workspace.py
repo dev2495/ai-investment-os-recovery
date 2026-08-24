@@ -25,15 +25,85 @@ def build_long_term_thesis_workspace(
         return max(minimum, min(maximum, raw))
 
     requested_id = bounded("thesis_id", 0, 0, 10_000_000)
+    requested_symbol = str(query.get("symbol", [""])[0] or "").strip().upper()
+    requested_exchange = str(query.get("exchange", [""])[0] or "").strip().upper()
     facts_page = bounded("facts_page", 1, 1, 10_000)
     evidence_page = bounded("evidence_page", 1, 1, 10_000)
     page_size = bounded("page_size", 12, 6, 24)
-    profile = str(query.get("profile", ["workspace"])[0] or "workspace").strip().lower()
-    dashboard_profile = profile == "dashboard"
+    requested_profile = str(query.get("profile", ["dashboard"])[0] or "dashboard").strip().lower()
+    # The investor dashboard is the safe, bounded default.  The legacy explicit
+    # ``workspace`` profile remains an operations alias for callers that have not
+    # yet moved to ``operations``; an omitted or unknown profile never hydrates
+    # the research control plane by accident.
+    operations_profile = requested_profile in {"operations", "workspace"}
+    dashboard_profile = not operations_profile
+    workspace_profile = (
+        "long_term_thesis_operations_v1"
+        if operations_profile
+        else "long_term_thesis_dashboard_v1"
+    )
     facts_offset = (facts_page - 1) * page_size
     evidence_offset = (evidence_page - 1) * page_size
 
-    theses = run_rows("""
+    # The investor dashboard needs the latest substantive Research Case pack,
+    # but not its task graph, raw evidence ledger, blockers, or model runs. Keep
+    # the projection inside the already-bounded thesis selector: one latest
+    # relevant case and at most one latest version of 20 named sections.
+    research_pack_projection = "case_pack.research_pack"
+    research_pack_join = """
+    LEFT JOIN LATERAL (
+      SELECT latest_case.id AS research_case_id,
+             (
+               SELECT jsonb_object_agg(
+                 latest_section.section_key,
+                 jsonb_build_object(
+                   'title',latest_section.title,
+                   'summary',latest_section.summary,
+                   'status',latest_section.status,
+                   'content',latest_section.content,
+                   'citation_ids',latest_section.citation_ids,
+                   'coverage_gaps',latest_section.coverage_gaps
+                 ) ORDER BY latest_section.section_key
+               )
+               FROM (
+                 SELECT DISTINCT ON (section.section_key)
+                        section.id,section.section_key,section.title,section.summary,
+                        section.status,section.content,section.citation_ids,
+                        section.coverage_gaps,section.version,section.updated_at
+                 FROM research.research_pack_sections section
+                 WHERE section.research_case_id=latest_case.id
+                 ORDER BY section.section_key,section.version DESC,
+                          section.updated_at DESC,section.id DESC
+                 LIMIT 20
+               ) latest_section
+             ) AS research_pack
+      FROM research.research_cases latest_case
+      WHERE (latest_case.holding_thesis_id=thesis.id OR latest_case.company_id=company.id)
+        AND latest_case.status IN ('active','review','completed','blocked')
+        AND EXISTS (
+          SELECT 1 FROM research.research_pack_sections available_section
+          WHERE available_section.research_case_id=latest_case.id
+        )
+      ORDER BY latest_case.updated_at DESC,latest_case.id DESC
+      LIMIT 1
+    ) case_pack ON true
+    """
+
+    if operations_profile:
+        evidence_projection = "coalesce(evidence.coverage_count,0)"
+        evidence_join = """
+        LEFT JOIN LATERAL (
+          SELECT count(*)::integer AS coverage_count
+          FROM research.fundamental_evidence e WHERE e.company_id=company.id
+        ) evidence ON true
+        """
+        thesis_order = "coalesce(evidence.coverage_count,0) DESC, thesis.updated_at DESC,thesis.id DESC"
+    else:
+        evidence_projection = "NULL::integer"
+        evidence_join = ""
+        thesis_order = "thesis.updated_at DESC,thesis.id DESC"
+
+    theses = run_rows(f"""
         SELECT thesis.id,thesis.symbol,thesis.exchange,thesis.company_name,
                thesis.thesis_title,thesis.thesis_status,thesis.decision_status,
                thesis.primary_owner_agent,thesis.thesis_summary,thesis.business_model,
@@ -51,7 +121,7 @@ def build_long_term_thesis_workspace(
                control.long_term_gross_exposure,control.checklist_count,
                control.checklist_complete_count,control.valuation_model_count,
                control.valuation_complete_count,
-               coalesce(evidence.coverage_count,0) AS evidence_count,
+               {evidence_projection} AS evidence_count,
                dossier.dossier_id,dossier.dossier_version_id,
                dossier.version_number AS dossier_version_number,
                dossier.version_status AS dossier_version_status,
@@ -59,16 +129,14 @@ def build_long_term_thesis_workspace(
                dossier.executive_conclusion,dossier.decision_summary,
                dossier.evidence_coverage,dossier.section_count,
                dossier.reviewed_section_count,dossier.specialist_count,
-               dossier.updated_at AS dossier_updated_at,case_pack.research_pack
+               dossier.updated_at AS dossier_updated_at,
+               {research_pack_projection} AS research_pack
         FROM portfolio.holding_theses thesis
         LEFT JOIN portfolio.v_long_term_thesis_control control ON control.id=thesis.id
         LEFT JOIN research.companies company
           ON upper(company.primary_symbol)=upper(thesis.symbol)
          AND upper(company.primary_exchange)=upper(thesis.exchange)
-        LEFT JOIN LATERAL (
-          SELECT count(*)::integer AS coverage_count
-          FROM research.fundamental_evidence e WHERE e.company_id=company.id
-        ) evidence ON true
+        {evidence_join}
         LEFT JOIN LATERAL (
           SELECT latest.* FROM research.v_latest_investment_dossiers latest
           WHERE latest.company_id=company.id
@@ -76,21 +144,26 @@ def build_long_term_thesis_workspace(
           ORDER BY (latest.holding_thesis_id=thesis.id) DESC,
                    latest.updated_at DESC NULLS LAST LIMIT 1
         ) dossier ON true
-        LEFT JOIN LATERAL (
-          SELECT jsonb_object_agg(section.section_key,jsonb_build_object(
-            'title',section.title,'summary',section.summary,'status',section.status,
-            'citation_ids',section.citation_ids,'coverage_gaps',section.coverage_gaps
-          ) ORDER BY section.id) AS research_pack
-          FROM research.research_cases case_row
-          JOIN research.research_pack_sections section ON section.research_case_id=case_row.id AND section.version=1
-          WHERE (case_row.holding_thesis_id=thesis.id OR case_row.company_id=company.id)
-            AND case_row.status IN ('active','review','completed','blocked')
-        ) case_pack ON true
+        {research_pack_join}
         ORDER BY (company.id IS NOT NULL) DESC,
-                 coalesce(evidence.coverage_count,0) DESC,
-                 thesis.updated_at DESC,thesis.id DESC LIMIT 50
+                 {thesis_order} LIMIT 50
     """)
-    selected = next((row for row in theses if int(row.get("id") or 0) == requested_id), theses[0] if theses else None)
+    selected_by_id = next(
+        (row for row in theses if int(row.get("id") or 0) == requested_id),
+        None,
+    )
+    selected_by_symbol = next(
+        (
+            row
+            for row in theses
+            if requested_symbol
+            and requested_exchange
+            and str(row.get("symbol") or "").strip().upper() == requested_symbol
+            and str(row.get("exchange") or "").strip().upper() == requested_exchange
+        ),
+        None,
+    )
+    selected = selected_by_id or selected_by_symbol or (theses[0] if theses else None)
     privacy = {
         "scope": "local_private",
         "private_data_egress_allowed": False,
@@ -101,7 +174,7 @@ def build_long_term_thesis_workspace(
     if selected is None:
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "workspace_profile": "long_term_thesis_dashboard_v1" if dashboard_profile else "long_term_thesis_workspace_v1",
+            "workspace_profile": workspace_profile,
             "theses": [],
             "selected_thesis": None,
             "issues": [{"status": "empty", "message": "No persisted holding thesis exists."}],
@@ -157,6 +230,70 @@ def build_long_term_thesis_workspace(
           fair_value_low,fair_value_base,fair_value_high,expected_cagr_pct,assumptions,
           outputs,note_path,owner_agent,updated_at FROM portfolio.holding_valuation_models
           WHERE holding_thesis_id={thesis_id} ORDER BY updated_at DESC,model_key LIMIT 40""",
+        "market_price_anchor": f"""WITH live_quotes AS (
+            SELECT live.instrument_token AS id,'zerodha_live_quote_state'::text AS source_key,
+              live.provider,live.provider_symbol,live.symbol,live.exchange,'INR'::text AS currency,
+              live.last_price AS price,
+              coalesce(live.exchange_timestamp,live.last_trade_timestamp,live.received_at) AS quote_ts,
+              live.received_at,'primary_zerodha_live'::text AS source_class,1 AS source_priority,
+              (instrument.instrument_token IS NOT NULL) AS approved_for_valuation,
+              true AS provider_entitled,'zerodha_canonical'::text AS provider_entitlement_key,
+              live.instrument_token,live.source_mode,live.broker_write_allowed,
+              CASE WHEN instrument.instrument_token IS NOT NULL THEN 'verified_zerodha_instrument'
+                   ELSE 'unmapped_zerodha_instrument' END AS mapping_status,
+              CASE WHEN live.exchange_timestamp IS NOT NULL THEN 'exchange_timestamp'
+                   WHEN live.last_trade_timestamp IS NOT NULL THEN 'last_trade_local_ist'
+                   ELSE 'receipt_utc' END AS timestamp_basis
+            FROM market.live_quote_state live
+            LEFT JOIN market.zerodha_instruments instrument
+              ON instrument.instrument_token=live.instrument_token AND instrument.active
+             AND upper(instrument.exchange)=upper(live.exchange)
+             AND upper(instrument.trading_symbol)=upper(live.symbol)
+            WHERE upper(live.symbol)={symbol_sql} AND upper(live.exchange)={exchange_sql}
+              AND lower(live.provider)='zerodha' AND live.last_price>0
+          ), stored_quotes AS (
+            SELECT quote.id,quote.source_key,quote.provider,quote.provider_symbol,
+              quote.symbol,quote.exchange,quote.currency,quote.price,quote.quote_ts,
+              quote.created_at AS received_at,
+              CASE WHEN lower(quote.provider)='zerodha' THEN 'zerodha_stored_quote'
+                   WHEN registry.source_key IS NOT NULL THEN 'entitled_secondary_quote'
+                   ELSE 'unentitled_secondary_quote' END AS source_class,
+              CASE WHEN lower(quote.provider)='zerodha' THEN 2 ELSE 3 END AS source_priority,
+              CASE WHEN lower(quote.provider)='zerodha' THEN instrument.instrument_token IS NOT NULL
+                   ELSE registry.source_key IS NOT NULL END AS approved_for_valuation,
+              CASE WHEN lower(quote.provider)='zerodha' THEN true
+                   ELSE registry.source_key IS NOT NULL END AS provider_entitled,
+              CASE WHEN lower(quote.provider)='zerodha' THEN 'zerodha_canonical'
+                   ELSE registry.source_key END AS provider_entitlement_key,
+              instrument.instrument_token,'bounded_read_only_snapshot'::text AS source_mode,
+              false AS broker_write_allowed,
+              CASE WHEN lower(quote.provider)='zerodha' AND instrument.instrument_token IS NOT NULL
+                     THEN 'verified_zerodha_instrument'
+                   WHEN lower(quote.provider)='zerodha' THEN 'unmapped_zerodha_instrument'
+                   ELSE 'exact_exchange_symbol' END AS mapping_status,
+              coalesce(quote.raw_payload->>'ai_os_timestamp_basis','unknown') AS timestamp_basis
+            FROM market.price_quotes quote
+            LEFT JOIN LATERAL (
+              SELECT mapping.instrument_token FROM market.zerodha_instruments mapping
+              WHERE mapping.active AND upper(mapping.exchange)=upper(quote.exchange)
+                AND upper(mapping.trading_symbol)=upper(quote.symbol)
+              ORDER BY mapping.last_seen_at DESC LIMIT 1
+            ) instrument ON true
+            LEFT JOIN core.data_source_registry registry
+              ON registry.source_key=quote.source_key
+             AND registry.status IN ('active','installed','mapped')
+             AND lower(coalesce(registry.provider,''))=lower(quote.provider)
+             AND coalesce(registry.metadata->>'valuation_price_entitled','false')='true'
+            WHERE upper(quote.symbol)={symbol_sql} AND upper(quote.exchange)={exchange_sql}
+              AND quote.price>0
+          )
+          SELECT * FROM (SELECT * FROM live_quotes UNION ALL SELECT * FROM stored_quotes) quotes
+          ORDER BY source_priority,quote_ts DESC,id DESC LIMIT 16""",
+        "market_holidays": f"""SELECT exchange,holiday_date,session_status,source_url
+          FROM market.exchange_holidays
+          WHERE upper(exchange)={exchange_sql}
+            AND holiday_date BETWEEN current_date-14 AND current_date+14
+          ORDER BY holiday_date""",
         "monte_carlo_runs": f"""SELECT id,run_key,run_status,horizon_years,
           simulation_count,start_price,starting_multiple,assumptions,input_snapshot,
           percentile_summary,probability_summary,warnings,evidence,note_path,
@@ -412,18 +549,25 @@ def build_long_term_thesis_workspace(
           FROM trading.v_execution_control_state LIMIT 1""",
     }
     if dashboard_profile:
-        # The investor report must never hydrate research operations, raw task payloads,
-        # or evidence ledgers. Those remain available via the full workspace profile.
+        # Keep the front-stage investor read model bounded.  In particular, do
+        # not execute case/task/evidence-ledger/model-run/source-pipeline queries
+        # merely because an operations drawer exists in the client.
+        queries["coverage"] = f"""SELECT
+          (SELECT count(*) FROM research.v_company_statement_facts_current
+            WHERE company_id {company_clause})::integer AS selected_company_facts,
+          (SELECT count(*) FROM research.corporate_filings
+            WHERE upper(symbol)={symbol_sql})::integer AS filings_registered,
+          (SELECT count(*) FROM research.corporate_filings
+            WHERE upper(symbol)={symbol_sql} AND extraction_status='extracted')::integer AS filings_extracted,
+          (SELECT count(*) FROM research.corporate_filings
+            WHERE upper(symbol)={symbol_sql})::integer AS selected_company_filings"""
         dashboard_keys = {
-            "coverage", "valuation_models", "monte_carlo_runs",
-            "management_guidance", "operational_kpis", "industry_observations",
-            "market_share_observations", "operating_peers", "segment_facts",
-            "governance_observations", "filings", "financial_history",
-            "financial_segment_history", "financial_history_gaps",
+            "coverage", "valuation_models", "market_price_anchor", "market_holidays", "monte_carlo_runs",
+            "thesis_versions", "dossier_sections", "management_guidance",
+            "operating_peers", "segment_facts", "governance_observations",
+            "filings", "news", "financial_facts", "financial_history", "financial_history_gaps",
             "financial_production_ratios", "financial_validation_checks",
-            "research_cases", "research_case_work_items", "research_case_agents",
-            "research_case_evidence", "research_case_events", "model_run_preflights",
-            "research_case_model_runs", "thesis_reports", "committee", "freshness",
+            "thesis_reports", "watchlist", "committee", "execution_control",
         }
         queries = {key: value for key, value in queries.items() if key in dashboard_keys}
 
@@ -432,12 +576,12 @@ def build_long_term_thesis_workspace(
     # authoritative; this guard prevents truncating the 240-fact series to 40.
     data = run_map(queries, row_limit=240, batch_size=6, error_collector=issues)
     coverage = (data.get("coverage") or [{}])[0]
-    if not dashboard_profile:
+    if operations_profile:
         data["financial_quality"] = build_financial_quality(data.get("financial_series") or [])
     data["valuation_workbench"] = build_valuation_workbench(selected, data)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "workspace_profile": "long_term_thesis_dashboard_v1" if dashboard_profile else "long_term_thesis_workspace_v1",
+        "workspace_profile": workspace_profile,
         "runtime_root": str(runtime_root),
         "vault_root": str(vault_root),
         "privacy": privacy,
@@ -445,8 +589,8 @@ def build_long_term_thesis_workspace(
             "page_size": page_size,
             "facts_page": facts_page,
             "facts_total": int(coverage.get("selected_company_facts") or 0),
-            "evidence_page": evidence_page,
-            "evidence_total": int(coverage.get("selected_company_evidence") or 0),
+            "evidence_page": evidence_page if operations_profile else None,
+            "evidence_total": int(coverage.get("selected_company_evidence") or 0) if operations_profile else None,
             "filings_total": int(coverage.get("selected_company_filings") or 0),
         },
         "theses": theses,

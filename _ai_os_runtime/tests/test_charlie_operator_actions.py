@@ -30,6 +30,7 @@ class CharlieOperatorActionsTest(unittest.TestCase):
             stderr="",
         )
         with (
+            mock.patch.object(ai_os_api_server, "governed_pdf_python", return_value="/governed/pdf/python"),
             mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed),
             mock.patch.object(
                 ai_os_api_server,

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from run_agent_worker_once import psql_json, psql_text, run_once, sql_jsonb, sql_literal
 from run_research_case_agent_once import run_once as run_research_case_agent_once
+from governed_pdf_runtime import governed_pdf_python
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or SCRIPT_DIR.parent).resolve()
@@ -33,6 +34,7 @@ from api.market_research_workflow import (  # noqa: E402
 
 def record_daemon_heartbeat(
     *,
+    daemon_key: str = "agent_message_daemon",
     instance_id: str,
     started_at: datetime,
     status: str,
@@ -49,7 +51,7 @@ def record_daemon_heartbeat(
             last_error, started_at, heartbeat_at, updated_at
         )
         VALUES (
-            'agent_message_daemon', {sql_literal(instance_id)},
+            {sql_literal(daemon_key)}, {sql_literal(instance_id)},
             {sql_literal(socket.gethostname())}, {os.getpid()}, {sql_literal(status)},
             {max(5, int(loop_interval_seconds))}, {sql_jsonb(enabled_workloads)},
             {sql_jsonb(last_pass_summary)},
@@ -90,6 +92,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "strategy_discovery_scheduler",
         "market_news_ingestion",
         "market_research_heartbeat",
+        "research_following_refresh",
         "research_hub_refresh",
         "institutional_options_materializer",
         "option_valuation_source_refresh",
@@ -896,6 +899,26 @@ def run_research_hub_refresh(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
+def run_research_following_refresh(timeout_seconds: int, limit: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "run_research_following_monitor.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [sys.executable, str(script), "--limit", str(max(1, min(25, limit))),
+         "--timeout", str(max(5, min(30, timeout_seconds))), "--json"],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(90, timeout_seconds * max(1, min(25, limit)) + 60),
+    )
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"status": "failed", "error": (completed.stderr or completed.stdout or "invalid following monitor output")[-4000:]}
+    if completed.returncode != 0 and payload.get("status") not in {"failed", "degraded"}:
+        payload["status"] = "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "Research Following refresh failed")[-4000:]
+    return payload
+
+
 def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
     rows = psql_json(
         f"""
@@ -941,10 +964,8 @@ def run_option_valuation_source_refresh(timeout_seconds: int) -> dict[str, Any]:
     script = WORKLOAD_SCRIPT_DIR / "collect_option_valuation_sources.py"
     if not script.is_file():
         return {"status": "failed", "error": f"required workload script is missing: {script}"}
-    managed_python = Path(os.environ.get("AI_OS_PDF_PYTHON") or (Path.home() / "AI_OS_NODE" / "runtime" / "python" / "bin" / "python3"))
-    python_executable = str(managed_python) if managed_python.is_file() else sys.executable
     completed = subprocess.run(
-        [python_executable, str(script), "--actor", "Options Data Quality Agent"],
+        [governed_pdf_python(verify_import=True), str(script), "--actor", "Options Data Quality Agent"],
         cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
         timeout=max(60, int(timeout_seconds)),
     )
@@ -1010,6 +1031,10 @@ def main() -> int:
     parser.add_argument("--market-calendar-interval", type=int, default=int(os.environ.get("AI_OS_MARKET_CALENDAR_INTERVAL_SECONDS", "21600")))
     parser.add_argument("--market-calendar-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_CALENDAR_TIMEOUT_SECONDS", "180")))
     parser.add_argument("--disable-research-hub-refresh", action="store_true", help="Disable scheduled AI research-output inventory refresh.")
+    parser.add_argument("--disable-research-following-refresh", action="store_true", help="Disable bounded refresh of operator-approved Research Following sources.")
+    parser.add_argument("--research-following-refresh-interval", type=int, default=int(os.environ.get("AI_OS_RESEARCH_FOLLOWING_INTERVAL_SECONDS", "900")))
+    parser.add_argument("--research-following-refresh-timeout", type=int, default=int(os.environ.get("AI_OS_RESEARCH_FOLLOWING_TIMEOUT_SECONDS", "12")))
+    parser.add_argument("--research-following-refresh-limit", type=int, default=int(os.environ.get("AI_OS_RESEARCH_FOLLOWING_LIMIT", "5")))
     parser.add_argument(
         "--research-hub-refresh-interval",
         type=int,
@@ -1064,6 +1089,8 @@ def main() -> int:
     market_calendar_interval = max(1800, int(args.market_calendar_interval))
     research_hub_refresh_enabled = not args.disable_research_hub_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_REFRESH", "1") != "0"
     research_hub_refresh_interval = max(300, int(args.research_hub_refresh_interval))
+    research_following_refresh_enabled = not args.disable_research_following_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_FOLLOWING_REFRESH", "1") != "0"
+    research_following_refresh_interval = max(300, int(args.research_following_refresh_interval))
     institutional_options_enabled = not args.disable_institutional_options and os.environ.get("AI_OS_ENABLE_INSTITUTIONAL_OPTIONS", "1") != "0"
     institutional_options_interval = max(60, int(args.institutional_options_interval))
     option_valuation_sources_enabled = not args.disable_option_valuation_sources and os.environ.get("AI_OS_ENABLE_OPTION_VALUATION_SOURCES", "1") != "0"
@@ -1079,6 +1106,7 @@ def main() -> int:
     last_market_research_heartbeat_run = 0.0
     last_market_calendar_run = 0.0
     last_research_hub_refresh_run = 0.0
+    last_research_following_refresh_run = 0.0
     last_institutional_options_run = 0.0
     last_option_valuation_source_run = 0.0
     last_workflow_scheduler_run = 0.0
@@ -1094,10 +1122,17 @@ def main() -> int:
         "market_research_heartbeat": market_research_heartbeat_enabled,
         "market_calendar": market_calendar_enabled,
         "research_hub_refresh": research_hub_refresh_enabled,
+        "research_following_refresh": research_following_refresh_enabled,
         "institutional_options": institutional_options_enabled,
         "option_valuation_sources": option_valuation_sources_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
         "graph_control": graph_control_enabled,
+    }
+    research_worker_workloads = {
+        "integrated_into_agent_message_daemon": True,
+        "sources": True,
+        "models": True,
+        "report_retries": True,
     }
 
     record_daemon_heartbeat(
@@ -1107,6 +1142,15 @@ def main() -> int:
         loop_interval_seconds=args.interval,
         enabled_workloads=enabled_workloads,
         last_pass_summary={"phase": "starting"},
+    )
+    record_daemon_heartbeat(
+        daemon_key="research_case_worker",
+        instance_id=daemon_instance_id,
+        started_at=daemon_started_at,
+        status="starting",
+        loop_interval_seconds=args.interval,
+        enabled_workloads=research_worker_workloads,
+        last_pass_summary={"phase": "starting", "integrated": True},
     )
 
     heartbeat_state: dict[str, Any] = {
@@ -1145,6 +1189,16 @@ def main() -> int:
                     loop_interval_seconds=args.interval,
                     enabled_workloads=enabled_workloads,
                     last_pass_summary=summary,
+                    last_error=last_error,
+                )
+                record_daemon_heartbeat(
+                    daemon_key="research_case_worker",
+                    instance_id=daemon_instance_id,
+                    started_at=daemon_started_at,
+                    status=status,
+                    loop_interval_seconds=args.interval,
+                    enabled_workloads=research_worker_workloads,
+                    last_pass_summary={"integrated": True, **summary},
                     last_error=last_error,
                 )
             except Exception:  # noqa: BLE001
@@ -1230,6 +1284,20 @@ def main() -> int:
                     "error": type(exc).__name__ + ": " + str(exc),
                 }
             last_research_hub_refresh_run = time.monotonic()
+        if research_following_refresh_enabled and (
+            last_research_following_refresh_run == 0.0
+            or time.monotonic() - last_research_following_refresh_run >= research_following_refresh_interval
+        ):
+            try:
+                result["research_following_refresh"] = run_research_following_refresh(
+                    max(5, int(args.research_following_refresh_timeout)),
+                    max(1, int(args.research_following_refresh_limit)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["research_following_refresh"] = {
+                    "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
+                }
+            last_research_following_refresh_run = time.monotonic()
         if institutional_options_enabled and (
             last_institutional_options_run == 0.0
             or time.monotonic() - last_institutional_options_run >= institutional_options_interval
@@ -1310,6 +1378,22 @@ def main() -> int:
                 last_pass_summary=pass_summary,
                 last_error=heartbeat_error,
             )
+            research_case = result.get("research_case_model") or {}
+            research_status = str(research_case.get("status") or "idle")
+            research_error = str(research_case.get("error") or "")[:2000] or None
+            record_daemon_heartbeat(
+                daemon_key="research_case_worker",
+                instance_id=daemon_instance_id,
+                started_at=daemon_started_at,
+                status="degraded" if research_status in {"error", "failed", "blocked"} else "running",
+                loop_interval_seconds=args.interval,
+                enabled_workloads=research_worker_workloads,
+                last_pass_summary={
+                    "generated_at": result.get("generated_at"),
+                    "research_case": research_case,
+                },
+                last_error=research_error,
+            )
         except Exception as exc:  # noqa: BLE001
             result["daemon_heartbeat"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
         if args.json:
@@ -1322,6 +1406,7 @@ def main() -> int:
             market_news = result.get("market_news_ingestion") or {}
             market_calendar = result.get("market_calendar_refresh") or {}
             research_hub = result.get("research_hub_refresh") or {}
+            research_following = result.get("research_following_refresh") or {}
             institutional_options = result.get("institutional_options_materializer") or {}
             valuation_sources = result.get("option_valuation_source_refresh") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
@@ -1335,6 +1420,7 @@ def main() -> int:
                 f"market_news={market_news.get('status', 'skipped')} "
                 f"market_calendar={market_calendar.get('status', 'skipped')} "
                 f"research_hub={research_hub.get('status', 'skipped')} "
+                f"research_following={research_following.get('status', 'skipped')} "
                 f"institutional_options={institutional_options.get('status', 'skipped')} "
                 f"valuation_sources={valuation_sources.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "

@@ -14,31 +14,47 @@ import json
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
+
+try:
+    from .market_price_resolver import resolve_market_price
+except ImportError:  # Direct script execution on the iMac.
+    from market_price_resolver import resolve_market_price  # type: ignore
 
 
 SSD_ROOT = Path("/Volumes/Devarsh SSD")
 ARTIFACT_ROOT = SSD_ROOT / "AI OS Data" / "research" / "cases"
 RESEARCH_MAX_COMPLETION_TOKENS = 3200
+MAX_REVIEW_ATTEMPTS = 2
+ACCEPTED_NUMERIC_FACT_STATES = {"validated", "human_reviewed"}
+FINANCIAL_CLAIM_TERMS = (
+    "revenue", "ebitda", "ebit", "profit", "pat", "cash flow", "free cash flow",
+    "equity", "debt", "borrowings", "capex", "margin", "eps", "roce", "roic",
+    "return on equity", "return on capital", "working capital", "receivable",
+)
 SPECIALIST_ROLES = (
     "company_business", "filings", "financials", "management",
     "industry_moat", "valuation", "bear_risk",
 )
 ROLE_PLAN = (
-    ("company_business", "Company Analyst", "openrouter_public_lead_glm52_canary", 18000, 2600, 2),
-    ("filings", "Filings and Transcript Analyst", "openrouter_public_lead_glm52_canary", 22000, 2800, 2),
-    ("financials", "Financial Statement Analyst", "openrouter_public_lead_glm52_canary", 30000, 3400, 2),
-    ("management", "Management Analyst", "openrouter_public_lead_glm52_canary", 18000, 2400, 2),
-    ("industry_moat", "Industry Analyst", "openrouter_public_lead_glm52_canary", 18000, 2500, 2),
-    ("valuation", "Valuation Agent", "openrouter_public_lead_glm52_canary", 26000, 3400, 2),
-    ("bear_risk", "Bear Case Agent", "openrouter_public_lead_glm52_canary", 18000, 2400, 2),
-    ("lead_synthesis", "Long-Term Portfolio Manager", "openrouter_public_lead_glm52_canary", 32000, 4000, 2),
-    ("executive_summary", "Research Analyst", "openrouter_public_lead_glm52_canary", 22000, 2800, 2),
-    ("independent_review", "Model Validation Agent", "openrouter_public_lead_deepseek_v4_pro_canary", 30000, 3600, 2),
-    ("committee_review", "CIO Agent", "openrouter_public_lead_deepseek_v4_pro_canary", 26000, 3200, 1),
+    # High-volume public-document specialists use the inexpensive DeepSeek
+    # Flash route. The lead, synthesis and challenge roles use the separately
+    # canaried DeepSeek Pro route selected by migration 249. Every role still
+    # receives only the bounded public packet created below.
+    ("company_business", "Company Analyst", "openrouter_research_fast", 18000, 2600, 2),
+    ("filings", "Filings and Transcript Analyst", "openrouter_research_fast", 22000, 2800, 2),
+    ("financials", "Financial Statement Analyst", "openrouter_research_fast", 30000, 3400, 2),
+    ("management", "Management Analyst", "openrouter_research_fast", 18000, 2400, 2),
+    ("industry_moat", "Industry Analyst", "openrouter_research_fast", 18000, 2500, 2),
+    ("valuation", "Valuation Agent", "openrouter_research_fast", 26000, 3400, 2),
+    ("bear_risk", "Bear Case Agent", "openrouter_research_fast", 18000, 2400, 2),
+    ("lead_synthesis", "Long-Term Portfolio Manager", "openrouter_public_lead_deepseek_v4_pro", 32000, 4000, 2),
+    ("executive_summary", "Research Analyst", "openrouter_public_lead_deepseek_v4_pro", 22000, 2800, 2),
+    ("independent_review", "Model Validation Agent", "openrouter_public_lead_deepseek_v4_pro", 30000, 3600, 2),
+    ("committee_review", "CIO Agent", "openrouter_public_lead_deepseek_v4_pro", 26000, 3200, 1),
 )
 
 PACK_SECTION_PLAN = (
@@ -259,14 +275,92 @@ def _public_packet(case: dict[str, Any], run_rows: Callable[[str], list[dict[str
       WHERE claim.company_id={company_id} AND evidence.source_url IS NOT NULL
       ORDER BY claim.claim_date DESC,claim.id DESC LIMIT 120
     """), 120)
-    market_quote = _bounded(run_rows(f"""
-      SELECT ('market:'||provider||':'||instrument_token)::text citation_id,provider,provider_symbol,
-             symbol,exchange,instrument_type,last_price,previous_close,exchange_timestamp,received_at,source_mode
-      FROM market.live_quote_state
-      WHERE upper(symbol)=upper({sql_literal(str(case.get('ticker') or ''))})
-        AND broker_write_allowed=false
-      ORDER BY received_at DESC LIMIT 1
-    """), 1)
+    market_now = datetime.now(timezone.utc)
+    market_candidates = _bounded(run_rows(f"""
+      WITH live_quotes AS (
+        SELECT live.instrument_token AS id,'zerodha_live_quote_state'::text AS source_key,
+               live.provider,live.provider_symbol,live.symbol,live.exchange,'INR'::text currency,
+               live.last_price AS price,
+               coalesce(live.exchange_timestamp,live.last_trade_timestamp,live.received_at) quote_ts,
+               live.received_at,'primary_zerodha_live'::text source_class,1 source_priority,
+               (instrument.instrument_token IS NOT NULL) approved_for_valuation,
+               true provider_entitled,'zerodha_canonical'::text provider_entitlement_key,
+               live.instrument_token,live.source_mode,live.broker_write_allowed,
+               CASE WHEN instrument.instrument_token IS NOT NULL THEN 'verified_zerodha_instrument'
+                    ELSE 'unmapped_zerodha_instrument' END mapping_status,
+               CASE WHEN live.exchange_timestamp IS NOT NULL THEN 'exchange_timestamp'
+                    WHEN live.last_trade_timestamp IS NOT NULL THEN 'last_trade_local_ist'
+                    ELSE 'receipt_utc' END timestamp_basis
+        FROM market.live_quote_state live
+        LEFT JOIN market.zerodha_instruments instrument
+          ON instrument.instrument_token=live.instrument_token AND instrument.active
+         AND upper(instrument.exchange)=upper(live.exchange)
+         AND upper(instrument.trading_symbol)=upper(live.symbol)
+        WHERE lower(live.provider)='zerodha'
+          AND upper(live.symbol)=upper({sql_literal(str(case.get('ticker') or ''))})
+          AND upper(live.exchange)=upper({sql_literal(str(case.get('exchange') or ''))})
+          AND live.last_price>0
+      ), stored_quotes AS (
+        SELECT quote.id,quote.source_key,quote.provider,quote.provider_symbol,
+               quote.symbol,quote.exchange,quote.currency,quote.price,quote.quote_ts,
+               quote.created_at received_at,
+               CASE WHEN lower(quote.provider)='zerodha' THEN 'zerodha_stored_quote'
+                    WHEN registry.source_key IS NOT NULL THEN 'entitled_secondary_quote'
+                    ELSE 'unentitled_secondary_quote' END source_class,
+               CASE WHEN lower(quote.provider)='zerodha' THEN 2 ELSE 3 END source_priority,
+               CASE WHEN lower(quote.provider)='zerodha' THEN instrument.instrument_token IS NOT NULL
+                    ELSE registry.source_key IS NOT NULL END approved_for_valuation,
+               CASE WHEN lower(quote.provider)='zerodha' THEN true
+                    ELSE registry.source_key IS NOT NULL END provider_entitled,
+               CASE WHEN lower(quote.provider)='zerodha' THEN 'zerodha_canonical'
+                    ELSE registry.source_key END provider_entitlement_key,
+               instrument.instrument_token,'bounded_read_only_snapshot'::text source_mode,
+               false broker_write_allowed,
+               CASE WHEN lower(quote.provider)='zerodha' AND instrument.instrument_token IS NOT NULL
+                      THEN 'verified_zerodha_instrument'
+                    WHEN lower(quote.provider)='zerodha' THEN 'unmapped_zerodha_instrument'
+                    ELSE 'exact_exchange_symbol' END mapping_status,
+               coalesce(quote.raw_payload->>'ai_os_timestamp_basis','unknown') timestamp_basis
+        FROM market.price_quotes quote
+        LEFT JOIN LATERAL (
+          SELECT mapping.instrument_token FROM market.zerodha_instruments mapping
+          WHERE mapping.active AND upper(mapping.exchange)=upper(quote.exchange)
+            AND upper(mapping.trading_symbol)=upper(quote.symbol)
+          ORDER BY mapping.last_seen_at DESC LIMIT 1
+        ) instrument ON true
+        LEFT JOIN core.data_source_registry registry
+          ON registry.source_key=quote.source_key
+         AND registry.status IN ('active','installed','mapped')
+         AND lower(coalesce(registry.provider,''))=lower(quote.provider)
+         AND coalesce(registry.metadata->>'valuation_price_entitled','false')='true'
+        WHERE upper(quote.symbol)=upper({sql_literal(str(case.get('ticker') or ''))})
+          AND upper(quote.exchange)=upper({sql_literal(str(case.get('exchange') or ''))})
+          AND quote.price>0
+      )
+      SELECT * FROM (SELECT * FROM live_quotes UNION ALL SELECT * FROM stored_quotes) candidates
+      ORDER BY source_priority,quote_ts DESC,id DESC LIMIT 16
+    """), 16)
+    market_holidays = _bounded(run_rows(f"""
+      SELECT exchange,holiday_date,session_status FROM market.exchange_holidays
+      WHERE upper(exchange)=upper({sql_literal(str(case.get('exchange') or ''))})
+        AND holiday_date BETWEEN {sql_literal((market_now.date()-timedelta(days=14)).isoformat())}::date
+                             AND {sql_literal((market_now.date()+timedelta(days=14)).isoformat())}::date
+      ORDER BY holiday_date
+    """), 40)
+    market_quote_status = resolve_market_price(
+        market_candidates,
+        symbol=str(case.get("ticker") or ""),
+        exchange=str(case.get("exchange") or ""),
+        holidays=market_holidays,
+        now=market_now,
+    )
+    market_quote: list[dict[str, Any]] = []
+    if market_quote_status and market_quote_status.get("decision_usable"):
+        quote_ref = (market_quote_status.get("source") or {}).get("quote_id") or market_quote_status.get("instrument_token")
+        market_quote = [{
+            **market_quote_status,
+            "citation_id": f"market:{market_quote_status.get('provider')}:{quote_ref}",
+        }]
     packet = {
         "case": {
             "id": case_id, "case_key": case.get("case_key"), "company_id": company_id,
@@ -278,6 +372,12 @@ def _public_packet(case: dict[str, Any], run_rows: Callable[[str], list[dict[str
         "financial_facts": facts, "financial_gaps": financial_gaps, "ratios": ratios,
         "segments": segments, "operating_history": operating, "operating_kpis": kpis,
         "industry": industry, "management_guidance": management, "market_quote": market_quote,
+        "market_quote_status": market_quote_status or {
+            "symbol": str(case.get("ticker") or "").upper(),
+            "exchange": str(case.get("exchange") or "").upper(),
+            "freshness_status": "unavailable", "decision_usable": False,
+            "broker_write_allowed": False,
+        },
         "boundaries": {
             "public_only": True, "private_data_egress_allowed": False,
             "external_write_allowed": False, "broker_write_allowed": False,
@@ -346,8 +446,17 @@ def prepare_research_case_runtime(
             "preflight_id": int(preflight_id), "idempotent_reuse": True,
             "private_data_egress_allowed": False, "capital_action_allowed": False,
         }
-    iteration_rows = run_rows(f"SELECT coalesce(max(iteration),0)+1 next_iteration FROM research.research_case_model_runs WHERE research_case_id={int(case_id)}")
-    iteration = _int((iteration_rows or [{"next_iteration": 1}])[0].get("next_iteration"), 1) if force_new_iteration else 1
+    iteration_rows = run_rows(f"""
+      SELECT count(*)::integer lifetime_run_count,coalesce(max(iteration),0)::integer max_iteration
+      FROM research.research_case_model_runs WHERE research_case_id={int(case_id)}
+    """)
+    iteration_state = iteration_rows[0] if iteration_rows else {}
+    lifetime_run_count = _int(iteration_state.get("lifetime_run_count"))
+    max_iteration = _int(iteration_state.get("max_iteration"))
+    # A newly approved preflight must never overwrite or silently reuse an old
+    # iteration. The per-preflight idempotency check above handles true retries;
+    # any lifetime history therefore advances to a fresh durable iteration.
+    iteration = max_iteration + 1 if force_new_iteration or lifetime_run_count > 0 else 1
     packet = _public_packet(case, run_rows, sql_literal)
     encoded = json.dumps(packet, sort_keys=True, separators=(",", ":"), default=str)
     packet_hash = _sha(encoded)
@@ -422,6 +531,12 @@ def prepare_research_case_runtime(
           current_goal='Run approved specialist analysis through independent review and committee gating',
           decision_readiness='needs_research',last_progress_at=now(),updated_at=now()
         WHERE id={int(case_id)} RETURNING id
+      ), blocker_resolved AS (
+        UPDATE research.research_case_blockers SET status='resolved',resolved_at=now(),next_retry_at=NULL,
+          resolution='The corrected public packet and cost ceiling were approved; a fresh specialist and independent-review iteration started.',
+          system_action='Fresh analysis iteration is running automatically.',user_action=NULL,updated_at=now()
+        WHERE research_case_id={int(case_id)} AND blocker_key='independent_review'
+          AND status<>'resolved' RETURNING id
       ), event AS (
         INSERT INTO research.research_case_events (research_case_id,event_type,event_status,event_summary,actor,event_payload)
         VALUES ({int(case_id)},'model_runtime_authorized','recorded',
@@ -475,7 +590,25 @@ def _parse_structured_output(value: str) -> dict[str, Any]:
     raise ValueError("structured_output_parse_failed:" + ",".join(errors[:4]))
 
 
-def _sanitize_output_citations(output: dict[str, Any], allowed_ids: set[str]) -> dict[str, Any]:
+def _canonical_financial_fact(source: dict[str, Any], citation_id: str) -> dict[str, Any]:
+    """Return one exact packet fact; agent prose never relabels its metric or unit."""
+    fact_key = str(source.get("fact_key") or "reported_fact")
+    fiscal_year = source.get("fiscal_year")
+    period_label = f"fiscal year {fiscal_year}" if fiscal_year is not None else str(source.get("period_end") or "the reported period")
+    scope = str(source.get("statement_scope") or "scope not recorded")
+    value = source.get("value")
+    unit = str(source.get("unit") or "unit not recorded")
+    return {
+        "claim": f"{fact_key.replace('_', ' ').title()} was {value} {unit} for {period_label} on a {scope} basis.",
+        "fact_key": fact_key, "fiscal_year": fiscal_year, "period_end": source.get("period_end"),
+        "value": value, "unit": unit, "statement_scope": scope,
+        "source_status": source.get("extraction_status"), "citation_ids": [citation_id],
+    }
+
+
+def _sanitize_output_citations(
+    output: dict[str, Any], allowed_ids: set[str], packet: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Remove unsupported draft claims without weakening the citation gate.
 
     Packet labels and case identifiers are not evidence. Unsupported fact rows
@@ -483,6 +616,12 @@ def _sanitize_output_citations(output: dict[str, Any], allowed_ids: set[str]) ->
     approved citations. This never manufactures or remaps a source.
     """
     dropped: list[str] = []
+    packet = packet or {}
+    financial_index = {
+        str(row.get("citation_id")): row
+        for row in packet.get("financial_facts", [])
+        if isinstance(row, dict) and row.get("citation_id")
+    }
     for section in ("facts", "analysis", "calculations", "risks", "disconfirmers"):
         values = output.get(section)
         if not isinstance(values, list):
@@ -501,6 +640,35 @@ def _sanitize_output_citations(output: dict[str, Any], allowed_ids: set[str]) ->
             if section == "facts" and not item["citation_ids"]:
                 dropped.append(f"Unsupported draft fact {index} was removed because it had no approved source citation.")
                 continue
+            if section == "facts":
+                fact_citations = list(dict.fromkeys(
+                    citation for citation in item["citation_ids"] if citation.startswith("fact:")
+                ))
+                if fact_citations:
+                    canonical_rows = []
+                    for citation in fact_citations:
+                        source = financial_index.get(citation)
+                        if not source:
+                            dropped.append(f"Draft fact {index} was removed because {citation} was absent from the approved packet fact index.")
+                            continue
+                        source_status = str(source.get("extraction_status") or "").lower()
+                        if source_status not in ACCEPTED_NUMERIC_FACT_STATES:
+                            dropped.append(f"Draft fact {index} was removed because {citation} is {source_status or 'unverified'}, not validated or human reviewed.")
+                            continue
+                        canonical_rows.append(_canonical_financial_fact(source, citation))
+                    cleaned.extend(canonical_rows)
+                    continue
+                claim_text = " ".join((str(item.get("claim") or ""), str(item.get("value") or ""))).lower()
+                structured_prefixes = {str(value).partition(":")[0] for value in item["citation_ids"]}
+                if (
+                    any(term in claim_text for term in FINANCIAL_CLAIM_TERMS)
+                    and re.search(r"\d", claim_text)
+                    and not structured_prefixes.intersection(
+                        {"ratio", "segment", "operating", "kpi", "industry", "management", "market"}
+                    )
+                ):
+                    dropped.append(f"Draft financial fact {index} was removed because a filing excerpt alone is not a validated numeric fact.")
+                    continue
             cleaned.append(item)
         output[section] = cleaned
     for section in ("missing", "source_requests"):
@@ -516,6 +684,66 @@ def _sanitize_output_citations(output: dict[str, Any], allowed_ids: set[str]) ->
         if isinstance(missing, list):
             missing.extend({"item": detail, "citation_ids": []} for detail in dropped)
     return output
+
+
+def _review_correction_envelope(completed: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Expose the latest reviewer requests as a mandatory, ordered synthesis input."""
+    reviews = [row for row in completed if row.get("role_key") == "independent_review"]
+    if not reviews:
+        return None
+    latest = max(
+        reviews,
+        key=lambda row: (_int(row.get("iteration")), _int(row.get("attempt")), _int(row.get("id"))),
+    )
+    output = latest.get("output_summary") or {}
+    if output.get("review_decision") != "needs_revision":
+        return None
+    requests = []
+    for index, item in enumerate((output.get("revision_requests") or [])[:12], start=1):
+        if isinstance(item, dict):
+            request = str(item.get("request") or item.get("detail") or item.get("finding") or "").strip()
+            citation_ids = [str(value) for value in (item.get("citation_ids") or [])]
+        else:
+            request = str(item).strip()
+            citation_ids = []
+        if not request:
+            continue
+        requests.append({
+            "correction_id": f"review-{int(latest.get('id') or 0)}-{index}-{_sha(request)[:10]}",
+            "request": request, "citation_ids": citation_ids,
+        })
+    findings = []
+    for item in (output.get("blocking_findings") or [])[:12]:
+        findings.append(str(item.get("finding") or item.get("detail") or item) if isinstance(item, dict) else str(item))
+    return {
+        "review_run_id": latest.get("id"), "iteration": latest.get("iteration"),
+        "attempt": latest.get("attempt"), "must_address_every_request": True,
+        "revision_requests": requests, "blocking_findings": findings,
+    }
+
+
+def _validate_review_correction_responses(
+    output: dict[str, Any], context: dict[str, Any],
+) -> list[str]:
+    envelope = context.get("required_review_corrections") or {}
+    required = {
+        str(row.get("correction_id"))
+        for row in envelope.get("revision_requests", [])
+        if isinstance(row, dict) and row.get("correction_id")
+    }
+    if not required:
+        return []
+    responses = output.get("correction_responses")
+    if not isinstance(responses, list):
+        return ["correction_responses_not_list"]
+    answered = {
+        str(row.get("correction_id"))
+        for row in responses
+        if isinstance(row, dict)
+        and row.get("correction_id")
+        and str(row.get("resolution") or "").strip()
+    }
+    return [f"unaddressed_review_correction:{correction_id}" for correction_id in sorted(required - answered)]
 
 
 def _validate_output(role: str, output: Any, allowed_ids: set[str]) -> tuple[bool, list[str], list[str]]:
@@ -589,6 +817,8 @@ def _role_context(role: str, packet: dict[str, Any], completed: list[dict[str, A
     if role in keys_by_role:
         for key in keys_by_role[role]:
             base[key] = packet.get(key) or []
+        if role == "valuation":
+            base["market_quote_status"] = packet.get("market_quote_status") or {}
     else:
         base["specialist_outputs"] = [
             {
@@ -600,10 +830,15 @@ def _role_context(role: str, packet: dict[str, Any], completed: list[dict[str, A
                 "risks": ((row.get("output_summary") or {}).get("risks") or [])[:3],
                 "missing": ((row.get("output_summary") or {}).get("missing") or [])[:4],
                 "review_decision": (row.get("output_summary") or {}).get("review_decision"),
-                "revision_requests": ((row.get("output_summary") or {}).get("revision_requests") or [])[:4],
+                "revision_requests": ((row.get("output_summary") or {}).get("revision_requests") or [])[:12],
+                "correction_responses": ((row.get("output_summary") or {}).get("correction_responses") or [])[:12],
             }
             for row in completed
         ]
+        if role in {"lead_synthesis", "executive_summary"}:
+            correction_envelope = _review_correction_envelope(completed)
+            if correction_envelope:
+                base["required_review_corrections"] = correction_envelope
         if role in {"lead_synthesis", "executive_summary", "independent_review", "committee_review"}:
             base["validated_financial_facts"] = [
                 {
@@ -637,6 +872,8 @@ def _prompt(role: str, context: dict[str, Any]) -> tuple[str, str]:
         "assumptions": [], "risks": [{"risk": "string", "monitor": "string", "citation_ids": []}],
         "disconfirmers": [{"condition": "string", "citation_ids": []}], "missing": [], "source_requests": [],
     }
+    if role in {"lead_synthesis", "executive_summary"}:
+        contract.update({"correction_responses": [{"correction_id": "exact supplied id", "resolution": "corrected, removed, or unresolved with exact reason", "citation_ids": []}]})
     if role == "independent_review":
         contract.update({"review_decision": "passed or needs_revision", "blocking_findings": [], "revision_requests": []})
     if role == "committee_review":
@@ -656,6 +893,7 @@ def _prompt(role: str, context: dict[str, Any]) -> tuple[str, str]:
     prompt = json.dumps({
         "instruction": ROLE_INSTRUCTIONS[role], "required_contract": contract,
         "review_rule": "For independent review, disclosed evidence gaps alone are not a rejection reason. Pass an evidence-debt pack when every presented claim is supported, calculations are reproducible, and missing inputs are explicit; reject only unsupported or internally inconsistent claims.",
+        "revision_rule": "When required_review_corrections is present, address every correction_id explicitly, remove rather than repeat an unsupported claim, and return one correction_responses row per request.",
         "context": bounded_context,
     }, separators=(",", ":"), default=str)
     return system, prompt
@@ -677,6 +915,134 @@ def _write_artifact(case_key: str, run_key: str, payload: dict[str, Any]) -> tup
     return str(target), _sha(encoded)
 
 
+def _publish_terminal_evidence_debt_report(
+    case_id: int,
+    reason: str,
+    run_statement,
+    sql_literal,
+    sql_jsonb,
+    report_generator: Callable[[int, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Publish current durable work without another paid call or acceptance claim."""
+    try:
+        if report_generator is None:
+            from research_case_report import generate_research_case_report
+            report_generator = generate_research_case_report
+        report = report_generator(int(case_id), "Research Report Builder · evidence debt")
+        public_result = {
+            key: report.get(key)
+            for key in (
+                "research_case_id", "holding_thesis_id", "report_id", "report_version",
+                "content_state", "delivery_state", "freshness_state", "decision_state",
+                "section_count", "citation_count",
+            )
+        }
+        run_statement(f"""
+          WITH event AS (
+            INSERT INTO research.research_case_events
+              (research_case_id,event_type,event_status,event_summary,actor,event_payload)
+            VALUES ({int(case_id)},'evidence_debt_pack_published','generated',
+              'The current source-backed work was published as an evidence-debt pack; research and human-review gates remain open.',
+              'Research Report Builder',{sql_jsonb({**public_result, 'terminal_reason': reason, 'capital_action_allowed': False})})
+            RETURNING id
+          ) SELECT coalesce(json_agg(row_to_json(event)),'[]'::json)::text FROM event
+        """)
+        return {"status": "evidence_debt_pack_published", **public_result}
+    except Exception as exc:
+        error_kind = type(exc).__name__
+        run_statement(f"""
+          WITH blocker AS (
+            INSERT INTO research.research_case_blockers
+              (research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,metadata)
+            VALUES ({int(case_id)},'research_pack_generation','report','Evidence-debt report delivery needs repair',
+              {sql_literal(error_kind + ': local report publication did not complete.')},
+              'Completed evidence and drafts are preserved; retry report delivery locally without rerunning paid research.',
+              'Open the existing research workstream while local report delivery retries.','open','high',
+              {sql_jsonb({'terminal_reason': reason, 'error_kind': error_kind, 'paid_research_rerun_required': False})})
+            ON CONFLICT (research_case_id,blocker_key) DO UPDATE SET
+              title=EXCLUDED.title,detail=EXCLUDED.detail,system_action=EXCLUDED.system_action,
+              user_action=EXCLUDED.user_action,status='open',severity='high',metadata=EXCLUDED.metadata,
+              resolved_at=NULL,resolution=NULL,updated_at=now() RETURNING id
+          ) SELECT coalesce(json_agg(row_to_json(blocker)),'[]'::json)::text FROM blocker
+        """)
+        return {"status": "evidence_debt_report_delivery_failed", "error_kind": error_kind}
+
+
+def _block_for_cost_ceiling(
+    run: dict[str, Any],
+    *,
+    spent: Decimal,
+    projected_cost: Decimal,
+    reason: str,
+    run_statement,
+    sql_literal,
+    sql_jsonb,
+    report_generator: Callable[[int, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Make the cost stop terminal and visible, then publish without a model call."""
+    case_id = int(run["research_case_id"])
+    run_id = int(run["id"])
+    iteration = int(run.get("iteration") or 1)
+    preflight_id = int(run["preflight_id"])
+    hard_max = _num(run.get("hard_max_cost_usd"))
+    run_statement(f"""
+      WITH model_updated AS (
+        UPDATE research.research_case_model_runs SET status='blocked',
+          exception_detail='Approved public-model cost ceiling prevents this call.',
+          finished_at=coalesce(finished_at,now()),updated_at=now()
+        WHERE id={run_id} RETURNING id
+      ), dependents AS (
+        UPDATE research.research_case_model_runs SET status='blocked',
+          exception_detail='Upstream work stopped at the approved public-model cost ceiling.',
+          finished_at=coalesce(finished_at,now()),updated_at=now()
+        WHERE research_case_id={case_id} AND iteration={iteration} AND id<>{run_id}
+          AND status IN ('queued','awaiting_dependencies') RETURNING id
+      ), case_updated AS (
+        UPDATE research.research_cases SET status='blocked',lead_status='cost_ceiling_blocked',
+          current_goal='Review the published evidence-debt pack before approving any additional model budget',
+          decision_readiness='needs_research',last_progress_at=now(),updated_at=now()
+        WHERE id={case_id} RETURNING id
+      ), preflight_updated AS (
+        UPDATE research.model_run_preflights SET status='completed',completed_at=coalesce(completed_at,now()),updated_at=now()
+        WHERE id={preflight_id} AND status='approved' RETURNING id
+      ), blocker AS (
+        INSERT INTO research.research_case_blockers
+          (research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,status,severity,metadata)
+        VALUES ({case_id},'cost_ceiling','review','Approved research budget is exhausted',
+          'The next bounded model call would exceed the explicitly approved public-research ceiling. Completed evidence and drafts remain available.',
+          'The stack will publish the current work as an evidence-debt report without another paid call.',
+          'Review the evidence-debt pack; approve a fresh cost plan only if more analysis is warranted.',
+          'open','high',{sql_jsonb({'spent_usd': float(spent), 'projected_call_usd': float(projected_cost), 'hard_max_usd': float(hard_max), 'capital_action_allowed': False})})
+        ON CONFLICT (research_case_id,blocker_key) DO UPDATE SET
+          title=EXCLUDED.title,detail=EXCLUDED.detail,system_action=EXCLUDED.system_action,
+          user_action=EXCLUDED.user_action,status='open',severity='high',metadata=EXCLUDED.metadata,
+          resolved_at=NULL,resolution=NULL,updated_at=now() RETURNING id
+      ), review_blocker AS (
+        UPDATE research.research_case_blockers SET status='open',
+          system_action='Paid correction calls stopped at the approved ceiling; the evidence-debt pack is being published locally.',
+          user_action='Review the evidence-debt pack before deciding whether a new bounded plan is justified.',
+          updated_at=now()
+        WHERE research_case_id={case_id} AND blocker_key='independent_review'
+          AND status IN ('open','retrying') RETURNING id
+      ), event AS (
+        INSERT INTO research.research_case_events
+          (research_case_id,event_type,event_status,event_summary,actor,event_payload)
+        VALUES ({case_id},'cost_ceiling','blocked',
+          'The approved model ceiling stopped the next call; no additional model spend was incurred.',
+          'Model Cost Guard',{sql_jsonb({'reason': reason, 'spent_usd': float(spent), 'projected_call_usd': float(projected_cost), 'hard_max_usd': float(hard_max)})})
+        RETURNING id
+      ) SELECT coalesce(json_agg(row_to_json(event)),'[]'::json)::text FROM event
+    """)
+    report = _publish_terminal_evidence_debt_report(
+        case_id, reason, run_statement, sql_literal, sql_jsonb, report_generator,
+    )
+    return {
+        "status": "blocked", "reason": reason, "model_run_id": run_id,
+        "research_case_id": case_id, "report": report,
+        "capital_action_allowed": False, "external_write_allowed": False,
+    }
+
+
 def _unlock_next(case_id: int, iteration: int, role: str, output: dict[str, Any], run_statement, sql_literal, sql_jsonb) -> None:
     if role in SPECIALIST_ROLES:
         next_role = "lead_synthesis"
@@ -687,7 +1053,7 @@ def _unlock_next(case_id: int, iteration: int, role: str, output: dict[str, Any]
         next_role, condition = "independent_review", "true"
     elif role == "independent_review":
         if output.get("review_decision") == "needs_revision":
-            run_statement(f"""
+            transition = run_statement(f"""
               WITH current_review AS (
                 SELECT max(attempt)::integer attempt FROM research.research_case_model_runs
                 WHERE research_case_id={case_id} AND iteration={iteration} AND role_key='independent_review'
@@ -695,7 +1061,7 @@ def _unlock_next(case_id: int, iteration: int, role: str, output: dict[str, Any]
                 UPDATE research.research_cases SET status='blocked',lead_status='independent_review_blocked',
                   decision_readiness='needs_research',exception_count=exception_count+1,
                   last_progress_at=now(),updated_at=now()
-                WHERE id={case_id} AND (SELECT attempt FROM current_review)>=4 RETURNING id
+                WHERE id={case_id} AND (SELECT attempt FROM current_review)>={MAX_REVIEW_ATTEMPTS} RETURNING id
               ), preflight_complete AS (
                 UPDATE research.model_run_preflights SET status='completed',completed_at=now(),updated_at=now()
                 WHERE id=(SELECT preflight_id FROM research.research_case_model_runs
@@ -745,9 +1111,14 @@ def _unlock_next(case_id: int, iteration: int, role: str, output: dict[str, Any]
                   CASE WHEN EXISTS (SELECT 1 FROM blocked)
                     THEN 'Independent review still found blocking issues after the bounded revision; human input is required.'
                     ELSE 'Independent reviewer returned the pack for one bounded revision.' END,
-                  'Model Validation Agent',{sql_jsonb({'revision_requests': output.get('revision_requests') or [], 'blocking_findings': output.get('blocking_findings') or [], 'max_review_attempts': 4})}) RETURNING id
+                  'Model Validation Agent',{sql_jsonb({'revision_requests': output.get('revision_requests') or [], 'blocking_findings': output.get('blocking_findings') or [], 'max_review_attempts': MAX_REVIEW_ATTEMPTS})}) RETURNING id,event_status
               ) SELECT coalesce(json_agg(row_to_json(event)),'[]'::json)::text FROM event
             """)
+            if any(str(row.get("event_status") or "") == "blocked" for row in (transition or [])):
+                _publish_terminal_evidence_debt_report(
+                    case_id, "independent_review_attempts_exhausted",
+                    run_statement, sql_literal, sql_jsonb,
+                )
             return
         run_statement(f"""
           WITH resolved AS (
@@ -893,11 +1264,10 @@ def run_next_research_case_model(
     spend_rows = run_rows(f"SELECT coalesce(sum(actual_cost_usd),0) spent FROM research.model_run_receipts WHERE preflight_id={int(run['preflight_id'])}")
     spent = _num((spend_rows or [{}])[0].get("spent"))
     if spent >= _num(run.get("hard_max_cost_usd")):
-        run_statement(f"""
-          WITH updated AS (UPDATE research.research_case_model_runs SET status='blocked',exception_detail='approved hard cost ceiling reached',updated_at=now() WHERE id={run_id} RETURNING id)
-          SELECT coalesce(json_agg(row_to_json(updated)),'[]'::json)::text FROM updated
-        """)
-        return {"status": "blocked", "reason": "hard_cost_ceiling_reached", "model_run_id": run_id}
+        return _block_for_cost_ceiling(
+            run, spent=spent, projected_cost=Decimal(0), reason="hard_cost_ceiling_reached",
+            run_statement=run_statement, sql_literal=sql_literal, sql_jsonb=sql_jsonb,
+        )
     claimed = run_statement(f"""
       WITH updated AS (
         UPDATE research.research_case_model_runs SET status='running',started_at=now(),updated_at=now()
@@ -909,7 +1279,7 @@ def run_next_research_case_model(
     role = str(run["role_key"])
     packet = run.get("public_context") or {}
     completed = run_rows(f"""
-      SELECT DISTINCT ON (role_key) role_key,output_summary,artifact_path,validation_result
+      SELECT DISTINCT ON (role_key) id,iteration,attempt,role_key,output_summary,artifact_path,validation_result
       FROM research.research_case_model_runs
       WHERE research_case_id={int(run['research_case_id'])} AND iteration={int(run.get('iteration') or 1)}
         AND role_key<>{sql_literal(role)}
@@ -928,21 +1298,10 @@ def run_next_research_case_model(
     projected_prompt_tokens = max(1, len(prompt) / 4)
     projected_cost = (Decimal(projected_prompt_tokens) * _num(rates.get("input_usd_per_1m_tokens")) + Decimal(RESEARCH_MAX_COMPLETION_TOKENS) * _num(rates.get("output_usd_per_1m_tokens"))) / Decimal(1_000_000)
     if spent + projected_cost > _num(run.get("hard_max_cost_usd")):
-        run_statement(f"""
-          WITH model_updated AS (UPDATE research.research_case_model_runs SET status='blocked',
-            exception_detail='Projected call cost would exceed the approved hard ceiling.',finished_at=now(),updated_at=now()
-            WHERE id={run_id} RETURNING id),
-          case_updated AS (UPDATE research.research_cases SET status='blocked',lead_status='cost_ceiling_blocked',
-            current_goal='Review a new cost preflight before additional model work',updated_at=now()
-            WHERE id={int(run['research_case_id'])} RETURNING id),
-          event AS (INSERT INTO research.research_case_events
-            (research_case_id,event_type,event_status,event_summary,actor,event_payload)
-            VALUES ({int(run['research_case_id'])},'cost_ceiling','blocked',
-              'The next model call was blocked before dispatch because its maximum projected cost could exceed the approved ceiling.',
-              'Model Cost Guard',{sql_jsonb({'spent_usd': float(spent), 'projected_call_usd': float(projected_cost), 'hard_max_usd': float(_num(run.get('hard_max_cost_usd')))})}) RETURNING id)
-          SELECT coalesce(json_agg(row_to_json(event)),'[]'::json)::text FROM event
-        """)
-        return {"status": "blocked", "reason": "projected_hard_cost_ceiling", "model_run_id": run_id}
+        return _block_for_cost_ceiling(
+            run, spent=spent, projected_cost=projected_cost, reason="projected_hard_cost_ceiling",
+            run_statement=run_statement, sql_literal=sql_literal, sql_jsonb=sql_jsonb,
+        )
     started = datetime.now(timezone.utc)
     response, call_status, usage = openrouter_chat(str(run["model_name"]), prompt, system_prompt)
     latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
@@ -977,8 +1336,11 @@ def run_next_research_case_model(
     else:
         parse_error = ""
     allowed_source_ids = set(str(item) for item in (run.get("source_ids") or []))
-    output = _sanitize_output_citations(output, allowed_source_ids)
+    output = _sanitize_output_citations(output, allowed_source_ids, packet)
     valid, errors, cited = _validate_output(role, output, allowed_source_ids)
+    if role in {"lead_synthesis", "executive_summary"}:
+        errors.extend(_validate_review_correction_responses(output, context))
+        valid = not errors
     if parse_error:
         errors.insert(0, parse_error)
         valid = False

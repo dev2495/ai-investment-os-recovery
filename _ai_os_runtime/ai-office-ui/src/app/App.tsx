@@ -83,7 +83,7 @@ function AppShell() {
               ))}
               {/* Legacy compat redirects */}
               <Route path="/portfolio" element={<Navigate to="/portfolio/overview" replace />} />
-              <Route path="/research" element={<Navigate to="/research/cases" replace />} />
+              <Route path="/research" element={<Navigate to="/research/desk" replace />} />
               <Route path="/risk-trading" element={<Navigate to="/risk/dashboard" replace />} />
               <Route path="/firm" element={<Navigate to="/firm/office" replace />} />
               <Route path="*" element={<Navigate to="/today" replace />} />
@@ -186,8 +186,12 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/risk/limits": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
     "/risk/institutional": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
     "/risk/capital": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
-    // Research & filings
+    // Company Research Desk
+    "/research/desk": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.ResearchDeskHome })),
     "/research/cases": () => import("../destinations/research/ResearchCases").then((m) => ({ default: m.default })),
+    "/research/following": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.ResearchFollowing })),
+    "/research/scanners": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.FundamentalScanners })),
+    "/research/knowledge": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.ResearchKnowledge })),
     "/research/filings": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/special-situations": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/papers": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),

@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import html
 import json
-import subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from financial_quality import build_financial_quality
+from atomic_report_renderer import find_chrome_browser, render_html_pdf
 
 
 def _esc(value):
@@ -642,16 +642,17 @@ def generate_thesis_report(*, thesis_id, actor, run_rows, run_statement, sql_lit
 <footer><strong>Decision gate:</strong> machine extraction and evidence coverage are not an investment conclusion. This report requires human review. It authorizes no broker, client, capital or external write. Artifact generated locally on Devarsh SSD.</footer></main></body></html>"""
     report_path.write_text(body, encoding="utf-8")
     pdf_path = report_root / f"{report_key}.pdf"
-    chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     report_format = "html"
     primary_path = report_path
-    if chrome.is_file():
-        completed = subprocess.run([str(chrome), "--headless", "--no-sandbox", "--disable-gpu", f"--print-to-pdf={pdf_path}", report_path.as_uri()], capture_output=True, text=True, timeout=90, check=False)
-        if completed.returncode == 0 and pdf_path.is_file() and pdf_path.stat().st_size > 10000:
-            report_format = "pdf"
-            primary_path = pdf_path
+    browser = find_chrome_browser()
+    pdf_render = render_html_pdf(browser, report_path, pdf_path, profile_root=report_root) if browser else {
+        "ok": False, "error": "No local Chromium renderer is installed; HTML is ready"
+    }
+    if pdf_render.get("ok"):
+        report_format = "pdf"
+        primary_path = pdf_path
     digest = hashlib.sha256(primary_path.read_bytes()).hexdigest()
-    coverage_snapshot = {"covered": covered, "total": len(matrix), "pending_review": pending, "missing": missing, "stale": stale, "source_count_debt": debt, "html_companion_path": str(report_path)}
+    coverage_snapshot = {"covered": covered, "total": len(matrix), "pending_review": pending, "missing": missing, "stale": stale, "source_count_debt": debt, "html_companion_path": str(report_path), "pdf_render": pdf_render}
     caveats = ["Machine-extracted financial facts are not human-reviewed unless explicitly labelled.", "Unsupported ratios and forecasts remain unavailable.", "Evidence coverage is distinct from evidence quality and decision readiness."]
     inserted = run_statement(f"""
         WITH inserted AS (

@@ -13,6 +13,7 @@ from pathlib import Path
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
+SCOPE_KEY = os.environ.get("AI_OS_RESEARCH_SCOPE_KEY", "owner:devarsh")
 
 SKIP_DIRS = {
     ".git",
@@ -125,13 +126,25 @@ def iter_markdown_files() -> list[Path]:
 
 
 def build_sql() -> tuple[str, dict]:
-    statements = ["BEGIN;", "DELETE FROM knowledge.note_links;"]
+    run_key = "obsidian:" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    statements = [
+        "BEGIN;",
+        f"SET LOCAL ai_os.scope_key={sql_quote(SCOPE_KEY)};",
+        "SET LOCAL ROLE ai_os_research_runtime;",
+        f"""INSERT INTO knowledge.index_runs
+            (scope_key,run_key,run_kind,run_mode,status,created_by,metadata)
+            VALUES ({sql_quote(SCOPE_KEY)},{sql_quote(run_key)},'obsidian','incremental','running',
+                    'Research Knowledge Indexer',
+                    {jsonb_quote({'vault_root': str(VAULT_ROOT), 'private_storage': 'external_ssd'})});""",
+        "RESET ROLE;",
+    ]
     notes = []
     link_count = 0
 
     for path in iter_markdown_files():
         relative = path.relative_to(VAULT_ROOT)
         note_path = str(relative)
+        note_key = "obsidian:" + content_hash(note_path.lower())[:40]
         text = path.read_text(encoding="utf-8", errors="replace")
         frontmatter, body = parse_frontmatter(text)
         title = str(frontmatter.get("title") or path.stem)
@@ -146,6 +159,9 @@ def build_sql() -> tuple[str, dict]:
 INSERT INTO knowledge.obsidian_notes (
     vault_path,
     note_path,
+    note_key,
+    scope_key,
+    privacy_class,
     title,
     note_type,
     tags,
@@ -153,11 +169,16 @@ INSERT INTO knowledge.obsidian_notes (
     content_hash,
     body_summary,
     last_modified_at,
-    indexed_at
+    indexed_at,
+    last_index_run_id,
+    deleted_at
 )
 VALUES (
     {sql_quote(str(VAULT_ROOT))},
     {sql_quote(note_path)},
+    {sql_quote(note_key)},
+    {sql_quote(SCOPE_KEY)},
+    'local_private',
     {sql_quote(title)},
     {sql_quote(note_type)},
     {text_array(tags)},
@@ -165,10 +186,15 @@ VALUES (
     {sql_quote(content_hash(text))},
     {sql_quote(summarize_body(body))},
     {sql_quote(modified_at)}::timestamptz,
-    now()
+    now(),
+    (SELECT id FROM knowledge.index_runs WHERE scope_key={sql_quote(SCOPE_KEY)} AND run_key={sql_quote(run_key)}),
+    NULL
 )
 ON CONFLICT (note_path) DO UPDATE SET
     vault_path = EXCLUDED.vault_path,
+    note_key = EXCLUDED.note_key,
+    scope_key = EXCLUDED.scope_key,
+    privacy_class = EXCLUDED.privacy_class,
     title = EXCLUDED.title,
     note_type = EXCLUDED.note_type,
     tags = EXCLUDED.tags,
@@ -176,7 +202,16 @@ ON CONFLICT (note_path) DO UPDATE SET
     content_hash = EXCLUDED.content_hash,
     body_summary = EXCLUDED.body_summary,
     last_modified_at = EXCLUDED.last_modified_at,
-    indexed_at = now();
+    indexed_at = now(),
+    last_index_run_id = EXCLUDED.last_index_run_id,
+    deleted_at = NULL;
+
+DELETE FROM knowledge.note_links
+WHERE from_note_id=(
+    SELECT id FROM knowledge.obsidian_notes
+    WHERE note_path={sql_quote(note_path)} AND scope_key={sql_quote(SCOPE_KEY)}
+    LIMIT 1
+);
 """
         )
         for link in links:
@@ -204,8 +239,29 @@ FROM from_note;
             )
         notes.append(note_path)
 
-    statements.append("COMMIT;")
-    return "\n".join(statements), {"notes_indexed": len(notes), "links_indexed": link_count}
+    note_paths_sql = ",".join(sql_quote(path) for path in notes) or "NULL"
+    statements.extend(
+        [
+            f"""UPDATE knowledge.obsidian_notes
+                SET deleted_at=now()
+                WHERE scope_key={sql_quote(SCOPE_KEY)} AND deleted_at IS NULL
+                  AND note_path NOT IN ({note_paths_sql});""",
+            f"SET LOCAL ai_os.scope_key={sql_quote(SCOPE_KEY)};",
+            "SET LOCAL ROLE ai_os_research_runtime;",
+            f"""UPDATE knowledge.index_runs
+                SET status='completed',finished_at=now(),
+                    counts={jsonb_quote({'notes_indexed': len(notes), 'links_indexed': link_count})}
+                WHERE scope_key={sql_quote(SCOPE_KEY)} AND run_key={sql_quote(run_key)};""",
+            "RESET ROLE;",
+            "COMMIT;",
+        ]
+    )
+    return "\n".join(statements), {
+        "run_key": run_key,
+        "scope_key": SCOPE_KEY,
+        "notes_indexed": len(notes),
+        "links_indexed": link_count,
+    }
 
 
 def run_psql(sql: str) -> None:

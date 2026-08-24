@@ -211,12 +211,15 @@ def persist_quotes(quotes: dict[str, dict]) -> int:
             continue
         previous = (row.get("ohlc") or {}).get("close") if isinstance(row.get("ohlc"), dict) else None
         change = ((float(price)-float(previous))/float(previous)*100) if previous not in (None, 0) else None
-        quote_ts = row.get("timestamp") or now_iso
+        quote_ts = zerodha_timestamp_utc(row["timestamp"]) if row.get("timestamp") else now_iso
+        raw_payload = dict(row)
+        raw_payload["ai_os_timestamp_basis"] = "exchange_local_ist" if row.get("timestamp") else "receipt_utc"
+        raw_payload["ai_os_received_at"] = now_iso
         values.append(
             "("
             f"'zerodha_live','Zerodha',{sql_literal(identifier)},{sql_literal(symbol)},"
             f"{sql_literal(exchange)},NULL,'INR',{float(price)},{'NULL' if change is None else change},"
-            f"{sql_literal(quote_ts)}::timestamptz,{sql_literal(json.dumps(row,separators=(',',':'),default=str))}::jsonb"
+            f"{sql_literal(quote_ts)}::timestamptz,{sql_literal(json.dumps(raw_payload,separators=(',',':'),default=str))}::jsonb"
             ")"
         )
     for offset in range(0, len(values), 100):

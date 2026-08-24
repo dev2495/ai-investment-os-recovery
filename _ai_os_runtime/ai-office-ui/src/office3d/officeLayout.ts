@@ -67,7 +67,7 @@ export const ROOMS: RoomDef[] = [
   room("data", -1, [0, -6], "Data Engineering", "Data", "#42617a", "/firm/system"),
   room("knowledge", -1, [12, -6], "Knowledge & Memory", "Knowledge", "#2d7a4f", "/firm/library"),
   room("software", -1, [-6, 5], "Software Engineering", "Software", "#4a5d78", "/firm/system", [9.4, 5.2]),
-  room("sector", -1, [8, 5], "Sector Intelligence", "Sector", "#2f8f83", undefined, [9.4, 5.2], "Hidden until sector sources and calculations pass acceptance."),
+  room("sector", -1, [8, 5], "Sector Intelligence", "Sector", "#2f8f83", "/sector/overview", [9.4, 5.2]),
 ];
 
 export function floorY(floor: number): number {

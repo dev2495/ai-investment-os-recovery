@@ -18,6 +18,7 @@ from typing import Any
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).resolve().parents[1])
+DATA_ROOT = Path(os.environ.get("AI_OS_DATA_ROOT") or "/Volumes/Devarsh SSD/AI OS Data")
 QDRANT_BASE_URL = "http://127.0.0.1:6333"
 OLLAMA_EMBED_URL = "http://127.0.0.1:11434/api/embed"
 OLLAMA_MODEL = "qwen3-embedding:0.6b"
@@ -521,18 +522,26 @@ ON CONFLICT (collection_name, qdrant_point_id) DO UPDATE SET
     run_psql("\n".join(statements))
 
 
-def existing_research_registry() -> list[dict[str, Any]]:
+def existing_collection_registry(collections: set[str]) -> list[dict[str, Any]]:
+    if not collections:
+        return []
     return fetch_json_rows(
-        """
-        SELECT qdrant_point_id, source_table, source_id, chunk_index, text_hash
+        f"""
+        SELECT collection_name,qdrant_point_id,source_table,source_id,chunk_index,text_hash
         FROM knowledge.vector_documents
-        WHERE collection_name = 'research_reports_qwen3_embedding_0_6b'
-        ORDER BY source_table, source_id, chunk_index
+        WHERE collection_name IN ({','.join(sql_literal(collection) for collection in sorted(collections))})
+        ORDER BY collection_name,source_table,source_id,chunk_index
         """
     )
 
 
-def write_incremental_research_registry(
+def existing_research_registry() -> list[dict[str, Any]]:
+    """Backward-compatible bounded reader for the research-report collection."""
+    return existing_collection_registry({"research_reports_qwen3_embedding_0_6b"})
+
+
+def write_incremental_collection_registry(
+    collection: str,
     rows: list[dict[str, Any]],
     stale_point_ids: list[str],
 ) -> None:
@@ -540,7 +549,7 @@ def write_incremental_research_registry(
     if stale_point_ids:
         statements.append(
             "DELETE FROM knowledge.vector_documents "
-            "WHERE collection_name = 'research_reports_qwen3_embedding_0_6b' "
+            f"WHERE collection_name = {sql_literal(collection)} "
             "AND qdrant_point_id IN ("
             + ",".join(sql_literal(point_id) for point_id in stale_point_ids)
             + ");"
@@ -581,6 +590,15 @@ ON CONFLICT (collection_name, qdrant_point_id) DO UPDATE SET
     run_psql("\n".join(statements))
 
 
+def write_incremental_research_registry(
+    rows: list[dict[str, Any]], stale_point_ids: list[str]
+) -> None:
+    """Backward-compatible writer used by the Research Hub refresh contract."""
+    write_incremental_collection_registry(
+        "research_reports_qwen3_embedding_0_6b", rows, stale_point_ids
+    )
+
+
 def delete_qdrant_points(collection: str, point_ids: list[str]) -> None:
     for start in range(0, len(point_ids), 128):
         batch = point_ids[start : start + 128]
@@ -593,20 +611,25 @@ def delete_qdrant_points(collection: str, point_ids: list[str]) -> None:
             )
 
 
-def index_research_reports_incremental() -> dict[str, Any]:
-    collection = "research_reports_qwen3_embedding_0_6b"
+def index_collections_incremental(
+    documents: list[SourceDocument],
+    selected_collections: set[str],
+    *,
+    mode: str,
+    existing_rows: list[dict[str, Any]] | None = None,
+    registry_writer=None,
+) -> dict[str, Any]:
     ensure_collections(recreate=False)
-    documents = source_research_reports()
-    existing_rows = existing_research_registry()
-    existing_point_ids = {
-        str(row["qdrant_point_id"])
-        for row in existing_rows
-        if row.get("qdrant_point_id")
-    }
-
-    expected_records: list[dict[str, Any]] = []
+    selected_documents = [document for document in documents if document.collection_name in selected_collections]
+    existing_rows = existing_rows if existing_rows is not None else existing_collection_registry(selected_collections)
+    registry_writer = registry_writer or write_incremental_collection_registry
+    existing_by_collection: dict[str, set[str]] = {collection: set() for collection in selected_collections}
+    for row in existing_rows:
+        if row.get("qdrant_point_id"):
+            existing_by_collection.setdefault(str(row["collection_name"]), set()).add(str(row["qdrant_point_id"]))
+    expected_by_collection: dict[str, list[dict[str, Any]]] = {collection: [] for collection in selected_collections}
     skipped_empty = 0
-    for document in documents:
+    for document in selected_documents:
         chunks = chunk_text(document.text)
         if not chunks:
             skipped_empty += 1
@@ -616,10 +639,10 @@ def index_research_reports_incremental() -> dict[str, Any]:
             point_id = str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,
-                    f"{collection}:{document.source_table}:{document.source_id}:{chunk_index}:{text_hash}",
+                    f"{document.collection_name}:{document.source_table}:{document.source_id}:{chunk_index}:{text_hash}",
                 )
             )
-            expected_records.append(
+            expected_by_collection[document.collection_name].append(
                 {
                     "doc": document,
                     "chunk_index": chunk_index,
@@ -629,80 +652,85 @@ def index_research_reports_incremental() -> dict[str, Any]:
                 }
             )
 
-    expected_point_ids = {record["point_id"] for record in expected_records}
-    stale_point_ids = sorted(existing_point_ids - expected_point_ids)
-    pending_records = [
-        record for record in expected_records
-        if record["point_id"] not in existing_point_ids
-    ]
     indexed_count = 0
+    deleted_count = 0
+    unchanged_count = 0
     embedder: Embedder | None = None
-
-    if pending_records:
-        embedder = Embedder()
+    collection_summary: dict[str, dict[str, int]] = {}
+    for collection in sorted(selected_collections):
+        expected_records = expected_by_collection.get(collection) or []
+        existing_point_ids = existing_by_collection.get(collection) or set()
+        expected_point_ids = {record["point_id"] for record in expected_records}
+        stale_point_ids = sorted(existing_point_ids - expected_point_ids)
+        pending_records = [record for record in expected_records if record["point_id"] not in existing_point_ids]
+        if pending_records and embedder is None:
+            embedder = Embedder()
         for start in range(0, len(pending_records), 16):
             batch_records = pending_records[start : start + 16]
-            embedded = embedder.embed_many([record["chunk"] for record in batch_records])
+            embedded = embedder.embed_many([record["chunk"] for record in batch_records]) if embedder else []
             batch_points: list[dict[str, Any]] = []
             batch_registry: list[dict[str, Any]] = []
             for record, (vector, embedding_model) in zip(batch_records, embedded, strict=True):
                 document = record["doc"]
                 chunk = record["chunk"]
                 payload = {
-                    "title": document.title,
-                    "source_table": document.source_table,
-                    "source_id": document.source_id,
-                    "chunk_index": record["chunk_index"],
-                    "text_hash": record["text_hash"],
-                    "text_preview": chunk[:600],
+                    "title": document.title, "source_table": document.source_table,
+                    "source_id": document.source_id, "chunk_index": record["chunk_index"],
+                    "text_hash": record["text_hash"], "text_preview": chunk[:600],
                     "metadata": document.metadata,
                 }
                 batch_points.append({"id": record["point_id"], "vector": vector, "payload": payload})
-                batch_registry.append(
-                    {
-                        "collection_name": collection,
-                        "qdrant_point_id": record["point_id"],
-                        "source_table": document.source_table,
-                        "source_id": document.source_id,
-                        "title": document.title,
-                        "text_hash": record["text_hash"],
-                        "embedding_model": embedding_model,
-                        "chunk_index": record["chunk_index"],
-                        "chunk_text_preview": chunk[:500],
-                        "metadata": document.metadata,
-                    }
-                )
-            qdrant_request(
-                "PUT",
-                f"/collections/{collection}/points?wait=true",
-                {"points": batch_points},
-                timeout=60,
-            )
-            write_incremental_research_registry(batch_registry, [])
+                batch_registry.append({
+                    "collection_name": collection, "qdrant_point_id": record["point_id"],
+                    "source_table": document.source_table, "source_id": document.source_id,
+                    "title": document.title, "text_hash": record["text_hash"],
+                    "embedding_model": embedding_model, "chunk_index": record["chunk_index"],
+                    "chunk_text_preview": chunk[:500], "metadata": document.metadata,
+                })
+            qdrant_request("PUT", f"/collections/{collection}/points?wait=true", {"points": batch_points}, timeout=60)
+            registry_writer(collection, batch_registry, [])
             indexed_count += len(batch_registry)
-            print(json.dumps({
-                "mode": "incremental_research_checkpoint",
-                "indexed": indexed_count,
-                "pending_total": len(pending_records),
-                "last_batch": len(batch_registry),
-            }), flush=True)
-
-    # Delete stale points only after every expected point has been durably upserted.
-    delete_qdrant_points(collection, stale_point_ids)
-    write_incremental_research_registry([], stale_point_ids)
-
+        # Stale points are removed only after every expected replacement has been persisted.
+        delete_qdrant_points(collection, stale_point_ids)
+        registry_writer(collection, [], stale_point_ids)
+        deleted_count += len(stale_point_ids)
+        unchanged_count += len(expected_point_ids & existing_point_ids)
+        collection_summary[collection] = {
+            "existing": len(existing_point_ids), "expected": len(expected_point_ids),
+            "indexed": len(pending_records), "unchanged": len(expected_point_ids & existing_point_ids),
+            "deleted": len(stale_point_ids),
+        }
     return {
-        "mode": "incremental_research_reports",
+        "mode": mode,
         "status": "success",
-        "documents_seen": len(documents),
+        "documents_seen": len(selected_documents),
         "documents_skipped_empty": skipped_empty,
-        "existing_points": len(existing_point_ids),
-        "unchanged_points": len(expected_point_ids & existing_point_ids),
+        "existing_points": sum(len(value) for value in existing_by_collection.values()),
+        "unchanged_points": unchanged_count,
         "points_indexed": indexed_count,
-        "points_deleted": len(stale_point_ids),
+        "points_deleted": deleted_count,
         "embedding_model": OLLAMA_MODEL,
-        "collection": collection,
+        "collections": collection_summary,
+        "private_storage": "external_ssd",
     }
+
+
+def index_research_reports_incremental() -> dict[str, Any]:
+    collection = "research_reports_qwen3_embedding_0_6b"
+    existing_rows = existing_research_registry()
+    for row in existing_rows:
+        row.setdefault("collection_name", collection)
+    return index_collections_incremental(
+        source_research_reports(), {collection}, mode="incremental_research_reports",
+        existing_rows=existing_rows,
+        registry_writer=lambda _collection, rows, stale: write_incremental_research_registry(rows, stale),
+    )
+
+
+def index_all_collections_incremental() -> dict[str, Any]:
+    return index_collections_incremental(
+        all_source_documents(), set(COLLECTIONS), mode="incremental_all_collections"
+    )
 
 
 def index_documents() -> dict[str, Any]:
@@ -790,17 +818,26 @@ def main() -> int:
         action="store_true",
         help="Update only changed research-report chunks without recreating collections.",
     )
+    parser.add_argument(
+        "--rebuild-all",
+        action="store_true",
+        help="Explicit maintenance-only full collection rebuild. Normal runs are incremental.",
+    )
     args = parser.parse_args()
+    if not DATA_ROOT.exists() or not str(DATA_ROOT.resolve()).startswith("/Volumes/Devarsh SSD/"):
+        print("Qdrant index failed: external Devarsh SSD data root is unavailable; no internal-disk fallback", file=sys.stderr)
+        return 1
     try:
-        summary = (
-            index_research_reports_incremental()
-            if args.incremental_research
-            else index_documents()
+        if args.rebuild_all and args.incremental_research:
+            raise RuntimeError("choose either --rebuild-all or --incremental-research")
+        summary = index_documents() if args.rebuild_all else (
+            index_research_reports_incremental() if args.incremental_research else index_all_collections_incremental()
         )
     except (RuntimeError, urllib.error.URLError) as exc:
         print(f"Qdrant index failed: {exc}", file=sys.stderr)
         return 1
-    output_path = RUNTIME_ROOT / "imports" / "qdrant_index_summary.json"
+    output_path = DATA_ROOT / "artifacts" / "indexes" / "qdrant_index_summary.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0

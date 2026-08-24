@@ -69,7 +69,7 @@ def run_import(import_key: str, actor: str) -> dict[str, Any]:
     _access_by_key(actor, import_key, "portfolio_import")
     script_path = core.RUNTIME_ROOT / "scripts" / "ingest_secure_client_report.py"
     completed = subprocess.run(
-        [core.PDF_PYTHON, str(script_path), "--import-key", import_key, "--actor", actor],
+        [core.governed_pdf_python(verify_import=True), str(script_path), "--import-key", import_key, "--actor", actor],
         cwd=str(core.RUNTIME_ROOT),
         text=True,
         capture_output=True,

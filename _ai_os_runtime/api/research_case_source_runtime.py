@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,14 +9,16 @@ from typing import Any, Callable
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 EXTRACTOR = RUNTIME_ROOT / "scripts" / "extract_filing_pdfs.py"
-SSD_PDF_PYTHON = Path("/Volumes/Devarsh SSD/AI OS Data/runtime/pdf-extraction/bin/python")
+SCRIPT_ROOT = RUNTIME_ROOT / "scripts"
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from governed_pdf_runtime import governed_pdf_python  # noqa: E402
 
 
 def _extractor_python() -> str:
     """Use the governed SSD PDF runtime; never fall back when it is unavailable."""
-    if not SSD_PDF_PYTHON.is_file() or not os.access(SSD_PDF_PYTHON, os.X_OK):
-        raise RuntimeError("governed external-SSD PDF runtime is unavailable; no internal-disk fallback")
-    return str(SSD_PDF_PYTHON)
+    return governed_pdf_python(verify_import=True)
 
 
 def queue_case_sources(case_id: int, actor: str, *, run_statement, sql_literal) -> dict[str, Any]:
@@ -157,7 +158,8 @@ def run_source_once(*, run_statement, sql_literal, sql_jsonb) -> dict[str, Any]:
             from run_agent_worker_once import psql_json
             readiness = psql_json(f"""
               SELECT preflight.id preflight_id,preflight.status preflight_status,
-                (SELECT count(*) FROM research.research_case_model_runs WHERE research_case_id={case_id})::integer model_run_count
+                (SELECT count(*) FROM research.research_case_model_runs
+                  WHERE research_case_id={case_id} AND preflight_id=preflight.id)::integer model_run_count
               FROM research.model_run_preflights preflight
               WHERE preflight.research_case_id={case_id} AND preflight.request_kind='research_case'
               ORDER BY preflight.id DESC LIMIT 1

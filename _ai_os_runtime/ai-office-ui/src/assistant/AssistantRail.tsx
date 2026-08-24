@@ -136,7 +136,7 @@ export function AssistantRail() {
   const location = useLocation();
   const navigate = useNavigate();
   const chat = useChat();
-  const employeeDirectory = useDepartmentTerminal("agents");
+  const employeeDirectory = useDepartmentTerminal(open ? "agents" : null);
   const proposeArchitecture = useProposeArchitectureChange();
   const updateWorkspace = useUpdateWorkspaceConfig();
   const createAgentMessage = useCreateAgentMessage();

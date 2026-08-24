@@ -8,7 +8,23 @@ export AI_OS_DATA_ROOT="${AI_OS_DATA_ROOT:-/Volumes/Devarsh SSD/AI OS Data}"
 export AI_OS_PSQL_BIN="${AI_OS_PSQL_BIN:-/opt/homebrew/opt/postgresql@15/bin/psql}"
 export AI_OS_DOCKER_BIN="${AI_OS_DOCKER_BIN:-/opt/homebrew/bin/docker}"
 export AI_OS_ARTIFACT_ROOT="${AI_OS_ARTIFACT_ROOT:-/Volumes/Devarsh SSD/AI OS Data/artifacts}"
-export AI_OS_PDF_PYTHON="${AI_OS_PDF_PYTHON:-/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3}"
+pdf_runtime_root="/Volumes/Devarsh SSD/AI OS Data/runtime/pdf-extraction"
+export AI_OS_PDF_PYTHON="${AI_OS_PDF_PYTHON:-/Volumes/Devarsh SSD/AI OS Data/runtime/pdf-extraction/bin/python}"
+case "${AI_OS_PDF_PYTHON}" in
+  "${pdf_runtime_root}"/*) ;;
+  *)
+    echo "AI OS agent daemon refused a PDF runtime outside the external-SSD governed root" >&2
+    exit 78
+    ;;
+esac
+if [[ ! -x "${AI_OS_PDF_PYTHON}" ]]; then
+  echo "AI OS agent daemon requires the governed external-SSD PDF runtime; no fallback is permitted" >&2
+  exit 78
+fi
+if ! PYTHONDONTWRITEBYTECODE=1 "${AI_OS_PDF_PYTHON}" -c "import pypdf" >/dev/null 2>&1; then
+  echo "AI OS agent daemon requires pypdf in the governed external-SSD PDF runtime; no fallback is permitted" >&2
+  exit 78
+fi
 
 runtime_env="${AI_OS_RUNTIME_ROOT}/.env"
 if [[ -f "${runtime_env}" ]]; then

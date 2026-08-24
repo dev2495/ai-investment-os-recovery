@@ -161,6 +161,10 @@ export const GlobalTopbarCss = `
   border-radius: 50%;
   flex: 0 0 auto;
 }
+.aios-topbar__broker-dot--idle {
+  background: var(--text-faint);
+  box-shadow: 0 0 0 3px var(--surface-soft);
+}
 .aios-topbar__broker-dot--ok {
   background: var(--status-ok);
   box-shadow: 0 0 0 3px var(--status-ok-soft);

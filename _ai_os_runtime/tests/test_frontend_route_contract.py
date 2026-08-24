@@ -26,7 +26,14 @@ class FrontendRouteContractTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(len(registered), 65)
+        self.assertGreaterEqual(len(registered), 65)
+        self.assertTrue({
+            "/research/desk",
+            "/research/cases",
+            "/research/following",
+            "/research/scanners",
+            "/research/knowledge",
+        }.issubset(registered))
         self.assertEqual(mapped, registered)
 
     def test_shared_terminals_derive_tab_from_pathname(self) -> None:
@@ -54,9 +61,10 @@ class FrontendRouteContractTest(unittest.TestCase):
             (data_root / filename).read_text(encoding="utf-8")
             for filename in ("queries.ts", "actions.ts")
         )
-        backend = (
-            self.runtime_root / "api" / "ai_os_api_server.py"
-        ).read_text(encoding="utf-8")
+        backend = "\n".join(
+            (self.runtime_root / "api" / filename).read_text(encoding="utf-8")
+            for filename in ("ai_os_api_server.py", "ai_os_api_runtime.py")
+        )
         paths = set(re.findall(r'"(/api/[^"?]+)', frontend))
 
         self.assertGreaterEqual(len(paths), 90)
@@ -251,6 +259,10 @@ class FrontendRouteContractTest(unittest.TestCase):
             self.runtime_root / "ai-office-ui" / "src" / "destinations" /
             "fundamental" / "LongTermThesisWorkspace.tsx"
         ).read_text(encoding="utf-8")
+        financial_quality = (
+            self.runtime_root / "ai-office-ui" / "src" / "destinations" /
+            "fundamental" / "FinancialQualityWorkspace.tsx"
+        ).read_text(encoding="utf-8")
         backend = (self.runtime_root / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
         read_model = (self.runtime_root / "api" / "long_term_thesis_workspace.py").read_text(encoding="utf-8")
 
@@ -259,8 +271,12 @@ class FrontendRouteContractTest(unittest.TestCase):
         self.assertIn('page_size = bounded("page_size", 12, 6, 24)', read_model)
         self.assertIn("filings_extracted", read_model)
         self.assertIn("private_data_egress_allowed", read_model)
-        self.assertIn("No section-level source is linked", terminal)
-        self.assertIn("Restated/superseded rows excluded", terminal)
+        self.assertIn(
+            "Section citation missing. Agent evidence elsewhere does not make this section decision-ready.",
+            terminal,
+        )
+        self.assertIn("Normalized fact ledger", financial_quality)
+        self.assertIn("extraction and restatement state", financial_quality)
         self.assertIn("It authorizes no broker, client, or external write", terminal)
         self.assertNotIn("mock", terminal.lower())
 

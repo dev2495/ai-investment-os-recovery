@@ -231,6 +231,9 @@ export AI_OS_API_PORT
 export AI_OS_ALLOWED_ORIGINS="${AI_OS_ALLOWED_ORIGINS:-http://127.0.0.1:${AI_OS_UI_PORT},http://localhost:${AI_OS_UI_PORT}}"
 export AI_OS_ALLOW_TOKENLESS_LOOPBACK
 export AI_OS_CHAT_MODEL_ROUTE="${AI_OS_CHAT_MODEL_ROUTE:-charlie_munger_orchestration}"
+export AI_OS_PDF_PYTHON="${AI_OS_PDF_PYTHON:-${AI_OS_DATA_ROOT}/runtime/pdf-extraction/bin/python}"
+[[ -x "${AI_OS_PDF_PYTHON}" ]] \
+  || die "Governed external-SSD PDF runtime is unavailable at ${AI_OS_PDF_PYTHON}"
 
 stop_stale_pidfile "${RUN_ROOT}/agent-daemon.pid" "run_agent_message_daemon.py" "agent message daemon"
 stop_stale_pidfile "${RUN_ROOT}/research-agent-daemon.pid" "run_research_case_agent_daemon.py" "Research Case agent daemon"
@@ -262,7 +265,9 @@ if [[ "${AI_OS_ENABLE_AGENT_DAEMON:-1}" == "1" ]]; then
   printf '%s\n' "$!" > "${RUN_ROOT}/agent-daemon.pid"
 fi
 
-if [[ "${AI_OS_ENABLE_RESEARCH_AGENT_DAEMON:-1}" == "1" ]]; then
+if [[ "${AI_OS_ENABLE_RESEARCH_AGENT_DAEMON:-0}" == "1" ]]; then
+  # Legacy opt-in only. The primary agent daemon owns Research Case source,
+  # model, synthesis and report-retry work plus its durable heartbeat.
   RESEARCH_LOG_ROOT="${AI_OS_DATA_ROOT}/runtime/logs"
   research_log_file="${RESEARCH_LOG_ROOT}/research-agent-daemon.log"
   research_err_file="${RESEARCH_LOG_ROOT}/research-agent-daemon.err"

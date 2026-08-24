@@ -46,6 +46,6 @@ def test_staging_preserves_drafts_dissent_and_execution_guardrails() -> None:
     assert by_key["forensic_accounting"]["opinion_status"] == "evidence_complete"
     assert "not a clean-company clearance" in by_key["governance"]["conclusion"]
     assert by_key["bear_case"]["opinion_status"] == "dissent"
-    assert "0 numeric market-share" in by_key["moat"]["conclusion"]
+    assert "numeric market share remains unavailable" in by_key["moat"]["conclusion"]
     assert all(row["disconfirming_evidence"] for row in rows)
     assert all(row["evidence_id"] in {21, 29} for row in rows)

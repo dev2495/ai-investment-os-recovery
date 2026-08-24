@@ -416,7 +416,7 @@ def extract_pdf_text(path: Path) -> tuple[str, int, str]:
     try:
         from pypdf import PdfReader  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError("pypdf is required; run with the bundled Codex Python runtime") from exc
+        raise RuntimeError("pypdf is required in the governed external-SSD PDF runtime") from exc
 
     reader = PdfReader(str(path))
     chunks: list[str] = []

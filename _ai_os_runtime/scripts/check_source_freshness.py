@@ -76,16 +76,20 @@ def source_rows(source_key: str | None, limit: int) -> list[dict[str, Any]]:
                 latest_ok.latest_ok_at,
                 latest_quote.latest_quote_at,
                 CASE
-                    WHEN latest_quote.latest_quote_at IS NULL
-                     AND latest_ok.latest_ok_at IS NULL
-                     AND latest_check.checked_at IS NULL THEN NULL
-                    ELSE EXTRACT(EPOCH FROM (
-                        now() - GREATEST(
-                            coalesce(latest_quote.latest_quote_at, '-infinity'::timestamptz),
-                            coalesce(latest_ok.latest_ok_at, '-infinity'::timestamptz),
-                            coalesce(latest_check.checked_at, '-infinity'::timestamptz)
-                        )
-                    )) / 60
+                    WHEN latest_quote.latest_quote_at IS NOT NULL
+                      OR lower(ds.source_type) ~ '(quote|broker_api|price_feed)'
+                    THEN 'quote'
+                    ELSE 'check'
+                END AS freshness_basis,
+                CASE
+                    WHEN latest_quote.latest_quote_at IS NOT NULL
+                      OR lower(ds.source_type) ~ '(quote|broker_api|price_feed)'
+                    THEN CASE WHEN latest_quote.latest_quote_at IS NULL THEN NULL
+                      ELSE EXTRACT(EPOCH FROM (now()-latest_quote.latest_quote_at))/60 END
+                    WHEN latest_ok.latest_ok_at IS NULL AND latest_check.checked_at IS NULL THEN NULL
+                    ELSE EXTRACT(EPOCH FROM (now()-GREATEST(
+                        coalesce(latest_ok.latest_ok_at,'-infinity'::timestamptz),
+                        coalesce(latest_check.checked_at,'-infinity'::timestamptz))))/60
                 END AS staleness_minutes
             FROM core.data_source_registry ds
             LEFT JOIN latest_check ON latest_check.source_key = ds.source_key
@@ -104,10 +108,14 @@ def classify(row: dict[str, Any], target_override: int | None) -> tuple[str, str
     target = target_override or row.get("freshness_target_minutes")
     if not target:
         return "not_targeted", "low"
-    if not row.get("latest_check_at"):
-        return "missing_check", "high"
-    if row.get("latest_check_status") not in {"ok", None}:
-        return "error", "high"
+    if row.get("freshness_basis") == "quote":
+        if not row.get("latest_quote_at"):
+            return "missing_quote", "high"
+    else:
+        if not row.get("latest_check_at"):
+            return "missing_check", "high"
+        if row.get("latest_check_status") not in {"ok", None}:
+            return "error", "high"
     staleness = Decimal(str(row.get("staleness_minutes") or "0"))
     if staleness > Decimal(str(target)):
         return "stale", "high" if staleness > Decimal(str(target)) * Decimal("2") else "medium"
@@ -196,6 +204,7 @@ def store_result(row: dict[str, Any], status: str, severity: str, risk_event_id:
         "latest_check_at": row.get("latest_check_at"),
         "latest_ok_at": row.get("latest_ok_at"),
         "latest_quote_at": row.get("latest_quote_at"),
+        "freshness_basis": row.get("freshness_basis"),
         "staleness_minutes": row.get("staleness_minutes"),
         "target_minutes": target,
         "sample_payload": row.get("sample_payload"),

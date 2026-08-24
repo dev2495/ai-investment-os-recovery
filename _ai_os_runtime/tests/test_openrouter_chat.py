@@ -323,12 +323,19 @@ class OpenRouterChatTest(unittest.TestCase):
         self.assertIn("and 1 completed specialist outputs", answer)
 
     def test_scoped_context_loads_live_employee_assignment(self) -> None:
-        def fake_psql(query: str):
-            if "FROM agent.v_live_office_presence_v2" in query:
-                return [{"agent_name": "Backtest Engineer", "live_state": "executing"}]
-            return []
+        def fake_batch(queries: dict[str, str], **_kwargs):
+            self.assertIn("scoped_employee", queries)
+            self.assertIn(
+                "FROM agent.v_live_office_presence_v2",
+                queries["scoped_employee"],
+            )
+            return {
+                key: ([{"agent_name": "Backtest Engineer", "live_state": "executing"}]
+                      if key == "scoped_employee" else [])
+                for key in queries
+            }
 
-        with mock.patch.object(ai_os_api_server, "run_psql_json", fake_psql):
+        with mock.patch.object(ai_os_api_server, "run_psql_json_object", fake_batch):
             context = ai_os_api_server.build_chat_context(
                 "What are you backtesting now?",
                 include_client_context=False,

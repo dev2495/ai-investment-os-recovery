@@ -52,12 +52,13 @@ def test_pdf_extractor_reuses_verified_local_pdf() -> None:
     assert 'errors.append(f"{command[0]}: {type(exc).__name__}: {exc}")' in source
 
 
-def test_api_prefers_managed_node_pdf_runtime() -> None:
+def test_api_uses_governed_external_ssd_pdf_runtime() -> None:
     api = (ROOT / "api" / "ai_os_api_server.py").read_text()
-    requirements = (ROOT / "requirements-pdf.txt").read_text()
-    assert 'AI_OS_NODE/runtime/python/bin/python3' in api
-    assert "NODE_PDF_PYTHON" in api
-    assert "pypdf[crypto]==" in requirements
+    resolver = (ROOT / "scripts" / "governed_pdf_runtime.py").read_text()
+    assert "governed_pdf_python(verify_import=True)" in api
+    assert "/Volumes/Devarsh SSD/AI OS Data/runtime/pdf-extraction" in resolver
+    assert "no internal-disk fallback" in resolver
+    assert '"-c", "import pypdf"' in resolver
 
 
 def test_company_ir_run_ledger_has_truthful_constraints() -> None:

@@ -107,6 +107,8 @@ def _route_plan(payload, run_rows, sql_literal):
             reasons.append(f"route_or_agent_unavailable:{route_name}")
             continue
         row = rows[0]
+        if not bool(row.get("enabled")):
+            reasons.append(f"route_disabled:{route_name}")
         if row.get("default_provider") != "openrouter":
             reasons.append(f"non_openrouter_route:{route_name}")
         if row.get("rate_id") is None:

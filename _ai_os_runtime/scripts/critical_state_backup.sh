@@ -114,6 +114,8 @@ done < <(jq -r '.result.collections[].name' "${STAGING_ROOT}/qdrant/collections.
 jq -s 'sort_by(.name)' "${STAGING_ROOT}/qdrant/inventory.jsonl" > "${STAGING_ROOT}/qdrant/inventory.json"
 rm -f "${STAGING_ROOT}/qdrant/inventory.jsonl"
 
+timescaledb_extension_version="$(docker exec ai_os_postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT extversion FROM pg_extension WHERE extname='\''timescaledb'\'';"' | tr -d '[:space:]')"
+postgres_major="$(docker exec ai_os_postgres postgres --version | sed -E 's/.* ([0-9]+)\..*/\1/')"
 (
   cd "${STAGING_ROOT}"
   find code postgres qdrant vault -type f -print0 | sort -z | xargs -0 shasum -a 256
@@ -125,6 +127,8 @@ rm -f "${STAGING_ROOT}/qdrant/inventory.jsonl"
   printf 'repo_commit=%s\n' "${repo_commit}"
   printf 'postgres_image=%s\n' "$(docker inspect ai_os_postgres --format '{{.Config.Image}}')"
   printf 'postgres_version=%s\n' "$(docker exec ai_os_postgres postgres --version | tr ' ' '_')"
+  printf 'timescaledb_extension_version=%s\n' "${timescaledb_extension_version}"
+  printf 'postgres_restore_image=timescale/timescaledb:%s-pg%s\n' "${timescaledb_extension_version}" "${postgres_major}"
   printf 'qdrant_image=%s\n' "$(docker inspect ai_os_qdrant --format '{{.Config.Image}}')"
   printf 'qdrant_version=%s\n' "$(docker exec ai_os_qdrant /qdrant/qdrant --version | tr ' ' '_')"
   printf 'postgres_archive=postgres/ai_os.dump\n'

@@ -16,13 +16,16 @@ try:
     from runtime_storage import artifact_reference, artifact_root
 except ModuleNotFoundError:  # Imported as an _ai_os_runtime package module.
     from _ai_os_runtime.scripts.runtime_storage import artifact_reference, artifact_root
+try:
+    from governed_pdf_runtime import governed_pdf_python
+except ModuleNotFoundError:  # Imported as an _ai_os_runtime package module.
+    from _ai_os_runtime.scripts.governed_pdf_runtime import governed_pdf_python
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
 ARTIFACT_ROOT = artifact_root("source_documents") / "long_term"
 USER_AGENT = "AI-OS-Research/0.1 (source document extraction; contact local user)"
-BUNDLED_PYTHON = Path("/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3")
 
 
 def ensure_pdf_runtime() -> None:
@@ -31,11 +34,12 @@ def ensure_pdf_runtime() -> None:
         return
     except Exception:
         pass
-    if os.environ.get("AI_OS_PDF_RUNTIME_REEXEC") == "1" or not BUNDLED_PYTHON.exists():
-        raise RuntimeError("pypdf is required for PDF extraction and the bundled runtime was not available")
+    if os.environ.get("AI_OS_PDF_RUNTIME_REEXEC") == "1":
+        raise RuntimeError("pypdf is unavailable in the governed external-SSD PDF runtime")
+    pdf_python = governed_pdf_python(verify_import=True)
     env = os.environ.copy()
     env["AI_OS_PDF_RUNTIME_REEXEC"] = "1"
-    os.execve(str(BUNDLED_PYTHON), [str(BUNDLED_PYTHON), *sys.argv], env)
+    os.execve(pdf_python, [pdf_python, *sys.argv], env)
 
 
 def sql_literal(value: object) -> str:

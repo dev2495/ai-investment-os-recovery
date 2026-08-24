@@ -6,7 +6,8 @@ module never creates a forecast, multiple, probability, fair value, or review.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import re
+
+from market_price_resolver import resolve_market_price
 
 CALCULATED = {"complete", "validated", "human_reviewed", "approved"}
 REVIEWED = {"human_reviewed", "approved"}
@@ -41,7 +42,15 @@ def _fact(facts, *keys):
     return next((facts[key] for key in keys if key in facts and _num(facts[key].get("value")) is not None), None)
 
 
-def _price(models, selected):
+def _price(models, selected, data):
+    warehouse = resolve_market_price(
+        data.get("market_price_anchor") or [],
+        symbol=str(selected.get("symbol") or ""),
+        exchange=str(selected.get("exchange") or "NSE"),
+        holidays=data.get("market_holidays") or [],
+    )
+    if warehouse:
+        return warehouse
     anchors = []
     for model in models:
         assumptions = model.get("assumptions") if isinstance(model.get("assumptions"), dict) else {}
@@ -53,20 +62,12 @@ def _price(models, selected):
         anchors.append({"value": value, "currency": "INR", "as_of": as_of,
                         "age_days": _age(as_of), "provider": source.get("provider") or source.get("source_key") or "Persisted model input",
                         "provider_symbol": source.get("provider_symbol") or source.get("symbol"), "source": source,
-                        "source_class": "market_fact", "verification_status": "source_linked" if as_of and source else "captured_unverified"})
+                        "source_class": "persisted_model_input", "verification_status": "source_linked" if as_of and source else "captured_unverified",
+                        "freshness_status": "stale", "decision_usable": False, "broker_write_allowed": False,
+                        "freshness_reason": "persisted model input is retained for lineage only; refresh the canonical read-only quote"})
     if anchors:
         anchors.sort(key=lambda row: str(row.get("as_of") or ""), reverse=True)
-        anchor = anchors[0]
-        anchor["freshness_status"] = "stale" if anchor.get("age_days") is None or anchor["age_days"] > 3 else "current"
-        return anchor
-    pack = selected.get("research_pack") if isinstance(selected.get("research_pack"), dict) else {}
-    valuation = pack.get("forecasts_valuation") if isinstance(pack.get("forecasts_valuation"), dict) else {}
-    match = re.search(r"(?:INR|₹)\s*([\d,]+(?:\.\d+)?)", str(valuation.get("summary") or ""), re.I)
-    if match:
-        return {"value": float(match.group(1).replace(",", "")), "currency": "INR", "as_of": None, "age_days": None,
-                "provider": "Research-case draft", "provider_symbol": selected.get("symbol"),
-                "source": {"citation_ids": valuation.get("citation_ids") or []}, "source_class": "agent_draft",
-                "verification_status": "captured_unverified", "freshness_status": "unknown"}
+        return anchors[0]
     return None
 
 
@@ -77,7 +78,7 @@ def build_valuation_workbench(selected, data):
     peers = data.get("operating_peers") or []
     segments = data.get("financial_segment_history") or data.get("segment_facts") or []
     facts, fiscal_year = _latest_facts(history)
-    price = _price(models, selected)
+    price = _price(models, selected, data)
 
     pat = _fact(facts, "profit_after_tax", "pat_continuing", "pat_total")
     eps = _fact(facts, "basic_eps", "eps_basic_continuing", "eps_basic_total")
@@ -94,13 +95,43 @@ def build_valuation_workbench(selected, data):
                        "source_url": pat.get("source_url") or eps.get("source_url"),
                        "source_page": [pat.get("source_page"), eps.get("source_page")], "period": fiscal_year}
 
-    cash = sum(_num((_fact(facts, key) or {}).get("value")) or 0 for key in ("cash", "cash_and_cash_equivalents"))
-    other_bank = _num((_fact(facts, "other_bank_balances") or {}).get("value")) or 0
-    debt = sum(_num((_fact(facts, key) or {}).get("value")) or 0 for key in ("current_borrowings", "non_current_borrowings"))
-    equity_bridge = {"cash_crore": cash / 100 if cash else None, "other_bank_balances_crore": other_bank / 100 if other_bank else None,
-                     "debt_crore": debt / 100 if debt else None,
-                     "net_debt_crore": (debt - cash) / 100 if (debt or cash) else None, "period": fiscal_year,
-                     "status": "validated_actual" if (debt or cash) else "missing"}
+    cash_fact = _fact(facts, "cash", "cash_and_cash_equivalents")
+    other_bank_fact = _fact(facts, "other_bank_balances")
+    total_debt_fact = _fact(facts, "total_borrowings", "total_debt")
+    current_debt_fact = _fact(facts, "current_borrowings")
+    non_current_debt_fact = _fact(facts, "non_current_borrowings")
+    cash_value = _num((cash_fact or {}).get("value"))
+    other_bank_value = _num((other_bank_fact or {}).get("value"))
+    if total_debt_fact:
+        debt_value = _num(total_debt_fact.get("value"))
+        debt_basis = "issuer_reported_total"
+    elif current_debt_fact and non_current_debt_fact:
+        debt_value = _num(current_debt_fact.get("value")) + _num(non_current_debt_fact.get("value"))
+        debt_basis = "current_plus_non_current"
+    else:
+        debt_value = None
+        debt_basis = "incomplete"
+    missing_components = []
+    if cash_value is None:
+        missing_components.append("cash_and_cash_equivalents")
+    if other_bank_value is None:
+        missing_components.append("other_bank_balances")
+    if debt_value is None:
+        if current_debt_fact is None:
+            missing_components.append("current_borrowings")
+        if non_current_debt_fact is None:
+            missing_components.append("non_current_borrowings")
+    complete_cash = cash_value is not None and other_bank_value is not None
+    net_debt = debt_value - cash_value - other_bank_value if debt_value is not None and complete_cash else None
+    equity_bridge = {
+        "cash_crore": cash_value / 100 if cash_value is not None else None,
+        "other_bank_balances_crore": other_bank_value / 100 if other_bank_value is not None else None,
+        "debt_crore": debt_value / 100 if debt_value is not None else None,
+        "net_debt_crore": net_debt / 100 if net_debt is not None else None,
+        "period": fiscal_year, "debt_basis": debt_basis,
+        "missing_components": missing_components,
+        "status": "validated_actual" if net_debt is not None else "partial" if any((cash_fact, other_bank_fact, total_debt_fact, current_debt_fact, non_current_debt_fact)) else "missing",
+    }
 
     by_type = {}
     for model in models:
@@ -128,7 +159,7 @@ def build_valuation_workbench(selected, data):
                         "expected_cagr_pct": _num(model.get("expected_cagr_pct")) if calculated else None,
                         "assumptions": model.get("assumptions") if model else {}, "outputs": model.get("outputs") if model else {},
                         "owner": model.get("owner_agent") if model else "Valuation Agent",
-                        "decision_usable": reviewed and bool(price) and price.get("freshness_status") == "current"})
+                        "decision_usable": reviewed and bool(price) and price.get("decision_usable") is True})
 
     dcf = by_type.get("dcf") or {}
     assumptions = dcf.get("assumptions") if isinstance(dcf.get("assumptions"), dict) else {}
@@ -142,7 +173,7 @@ def build_valuation_workbench(selected, data):
         blockers.append({"key": key, "title": title, "reason": reason, "repair": repair, "priority": priority})
     if not price:
         block("market_price", "Current market price missing", "No source-linked market price and timestamp is persisted.", "Refresh the read-only quote, then rerun valuation preflight.")
-    elif price.get("freshness_status") != "current" or price.get("verification_status") != "source_linked":
+    elif price.get("decision_usable") is not True or price.get("freshness_status") != "current" or price.get("verification_status") != "source_linked":
         block("market_price", "Market price is stale or unverified", f"The only anchor is {price.get('provider')} as of {price.get('as_of') or 'an unknown time'}.", "Refresh the read-only quote and preserve provider, symbol and timestamp.")
     if not share_basis:
         block("share_basis", "Per-share basis missing", "Neither validated shares nor a reproducible PAT/EPS bridge is available.", "Validate share count, dilution and split/restatement history.")

@@ -348,6 +348,7 @@ class InstitutionalEngineApiActionsTest(unittest.TestCase):
     def test_valuation_source_refresh_cannot_activate_policy(self) -> None:
         payload = {"status": "completed", "activated_policy": False, "broker_write_allowed": False, "candidates": []}
         with (
+            mock.patch.object(ai_os_api_server, "governed_pdf_python", return_value="/governed/pdf/python"),
             mock.patch.object(ai_os_api_server.subprocess, "run", return_value=completed(payload)) as run,
             mock.patch.object(ai_os_api_server, "audit_api_write") as audit,
         ):

@@ -110,6 +110,11 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
 
   /* ---- FUNDAMENTAL RESEARCH (Buffett school) ---- */
   { code: "LTF", path: "/fundamental/theses", label: "Company Dashboard", icon: BookOpen, description: "Source-backed investment theses — change log, moat, management, quality, valuation, evidence, and decisions", group: "fundamental", order: 0, status: "live" },
+  { code: "RDESK", path: "/research/desk", label: "Research Desk", icon: Radar, description: "Natural-language intake, current work, decisions and followed-company changes", group: "fundamental", order: 1, status: "live" },
+  { code: "RCASE", path: "/research/cases", label: "Workstreams", icon: GitBranch, description: "Start and track durable company research cases, agents, sources and reports", group: "fundamental", order: 2, status: "live" },
+  { code: "RFOLLOW", path: "/research/following", label: "Following", icon: Activity, description: "Material sourced changes and decision impact for followed companies", group: "fundamental", order: 3, status: "live" },
+  { code: "RFSCAN", path: "/research/scanners", label: "Fundamental Scanners", icon: Radar, description: "Source-qualified company ideas and underwriting candidates", group: "fundamental", order: 4, status: "live" },
+  { code: "RKNOW", path: "/research/knowledge", label: "Knowledge", icon: Library, description: "Company reports, analytical artifacts and source lineage", group: "fundamental", order: 5, status: "live" },
   { code: "SCOR", path: "/fundamental/scorecards", label: "Specialist Scorecards", icon: Microscope, description: "12 scorecards — business model, moat, governance, forensic, valuation, portfolio fit", group: "fundamental", order: 1, status: "beta" },
   { code: "VAL", path: "/fundamental/valuation", label: "Valuation Suite", icon: Calculator, description: "DCF, multiples, reverse DCF, Monte Carlo per holding", group: "fundamental", order: 2, status: "beta" },
   { code: "COV", path: "/fundamental/coverage", label: "Coverage & Checklists", icon: ClipboardCheck, description: "Coverage queue, theses checklists, review schedule", group: "fundamental", order: 3, status: "beta" },
@@ -175,11 +180,10 @@ export const TERMINAL_FUNCTIONS: TerminalFunction[] = [
   { code: "CAL", path: "/macro/calendar", label: "Market Calendar", icon: Calendar, description: "Earnings, ex-dates, RBI, Fed, holidays", group: "macro", order: 3, status: "beta" },
 
   /* ---- RESEARCH & FILINGS ---- */
-  { code: "RCASE", path: "/research/cases", label: "Research Workstreams", icon: BookOpen, description: "Start and track durable company research cases, agents, sources and reports", group: "fundamental", order: 1, status: "live" },
-  { code: "FIL", path: "/research/filings", label: "Filings & Updates", icon: FileText, description: "NSE/BSE/SEC filings, collector runs, PDF extraction", group: "fundamental", order: 2, status: "beta" },
+  { code: "FIL", path: "/research/filings", label: "Filings & Updates", icon: FileText, description: "NSE/BSE/SEC filings, collector runs, PDF extraction", group: "research", order: 0, status: "beta" },
   { code: "SPEC", path: "/research/special-situations", label: "Special Situations", icon: Target, description: "Arbitrage, demergers, buybacks, delistings — committee gates", group: "research", order: 2, status: "beta" },
   { code: "PAPER", path: "/research/papers", label: "Research Papers", icon: BookOpen, description: "Ingest academic papers → strategy hypotheses", group: "research", order: 3, status: "beta" },
-  { code: "ING", path: "/research/ingest", label: "Research Library", icon: Download, description: "Ingest research pages, blogs, PDFs → strategy ideas", group: "fundamental", order: 3, status: "beta" },
+  { code: "ING", path: "/research/ingest", label: "Research Library", icon: Download, description: "Ingest research pages, blogs, PDFs → strategy ideas", group: "research", order: 1, status: "beta" },
 
   /* ---- RISK & COMPLIANCE ---- */
   { code: "RISK", path: "/risk/dashboard", label: "Risk Dashboard", icon: ShieldAlert, description: "Live breaches, limit checks, concentration, drawdown", group: "risk", order: 0, status: "beta" },
@@ -202,15 +206,16 @@ export const DAILY_DRIVER_PATHS = new Set([
   "/firm/governance",
   "/firm/models",
   "/firm/system",
-  "/firm/library",
   "/fundamental/theses",
+  "/research/desk",
+  "/research/cases",
+  "/research/following",
+  "/research/scanners",
+  "/research/knowledge",
   "/portfolio/imports",
   "/trading/tradingview",
   "/trading/execution",
   "/options/desk",
-  "/research/cases",
-  "/research/filings",
-  "/research/ingest",
 ]);
 
 /** Get every registered function for command-palette and coverage use. */

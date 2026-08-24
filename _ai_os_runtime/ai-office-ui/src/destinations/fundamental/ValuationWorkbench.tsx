@@ -6,6 +6,7 @@ import "./ValuationWorkbench.css";
 
 const object = (raw: unknown): LiveRow => raw && typeof raw === "object" && !Array.isArray(raw) ? raw as LiveRow : {};
 const list = (raw: unknown): LiveRow[] => Array.isArray(raw) ? raw.filter((row): row is LiveRow => Boolean(row && typeof row === "object")) : [];
+const strings = (raw: unknown): string[] => Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
 const money = (raw: unknown) => raw === null || raw === undefined ? "Not available" : `₹${Number(raw).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const percent = (raw: unknown) => raw === null || raw === undefined ? "Not available" : `${(Number(raw) * (Math.abs(Number(raw)) <= 1 ? 100 : 1)).toFixed(1)}%`;
 const displayDate = (raw: unknown) => {
@@ -47,6 +48,7 @@ export function ValuationWorkbench({ workbench }: { workbench: LiveRow }) {
   const price = object(workbench.current_price);
   const shareBasis = object(workbench.share_basis);
   const bridge = object(workbench.equity_bridge);
+  const bridgeMissing = strings(bridge.missing_components);
   const actuals = object(workbench.actuals);
   const review = object(workbench.review);
   const methods = list(workbench.methods);
@@ -57,6 +59,10 @@ export function ValuationWorkbench({ workbench }: { workbench: LiveRow }) {
   const dcfAssumptions = object(dcf?.assumptions);
   const scenarios = object(dcfAssumptions.scenarios);
   const currentPrice = price.value === null || price.value === undefined ? null : num(price, "value");
+  const priceDecisionUsable = price.decision_usable === true;
+  const priceExchange = text(price, "exchange", text(object(price.source), "exchange", "exchange unavailable"));
+  const priceSymbol = text(price, "provider_symbol", text(price, "symbol", text(object(price.source), "symbol", "symbol unavailable")));
+  const delaySeconds = price.delay_seconds === null || price.delay_seconds === undefined ? null : num(price, "delay_seconds");
   const impliedGrowth = num(object(reverse?.outputs), "implied_annual_fcf_growth", Number.NaN);
 
   return <div className="valuation-workbench">
@@ -66,9 +72,17 @@ export function ValuationWorkbench({ workbench }: { workbench: LiveRow }) {
     </section>
 
     <div className="valuation-basis">
-      <article><span>Market price</span><strong>{currentPrice === null ? "Missing" : money(currentPrice)}</strong><p>{text(price, "provider", "No provider")} · {displayDate(price.as_of)}</p><small className={`state-${text(price, "freshness_status", "missing")}`}>{text(price, "verification_status", "missing").replace(/_/g, " ")} · {text(price, "freshness_status", "missing")}</small></article>
+      <article>
+        <span>Canonical market-price anchor</span>
+        <strong>{currentPrice === null ? "Missing" : money(currentPrice)}</strong>
+        <p>{text(price, "provider", "No provider")} · {priceExchange}:{priceSymbol}</p>
+        <small>{displayDate(price.as_of)}{delaySeconds === null ? " · delay unavailable" : ` · ${delaySeconds.toFixed(0)}s delay`}</small>
+        <small className={`state-${text(price, "freshness_status", "missing")}`}>{text(price, "verification_status", "missing").replace(/_/g, " ")} · {text(price, "freshness_status", "missing")} · {priceDecisionUsable ? "usable for valuation" : "lineage only"}</small>
+        <small>{text(price, "freshness_reason", "A fresh canonical read-only quote is required before valuation can be decision-usable.")}</small>
+        <small>Broker writes {price.broker_write_allowed === true ? "enabled" : "locked"}{price.fallback_used === true ? " · labelled fallback" : ""}</small>
+      </article>
       <article><span>Share basis</span><strong>{shareBasis.shares_crore === null || shareBasis.shares_crore === undefined ? "Missing" : `${num(shareBasis, "shares_crore").toFixed(2)}cr`}</strong><p>FY{num(shareBasis, "period", num(actuals, "fiscal_year_end"))} · {text(shareBasis, "method", "No method")}</p><small>{text(shareBasis, "status", "missing").replace(/_/g, " ")}</small></article>
-      <article><span>Equity bridge</span><strong>{bridge.net_debt_crore === null || bridge.net_debt_crore === undefined ? "Missing" : `${num(bridge, "net_debt_crore") < 0 ? "Net cash" : "Net debt"} ${money(Math.abs(num(bridge, "net_debt_crore")))}cr`}</strong><p>Cash &amp; equivalents {money(bridge.cash_crore)}cr · debt {money(bridge.debt_crore)}cr</p><small>Other bank balances {bridge.other_bank_balances_crore === null || bridge.other_bank_balances_crore === undefined ? "not recorded" : `${money(bridge.other_bank_balances_crore)}cr (excluded pending liquidity review)`} · FY{num(bridge, "period")}</small></article>
+      <article><span>Equity bridge</span><strong>{bridge.net_debt_crore === null || bridge.net_debt_crore === undefined ? "Not computable" : `${num(bridge, "net_debt_crore") < 0 ? "Net cash" : "Net debt"} ${money(Math.abs(num(bridge, "net_debt_crore")))}cr`}</strong><p>Cash &amp; equivalents {money(bridge.cash_crore)}cr · other bank balances {money(bridge.other_bank_balances_crore)}cr · debt {money(bridge.debt_crore)}cr</p><small>{bridgeMissing.length ? `Missing inputs: ${bridgeMissing.join(", ").replace(/_/g, " ")}` : `${text(bridge, "debt_basis", "validated basis").replace(/_/g, " ")} · FY${num(bridge, "period")}`}</small></article>
       <article><span>Historical basis</span><strong>{num(actuals, "years")} years</strong><p>FY{num(actuals, "fiscal_year_start")}–FY{num(actuals, "fiscal_year_end")}</p><small>{num(actuals, "validation_checks_passed")}/{num(actuals, "validation_checks_total")} validation checks passed</small></article>
     </div>
 

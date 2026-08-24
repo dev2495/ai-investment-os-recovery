@@ -35,20 +35,20 @@ class ModelRouterContractTest(unittest.TestCase):
             )
         )
 
-    def test_operator_defaults_to_private_local_route_and_uses_luna_for_volume(self) -> None:
+    def test_operator_defaults_to_private_local_route_and_uses_gemini_for_fast_public_chat(self) -> None:
         self.assertIn(
             'local: { routeName: "charlie_munger_orchestration", privateContext: true }',
             self.assistant,
         )
         self.assertIn(
-            'fast: { routeName: "openrouter_luna_volume", privateContext: false }',
+            'fast: { routeName: "openrouter_gemini36_research", privateContext: false }',
             self.assistant,
         )
         self.assertIn(
             'React.useState<ReasoningRoute>("local")',
             self.assistant,
         )
-        self.assertIn("Capped Luna volume model; no client data", self.assistant)
+        self.assertIn("Gemini Flash quick answer with verified local stack snapshot; no client data", self.assistant)
         self.assertIn(
             'research: { routeName: "openrouter_gemini36_research", privateContext: false }',
             self.assistant,

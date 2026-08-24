@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -112,6 +113,18 @@ def post_api_json(path: str, payload: dict, timeout: float = 60.0) -> dict:
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"API {path} failed with HTTP {exc.code}: {body}") from exc
+
+
+def get_api_json(path: str, query: dict[str, object] | None = None, timeout: float = 60.0) -> dict:
+    encoded = urllib.parse.urlencode({key: value for key, value in (query or {}).items() if value not in (None, "")})
+    url = f"{API_BASE_URL}{path}" + (f"?{encoded}" if encoded else "")
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -5969,7 +5982,122 @@ def run_scheduled_reports(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/reports/run", arguments, timeout=620.0))
 
 
+def research_knowledge(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/research/knowledge", {
+        "q": arguments.get("query") or "",
+        "node_type": arguments.get("node_type") or "",
+        "cursor": arguments.get("cursor") or 0,
+        "limit": limit_arg(arguments, default=30, maximum=100),
+    }))
+
+
+def research_following(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/research/following", {
+        "cursor": arguments.get("cursor") or 0,
+        "limit": limit_arg(arguments, default=30, maximum=100),
+    }))
+
+
+def follow_research_source(arguments: dict) -> dict:
+    if arguments.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true after the public source plan is reviewed")
+    return tool_result(post_api_json("/api/research/following", arguments, timeout=60.0))
+
+
+def refresh_followed_research_source(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/research/following/refresh", arguments, timeout=180.0))
+
+
+def fundamental_scanners(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/fundamental-scanners", {
+        "cursor": arguments.get("cursor") or 0,
+        "limit": limit_arg(arguments, default=25, maximum=100),
+    }))
+
+
+def create_fundamental_scanner_from_text(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/fundamental-scanners/from-natural-language", arguments))
+
+
+def fundamental_scanner_action(arguments: dict) -> dict:
+    scanner_id = int(arguments.get("scanner_id") or 0)
+    action = str(arguments.get("action") or "").strip().lower()
+    if scanner_id <= 0:
+        raise ValueError("scanner_id is required")
+    if action not in {"validate", "publish-request", "publish", "run"}:
+        raise ValueError("action must be validate, publish-request, publish, or run")
+    payload = {key: value for key, value in arguments.items() if key not in {"scanner_id", "action"}}
+    return tool_result(post_api_json(f"/api/fundamental-scanners/{scanner_id}/{action}", payload, timeout=180.0))
+
+
 TOOLS = {
+    "ai_os_research_knowledge": {
+        "description": "Search the owner-scoped local Research Desk knowledge graph and indexed Obsidian notes. Read-only; returns bounded nodes, edges, notes and unresolved links without private-data egress.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "query": {"type": "string", "maxLength": 240},
+            "node_type": {"type": "string", "maxLength": 80},
+            "cursor": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}
+        }},
+        "handler": research_knowledge,
+    },
+    "ai_os_research_following": {
+        "description": "Read the owner-scoped Research Following catalog, bounded feed, idea inbox and quarantined items. No fetch or external write occurs.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "cursor": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}
+        }},
+        "handler": research_following,
+    },
+    "ai_os_follow_research_source": {
+        "description": "After explicit operator confirmation, register one public HTTPS RSS or Atom source for bounded metadata/permitted-excerpt following. Never accepts credentials, never sends messages, and never enables broker or capital actions.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "feed_name": {"type": "string", "minLength": 3, "maxLength": 120},
+            "provider": {"type": "string", "maxLength": 120},
+            "url": {"type": "string", "pattern": "^https://"},
+            "topics": {"type": "array", "items": {"type": "string", "maxLength": 40}, "maxItems": 12},
+            "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"], "default": "normal"},
+            "followed_reason": {"type": "string", "maxLength": 500},
+            "refresh_minutes": {"type": "integer", "minimum": 15, "maximum": 10080, "default": 60},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["feed_name", "url", "operator_confirmed"]},
+        "handler": follow_research_source,
+    },
+    "ai_os_refresh_followed_research_source": {
+        "description": "Run one bounded refresh for an already active, operator-approved public source. It stores metadata/permitted excerpts locally, quarantines prompt-injection patterns and cannot mutate broker/client/external systems.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "followed_source_id": {"type": "integer", "minimum": 1},
+            "per_feed": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+            "timeout": {"type": "integer", "minimum": 5, "maximum": 30, "default": 12}
+        }, "required": ["followed_source_id"]},
+        "handler": refresh_followed_research_source,
+    },
+    "ai_os_fundamental_scanners": {
+        "description": "List bounded deterministic Research Desk scanner definitions, versions, validation state and run counts. Read-only.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "cursor": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        }},
+        "handler": fundamental_scanners,
+    },
+    "ai_os_create_fundamental_scanner_draft": {
+        "description": "Convert a plain-English fundamental screen into an allowlisted deterministic draft. Unsupported requirements remain explicit; this does not validate, publish, schedule or run it.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "instruction": {"type": "string", "minLength": 12, "maxLength": 2000},
+            "name": {"type": "string", "minLength": 3, "maxLength": 140}
+        }, "required": ["instruction"]},
+        "handler": create_fundamental_scanner_from_text,
+    },
+    "ai_os_fundamental_scanner_action": {
+        "description": "Validate, request publication, publish with a matching approved approval id, or run a published deterministic scanner. Every output remains research-only with broker_write_allowed=false.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "scanner_id": {"type": "integer", "minimum": 1},
+            "action": {"type": "string", "enum": ["validate", "publish-request", "publish", "run"]},
+            "approval_id": {"type": "integer", "minimum": 1},
+            "as_of_at": {"type": "string", "format": "date-time"}
+        }, "required": ["scanner_id", "action"]},
+        "handler": fundamental_scanner_action,
+    },
     "ai_os_sync_fundamental_company_intake": {
         "description": "Synchronize real NSE/BSE portfolio holdings into the institutional company master and link official exchange filings as evidence. It never fabricates financial facts, scores, recommendations, capital actions, or broker orders.",
         "inputSchema": {

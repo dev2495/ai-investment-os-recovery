@@ -495,7 +495,7 @@ def build_dossier(
     thesis = (
         f"{node['node_name']} has source-backed constituent fundamentals, official ten-year valuation, "
         f"ownership and observed block/bulk-deal flow evidence. Stored portfolio exposure is {sector_weight:.4f}%. "
-        f"Remaining evidence blockers: {gap_names or 'none'}. No capital change is authorized by this dossier."
+        f"Remaining evidence blockers: {gap_names or 'none'}. These blockers block any allocation recommendation. No capital change is authorized by this dossier."
     )
     return sections, evidence_references, monitoring, thesis
 

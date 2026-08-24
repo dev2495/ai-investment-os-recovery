@@ -4,11 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from datetime import datetime
+from pathlib import Path
 from statistics import median
 from typing import Any
 
 from extract_long_term_source_document import run_psql_json, sql_jsonb, sql_literal
+
+API_ROOT = Path(__file__).resolve().parents[1] / "api"
+if str(API_ROOT) not in sys.path:
+    sys.path.insert(0, str(API_ROOT))
+from market_price_resolver import resolve_market_price  # noqa: E402
 
 
 SCENARIOS = {
@@ -76,10 +83,21 @@ def build_models(context: dict[str, Any]) -> list[dict[str, Any]]:
     shares = float(inputs["diluted_weighted_average_shares"]["value_numeric"])
     shares_crore = shares / 10_000_000.0
     diluted_eps = float(inputs["diluted_eps_continuing"]["value_numeric"])
-    current_price = float(context["quote"]["price"])
-    quote_source = {key: context["quote"].get(key) for key in (
-        "provider", "provider_symbol", "symbol", "exchange", "price", "quote_ts", "source_key"
+    quote = resolve_market_price(
+        context.get("quotes") or [], symbol=context["company"]["primary_symbol"],
+        exchange=context["company"]["primary_exchange"],
+        holidays=context.get("market_holidays") or [], now=context.get("as_of"),
+    )
+    if not quote or not quote.get("decision_usable"):
+        raise ValueError("an exact exchange-matched, source-linked, current market quote is required")
+    current_price = float(quote["value"])
+    quote_source = {key: quote.get(key) for key in (
+        "provider", "provider_symbol", "symbol", "exchange", "source_key", "source_class",
+        "source_priority", "quote_timestamp", "received_at", "freshness_status", "delay_status",
+        "fallback_used", "primary_quote_status", "instrument_token", "mapping_status",
+        "decision_usable", "broker_write_allowed",
     )}
+    quote_source["price"] = quote["value"]
     evidence = context["evidence"]
     evidence_ref = {
         "source": evidence["source_url"], "evidence_id": evidence["id"],
@@ -126,16 +144,77 @@ def load_context(symbol: str, exchange: str, as_of: datetime) -> dict[str, Any]:
       WITH company AS (SELECT * FROM research.companies WHERE upper(primary_symbol)={sql_literal(symbol)} AND upper(primary_exchange)={sql_literal(exchange)} LIMIT 1),
       thesis AS (SELECT thesis.* FROM portfolio.holding_theses thesis JOIN company ON upper(thesis.symbol)=upper(company.primary_symbol) AND upper(thesis.exchange)=upper(company.primary_exchange) ORDER BY thesis.id LIMIT 1),
       evidence AS (SELECT evidence.* FROM research.fundamental_evidence evidence JOIN company ON company.id=evidence.company_id WHERE evidence.id=(SELECT evidence_id FROM research.company_valuation_inputs input JOIN company ON company.id=input.company_id WHERE input.fiscal_year=2026 AND input.verification_status NOT IN ('rejected','superseded') ORDER BY input.available_at DESC LIMIT 1)),
-      quote AS (SELECT quote.* FROM market.v_latest_price_quotes quote JOIN company ON upper(quote.symbol)=upper(company.primary_symbol) WHERE quote.quote_ts<={sql_literal(as_of.isoformat())}::timestamptz ORDER BY quote.quote_ts DESC LIMIT 1)
+      live_quotes AS (SELECT live.instrument_token AS id,'zerodha_live_quote_state'::text AS source_key,
+          live.provider,live.provider_symbol,live.symbol,live.exchange,'INR'::text AS currency,
+          live.last_price AS price,
+          coalesce(live.exchange_timestamp,live.last_trade_timestamp,live.received_at) AS quote_ts,
+          live.received_at,'primary_zerodha_live'::text AS source_class,1 AS source_priority,
+          (instrument.instrument_token IS NOT NULL) AS approved_for_valuation,
+          true AS provider_entitled,'zerodha_canonical'::text AS provider_entitlement_key,
+          live.instrument_token,live.source_mode,live.broker_write_allowed,
+          CASE WHEN instrument.instrument_token IS NOT NULL THEN 'verified_zerodha_instrument'
+               ELSE 'unmapped_zerodha_instrument' END AS mapping_status,
+          CASE WHEN live.exchange_timestamp IS NOT NULL THEN 'exchange_timestamp'
+               WHEN live.last_trade_timestamp IS NOT NULL THEN 'last_trade_local_ist'
+               ELSE 'receipt_utc' END AS timestamp_basis
+        FROM market.live_quote_state live JOIN company
+          ON upper(live.symbol)=upper(company.primary_symbol)
+         AND upper(live.exchange)=upper(company.primary_exchange)
+        LEFT JOIN market.zerodha_instruments instrument
+          ON instrument.instrument_token=live.instrument_token AND instrument.active
+         AND upper(instrument.exchange)=upper(live.exchange)
+         AND upper(instrument.trading_symbol)=upper(live.symbol)
+        WHERE lower(live.provider)='zerodha' AND live.last_price>0
+          AND coalesce(live.exchange_timestamp,live.last_trade_timestamp,live.received_at)<={sql_literal(as_of.isoformat())}::timestamptz),
+      stored_quotes AS (SELECT quote.id,quote.source_key,quote.provider,quote.provider_symbol,
+          quote.symbol,quote.exchange,quote.currency,quote.price,quote.quote_ts,
+          quote.created_at AS received_at,
+          CASE WHEN lower(quote.provider)='zerodha' THEN 'zerodha_stored_quote'
+               WHEN registry.source_key IS NOT NULL THEN 'entitled_secondary_quote'
+               ELSE 'unentitled_secondary_quote' END AS source_class,
+          CASE WHEN lower(quote.provider)='zerodha' THEN 2 ELSE 3 END AS source_priority,
+          CASE WHEN lower(quote.provider)='zerodha' THEN instrument.instrument_token IS NOT NULL
+               ELSE registry.source_key IS NOT NULL END AS approved_for_valuation,
+          CASE WHEN lower(quote.provider)='zerodha' THEN true
+               ELSE registry.source_key IS NOT NULL END AS provider_entitled,
+          CASE WHEN lower(quote.provider)='zerodha' THEN 'zerodha_canonical'
+               ELSE registry.source_key END AS provider_entitlement_key,
+          instrument.instrument_token,'bounded_read_only_snapshot'::text AS source_mode,
+          false AS broker_write_allowed,
+          CASE WHEN lower(quote.provider)='zerodha' AND instrument.instrument_token IS NOT NULL
+                 THEN 'verified_zerodha_instrument'
+               WHEN lower(quote.provider)='zerodha' THEN 'unmapped_zerodha_instrument'
+               ELSE 'exact_exchange_symbol' END AS mapping_status,
+          coalesce(quote.raw_payload->>'ai_os_timestamp_basis','unknown') AS timestamp_basis
+        FROM market.price_quotes quote JOIN company
+          ON upper(quote.symbol)=upper(company.primary_symbol)
+         AND upper(quote.exchange)=upper(company.primary_exchange)
+        LEFT JOIN LATERAL (
+          SELECT mapping.instrument_token FROM market.zerodha_instruments mapping
+          WHERE mapping.active AND upper(mapping.exchange)=upper(quote.exchange)
+            AND upper(mapping.trading_symbol)=upper(quote.symbol)
+          ORDER BY mapping.last_seen_at DESC LIMIT 1
+        ) instrument ON true
+        LEFT JOIN core.data_source_registry registry
+          ON registry.source_key=quote.source_key
+         AND registry.status IN ('active','installed','mapped')
+         AND lower(coalesce(registry.provider,''))=lower(quote.provider)
+         AND coalesce(registry.metadata->>'valuation_price_entitled','false')='true'
+        WHERE quote.quote_ts<={sql_literal(as_of.isoformat())}::timestamptz),
+      quotes AS (SELECT * FROM (SELECT * FROM live_quotes UNION ALL SELECT * FROM stored_quotes) ranked
+        ORDER BY source_priority,quote_ts DESC,id DESC LIMIT 16)
       SELECT json_build_object(
         'company',(SELECT row_to_json(company) FROM company),'thesis',(SELECT row_to_json(thesis) FROM thesis),
-        'evidence',(SELECT row_to_json(evidence) FROM evidence),'quote',(SELECT row_to_json(quote) FROM quote),
+        'evidence',(SELECT row_to_json(evidence) FROM evidence),
+        'quotes',coalesce((SELECT json_agg(row_to_json(quotes) ORDER BY source_priority,quote_ts DESC) FROM quotes),'[]'::json),
+        'market_holidays',coalesce((SELECT json_agg(json_build_object('exchange',holiday.exchange,'holiday_date',holiday.holiday_date,'session_status',holiday.session_status)) FROM market.exchange_holidays holiday JOIN company ON upper(holiday.exchange)=upper(company.primary_exchange) WHERE holiday.holiday_date BETWEEN {sql_literal(as_of.date().isoformat())}::date-14 AND {sql_literal(as_of.date().isoformat())}::date+14),'[]'::json),
         'valuation_inputs',coalesce((SELECT json_agg(row_to_json(input) ORDER BY input.input_key) FROM research.company_valuation_inputs input JOIN company ON company.id=input.company_id WHERE input.fiscal_year=2026 AND input.available_at<={sql_literal(as_of.isoformat())}::timestamptz AND input.verification_status NOT IN ('rejected','superseded')),'[]'::json),
         'facts',coalesce((SELECT json_agg(row_to_json(row) ORDER BY row.fact_key,row.fiscal_year) FROM (SELECT definition.fact_key,fact.fiscal_year,fact.value_numeric,fact.unit,fact.evidence_id FROM research.company_statement_facts fact JOIN research.statement_fact_definitions definition ON definition.id=fact.fact_definition_id JOIN company ON company.id=fact.company_id WHERE fact.fiscal_period='FY' AND fact.is_current AND fact.available_at<={sql_literal(as_of.isoformat())}::timestamptz AND definition.fact_key IN ('operating_cash_flow','capital_expenditure','cash_and_cash_equivalents','current_borrowings','non_current_borrowings','revenue_from_operations','profit_after_tax')) row),'[]'::json)
       )::text
     """)
-    if not isinstance(result, dict) or not all(result.get(key) for key in ("company", "thesis", "evidence", "quote", "valuation_inputs", "facts")):
+    if not isinstance(result, dict) or not all(result.get(key) for key in ("company", "thesis", "evidence", "quotes", "valuation_inputs", "facts")):
         raise ValueError("company, thesis, primary evidence, quote, valuation inputs and statement facts are required")
+    result["as_of"] = as_of
     return result
 
 
