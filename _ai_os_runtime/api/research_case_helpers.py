@@ -128,6 +128,30 @@ def _entity_matches(query, run_rows, sql_literal):
     return rows
 
 
+def _resolve_entity_prefix(query, run_rows, sql_literal):
+    """Resolve a verified company at the start of a natural-language scope.
+
+    The launch grammar captures everything after ``on`` so legitimate company
+    names containing connector words remain possible.  When the complete text
+    is not a registry match, trim only from the right and select the longest
+    prefix which maps to one verified listing.  No company is guessed or
+    created by this fallback.
+    """
+    normalized = _clean_entity_candidate(query)
+    matches = _entity_matches(normalized, run_rows, sql_literal)
+    if matches:
+        return normalized, matches
+    tokens = normalized.split()
+    for end in range(len(tokens) - 1, 0, -1):
+        candidate = _clean_entity_candidate(" ".join(tokens[:end]))
+        if not candidate:
+            continue
+        candidate_matches = _entity_matches(candidate, run_rows, sql_literal)
+        if candidate_matches:
+            return candidate, candidate_matches
+    return normalized, []
+
+
 def _confirm_market_reference_company(company_id, actor, *, run_statement, sql_literal):
     """Confirm listing identity from an active local symbol reference plus operator choice.
 
@@ -194,8 +218,15 @@ def propose_research_case(payload, *, run_rows, run_statement, sql_literal, sql_
     if priority not in {"low", "normal", "medium", "high", "critical"}:
         raise ValueError("priority must be low, normal, medium, high, or critical")
     horizon = str(payload.get("horizon") or "3-5 years").strip()
-    mandate = str(payload.get("mandate") or f"Build a source-backed long-term investment decision brief for {entity_query}.").strip()
-    matches = _entity_matches(entity_query, run_rows, sql_literal)
+    requested_entity_scope = entity_query
+    entity_query, matches = _resolve_entity_prefix(entity_query, run_rows, sql_literal)
+    scope_suffix = requested_entity_scope[len(entity_query):].strip(" ,.:;-–—")
+    if scope_suffix.lower().startswith("for "):
+        scope_suffix = scope_suffix[4:].strip()
+    default_mandate = f"Build a source-backed long-term investment decision brief for {entity_query}."
+    if scope_suffix:
+        default_mandate += f" Focus on {scope_suffix.rstrip('.')}."
+    mandate = str(payload.get("mandate") or default_mandate).strip()
     explicit_company_id = payload.get("company_id") or payload.get("companyId")
     if explicit_company_id:
         scoped_matches = [row for row in matches if int(row.get("company_id") or 0) == int(explicit_company_id)]

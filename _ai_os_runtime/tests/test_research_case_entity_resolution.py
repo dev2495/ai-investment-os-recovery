@@ -49,6 +49,37 @@ class ResearchCaseEntityResolutionTests(unittest.TestCase):
         self.assertIn("exact exchange ticker", result["detail"])
         self.assertIn("No case or agent work was created", result["detail"])
 
+    def test_natural_language_scope_after_company_resolves_longest_verified_prefix(self):
+        seen_sql = []
+
+        def rows(sql):
+            seen_sql.append(sql)
+            if "FROM research.companies company" in sql:
+                if "Indian Energy Exchange for" in sql:
+                    return []
+                if "'Indian Energy Exchange'" in sql:
+                    return [{
+                        "company_id": 18, "company_key": "nse:iex",
+                        "legal_name": "Indian Energy Exchange Limited",
+                        "display_name": "Indian Energy Exchange Limited",
+                        "ticker": "IEX", "exchange": "NSE", "holding_thesis_id": None,
+                        "identity_verified": True, "identity_source": "verified_company_registry",
+                    }]
+            return []
+
+        result = propose_research_case({
+            "request_text": (
+                "Start long-term research on Indian Energy Exchange for a 5 to 10 year "
+                "moat, financial quality, reverse DCF and risk decision"
+            ),
+        }, run_rows=rows,
+            run_statement=lambda sql: [{"id": 904, "ticker": "IEX", "status": "proposed"}],
+            sql_literal=literal, sql_jsonb=jsonb)
+
+        self.assertEqual(result["status"], "proposed")
+        self.assertEqual(result["research_case"]["ticker"], "IEX")
+        self.assertTrue(any("'Indian Energy Exchange'" in sql for sql in seen_sql))
+
 
     def test_natural_language_launch_commands_are_bounded_and_normalized(self):
         examples = {
