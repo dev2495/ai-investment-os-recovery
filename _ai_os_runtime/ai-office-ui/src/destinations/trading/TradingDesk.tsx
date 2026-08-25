@@ -18,15 +18,15 @@ import {
   TrendingUp, Notebook, LineChart, Target, Zap, ShieldCheck,
   Plus, Play, AlertTriangle, Activity, ChevronRight,
 } from "lucide-react";
-import { useTradingQuantRisk } from "../../data/queries";
-import { useRecordManualTrade, useRecordPaperTrade } from "../../data/actions";
+import { useTradingQuantRisk, useTradingViewDesktopStatus } from "../../data/queries";
+import { useOpenTradingViewDesktop, useRecordManualTrade, useRecordPaperTrade, useRunTradingViewTemplate } from "../../data/actions";
 import { useUIStore } from "../../store";
 import {
   Panel, MetricTile, Metric, DataTable, StatusPill, Badge, Empty, Skeleton,
   Button, Tabs, Drawer, Field, TextInput, TextArea, Select, KeyValue,
 } from "../../system/primitives";
-import { AreaSeriesChart, BarSeriesChart } from "../../system/charts";
-import { text, num, formatRelative, formatCurrency, formatCompact, formatPercent } from "../../data/liveRow";
+import { BarSeriesChart } from "../../system/charts";
+import { text, num, bool, formatRelative, formatCurrency, formatPercent } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 
 const TABS = [
@@ -171,12 +171,17 @@ function JournalView() {
   const { data, isLoading } = useTradingQuantRisk();
   const trades = data?.trade_activity ?? [];
   const paperSummary = data?.paper_trade_summary ?? [];
+  const [showTicket, setShowTicket] = React.useState(false);
+  const [showPaper, setShowPaper] = React.useState(false);
 
   return (
     <>
-      <Panel icon={Notebook} title="Trade Journal">
+      <Panel icon={Notebook} title="Trade Journal" actions={<>
+          <Button size="sm" variant="ghost" icon={Notebook} onClick={() => setShowPaper(true)}>Paper trade</Button>
+          <Button size="sm" variant="primary" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>
+        </>}>
         {isLoading ? <SkeletonGrid rows={4} /> : trades.length === 0 ? (
-          <Empty icon={Notebook} title="No journal entries" description="Trades recorded with thesis text appear here as journal entries for later mining." />
+          <Empty icon={Notebook} title="No journal entries" description="Trades recorded with thesis text appear here as journal entries for later mining." action={<Button size="sm" icon={Plus} onClick={() => setShowTicket(true)}>Record trade</Button>} />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", padding: "var(--space-3)" }}>
             {trades.slice(0, 20).map((trade, i) => {
@@ -211,6 +216,9 @@ function JournalView() {
           />
         </Panel>
       )}
+
+      <TradeTicketDrawer open={showTicket} onClose={() => setShowTicket(false)} paper={false} />
+      <TradeTicketDrawer open={showPaper} onClose={() => setShowPaper(false)} paper />
     </>
   );
 }
@@ -220,94 +228,313 @@ function JournalView() {
  * ============================================================ */
 function TradingViewBridgeView() {
   const { data, isLoading } = useTradingQuantRisk();
+  const desktop = useTradingViewDesktopStatus();
+  const openDesktop = useOpenTradingViewDesktop();
+  const runTemplate = useRunTradingViewTemplate();
+  const pushToast = useUIStore((state) => state.pushToast);
   const tasks = data?.tradingview_tasks ?? [];
   const templates = data?.tradingview_templates ?? [];
+  const [symbol, setSymbol] = React.useState("NIFTY");
+  const [exchange, setExchange] = React.useState("NSE");
+  const [timeframe, setTimeframe] = React.useState("D");
+  const [templateKey, setTemplateKey] = React.useState("");
+  const [lastResult, setLastResult] = React.useState<LiveRow | null>(null);
+  const [templateValues, setTemplateValues] = React.useState<Record<string, string>>({
+    benchmark: "NSE:NIFTY",
+    leg_a: "",
+    leg_b: "",
+    hedge_ratio: "1",
+    expiry: "",
+    strike: "",
+    call_symbol: "",
+    put_symbol: "",
+    indicators: "VWAP, Volume, RSI, MACD, ATR, Supertrend",
+    fields: "TOTAL_REVENUE, NET_INCOME, OPERATING_MARGIN, RETURN_ON_INVESTED_CAPITAL, TOTAL_DEBT, PRICE_EARNINGS, PRICE_BOOK",
+    equity_index: "NSE:NIFTY",
+    volatility_index: "NSE:INDIAVIX",
+    bond_yield: "TVC:IN10Y",
+    currency: "FX_IDC:USDINR",
+    condition: "",
+  });
+
+  React.useEffect(() => {
+    if (!templateKey && templates.length) {
+      setTemplateKey(text(templates[0], "template_key", text(templates[0], "key")));
+    }
+  }, [templateKey, templates]);
+
+  const desktopStatus = desktop.data ?? {};
+  const desktopInstalled = Boolean(desktopStatus.installed);
+  const desktopMode = text(desktopStatus, "interaction_mode", "unknown");
+  const desktopReady = desktopInstalled && (desktopMode !== "clipboard_menu" || Boolean(desktopStatus.automation_permission));
+  const desktopRunning = Boolean(desktopStatus.running);
+  const busy = openDesktop.isPending || runTemplate.isPending;
+
+  function updateTemplateValue(key: string, value: string) {
+    setTemplateValues((current) => ({ ...current, [key]: value }));
+  }
+
+  function csvValues(key: string) {
+    return (templateValues[key] ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  function templateParametersFor(key: string): Record<string, unknown> {
+    if (key === "relative_strength_ratio_chart") {
+      return { benchmark: templateValues.benchmark.trim() };
+    }
+    if (key === "spread_pair_formula_chart") {
+      return {
+        leg_a: templateValues.leg_a.trim() || symbol.trim(),
+        leg_b: templateValues.leg_b.trim(),
+        hedge_ratio: templateValues.hedge_ratio.trim(),
+      };
+    }
+    if (key === "open_option_straddle_layout" || key === "option_straddle_four_pane") {
+      return {
+        underlying: symbol.trim(),
+        expiry: templateValues.expiry.trim(),
+        strike: templateValues.strike.trim(),
+        call_symbol: templateValues.call_symbol.trim(),
+        put_symbol: templateValues.put_symbol.trim(),
+      };
+    }
+    if (key === "technical_indicator_stack") {
+      return { indicators: csvValues("indicators") };
+    }
+    if (key === "fundamental_ratio_dashboard") {
+      return { fields: csvValues("fields"), filing_cross_check_required: true };
+    }
+    if (key === "market_regime_four_pane") {
+      return {
+        equity_index: templateValues.equity_index.trim() || symbol.trim(),
+        volatility_index: templateValues.volatility_index.trim(),
+        bond_yield: templateValues.bond_yield.trim(),
+        currency: templateValues.currency.trim(),
+      };
+    }
+    if (key === "create_alert_request") {
+      return { condition: templateValues.condition.trim() };
+    }
+    return {};
+  }
+
+  function templateParameterFields() {
+    const gridStyle: React.CSSProperties = {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+      gap: "var(--space-3)",
+      marginTop: "var(--space-3)",
+    };
+    const input = (key: string, label: string, placeholder: string) => (
+      <Field key={key} label={label}>
+        <TextInput
+          value={templateValues[key] ?? ""}
+          onChange={(event) => updateTemplateValue(key, event.target.value)}
+          placeholder={placeholder}
+        />
+      </Field>
+    );
+
+    if (templateKey === "relative_strength_ratio_chart") {
+      return <div style={gridStyle}>{input("benchmark", "Benchmark", "NSE:NIFTY")}</div>;
+    }
+    if (templateKey === "spread_pair_formula_chart") {
+      return <div style={gridStyle}>{input("leg_a", "Leg A", "NSE:RELIANCE")}{input("leg_b", "Leg B", "NSE:NIFTY")}{input("hedge_ratio", "Hedge Ratio", "1")}</div>;
+    }
+    if (templateKey === "open_option_straddle_layout" || templateKey === "option_straddle_four_pane") {
+      return <div style={gridStyle}>{input("expiry", "Expiry", "2026-08-27")}{input("strike", "Strike", "25000")}{input("call_symbol", "Call Symbol", "NFO:NIFTY...")}{input("put_symbol", "Put Symbol", "NFO:NIFTY...")}</div>;
+    }
+    if (templateKey === "technical_indicator_stack") {
+      return <div style={gridStyle}>{input("indicators", "Indicators", "VWAP, Volume, RSI")}</div>;
+    }
+    if (templateKey === "fundamental_ratio_dashboard") {
+      return <div style={gridStyle}>{input("fields", "Financial Fields", "TOTAL_REVENUE, NET_INCOME")}</div>;
+    }
+    if (templateKey === "market_regime_four_pane") {
+      return <div style={gridStyle}>{input("equity_index", "Equity Index", "NSE:NIFTY")}{input("volatility_index", "Volatility", "NSE:INDIAVIX")}{input("bond_yield", "Bond Yield", "TVC:IN10Y")}{input("currency", "Currency", "FX_IDC:USDINR")}</div>;
+    }
+    if (templateKey === "create_alert_request") {
+      return <div style={gridStyle}>{input("condition", "Alert Condition", "Crossing or indicator condition")}</div>;
+    }
+    return null;
+  }
+
+  function notify(title: string, tone: "ok" | "risk" | "warn", message?: string) {
+    pushToast({ title, tone, message, duration: 6000 });
+  }
+
+  function directOpen() {
+    if (!symbol.trim()) {
+      notify("Symbol required", "warn");
+      return;
+    }
+    openDesktop.mutate(
+      { symbol: symbol.trim().toUpperCase(), exchange, timeframe, actor: "Devarsh" },
+      {
+        onSuccess: (result) => {
+          setLastResult(result);
+          const status = text(result, "status");
+          const handedOff = status === "opened" || status === "handoff_requested";
+          notify(
+            handedOff ? "Sent to TradingView Desktop" : "Desktop action needs attention",
+            handedOff ? "ok" : "warn",
+            handedOff ? `${exchange}:${symbol.toUpperCase()} | ${timeframe}` : text(result, "fallback", text(result, "next_action"))
+          );
+        },
+        onError: (error) => notify("TradingView Desktop action failed", "risk", error.message),
+      }
+    );
+  }
+
+  function executeTemplate() {
+    if (!templateKey || !symbol.trim()) {
+      notify("Template and symbol required", "warn");
+      return;
+    }
+    runTemplate.mutate(
+      {
+        template_key: templateKey,
+        symbol: symbol.trim().toUpperCase(),
+        exchange,
+        timeframe,
+        parameters: templateParametersFor(templateKey),
+        actor: "Devarsh",
+      },
+      {
+        onSuccess: (result) => {
+          setLastResult(result);
+          const status = text(result, "status", text(result, "approval_status", "queued"));
+          const approval = status.includes("approval") || status.includes("pending");
+          notify(approval ? "Template queued for approval" : "Template dispatched", approval ? "warn" : "ok", templateKey);
+        },
+        onError: (error) => notify("Template dispatch failed", "risk", error.message),
+      }
+    );
+  }
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
-        <Panel icon={LineChart} title="TradingView Chart Actions">
-          {isLoading ? <SkeletonGrid rows={3} /> : tasks.length === 0 ? (
-            <Empty icon={LineChart} title="No chart tasks" description="Chart actions dispatched via the TradingView CDP bridge appear here." />
-          ) : (
-            <DataTable
-              columns={[
-                { key: "symbol", header: "Symbol", render: (r) => <strong>{text(r, "symbol")}</strong> },
-                { key: "action", header: "Action", render: (r) => text(r, "action_type", text(r, "chart_action", "—")) },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "complete")} /> },
-                { key: "when", header: "When", render: (r) => formatRelative(text(r, "executed_at", text(r, "created_at"))) },
-              ]}
-              rows={tasks}
-              rowKey={(r, i) => String(text(r, "task_id", text(r, "id", i)))}
-            />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+        <MetricTile tone={desktopRunning ? "ok" : desktopInstalled ? "warn" : "risk"}><Metric label="Desktop App" value={desktopRunning ? "Running" : desktopInstalled ? "Installed" : "Unavailable"} sub={text(desktopStatus, "version", "not detected")} /></MetricTile>
+        <MetricTile tone={desktopReady ? "ok" : desktopInstalled ? "warn" : "risk"}><Metric label="Native Handoff" value={desktopReady ? "Ready" : desktopInstalled ? "Manual" : "Unavailable"} sub={desktopMode.replace(/_/g, " ")} /></MetricTile>
+        <MetricTile tone={desktopInstalled ? "ok" : "warn"}><Metric label="Desktop Workspace" value="User Managed" sub="existing signed-in app session" /></MetricTile>
+        <MetricTile><Metric label="Broker Writes" value="Locked" sub="visual analysis only" /></MetricTile>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(300px, .75fr)", gap: "var(--space-4)", alignItems: "start" }}>
+        <Panel icon={LineChart} title="Chart Workspace" actions={<Button size="sm" variant="ghost" icon={Activity} disabled={desktop.isFetching} onClick={() => desktop.refetch()}>Refresh</Button>}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) 120px 120px", gap: "var(--space-3)" }}>
+            <Field label="Symbol"><TextInput value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="RELIANCE" /></Field>
+            <Field label="Exchange"><Select value={exchange} onChange={(event) => setExchange(event.target.value)}><option>NSE</option><option>BSE</option><option>NFO</option><option>MCX</option><option>BINANCE</option></Select></Field>
+            <Field label="Timeframe"><Select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}><option value="5">5 min</option><option value="15">15 min</option><option value="60">1 hour</option><option value="D">Daily</option><option value="W">Weekly</option><option value="M">Monthly</option></Select></Field>
+          </div>
+          {!desktopReady && text(desktopStatus, "next_action") && (
+            <div className="aios-inline-alert aios-inline-alert--warn" style={{ marginTop: "var(--space-3)" }}>
+              <AlertTriangle size={16} />
+              <span>{text(desktopStatus, "next_action")}</span>
+            </div>
           )}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
+            <Button variant="primary" icon={Play} disabled={busy || !desktopInstalled} onClick={directOpen}>{desktopReady ? (desktopRunning ? "Open in App" : "Launch & Open") : "Prepare App Link"}</Button>
+          </div>
         </Panel>
-        <Panel icon={LineChart} title="Pine Indicators / Templates">
-          {isLoading ? <SkeletonGrid rows={3} /> : templates.length === 0 ? (
-            <Empty icon={LineChart} title="No templates" description="Reusable Pine indicator templates and chart layouts." />
-          ) : (
-            <DataTable
-              columns={[
-                { key: "name", header: "Template", render: (r) => <strong>{text(r, "template_name", text(r, "name"))}</strong> },
-                { key: "indicators", header: "Indicators", align: "right", render: (r) => num(r, "indicator_count", 0) },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", "ready")} /> },
-              ]}
-              rows={templates}
-              rowKey={(r, i) => String(text(r, "template_id", text(r, "id", i)))}
-            />
+
+        <Panel icon={Target} title="Desktop App Templates">
+          <Field label="Template">
+            <Select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)}>
+              {templates.map((row) => {
+                const key = text(row, "template_key", text(row, "key"));
+                return <option key={key} value={key}>{text(row, "template_name", text(row, "name", key))}</option>;
+              })}
+            </Select>
+          </Field>
+          {templateParameterFields()}
+          <Button style={{ width: "100%", marginTop: "var(--space-3)" }} icon={Play} disabled={busy || !templateKey} onClick={executeTemplate}>Run Template</Button>
+          {lastResult && (
+            <div style={{ marginTop: "var(--space-4)" }}>
+              <KeyValue label="Status" value={text(lastResult, "status", "recorded")} />
+              <KeyValue label="Target" value={text(lastResult, "target_url", `${exchange}:${symbol}`)} />
+            </div>
           )}
         </Panel>
       </div>
+
+      <Panel icon={LineChart} title="TradingView Activity">
+        {isLoading ? <SkeletonGrid rows={4} /> : tasks.length === 0 ? (
+          <Empty icon={LineChart} title="No chart tasks" description="Open a chart or desktop template to create the first audited task." />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "task", header: "Task", render: (row) => <strong>{text(row, "task_title", text(row, "title"))}</strong> },
+              { key: "symbols", header: "Symbols", render: (row) => Array.isArray(row.symbols) ? row.symbols.join(", ") : text(row, "symbol", "-") },
+              { key: "type", header: "Mode", render: (row) => text(row, "task_type", "chart action").replace(/_/g, " ") },
+              { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", "queued")} /> },
+              { key: "when", header: "Updated", render: (row) => formatRelative(text(row, "updated_at", text(row, "created_at"))) },
+            ]}
+            rows={tasks}
+            rowKey={(row, index) => String(text(row, "task_id", text(row, "id", index)))}
+          />
+        )}
+      </Panel>
     </>
   );
 }
+
 
 /* ============================================================
  * ALPHA TRACKER — P&L attribution + edge decay
  * ============================================================ */
 function AlphaView() {
   const { data, isLoading } = useTradingQuantRisk();
-  const summary = data?.paper_trade_summary ?? [];
-
-  // Heuristic equity curve from trade activity
-  const equityCurve = React.useMemo(() => {
-    const trades = data?.trade_activity ?? [];
-    let cum = 0;
-    return trades.slice(-60).map((t, i) => {
-      cum += num(t, "pnl", 0);
-      return { label: `T${i}`, value: cum, pnl: num(t, "pnl", 0) };
-    });
-  }, [data?.trade_activity]);
+  const performance = data?.paper_monitor_performance ?? [];
+  const positions = data?.paper_positions ?? [];
+  const realized = performance.reduce((sum, row) => sum + num(row, "realized_pnl", 0), 0);
+  const unrealized = performance.reduce((sum, row) => sum + num(row, "unrealized_pnl", 0), 0);
+  const openCount = performance.reduce((sum, row) => sum + num(row, "positions_open", 0), 0);
+  const closedCount = performance.reduce((sum, row) => sum + num(row, "positions_closed", 0), 0);
+  const attribution = performance.map((row) => ({
+    name: text(row, "strategy_name", text(row, "candidate_key", "Strategy")),
+    realized: num(row, "realized_pnl", 0),
+    unrealized: num(row, "unrealized_pnl", 0),
+  }));
 
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--space-3)" }}>
-        <MetricTile>
-          <Metric label="Realized P&L" value={formatCurrency(equityCurve.length ? equityCurve[equityCurve.length - 1].value : 0)}
-            delta={equityCurve.length > 1 ? { value: formatCurrency(equityCurve[equityCurve.length - 1].value - equityCurve[0].value), direction: equityCurve[equityCurve.length - 1].value >= equityCurve[0].value ? "up" : "down" } : undefined} />
-        </MetricTile>
-        <MetricTile><Metric label="Win Rate" value={formatPercent(summary.length ? num(summary[0], "win_rate", 0) : 0, { alreadyPercent: true })} /></MetricTile>
-        <MetricTile><Metric label="Trades" value={data?.trade_activity?.length ?? 0} /></MetricTile>
-        <MetricTile><Metric label="Strategies" value={summary.length} /></MetricTile>
+        <MetricTile><Metric label="Paper Realized P&L" value={formatCurrency(realized)} /></MetricTile>
+        <MetricTile><Metric label="Paper Unrealized P&L" value={formatCurrency(unrealized)} /></MetricTile>
+        <MetricTile><Metric label="Open Positions" value={openCount} /></MetricTile>
+        <MetricTile><Metric label="Closed Positions" value={closedCount} /></MetricTile>
       </div>
 
-      <Panel icon={Target} title="Equity Curve (realized)">
-        {isLoading ? <Skeleton style={{ height: 240 }} /> : equityCurve.length === 0 ? (
-          <Empty icon={Target} title="No P&L data yet" description="Record trades to build your equity curve and track edge." />
+      <Panel icon={Target} title="Paper Strategy Attribution">
+        {isLoading ? <Skeleton style={{ height: 240 }} /> : attribution.length === 0 ? (
+          <Empty icon={Target} title="No evaluated paper positions" description="Approved paper monitors populate this view from canonical stored OHLCV." />
         ) : (
-          <AreaSeriesChart data={equityCurve} series={[{ key: "value", name: "Cumulative P&L" }]} xKey="label" height={260} yFormat={(v) => formatCompact(v)} />
+          <BarSeriesChart data={attribution} bars={[{ key: "realized", name: "Realized" }, { key: "unrealized", name: "Unrealized" }]} xKey="name" height={260} />
         )}
       </Panel>
 
-      <Panel icon={Target} title="Strategy Attribution">
-        {isLoading ? <SkeletonGrid rows={3} /> : summary.length === 0 ? (
-          <Empty icon={Target} title="No strategy attribution" />
+      <Panel icon={Activity} title="Paper Position Ledger">
+        {isLoading ? <SkeletonGrid rows={4} /> : positions.length === 0 ? (
+          <Empty icon={Activity} title="No paper positions" />
         ) : (
-          <BarSeriesChart
-            data={summary.map((s, i) => ({ name: text(s, "strategy_name", `S${i}`), value: num(s, "pnl", 0) }))}
-            bars={[{ key: "value", name: "P&L" }]}
-            xKey="name"
-            height={220}
+          <DataTable
+            columns={[
+              { key: "strategy", header: "Strategy", render: (row) => text(row, "strategy_name", text(row, "candidate_key")) },
+              { key: "symbol", header: "Symbol", render: (row) => <strong>{text(row, "symbol")}</strong> },
+              { key: "state", header: "State", render: (row) => <StatusPill status={text(row, "state", "open")} /> },
+              { key: "entry", header: "Entry", align: "right", render: (row) => formatCurrency(num(row, "entry_price", 0)) },
+              { key: "mark", header: "Latest Mark", align: "right", render: (row) => formatCurrency(num(row, "latest_mark_price", 0)) },
+              { key: "unrealized", header: "Unrealized", align: "right", render: (row) => formatCurrency(num(row, "unrealized_pnl", 0)) },
+              { key: "realized", header: "Realized", align: "right", render: (row) => formatCurrency(num(row, "realized_pnl", 0)) },
+              { key: "updated", header: "Updated", render: (row) => formatRelative(text(row, "latest_mark_ts", text(row, "updated_at"))) },
+            ]}
+            rows={positions}
+            rowKey={(row, index) => String(text(row, "id", index))}
           />
         )}
       </Panel>
@@ -383,25 +610,25 @@ function SignalsView() {
 function ExecutionView() {
   const { data, isLoading } = useTradingQuantRisk();
   const controls = data?.execution_control ?? [];
-  const killSwitch = controls.find((r) => String(text(r, "control_key", text(r, "kind"))).includes("kill_switch"));
-  const armed = killSwitch && String(text(killSwitch, "status", text(killSwitch, "state"))).toLowerCase().includes("armed");
+  const control = controls[0];
+  const globalLiveLocked = !control || bool(control, "global_execution_locked", true) || !bool(control, "live_broker_writes_allowed", false);
+  const paperAllowed = Boolean(control && bool(control, "paper_trading_allowed", false));
   const limitedLive = data?.limited_live_requests ?? [];
   const orderIntents = data?.order_intents ?? [];
 
   return (
     <>
-      {/* Kill-switch — prominent */}
-      <Panel variant={armed ? "risk" : "default"} icon={ShieldCheck} title="Global Kill-Switch"
-        actions={armed ? <Badge tone="risk" dot pulse>ARMED</Badge> : <Badge tone="ok" dot>SAFE</Badge>}
+      <Panel variant={globalLiveLocked ? "warn" : "risk"} icon={ShieldCheck} title="Execution Authority"
+        actions={globalLiveLocked ? <Badge tone="warn" dot>GLOBAL LIVE WRITES LOCKED</Badge> : <Badge tone="risk" dot pulse>STAGED LIVE AUTHORITY PRESENT</Badge>}
       >
         <div style={{ padding: "var(--space-4)" }}>
           <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: "var(--space-3)" }}>
-            {armed
-              ? "🛑 Kill-switch is ARMED. All automated trading is halted. No new orders will be placed until you disengage it."
-              : "Kill-switch is safe. Automated trading systems (when enabled) can operate within approved limits."}
+            {globalLiveLocked
+              ? `Global live broker writes are locked. Research, drafts, and ${paperAllowed ? "paper trading" : "paper requests"} may continue only within their own controls; AI OS cannot send a live order.`
+              : "A limited-live authority record is present. Every specific order still requires independent risk gates and explicit human confirmation; this page does not execute orders."}
           </div>
           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
-            Engaging the kill-switch requires explicit confirmation and is audit-logged. Disengaging requires governance review.
+            Progression remains read-only → research/report → draft → paper → staged live → explicit human confirmation. Every authority change is audit-logged.
           </div>
         </div>
       </Panel>

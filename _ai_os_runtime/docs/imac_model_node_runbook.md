@@ -1,66 +1,132 @@
-# iMac M1 8GB Local Model Node
+# iMac AI OS Node Runbook
 
 ## Role
 
-The iMac is the nearly-always-on deterministic worker. It owns public ingestion,
-scheduling, alerts, rule-based classification, and public research retrieval. It does not become the
-authoritative writer for client portfolios, private journals, orders, or approvals.
+The M1 iMac is the nearly-always-on backend, durable storage host, embedding node, schedulers host, and promotion-gated compact conversation fallback. The MacBook is the portable operator workstation and stronger local conversation node.
+
+Power or network downtime is tolerated. Durable queues, PostgreSQL, Qdrant, and scheduled collectors resume when the iMac returns.
 
 ## Storage
 
-Use a separate external SSD named `AI OS iMac`. The Devarsh SSD cannot be attached to
-the MacBook and iMac simultaneously, and SQLite/Qdrant files must not be network-mounted
-between writers.
+Canonical external storage:
 
-Expected model path:
-
-`/Volumes/AI OS iMac/ollama/models`
-
-The iMac keeps disposable public indexes and an encrypted read-only private snapshot.
-The MacBook plus Devarsh SSD remain authoritative for client-private data.
-
-## Installation
-
-1. Install current Ollama on the iMac.
-2. Copy or clone the AI OS repository to the iMac.
-3. Attach the dedicated SSD and confirm it is mounted as `AI OS iMac`.
-4. Run:
-
-```bash
-cd /path/to/ai-investment-os
-bash _ai_os_runtime/scripts/setup_imac_model_node.sh
+```text
+/Volumes/Devarsh SSD/
+  Obsidian memory/
+  AI OS Data/
+    postgres/
+    qdrant/
+    ollama/models/
+    models/
+    caches/
+    backups/
+    research-inbox/
 ```
 
-5. Start Ollama with these fixed bounds:
+Application code and recoverable service packaging may stay on internal storage. Databases, model artifacts, document corpora, caches, and backups stay on `/Volumes/Devarsh SSD`.
 
-```bash
-AI_OS_OLLAMA_MODELS="/Volumes/AI OS iMac/ollama/models" \
-OLLAMA_NUM_PARALLEL=1 OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=5m \
-bash _ai_os_runtime/scripts/start_ollama_foreground.sh
+The SSD should remain attached to the iMac. It is not a single copy: scheduled backups and the Git remote protect recoverable state.
+
+## Network
+
+- Tailscale provides private reachability.
+- Standard macOS Remote Login provides SSH.
+- PostgreSQL, Qdrant, Ollama, and local model endpoints remain loopback or Tailscale scoped.
+- Do not expose database, model, or broker endpoints directly to the public internet.
+
+## Install And Upgrade
+
+1. Mount `/Volumes/Devarsh SSD`.
+2. Run `deploy/imac-backend/INSTALL_ON_IMAC.command`.
+3. Populate the runtime environment from `deploy/imac-backend/imac.env.example`.
+4. Run migrations through 179.
+5. Start or restart through the installed supervisor.
+6. Verify authenticated API workflows, not only HTTP health.
+7. Confirm broker execution remains locked.
+
+Useful entry points:
+
+```text
+deploy/imac-backend/bin/aios-imac
+deploy/imac-backend/bin/supervisor.sh
+scripts/install_zerodha_stream_imac.sh
+scripts/setup_imac_nanbeige42_assistant.sh
+scripts/setup_imac_model_node.sh
 ```
 
-6. Apply database migrations `143_local_model_fleet_truth_evals_v1.sql` and
-`148_deterministic_always_on_route.sql` to the iMac's
-public-worker database, then run:
+## Model Services
 
-```bash
-python3 _ai_os_runtime/scripts/run_local_model_evals.py \
-  --model qwen3-embedding:0.6b --persist --promote
-```
+Only one compact generative model should be resident on the 8 GB iMac at a time.
 
-## Operating Limits
+### Embeddings
 
-- No generative model is approved on the 8GB iMac; weak small-model output must not enter the evidence ledger.
-- One embedding request at a time.
-- Default context 8K; do not expose the advertised 256K context on an 8GB machine.
-- Do not install Qwen3.5 9B, Gemma 4, Bonsai 27B, Docker Desktop, or rented-GPU clients on this node.
-- Unload models after idle periods; run embedding batches outside chat bursts.
-- Bind services to loopback. Add Tailscale later; never expose Ollama directly to the public internet.
-- Queue writes while the MacBook is offline and label dashboard snapshots with their as-of time.
-- Use a UPS for the iMac, router, and SSD. A cloud relay may carry heartbeat and public alerts only.
+- Runtime: Ollama.
+- Model: `qwen3-embedding:0.6b`.
+- Storage: `/Volumes/Devarsh SSD/AI OS Data/ollama/models`.
+- Purpose: Qdrant indexing and retrieval.
+- It has no chat, investment, capital, or execution authority.
 
-## Acceptance Checks
+### Nanbeige Candidate
 
-The node is usable only when the exact embedding model is installed, retrieval_v1 passes with
-zero hard failures, no client-private data is present, the SSD guard passes, and restart
-testing proves the queue resumes without duplicate work.
+- Model: `nanbeige/nanbeige4.2:3b-Q4_K_M`.
+- Runtime: pinned isolated Nanbeige llama.cpp revision.
+- Endpoint: loopback OpenAI-compatible API.
+- Storage: `/Volumes/Devarsh SSD/AI OS Data/models/nanbeige42-runtime`.
+- Purpose: conversation intake, governed tool selection, business-review drafts, and deck outlines.
+- It is assignable only after the exact model and runtime revisions pass `conversation_v1` and the endpoint is healthy.
+
+### Qwen 2B Candidate
+
+- Model: `mlx-community/Qwen3.5-2B-4bit`.
+- Purpose: secondary compact private conversation fallback.
+- It is subject to the same exact-revision evaluation and endpoint-health gates.
+
+Do not call either candidate active merely because its files exist.
+
+## Promotion Procedure
+
+1. Verify the pinned model and runtime digests.
+2. Start the endpoint on loopback.
+3. Run the local model evaluation suite.
+4. Require `conversation_v1` score at least 0.8 with no hard failures.
+5. Record endpoint health.
+6. Mark the registry row approved only after review.
+7. Call `agent.activate_final_local_model_fleet()`.
+8. Confirm the live assignment and fallback route from PostgreSQL.
+9. Run a natural Charlie conversation, tool-intake, retrieval, and durable delegation test.
+10. Confirm no private prompt enters cloud audit rows.
+
+## Always-On Workloads
+
+The iMac supervisor owns:
+
+- API and frontend.
+- PostgreSQL and Qdrant.
+- Jarvis mailbox and graph workers.
+- Zerodha read-only sync and live stream.
+- Canonical OHLCV aggregation.
+- News, filings, market calendar, and research-hub indexing.
+- Scheduled reports, source freshness, and backups.
+
+TradingView Desktop remains user managed. No managed TradingView browser or CDP runtime is started. The TradingView public quote scanner is off by default.
+
+## Recovery Checks
+
+After restart:
+
+1. SSD is mounted at the exact canonical path.
+2. Containers and supervisor are healthy.
+3. PostgreSQL and Qdrant volumes resolve to the SSD.
+4. Zerodha session status is validated against the broker profile.
+5. Live tick heartbeat and canonical OHLCV freshness advance.
+6. News, filings, calendar, and research index heartbeats advance.
+7. Charlie can converse, retrieve evidence, and queue work.
+8. Broker writes and live execution remain disabled.
+
+## Operational Boundaries
+
+- Local models may handle private conversation but cannot calculate or approve investments.
+- Cloud routes never receive client-private data.
+- Live trading is human gated.
+- A stopped or degraded feed must be shown as degraded; stale data must not be presented as live.
+- Runtime health in PostgreSQL is authoritative over static configuration files.

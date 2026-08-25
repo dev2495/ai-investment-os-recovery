@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -120,6 +121,18 @@ def post_api_json(path: str, payload: dict, timeout: float = 60.0) -> dict:
         raise RuntimeError(f"API {path} failed with HTTP {exc.code}: {body}") from exc
 
 
+def get_api_json(path: str, query: dict[str, object] | None = None, timeout: float = 60.0) -> dict:
+    encoded = urllib.parse.urlencode({key: value for key, value in (query or {}).items() if value not in (None, "")})
+    url = f"{API_BASE_URL}{path}" + (f"?{encoded}" if encoded else "")
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"API {path} failed with HTTP {exc.code}: {body}") from exc
+
+
 def limit_arg(arguments: dict, default: int = 25, maximum: int = 200) -> int:
     try:
         value = int(arguments.get("limit", default))
@@ -162,6 +175,17 @@ def materialize_agent_schedules(arguments: dict) -> dict:
         "limit": limit_arg(arguments, default=10, maximum=50),
     }
     return tool_result(post_api_json("/api/agents/schedules/run", payload))
+
+
+def calibrate_kronos_forecast(arguments: dict) -> dict:
+    forecast_run_id = arguments.get("forecast_run_id")
+    if forecast_run_id is None:
+        raise ValueError("forecast_run_id is required")
+    payload = {
+        "forecast_run_id": int(forecast_run_id),
+        "actor": str(arguments.get("actor") or "Model Validation Agent"),
+    }
+    return tool_result(post_api_json("/api/kronos/forecasts/calibrate", payload, timeout=180.0))
 
 
 def list_open_tasks(arguments: dict) -> dict:
@@ -3500,8 +3524,8 @@ def execute_tradingview_chart_action(arguments: dict) -> dict:
     result = post_api_json("/api/tradingview/chart-actions", arguments, timeout=75.0)
     audit_mcp_call(
         tool_name="ai_os_execute_tradingview_chart_action",
-        action_type="execute_tradingview_chart_action",
-        permission_level="browser_capture",
+        action_type="open_tradingview_desktop_chart",
+        permission_level="native_desktop_handoff",
         actor=str(arguments.get("actor") or arguments.get("requested_by") or "Trading Desk Agent"),
         target_table="ops.tradingview_tasks",
         target_id=result.get("id") if isinstance(result, dict) else None,
@@ -4296,6 +4320,193 @@ def run_institutional_portfolio_risk(arguments: dict) -> dict:
     }
     result = post_api_json("/api/risk/institutional/run", payload, timeout=320)
     return tool_result(result)
+
+
+def sync_fundamental_company_intake(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("symbol", "actor")
+        if key in arguments
+    }
+    payload.update({
+        "capital_action_allowed": False,
+        "broker_write_allowed": False,
+    })
+    return tool_result(post_api_json("/api/research/fundamental-intake/sync", payload, timeout=180))
+
+
+def run_institutional_fundamental_factory(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("company_id", "company_key", "symbol", "exchange", "as_of", "actor", "run_key", "dry_run")
+        if key in arguments
+    }
+    payload.update({
+        "paper_only": True,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+    })
+    return tool_result(post_api_json("/api/research/fundamental-factory/run", payload, timeout=620))
+
+
+def run_sector_intelligence_engine(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("index_id", "index_key", "as_of_date", "horizon", "actor", "run_key", "dry_run")
+        if key in arguments
+    }
+    payload.update({
+        "paper_only": True,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+        "tradingview_artifacts_only": True,
+    })
+    return tool_result(post_api_json("/api/sector-intelligence/run", payload, timeout=620))
+
+
+def sync_sector_fundamentals(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Fundamental Analyst")
+    payload.setdefault("persist", True)
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/fundamentals/sync", payload, timeout=320))
+
+
+def sync_sector_ownership_flows(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "lookback_days", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Flow And Ownership Analyst")
+    payload.setdefault("lookback_days", 365)
+    payload.setdefault("persist", True)
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/ownership-flows/sync", payload, timeout=920))
+
+
+def build_sector_underwrite(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_key", "as_of_date", "actor", "persist")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Portfolio Manager")
+    payload.setdefault("persist", True)
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/underwrite/build", payload, timeout=1220))
+
+
+def run_sector_acceptance(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("taxonomy_node_id", "taxonomy_key", "as_of_date", "run_key", "actor")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Sector Portfolio Manager")
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["broker_write_allowed"] = False
+    payload["capital_action_allowed"] = False
+    return tool_result(post_api_json("/api/sector-intelligence/acceptance/run", payload, timeout=180))
+
+
+def run_institutional_options_engine(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in (
+            "underlying", "exchange", "expiry_date", "as_of", "model", "max_age_seconds",
+            "max_spread_bps", "min_open_interest", "min_volume", "actor", "run_key",
+        )
+        if key in arguments
+    }
+    payload.update({
+        "paper_only": True,
+        "live_execution_allowed": False,
+        "capital_action_allowed": False,
+    })
+    return tool_result(post_api_json("/api/options/institutional-analytics/run", payload, timeout=620))
+
+
+def run_option_acceptance(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("exchange", "underlying", "expiry_date", "window_start", "window_end", "run_key", "actor")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Options Data Quality Agent")
+    payload["paper_only"] = True
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/options/institutional-analytics/acceptance/run", payload, timeout=180))
+
+
+def run_office_operability_acceptance(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in ("run_key", "actor")
+        if key in arguments
+    }
+    payload.setdefault("actor", "Jarvis")
+    payload["live_execution_allowed"] = False
+    payload["capital_action_allowed"] = False
+    payload["broker_write_allowed"] = False
+    return tool_result(post_api_json("/api/office/operability/acceptance/run", payload, timeout=180))
+
+
+def materialize_institutional_options(arguments: dict) -> dict:
+    payload = {
+        "limit": arguments.get("limit") or 20,
+        "interval_seconds": arguments.get("interval_seconds") or 300,
+        "actor": arguments.get("actor") or "Options Data Quality Agent",
+    }
+    return tool_result(post_api_json("/api/options/institutional-analytics/materialize", payload, timeout=320))
+
+
+def refresh_option_valuation_sources(arguments: dict) -> dict:
+    payload = {
+        "sources": arguments.get("sources") or ["rate", "dividends"],
+        "actor": arguments.get("actor") or "Options Data Quality Agent",
+        "broker_write_allowed": False,
+        "capital_action_allowed": False,
+    }
+    return tool_result(post_api_json("/api/options/valuation-sources/refresh", payload, timeout=200))
+
+
+def upsert_option_valuation_policy(arguments: dict) -> dict:
+    payload = {
+        key: arguments[key]
+        for key in (
+            "policy_key", "provider", "exchange", "underlying", "model_family", "risk_free_rate",
+            "dividend_yield", "rate_observation_id", "dividend_observation_id",
+            "effective_from", "expires_at", "operator_confirmed",
+            "day_count_convention", "expiry_local_time", "expiry_timezone", "assumptions", "actor",
+        )
+        if key in arguments
+    }
+    payload.setdefault("actor", "Options Data Quality Agent")
+    payload["broker_write_allowed"] = False
+    payload["capital_action_allowed"] = False
+    return tool_result(post_api_json("/api/options/valuation-policy/upsert", payload, timeout=120))
+
+
+def import_sector_intelligence_package(arguments: dict) -> dict:
+    payload = {
+        "package": arguments.get("package"),
+        "persist": arguments.get("persist") is True,
+        "actor": arguments.get("actor") or "Sector Data Steward",
+    }
+    return tool_result(post_api_json("/api/sector-intelligence/import", payload, timeout=320))
 
 
 def institutional_portfolio_risk(arguments: dict) -> dict:
@@ -5771,7 +5982,380 @@ def run_scheduled_reports(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/reports/run", arguments, timeout=620.0))
 
 
+def research_knowledge(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/research/knowledge", {
+        "q": arguments.get("query") or "",
+        "node_type": arguments.get("node_type") or "",
+        "cursor": arguments.get("cursor") or 0,
+        "limit": limit_arg(arguments, default=30, maximum=100),
+    }))
+
+
+def research_following(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/research/following", {
+        "cursor": arguments.get("cursor") or 0,
+        "limit": limit_arg(arguments, default=30, maximum=100),
+    }))
+
+
+def follow_research_source(arguments: dict) -> dict:
+    if arguments.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true after the public source plan is reviewed")
+    return tool_result(post_api_json("/api/research/following", arguments, timeout=60.0))
+
+
+def refresh_followed_research_source(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/research/following/refresh", arguments, timeout=180.0))
+
+
+def fundamental_scanners(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/fundamental-scanners", {
+        "cursor": arguments.get("cursor") or 0,
+        "limit": limit_arg(arguments, default=25, maximum=100),
+    }))
+
+
+def create_fundamental_scanner_from_text(arguments: dict) -> dict:
+    return tool_result(post_api_json("/api/fundamental-scanners/from-natural-language", arguments))
+
+
+def fundamental_scanner_action(arguments: dict) -> dict:
+    scanner_id = int(arguments.get("scanner_id") or 0)
+    action = str(arguments.get("action") or "").strip().lower()
+    if scanner_id <= 0:
+        raise ValueError("scanner_id is required")
+    if action not in {"validate", "publish-request", "publish", "run"}:
+        raise ValueError("action must be validate, publish-request, publish, or run")
+    payload = {key: value for key, value in arguments.items() if key not in {"scanner_id", "action"}}
+    return tool_result(post_api_json(f"/api/fundamental-scanners/{scanner_id}/{action}", payload, timeout=180.0))
+
+
 TOOLS = {
+    "ai_os_research_knowledge": {
+        "description": "Search the owner-scoped local Research Desk knowledge graph and indexed Obsidian notes. Read-only; returns bounded nodes, edges, notes and unresolved links without private-data egress.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "query": {"type": "string", "maxLength": 240},
+            "node_type": {"type": "string", "maxLength": 80},
+            "cursor": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}
+        }},
+        "handler": research_knowledge,
+    },
+    "ai_os_research_following": {
+        "description": "Read the owner-scoped Research Following catalog, bounded feed, idea inbox and quarantined items. No fetch or external write occurs.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "cursor": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}
+        }},
+        "handler": research_following,
+    },
+    "ai_os_follow_research_source": {
+        "description": "After explicit operator confirmation, register one public HTTPS RSS or Atom source for bounded metadata/permitted-excerpt following. Never accepts credentials, never sends messages, and never enables broker or capital actions.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "feed_name": {"type": "string", "minLength": 3, "maxLength": 120},
+            "provider": {"type": "string", "maxLength": 120},
+            "url": {"type": "string", "pattern": "^https://"},
+            "topics": {"type": "array", "items": {"type": "string", "maxLength": 40}, "maxItems": 12},
+            "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"], "default": "normal"},
+            "followed_reason": {"type": "string", "maxLength": 500},
+            "refresh_minutes": {"type": "integer", "minimum": 15, "maximum": 10080, "default": 60},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["feed_name", "url", "operator_confirmed"]},
+        "handler": follow_research_source,
+    },
+    "ai_os_refresh_followed_research_source": {
+        "description": "Run one bounded refresh for an already active, operator-approved public source. It stores metadata/permitted excerpts locally, quarantines prompt-injection patterns and cannot mutate broker/client/external systems.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "followed_source_id": {"type": "integer", "minimum": 1},
+            "per_feed": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+            "timeout": {"type": "integer", "minimum": 5, "maximum": 30, "default": 12}
+        }, "required": ["followed_source_id"]},
+        "handler": refresh_followed_research_source,
+    },
+    "ai_os_fundamental_scanners": {
+        "description": "List bounded deterministic Research Desk scanner definitions, versions, validation state and run counts. Read-only.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "cursor": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
+        }},
+        "handler": fundamental_scanners,
+    },
+    "ai_os_create_fundamental_scanner_draft": {
+        "description": "Convert a plain-English fundamental screen into an allowlisted deterministic draft. Unsupported requirements remain explicit; this does not validate, publish, schedule or run it.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "instruction": {"type": "string", "minLength": 12, "maxLength": 2000},
+            "name": {"type": "string", "minLength": 3, "maxLength": 140}
+        }, "required": ["instruction"]},
+        "handler": create_fundamental_scanner_from_text,
+    },
+    "ai_os_fundamental_scanner_action": {
+        "description": "Validate, request publication, publish with a matching approved approval id, or run a published deterministic scanner. Every output remains research-only with broker_write_allowed=false.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "scanner_id": {"type": "integer", "minimum": 1},
+            "action": {"type": "string", "enum": ["validate", "publish-request", "publish", "run"]},
+            "approval_id": {"type": "integer", "minimum": 1},
+            "as_of_at": {"type": "string", "format": "date-time"}
+        }, "required": ["scanner_id", "action"]},
+        "handler": fundamental_scanner_action,
+    },
+    "ai_os_sync_fundamental_company_intake": {
+        "description": "Synchronize real NSE/BSE portfolio holdings into the institutional company master and link official exchange filings as evidence. It never fabricates financial facts, scores, recommendations, capital actions, or broker orders.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "symbol": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Fundamental Research Factory"},
+            },
+        },
+        "handler": sync_fundamental_company_intake,
+    },
+    "ai_os_run_institutional_fundamental_factory": {
+        "description": "Run the evidence-first institutional fundamental research factory for one real company at a point-in-time cutoff. Produces a versioned research dossier and acceptance evidence only; it is paper-only and cannot execute trades or authorize capital actions.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "company_id": {"type": "integer", "minimum": 1},
+                "company_key": {"type": "string", "minLength": 1, "maxLength": 120},
+                "symbol": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "exchange": {"type": "string", "enum": ["NSE", "BSE"]},
+                "as_of": {"type": "string", "format": "date-time"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Fundamental Research Director"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "dry_run": {"type": "boolean", "default": True},
+            },
+            "required": ["as_of"],
+            "oneOf": [
+                {"required": ["company_id"]},
+                {"required": ["company_key"]},
+                {"required": ["symbol"]},
+            ],
+        },
+        "handler": run_institutional_fundamental_factory,
+    },
+    "ai_os_run_sector_intelligence_engine": {
+        "description": "Run evidence-first, point-in-time sector and custom-index calculations from governed warehouse inputs. Generates research, index history, rankings, and TradingView chart artifacts only; it is paper-only and has no broker execution or capital authority.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "index_id": {"type": "integer", "minimum": 1},
+                "index_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,120}$"},
+                "as_of_date": {"type": "string", "format": "date"},
+                "horizon": {"type": "string", "enum": ["1D", "1W", "1M", "3M", "6M", "1Y", "cycle"]},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "dry_run": {"type": "boolean", "default": True},
+            },
+            "required": ["as_of_date"],
+            "oneOf": [
+                {"required": ["index_id"]},
+                {"required": ["index_key"]},
+            ],
+        },
+        "handler": run_sector_intelligence_engine,
+    },
+    "ai_os_sync_sector_fundamentals": {
+        "description": "Publish latest available audited consolidated company facts into comparable sector metrics with official source lineage and point-in-time valuation. It never backdates evidence and cannot authorize capital or broker execution.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Fundamental Analyst"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": sync_sector_fundamentals,
+    },
+    "ai_os_sync_sector_ownership_flows": {
+        "description": "Collect official NSE corporate shareholding filings and constituent-level bulk/block deals for one active sector. Raw responses and hashes are retained; investor type is not guessed from names. No capital or broker execution is available.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "lookback_days": {"type": "integer", "minimum": 1, "maximum": 366, "default": 365},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Flow And Ownership Analyst"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": sync_sector_ownership_flows,
+    },
+    "ai_os_build_sector_underwrite": {
+        "description": "Build a paper-only institutional sector underwrite from official ten-year point-in-time valuation history, stored fundamentals, ownership, flows and portfolio evidence. It records independent dissent and evidence gaps and cannot authorize capital, execution, or broker orders.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+                "persist": {"type": "boolean", "default": True},
+            },
+            "required": ["taxonomy_key", "as_of_date"],
+        },
+        "handler": build_sector_underwrite,
+    },
+    "ai_os_calibrate_kronos_forecast": {
+        "description": "Score one completed Kronos forecast against canonical realized OHLCV. The result is model-risk evidence only and cannot promote a strategy, allocate capital, or create a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "forecast_run_id": {"type": "integer", "minimum": 1},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Model Validation Agent"},
+            },
+            "required": ["forecast_run_id"],
+        },
+        "handler": calibrate_kronos_forecast,
+    },
+    "ai_os_run_sector_acceptance": {
+        "description": "Evaluate and persist the ten real-sector institutional acceptance gates for one active Indian sector at a point-in-time cutoff. This is paper-only and records evidence and blockers; it cannot authorize capital, execution, or a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "taxonomy_node_id": {"type": "integer", "minimum": 1},
+                "taxonomy_key": {"type": "string", "minLength": 1, "maxLength": 160},
+                "as_of_date": {"type": "string", "format": "date"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Sector Portfolio Manager"},
+            },
+            "required": ["as_of_date"],
+            "oneOf": [
+                {"required": ["taxonomy_node_id"]},
+                {"required": ["taxonomy_key"]},
+            ],
+        },
+        "handler": run_sector_acceptance,
+    },
+    "ai_os_run_institutional_options_engine": {
+        "description": "Run evidence-first institutional options analytics for one underlying and expiry using validated quotes, liquidity filters, IV, Greeks, structures, and replay controls. Analysis is paper-only with no execution; this tool cannot place, modify, or authorize any order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "underlying": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "exchange": {"type": "string", "enum": ["NFO", "BFO"]},
+                "expiry_date": {"type": "string", "format": "date"},
+                "as_of": {"type": "string", "format": "date-time"},
+                "model": {"type": "string", "enum": ["black_scholes_merton", "black_76"], "default": "black_scholes_merton"},
+                "max_age_seconds": {"type": "integer", "minimum": 1, "maximum": 900, "default": 120},
+                "max_spread_bps": {"type": "number", "minimum": 1, "maximum": 5000, "default": 500},
+                "min_open_interest": {"type": "number", "minimum": 0, "maximum": 1000000000, "default": 1},
+                "min_volume": {"type": "number", "minimum": 0, "maximum": 1000000000, "default": 0},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Options Specialist"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+            },
+            "required": ["underlying", "exchange", "expiry_date", "as_of"],
+        },
+        "handler": run_institutional_options_engine,
+    },
+    "ai_os_run_option_acceptance": {
+        "description": "Evaluate and persist institutional options acceptance for one source-backed underlying, expiry, and multi-minute window. The tool is paper-only and cannot authorize capital, execution, or a broker order.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "exchange": {"type": "string", "enum": ["NFO", "BFO"]},
+                "underlying": {"type": "string", "pattern": "^[A-Za-z0-9._&-]{1,40}$"},
+                "expiry_date": {"type": "string", "format": "date"},
+                "window_start": {"type": "string", "format": "date-time"},
+                "window_end": {"type": "string", "format": "date-time"},
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Options Data Quality Agent"},
+            },
+            "required": ["exchange", "underlying", "expiry_date", "window_start", "window_end"],
+        },
+        "handler": run_option_acceptance,
+    },
+    "ai_os_run_office_operability_acceptance": {
+        "description": "Evaluate every active AI Office employee and department for real structure, tools, model route, bounded worker proof, evidence output, and durable handoffs. This read-and-audit tool cannot authorize capital or broker execution.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "run_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120, "default": "Jarvis"},
+            },
+        },
+        "handler": run_office_operability_acceptance,
+    },
+    "ai_os_materialize_institutional_options": {
+        "description": "Materialize source-backed Zerodha option snapshots into immutable point-in-time institutional batches and calculate analytics only when a validated valuation policy exists. Paper-only; no order path.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                "interval_seconds": {"type": "integer", "minimum": 60, "maximum": 3600, "default": 300},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        "handler": materialize_institutional_options,
+    },
+    "ai_os_upsert_option_valuation_policy": {
+        "description": "Record a human-validated, source-evidenced and expiring rate/dividend policy for deterministic option analytics. This enables calculations only and never capital action.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "policy_key": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,160}$"},
+                "provider": {"type": "string", "minLength": 1},
+                "exchange": {"type": "string", "enum": ["NFO", "BFO", "NSE", "BSE"]},
+                "underlying": {"type": "string", "minLength": 1},
+                "model_family": {"type": "string", "enum": ["black_scholes_merton", "black_76"]},
+                "risk_free_rate": {"type": "number", "minimum": -0.2, "maximum": 1},
+                "dividend_yield": {"type": "number", "minimum": -0.2, "maximum": 1},
+                "rate_observation_id": {"type": "integer", "minimum": 1},
+                "dividend_observation_id": {"type": "integer", "minimum": 1},
+                "effective_from": {"type": "string", "format": "date-time"},
+                "expires_at": {"type": "string", "format": "date-time"},
+                "operator_confirmed": {"type": "boolean", "const": True},
+                "day_count_convention": {"type": "string", "default": "ACT/365F"},
+                "expiry_local_time": {"type": "string", "default": "15:30:00"},
+                "expiry_timezone": {"type": "string", "default": "Asia/Kolkata"},
+                "assumptions": {"type": "object"},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+            "required": ["policy_key", "provider", "exchange", "underlying", "risk_free_rate",
+                         "dividend_yield", "rate_observation_id", "dividend_observation_id",
+                         "effective_from", "expires_at", "operator_confirmed"],
+        },
+        "handler": upsert_option_valuation_policy,
+    },
+    "ai_os_refresh_option_valuation_sources": {
+        "description": "Collect official read-only rate and index dividend-yield evidence as review candidates. This never activates a policy or permits execution.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "sources": {"type": "array", "items": {"type": "string", "enum": ["rate", "dividends"]}, "minItems": 1, "uniqueItems": True},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        "handler": refresh_option_valuation_sources,
+    },
+    "ai_os_import_sector_intelligence_package": {
+        "description": "Validate or atomically import an evidence-backed licensed export or primary-source sector package containing taxonomy, memberships, metrics and custom indices.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "package": {"type": "object"},
+                "persist": {"type": "boolean", "default": False},
+                "actor": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+            "required": ["package"],
+        },
+        "handler": import_sector_intelligence_package,
+    },
     "ai_os_report_scheduler_status": {
         "description": "Read report cadence, due state, latest launchd proof, scheduler invocation history, failures, and generated-run linkage.",
         "inputSchema": {
@@ -7018,7 +7602,7 @@ TOOLS = {
         "handler": update_tradingview_task,
     },
     "ai_os_execute_tradingview_chart_action": {
-        "description": "Open a TradingView chart through local CDP, capture a screenshot artifact, and update the TradingView task. This does not place trades.",
+        "description": "Open one or more charts in the user's logged-in TradingView Desktop app and update the governed task. This never starts a separate browser, does not claim screenshot capture, and cannot place trades.",
         "inputSchema": {
             "type": "object",
             "properties": {

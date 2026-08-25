@@ -13,12 +13,11 @@ from typing import Any
 
 from run_strategy_backtest import run_psql_json, sql_jsonb, sql_literal
 from run_trade_journal_strategy_mining import sql_text_array
+from governed_pdf_runtime import governed_pdf_python
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).absolute().parents[1])
 VAULT_ROOT = Path(os.environ.get("AI_OS_VAULT_ROOT") or RUNTIME_ROOT.parent)
-DEFAULT_PDF_PYTHON = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-PDF_PYTHON = os.environ.get("AI_OS_PDF_PYTHON") or (str(DEFAULT_PDF_PYTHON) if DEFAULT_PDF_PYTHON.exists() else sys.executable)
 
 
 def fetch_json(sql: str) -> list[dict[str, Any]]:
@@ -144,7 +143,7 @@ def run_filings_adapter(args: argparse.Namespace) -> dict[str, Any]:
 
 def run_filing_extraction_adapter(args: argparse.Namespace) -> dict[str, Any]:
     command = [
-        PDF_PYTHON,
+        governed_pdf_python(verify_import=True),
         str(RUNTIME_ROOT / "scripts" / "extract_filing_pdfs.py"),
         "--limit",
         str(args.filing_extraction_limit),

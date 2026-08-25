@@ -2,7 +2,8 @@
 set -euo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export AI_OS_RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-/Users/devarshthakkar/AI_OS_NODE/ai-investment-os/_ai_os_runtime}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export AI_OS_RUNTIME_ROOT="${AI_OS_RUNTIME_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 export AI_OS_ZERODHA_STREAM_VENV="${AI_OS_ZERODHA_STREAM_VENV:-${HOME}/Library/Application Support/AIOS/venvs/zerodha-stream}"
 export AI_OS_ZERODHA_MINUTE_RETENTION_DAYS="${AI_OS_ZERODHA_MINUTE_RETENTION_DAYS:-45}"
 export AI_OS_ZERODHA_STREAM_FLUSH_SECONDS="${AI_OS_ZERODHA_STREAM_FLUSH_SECONDS:-2}"

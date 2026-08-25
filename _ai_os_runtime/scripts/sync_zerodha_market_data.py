@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from sync_zerodha_read_only import BASE_URL, keychain_token, psql, request_json, sql_literal
 
@@ -26,6 +27,24 @@ INDEX_IDENTIFIERS = {
     "SENSEX": "BSE:SENSEX",
 }
 VALID_INTERVALS = {"minute", "3minute", "5minute", "10minute", "15minute", "30minute", "60minute", "day"}
+ZERODHA_MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def canonical_instrument_type(exchange: str, broker_type: object, segment: object = None) -> str:
+    """Map Zerodha instrument labels onto the warehouse security taxonomy."""
+    value = str(broker_type or "").strip().upper()
+    segment_value = str(segment or "").strip().upper()
+    if segment_value in {"INDICES", "NSE-INDICES", "BSE-INDICES"}:
+        return "index"
+    if value in {"EQ", "BE", "BZ", "SM", "ST"}:
+        return "equity"
+    if value in {"CE", "PE"}:
+        return "option"
+    if value == "FUT":
+        return "future"
+    if value in {"INDEX", "INDICES"}:
+        return "index"
+    return value.lower() or ("equity" if exchange.upper() in {"NSE", "BSE"} else "unknown")
 
 
 def as_number(value: object) -> str:
@@ -35,6 +54,14 @@ def as_number(value: object) -> str:
         return str(Decimal(str(value)))
     except InvalidOperation:
         return ""
+
+
+def zerodha_timestamp_utc(value: object) -> str:
+    """Treat Kite's timezone-less market timestamps as exchange-local IST."""
+    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZERODHA_MARKET_TIMEZONE)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def returned_id(raw: str, label: str) -> int:
@@ -184,12 +211,15 @@ def persist_quotes(quotes: dict[str, dict]) -> int:
             continue
         previous = (row.get("ohlc") or {}).get("close") if isinstance(row.get("ohlc"), dict) else None
         change = ((float(price)-float(previous))/float(previous)*100) if previous not in (None, 0) else None
-        quote_ts = row.get("timestamp") or now_iso
+        quote_ts = zerodha_timestamp_utc(row["timestamp"]) if row.get("timestamp") else now_iso
+        raw_payload = dict(row)
+        raw_payload["ai_os_timestamp_basis"] = "exchange_local_ist" if row.get("timestamp") else "receipt_utc"
+        raw_payload["ai_os_received_at"] = now_iso
         values.append(
             "("
             f"'zerodha_live','Zerodha',{sql_literal(identifier)},{sql_literal(symbol)},"
             f"{sql_literal(exchange)},NULL,'INR',{float(price)},{'NULL' if change is None else change},"
-            f"{sql_literal(quote_ts)}::timestamptz,{sql_literal(json.dumps(row,separators=(',',':'),default=str))}::jsonb"
+            f"{sql_literal(quote_ts)}::timestamptz,{sql_literal(json.dumps(raw_payload,separators=(',',':'),default=str))}::jsonb"
             ")"
         )
     for offset in range(0, len(values), 100):
@@ -212,7 +242,7 @@ def sync_quotes(api_key: str, access_token: str) -> dict:
 
 def resolve_instrument(exchange: str, symbol: str) -> dict:
     rows = query_json(
-        "SELECT instrument_token,exchange,trading_symbol,name,instrument_type "
+        "SELECT instrument_token,exchange,trading_symbol,name,instrument_type,segment "
         "FROM market.zerodha_instruments "
         f"WHERE exchange={sql_literal(exchange.upper())} AND upper(trading_symbol)={sql_literal(symbol.upper())} "
         "ORDER BY active DESC,last_seen_at DESC LIMIT 1"
@@ -246,9 +276,12 @@ def sync_historical(
         "'GET-only instruments, quotes and historical candles; broker writes are absent.') "
         "ON CONFLICT (name) DO UPDATE SET status='active' RETURNING id"
     ), "source system")
+    instrument_type = canonical_instrument_type(
+        exchange, instrument.get("instrument_type"), instrument.get("segment")
+    )
     symbol_id = returned_id(psql(
         "INSERT INTO trading.symbols (symbol,exchange,instrument_type,name,currency,active) VALUES ("
-        f"{sql_literal(symbol.upper())},{sql_literal(exchange.upper())},{sql_literal(instrument.get('instrument_type'))},"
+        f"{sql_literal(symbol.upper())},{sql_literal(exchange.upper())},{sql_literal(instrument_type)},"
         f"{sql_literal(instrument.get('name'))},'INR',true) "
         "ON CONFLICT (symbol,exchange,instrument_type) DO UPDATE SET name=EXCLUDED.name,active=true RETURNING id"
     ), "symbol")
@@ -268,18 +301,36 @@ def sync_historical(
               "open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,"
               "volume=EXCLUDED.volume,source_system_id=EXCLUDED.source_system_id"
         )
+    committed = query_json(
+        "SELECT count(*)::integer AS committed_count FROM trading.ohlcv "
+        f"WHERE symbol_id={symbol_id} AND timeframe={sql_literal(canonical_timeframe)} "
+        f"AND ts::date BETWEEN {sql_literal(date_from)}::date AND {sql_literal(date_to)}::date "
+        f"AND source_system_id={source_id}"
+    )
+    committed_rows = int(committed[0]["committed_count"]) if committed else 0
+    if values and committed_rows == 0:
+        raise RuntimeError(f"historical candles were returned but none committed for {exchange}:{symbol}")
     return {
         "status": "completed",
         "symbol": symbol,
         "exchange": exchange,
         "interval": interval,
         "timeframe": canonical_timeframe,
-        "rows": len(values),
+        "symbol_id": symbol_id,
+        "instrument_type": instrument_type,
+        "api_rows": len(values),
+        "rows": committed_rows,
     }
 
 
-def sync_options(api_key: str, access_token: str, underlyings: list[str], strike_pairs: int) -> dict:
-    observed_at = datetime.now(timezone.utc).isoformat()
+def sync_options(
+    api_key: str,
+    access_token: str,
+    underlyings: list[str],
+    strike_pairs: int,
+    expiry_count: int,
+) -> dict:
+    collected_at = datetime.now(timezone.utc).isoformat()
     stored = 0
     summaries: list[dict] = []
     for underlying in underlyings:
@@ -294,33 +345,53 @@ def sync_options(api_key: str, access_token: str, underlyings: list[str], strike
             summaries.append({"underlying": normalized, "status": "spot_unavailable"})
             continue
         instruments = query_json(
-            "WITH nearest AS (SELECT min(expiry) expiry FROM market.zerodha_instruments "
-            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') AND expiry>=current_date) "
+            "WITH selected_expiries AS (SELECT DISTINCT expiry FROM market.zerodha_instruments "
+            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') "
+            f"AND expiry>=current_date ORDER BY expiry LIMIT {max(1, min(int(expiry_count), 6))}) "
             "SELECT instrument_token,trading_symbol,exchange,"
             "market.zerodha_instruments.expiry AS expiry,strike,instrument_type "
-            "FROM market.zerodha_instruments,nearest "
-            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') AND market.zerodha_instruments.expiry=nearest.expiry "
+            "FROM market.zerodha_instruments JOIN selected_expiries USING (expiry) "
+            f"WHERE active AND name={sql_literal(normalized)} AND instrument_type IN ('CE','PE') "
             "ORDER BY strike,instrument_type"
         )
-        strikes = sorted({float(row["strike"]) for row in instruments if row.get("strike") is not None}, key=lambda x: abs(x-float(spot)))
-        selected_strikes = set(strikes[: max(2, strike_pairs)])
-        selected = [row for row in instruments if float(row.get("strike") or 0) in selected_strikes]
+        selected: list[dict] = []
+        for expiry in sorted({str(row.get("expiry")) for row in instruments if row.get("expiry")}):
+            expiry_rows = [row for row in instruments if str(row.get("expiry")) == expiry]
+            strikes = sorted(
+                {float(row["strike"]) for row in expiry_rows if row.get("strike") is not None},
+                key=lambda value: abs(value - float(spot)),
+            )
+            selected_strikes = set(strikes[: max(2, strike_pairs)])
+            selected.extend(
+                row for row in expiry_rows
+                if float(row.get("strike") or 0) in selected_strikes
+            )
         identifiers = [f"{row['exchange']}:{row['trading_symbol']}" for row in selected]
         quotes = quote_batches(api_key, access_token, identifiers)
         values: list[str] = []
+        missing_timestamps = 0
         for instrument in selected:
             identifier = f"{instrument['exchange']}:{instrument['trading_symbol']}"
             quote = quotes.get(identifier) or {}
+            source_timestamp = quote.get("timestamp") or spot_payload.get("timestamp")
+            try:
+                source_observed_at = zerodha_timestamp_utc(source_timestamp)
+            except (TypeError, ValueError):
+                missing_timestamps += 1
+                continue
             depth = quote.get("depth") if isinstance(quote.get("depth"), dict) else {}
             buy = depth.get("buy") if isinstance(depth, dict) else []
             sell = depth.get("sell") if isinstance(depth, dict) else []
             bid = buy[0].get("price") if buy and isinstance(buy[0], dict) else None
             ask = sell[0].get("price") if sell and isinstance(sell[0], dict) else None
-            canonical = json.dumps(quote, sort_keys=True, separators=(",", ":"), default=str)
+            canonical = json.dumps(
+                {"contract_quote": quote, "spot_quote": spot_payload, "collected_at": collected_at},
+                sort_keys=True, separators=(",", ":"), default=str,
+            )
             payload_hash = hashlib.sha256(canonical.encode()).hexdigest()
             values.append(
                 "("
-                f"{sql_literal(observed_at)}::timestamptz,'Zerodha','zerodha_live_connector',"
+                f"{sql_literal(source_observed_at)}::timestamptz,'Zerodha','zerodha_live_connector',"
                 f"{sql_literal(instrument['exchange'])},{sql_literal(normalized)},{sql_literal(instrument['expiry'])}::date,"
                 f"{instrument['strike']},{sql_literal(instrument['instrument_type'])},{sql_literal(instrument['instrument_token'])},"
                 f"{sql_literal(instrument['trading_symbol'])},{spot},{quote.get('last_price') or 'NULL'},"
@@ -344,10 +415,12 @@ def sync_options(api_key: str, access_token: str, underlyings: list[str], strike
         stored += len(values)
         summaries.append({
             "underlying": normalized, "status": "completed", "spot": spot,
-            "expiry": selected[0].get("expiry") if selected else None, "contracts": len(values),
+            "expiries": sorted({str(row.get("expiry")) for row in selected if row.get("expiry")}),
+            "contracts": len(values),
+            "missing_source_timestamps": missing_timestamps,
             "iv_and_greeks": "not_provided_by_kite",
         })
-    return {"status": "completed", "observed_at": observed_at, "rows": stored, "underlyings": summaries}
+    return {"status": "completed", "collected_at": collected_at, "rows": stored, "underlyings": summaries}
 
 
 def main() -> int:
@@ -356,6 +429,7 @@ def main() -> int:
     parser.add_argument("--exchanges", nargs="+", default=["ALL"])
     parser.add_argument("--underlyings", nargs="+", default=["NIFTY", "BANKNIFTY"])
     parser.add_argument("--strike-pairs", type=int, default=24)
+    parser.add_argument("--expiry-count", type=int, default=3)
     parser.add_argument("--historical-exchange")
     parser.add_argument("--historical-symbol")
     parser.add_argument("--from-date")
@@ -382,7 +456,13 @@ def main() -> int:
         if "quotes" in args.modes:
             results["quotes"] = sync_quotes(api_key, access_token)
         if "options" in args.modes:
-            results["options"] = sync_options(api_key, access_token, args.underlyings, max(2, min(args.strike_pairs, 60)))
+            results["options"] = sync_options(
+                api_key,
+                access_token,
+                args.underlyings,
+                max(2, min(args.strike_pairs, 60)),
+                max(1, min(args.expiry_count, 6)),
+            )
         if "historical" in args.modes:
             required = [args.historical_exchange, args.historical_symbol, args.from_date, args.to_date]
             if not all(required):

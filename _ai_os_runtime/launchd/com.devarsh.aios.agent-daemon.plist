@@ -30,11 +30,11 @@
     <key>AI_OS_PSQL_BIN</key>
     <string>/opt/homebrew/opt/postgresql@15/bin/psql</string>
     <key>AI_OS_DOCKER_BIN</key>
-    <string>/usr/local/bin/docker</string>
+    <string>/opt/homebrew/bin/docker</string>
     <key>AI_OS_ARTIFACT_ROOT</key>
     <string>/Volumes/Devarsh SSD/AI OS Data/artifacts</string>
     <key>AI_OS_PDF_PYTHON</key>
-    <string>/Users/devarshthakkar/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3</string>
+    <string>/Volumes/Devarsh SSD/AI OS Data/runtime/pdf-extraction/bin/python</string>
     <key>AI_OS_AGENT_DAEMON_INTERVAL</key>
     <string>45</string>
     <key>AI_OS_ENABLE_SOURCE_FRESHNESS_SCHEDULER</key>
@@ -45,12 +45,6 @@
     <string>100</string>
     <key>AI_OS_SOURCE_FRESHNESS_TIMEOUT_SECONDS</key>
     <string>180</string>
-    <key>AI_OS_ENABLE_TRADINGVIEW_CDP_CHECKER</key>
-    <string>1</string>
-    <key>AI_OS_TRADINGVIEW_CDP_CHECK_INTERVAL_SECONDS</key>
-    <string>60</string>
-    <key>AI_OS_TRADINGVIEW_CDP_CHECK_TIMEOUT_SECONDS</key>
-    <string>3</string>
     <key>AI_OS_ENABLE_OHLCV_AGGREGATION</key>
     <string>1</string>
     <key>AI_OS_OHLCV_AGGREGATION_INTERVAL_SECONDS</key>

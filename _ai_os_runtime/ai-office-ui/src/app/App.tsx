@@ -83,7 +83,7 @@ function AppShell() {
               ))}
               {/* Legacy compat redirects */}
               <Route path="/portfolio" element={<Navigate to="/portfolio/overview" replace />} />
-              <Route path="/research" element={<Navigate to="/research/filings" replace />} />
+              <Route path="/research" element={<Navigate to="/research/desk" replace />} />
               <Route path="/risk-trading" element={<Navigate to="/risk/dashboard" replace />} />
               <Route path="/firm" element={<Navigate to="/firm/office" replace />} />
               <Route path="*" element={<Navigate to="/today" replace />} />
@@ -119,6 +119,7 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
   const loader: Record<string, () => Promise<{ default: React.ComponentType }>> = {
     "/today": () => import("../destinations/today/TodayDestination"),
     "/firm/office": () => import("../destinations/firm/OfficeView").then((m) => ({ default: m.OfficeView })),
+    "/firm/graphs": () => import("../destinations/firm/GraphStudio").then((m) => ({ default: m.GraphStudio })),
     "/firm/agents": () => import("../destinations/firm/FirmAgentViews").then((m) => ({ default: m.AgentsView })),
     "/firm/departments": () => import("../destinations/firm/FirmAgentViews").then((m) => ({ default: m.DepartmentsView })),
     "/firm/committees": () => import("../destinations/firm/FirmAgentViews").then((m) => ({ default: m.CommitteesView })),
@@ -130,7 +131,13 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/fundamental/scorecards": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/fundamental/valuation": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/fundamental/coverage": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
+    "/fundamental/dossiers": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
     "/fundamental/ideas": () => import("../destinations/fundamental/FundamentalResearch").then((m) => ({ default: m.default })),
+    "/sector/overview": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
+    "/sector/fundamentals": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
+    "/sector/indices": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
+    "/sector/flows": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
+    "/sector/committee": () => import("../destinations/sector/SectorIntelligence").then((m) => ({ default: m.default })),
     "/quant/lab": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
     "/quant/factors": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
     "/quant/backtests": () => import("../destinations/quant/QuantStrategy").then((m) => ({ default: m.default })),
@@ -144,6 +151,8 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/options/desk": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/chain": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/surface": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
+    "/options/oi-analysis": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
+    "/options/strategies": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     "/options/agent": () => import("../destinations/options/OptionsDesk").then((m) => ({ default: m.default })),
     // Scanners
     "/scanners/momentum": () => import("../destinations/scanners/Scanners").then((m) => ({ default: m.default })),
@@ -168,10 +177,21 @@ function lazyFunction(path: string): React.LazyExoticComponent<React.ComponentTy
     "/portfolio/positions": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/books": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/clients": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
+    "/portfolio/imports": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/nav": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/reconciliation": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
     "/portfolio/trackers": () => import("../destinations/portfolio/PortfolioTerminal").then((m) => ({ default: m.default })),
-    // Research & filings
+    // Risk and capital
+    "/risk/dashboard": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    "/risk/limits": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    "/risk/institutional": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    "/risk/capital": () => import("../destinations/risk/RiskCapital").then((m) => ({ default: m.default })),
+    // Company Research Desk
+    "/research/desk": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.ResearchDeskHome })),
+    "/research/cases": () => import("../destinations/research/ResearchCases").then((m) => ({ default: m.default })),
+    "/research/following": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.ResearchFollowing })),
+    "/research/scanners": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.FundamentalScanners })),
+    "/research/knowledge": () => import("../destinations/research/ResearchDesk").then((m) => ({ default: m.ResearchKnowledge })),
     "/research/filings": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/special-situations": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),
     "/research/papers": () => import("../destinations/research/ResearchFilings").then((m) => ({ default: m.default })),

@@ -10,10 +10,11 @@ import re
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
+from collect_nse_bse_filings import curl_get
+from runtime_executables import docker_binary, psql_binary
 from runtime_storage import artifact_root
 
 
@@ -27,20 +28,20 @@ USER_AGENT = os.environ.get(
 ARTIFACT_ROOT = artifact_root("filings")
 
 SPECIAL_EVENT_KEYWORDS = [
-    ("reverse_merger", ["reverse merger"]),
-    ("demerger", ["demerger", "de-merger", "resulting company"]),
+    ("reverse_merger", ["reverse merger", "reverse takeover"]),
+    ("demerger", ["demerger", "de-merger", "resulting company pursuant to the scheme"]),
     ("merger", ["merger", "amalgamation", "merged with"]),
     ("scheme_arrangement", ["scheme of arrangement", "arrangement with creditors", "share exchange ratio"]),
-    ("buyback", ["buyback", "buy-back", "tender offer"]),
-    ("open_offer", ["open offer", "public announcement", "letter of offer"]),
+    ("buyback", ["buyback", "buy-back", "tender offer for equity shares"]),
+    ("open_offer", ["open offer", "public announcement under sebi takeover", "letter of offer"]),
     ("delisting", ["delisting", "de-listing", "exit offer"]),
-    ("rights_issue", ["rights issue", "rights entitlement", "rights equity shares"]),
-    ("preferential_allotment", ["preferential", "warrant", "allotment", "qualified institutions placement", "qip"]),
+    ("rights_issue", ["rights issue", "rights entitlement"]),
+    ("preferential_allotment", ["preferential issue", "preferential allotment", "allotment of warrants", "convertible warrants", "qualified institutions placement", "qip"]),
     ("asset_sale", ["slump sale", "asset sale", "sale of undertaking", "business transfer agreement"]),
-    ("pledge_change", ["pledge", "encumbrance", "release of pledge"]),
-    ("insolvency", ["insolvency", "ibc", "nclt", "resolution plan", "corporate insolvency"]),
-    ("arbitrage_watch", ["record date", "swap ratio", "cash consideration", "court convened meeting"]),
-    ("board_action", ["board meeting", "dividend", "bonus", "split", "sub-division"]),
+    ("pledge_change", ["pledge of shares", "release of pledge", "invocation of pledge", "encumbrance on shares"]),
+    ("insolvency", ["corporate insolvency", "insolvency resolution process", "admitted under ibc", "nclt admits", "resolution plan approved"]),
+    ("arbitrage_watch", ["swap ratio", "cash consideration", "court convened meeting"]),
+    ("board_action", ["board meeting", "record date", "dividend", "bonus issue", "stock split", "sub-division of shares"]),
 ]
 
 
@@ -55,9 +56,11 @@ def sql_jsonb(value: object) -> str:
 
 
 def psql_command_candidates() -> list[list[str]]:
-    return [
-        [
-            "/opt/homebrew/opt/postgresql@15/bin/psql",
+    commands: list[list[str]] = []
+    local_psql = psql_binary()
+    if local_psql:
+        commands.append([
+            local_psql,
             "-h",
             "127.0.0.1",
             "-p",
@@ -71,9 +74,9 @@ def psql_command_candidates() -> list[list[str]]:
             "ai_os",
             "-d",
             "ai_os",
-        ],
-        [
-            "docker",
+        ])
+    commands.append([
+            docker_binary(),
             "exec",
             "-i",
             "ai_os_postgres",
@@ -87,8 +90,8 @@ def psql_command_candidates() -> list[list[str]]:
             "ai_os",
             "-d",
             "ai_os",
-        ],
-    ]
+        ])
+    return commands
 
 
 def run_psql_text(sql: str) -> str:
@@ -96,10 +99,14 @@ def run_psql_text(sql: str) -> str:
     env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
     errors: list[str] = []
     for command in psql_command_candidates():
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        try:
+            completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        except OSError as exc:
+            errors.append(f"{command[0]}: {type(exc).__name__}: {exc}")
+            continue
         if completed.returncode == 0:
             return completed.stdout.strip()
-        errors.append((completed.stderr or completed.stdout).strip())
+        errors.append(f"{command[0]}: {(completed.stderr or completed.stdout).strip()}")
     raise RuntimeError(" | ".join(errors))
 
 
@@ -131,6 +138,17 @@ def storage_path(path: Path) -> str:
 
 
 def classify_event(title: str, filing_type: str, text: str) -> dict[str, Any]:
+    document_kind = f"{title} {filing_type}".lower()
+    if "annual report" in document_kind or "annual_report" in document_kind:
+        return {
+            "event_type": "routine_filing",
+            "urgency": "normal",
+            "opportunity_score": 20,
+            "risk_score": 25,
+            "assigned_agent": "Filings Analyst",
+            "matched_keywords": [],
+            "classifier": "keyword_pdf_text_v1",
+        }
     haystack = f"{title} {filing_type} {text[:20000]}".lower()
     if any(phrase in haystack for phrase in ["employee stock option", "stock option scheme", "esop", "exercise of stock options"]):
         return {
@@ -365,6 +383,13 @@ def finish_run(run_id: int, status: str, local_pdf_path: str | None, parser_name
 
 
 def download_pdf(filing: dict[str, Any]) -> Path:
+    existing_path = str(filing.get("local_path") or "").strip()
+    if existing_path:
+        existing = Path(existing_path).expanduser()
+        if existing.is_file():
+            with existing.open("rb") as handle:
+                if handle.read(4) == b"%PDF":
+                    return existing
     source_url = str(filing.get("attachment_url") or filing.get("source_url") or "")
     if not source_url:
         raise ValueError("filing has no PDF URL")
@@ -378,9 +403,9 @@ def download_pdf(filing: dict[str, Any]) -> Path:
         "Accept": "application/pdf,*/*",
         "Referer": "https://www.nseindia.com/",
     }
-    request = urllib.request.Request(source_url, headers=headers)
-    with urllib.request.urlopen(request, timeout=45) as response:
-        data = response.read()
+    status, data = curl_get(source_url, headers, timeout=45)
+    if status != 200:
+        raise RuntimeError(f"PDF download returned HTTP {status}: {source_url}")
     if not data.startswith(b"%PDF"):
         raise ValueError(f"downloaded content is not a PDF: {source_url}")
     target.write_bytes(data)
@@ -391,7 +416,7 @@ def extract_pdf_text(path: Path) -> tuple[str, int, str]:
     try:
         from pypdf import PdfReader  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError("pypdf is required; run with the bundled Codex Python runtime") from exc
+        raise RuntimeError("pypdf is required in the governed external-SSD PDF runtime") from exc
 
     reader = PdfReader(str(path))
     chunks: list[str] = []
@@ -446,6 +471,17 @@ def upsert_event_and_inbox(filing: dict[str, Any], event: dict[str, Any]) -> tup
             "matched_keywords": event.get("matched_keywords", []),
         }
     ]
+    document_kind = f"{filing.get('title') or ''} {filing.get('filing_type') or ''}".lower()
+    if event.get("event_type") == "routine_filing" and (
+        "annual report" in document_kind or "annual_report" in document_kind
+    ):
+        evidence_match = [{"table": "research.corporate_filings", "id": filing_id}]
+        run_psql_text(
+            f"UPDATE research.filing_events SET status='superseded' "
+            f"WHERE filing_id={filing_id} AND event_type <> 'routine_filing'; "
+            f"UPDATE agent.inbox_items SET status='closed',updated_at=now() "
+            f"WHERE title LIKE 'PDF filing event:%' AND evidence @> {sql_jsonb(evidence_match)};"
+        )
     rows = run_psql_json(
         f"""
         WITH demote_routine AS (

@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -14,14 +15,26 @@ from typing import Any
 from uuid import uuid4
 
 from run_agent_worker_once import psql_json, psql_text, run_once, sql_jsonb, sql_literal
+from run_research_case_agent_once import run_once as run_research_case_agent_once
+from governed_pdf_runtime import governed_pdf_python
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or SCRIPT_DIR.parent).resolve()
 WORKLOAD_SCRIPT_DIR = RUNTIME_ROOT / "scripts"
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
+
+from api import graph_control_plane  # noqa: E402
+from api.research_monitor_runtime import run_company_research_monitor_once  # noqa: E402
+from api.market_research_workflow import (  # noqa: E402
+    build_public_market_evidence_packet,
+    materiality_for_news,
+)
 
 
 def record_daemon_heartbeat(
     *,
+    daemon_key: str = "agent_message_daemon",
     instance_id: str,
     started_at: datetime,
     status: str,
@@ -38,7 +51,7 @@ def record_daemon_heartbeat(
             last_error, started_at, heartbeat_at, updated_at
         )
         VALUES (
-            'agent_message_daemon', {sql_literal(instance_id)},
+            {sql_literal(daemon_key)}, {sql_literal(instance_id)},
             {sql_literal(socket.gethostname())}, {os.getpid()}, {sql_literal(status)},
             {max(5, int(loop_interval_seconds))}, {sql_jsonb(enabled_workloads)},
             {sql_jsonb(last_pass_summary)},
@@ -70,15 +83,21 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "generated_at": result.get("generated_at"),
         "messages_processed": result.get("messages_processed", 0),
         "worker_runs": (result.get("worker") or {}).get("count", 0),
+        "research_case_model": result.get("research_case_model") or {"status": "idle", "count": 0},
     }
     for key in (
         "ohlcv_aggregation",
-        "tradingview_quote_refresh",
-        "tradingview_cdp_check",
+        "paper_monitor_evaluation",
         "source_freshness_scheduler",
         "strategy_discovery_scheduler",
         "market_news_ingestion",
+        "market_research_heartbeat",
+        "research_following_refresh",
+        "research_hub_refresh",
+        "institutional_options_materializer",
+        "option_valuation_source_refresh",
         "workflow_schedule_materializer",
+        "graph_control_plane",
     ):
         payload = result.get(key)
         if isinstance(payload, dict):
@@ -240,15 +259,98 @@ def process_messages(limit: int) -> list[dict[str, Any]]:
     return results
 
 
-def daemon_pass(message_limit: int, worker_limit: int, include_completed: bool = False) -> dict[str, Any]:
+def psql_json_statement(sql: str) -> list[dict[str, Any]]:
+    payload = json.loads(psql_text(sql) or "[]")
+    if not isinstance(payload, list):
+        raise RuntimeError("graph statement did not return a JSON array")
+    return payload
+
+
+def advance_active_graph_runs(run_limit: int, max_steps: int) -> dict[str, Any]:
+    runs = psql_json(
+        f"""
+        SELECT graph_run_id,graph_key,run_status,updated_at
+        FROM agent.v_graph_run_status
+        WHERE run_status IN ('queued','running','waiting_approval')
+        ORDER BY updated_at,graph_run_id
+        LIMIT {max(1, min(50, int(run_limit)))}
+        """
+    )
+    advanced: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for run in runs:
+        run_id = int(run["graph_run_id"])
+        try:
+            result = graph_control_plane.advance_graph_run(
+                psql_json,
+                psql_json_statement,
+                {
+                    "graph_run_id": run_id,
+                    "actor": "Jarvis Agent Daemon",
+                    "max_steps": max(1, min(100, int(max_steps))),
+                },
+            )
+            advanced.append({
+                "graph_run_id": run_id,
+                "graph_key": result.get("graph_key") or run.get("graph_key"),
+                "run_status": result.get("run_status"),
+                "processed_steps": result.get("processed_steps", 0),
+                "waiting": len(result.get("attention") or []),
+            })
+        except Exception as exc:  # noqa: BLE001
+            errors.append({
+                "graph_run_id": run_id,
+                "graph_key": run.get("graph_key"),
+                "error": type(exc).__name__ + ": " + str(exc),
+            })
+    return {
+        "status": "failed" if errors else "success",
+        "count": len(advanced),
+        "active_runs_seen": len(runs),
+        "runs": advanced,
+        "errors": errors,
+    }
+
+
+def daemon_pass(
+    message_limit: int,
+    worker_limit: int,
+    include_completed: bool = False,
+    *,
+    graph_control_enabled: bool = True,
+    graph_run_limit: int = 20,
+    graph_max_steps: int = 40,
+) -> dict[str, Any]:
     message_results = process_messages(message_limit)
     worker_results = run_once(max(1, worker_limit), include_completed)
-    return {
+    try:
+        research_case_model = run_research_case_agent_once()
+    except Exception as exc:  # keep the daemon alive; durable run remains retryable or blocked
+        research_case_model = {"status": "error", "count": 0, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        company_research_monitor = run_company_research_monitor_once(
+            run_rows=psql_json,
+            run_statement=psql_json_statement,
+            sql_literal=sql_literal,
+            sql_jsonb=sql_jsonb,
+            limit=int(os.environ.get("AI_OS_COMPANY_RESEARCH_MONITOR_LIMIT", "80")),
+        )
+    except Exception as exc:  # monitoring is durable and isolated from other daemon work
+        company_research_monitor = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    result = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "messages_processed": len(message_results),
         "message_results": message_results,
         "worker": worker_results,
+        "research_case_model": research_case_model,
+        "company_research_monitor": company_research_monitor,
     }
+    if graph_control_enabled:
+        result["graph_control_plane"] = advance_active_graph_runs(
+            graph_run_limit,
+            graph_max_steps,
+        )
+    return result
 
 
 def record_source_freshness_scheduler_run(
@@ -359,35 +461,6 @@ def run_source_freshness_scheduler(interval_seconds: int, limit: int, timeout_se
     )
 
 
-def run_tradingview_cdp_check(timeout_seconds: int) -> dict[str, Any]:
-    command = [
-        sys.executable,
-        str(SCRIPT_DIR / "check_tradingview_cdp.py"),
-        "--actor",
-        "AI OS Agent Daemon",
-        "--timeout",
-        str(max(1, timeout_seconds)),
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=str(RUNTIME_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=max(10, timeout_seconds + 5),
-    )
-    payload: dict[str, Any] = {}
-    if completed.stdout.strip():
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError:
-            payload = {"raw_stdout": completed.stdout.strip()[:2000]}
-    if completed.returncode != 0:
-        payload["status"] = payload.get("status") or "failed"
-        payload["error"] = (completed.stderr or completed.stdout or "TradingView CDP check failed").strip()[:2000]
-    return payload
-
-
 def run_ohlcv_aggregation(timeout_seconds: int) -> dict[str, Any]:
     command = [sys.executable, str(SCRIPT_DIR / "aggregate_ticks_to_ohlcv.py")]
     completed = subprocess.run(
@@ -410,22 +483,14 @@ def run_ohlcv_aggregation(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
-def run_tradingview_quote_refresh(timeout_seconds: int, symbol_limit: int) -> dict[str, Any]:
-    quote_script = WORKLOAD_SCRIPT_DIR / "refresh_event_quotes.py"
-    if not quote_script.is_file():
-        return {"status": "failed", "error": f"required workload script is missing: {quote_script}"}
-    command = [
-        sys.executable,
-        str(quote_script),
-        "--limit",
-        str(max(1, min(200, symbol_limit))),
-    ]
+
+def run_paper_monitor_evaluation(timeout_seconds: int, monitor_limit: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "run_paper_monitors.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
     completed = subprocess.run(
-        command,
-        cwd=str(RUNTIME_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
+        [sys.executable, str(script), "--limit", str(max(1, min(100, monitor_limit))), "--json"],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
         timeout=max(30, timeout_seconds),
     )
     payload: dict[str, Any] = {}
@@ -434,9 +499,9 @@ def run_tradingview_quote_refresh(timeout_seconds: int, symbol_limit: int) -> di
             payload = json.loads(completed.stdout)
         except json.JSONDecodeError:
             payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    payload["status"] = "success" if completed.returncode == 0 else "failed"
     if completed.returncode != 0:
-        payload["status"] = payload.get("status") or "failed"
-        payload["error"] = (completed.stderr or completed.stdout or "TradingView quote refresh failed").strip()[:4000]
+        payload["error"] = (completed.stderr or completed.stdout or "paper monitor evaluation failed").strip()[:4000]
     return payload
 
 
@@ -467,13 +532,13 @@ def run_strategy_discovery_scheduler(interval_seconds: int, timeout_seconds: int
         "--filing-timeout",
         os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_TIMEOUT_SECONDS", "300"),
         "--filing-extraction-limit",
-        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_LIMIT", "4"),
+        os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_LIMIT", "2"),
         "--filing-extraction-timeout",
         os.environ.get("AI_OS_STRATEGY_DISCOVERY_FILING_EXTRACTION_TIMEOUT_SECONDS", "300"),
     ]
-    if os.environ.get("AI_OS_STRATEGY_DISCOVERY_ENABLE_FILINGS", "0") == "1":
+    if os.environ.get("AI_OS_STRATEGY_DISCOVERY_ENABLE_FILINGS", "1") == "1":
         command.append("--enable-filings")
-    if os.environ.get("AI_OS_STRATEGY_DISCOVERY_ENABLE_FILING_EXTRACTION", "0") == "1":
+    if os.environ.get("AI_OS_STRATEGY_DISCOVERY_ENABLE_FILING_EXTRACTION", "1") == "1":
         command.append("--enable-filing-extraction")
     completed = subprocess.run(
         command,
@@ -533,6 +598,327 @@ def run_market_news_ingestion(timeout_seconds: int) -> dict[str, Any]:
     return payload
 
 
+def psql_json_statement(sql: str) -> list[dict[str, Any]]:
+    output = psql_text(sql)
+    return json.loads(output or "[]")
+
+
+def record_market_research_heartbeat(
+    *,
+    run_key: str,
+    status: str,
+    lookback_minutes: int,
+    cooldown_minutes: int,
+    candidate_count: int,
+    material_candidate_count: int,
+    selected_news_id: int | None,
+    source_fingerprint: str | None,
+    graph_run_id: int | None,
+    graph_created: bool,
+    skip_reason: str | None,
+    evidence: list[dict[str, Any]],
+    error_message: str | None,
+    started_at: datetime,
+    finished_at: datetime,
+) -> dict[str, Any]:
+    selected_sql = str(int(selected_news_id)) if selected_news_id is not None else "NULL"
+    graph_sql = str(int(graph_run_id)) if graph_run_id is not None else "NULL"
+    retry_count = 1 if status == "failed" else 0
+    next_retry_sql = "now() + interval '15 minutes'" if status == "failed" else "NULL"
+    cooldown_sql = (
+        f"now() + make_interval(mins => {int(cooldown_minutes)})"
+        if selected_news_id is not None
+        else "NULL"
+    )
+    rows = psql_json_statement(
+        f"""
+        WITH inserted AS (
+            INSERT INTO research.market_research_heartbeat_runs (
+                run_key,status,lookback_minutes,cooldown_minutes,candidate_count,
+                material_candidate_count,selected_news_id,source_fingerprint,
+                graph_run_id,graph_created,skip_reason,retry_count,next_retry_at,
+                cooldown_until,evidence,error_message,created_by,started_at,finished_at
+            ) VALUES (
+                {sql_literal(run_key)},{sql_literal(status)},{int(lookback_minutes)},
+                {int(cooldown_minutes)},{int(candidate_count)},{int(material_candidate_count)},
+                {selected_sql},{sql_literal(source_fingerprint) if source_fingerprint else 'NULL'},
+                {graph_sql},{'true' if graph_created else 'false'},
+                {sql_literal(skip_reason) if skip_reason else 'NULL'},{retry_count},
+                {next_retry_sql},{cooldown_sql},{sql_jsonb(evidence)},
+                {sql_literal(error_message) if error_message else 'NULL'},
+                'AI OS Agent Daemon',{sql_literal(started_at.isoformat())}::timestamptz,
+                {sql_literal(finished_at.isoformat())}::timestamptz
+            )
+            ON CONFLICT (run_key) DO UPDATE SET
+                status=EXCLUDED.status,candidate_count=EXCLUDED.candidate_count,
+                material_candidate_count=EXCLUDED.material_candidate_count,
+                selected_news_id=EXCLUDED.selected_news_id,
+                source_fingerprint=EXCLUDED.source_fingerprint,
+                graph_run_id=EXCLUDED.graph_run_id,graph_created=EXCLUDED.graph_created,
+                skip_reason=EXCLUDED.skip_reason,retry_count=EXCLUDED.retry_count,
+                next_retry_at=EXCLUDED.next_retry_at,cooldown_until=EXCLUDED.cooldown_until,
+                evidence=EXCLUDED.evidence,error_message=EXCLUDED.error_message,
+                finished_at=EXCLUDED.finished_at,updated_at=now()
+            RETURNING id,run_key,status,candidate_count,material_candidate_count,
+                      selected_news_id,source_fingerprint,graph_run_id,graph_created,
+                      skip_reason,retry_count,next_retry_at,cooldown_until,started_at,finished_at
+        )
+        SELECT coalesce(json_agg(row_to_json(inserted)), '[]'::json)::text FROM inserted
+        """
+    )
+    return rows[0] if rows else {"run_key": run_key, "status": status}
+
+
+def run_market_research_heartbeat(lookback_minutes: int, cooldown_minutes: int) -> dict[str, Any]:
+    started_at = datetime.now().astimezone()
+    run_key = f"market-research-heartbeat-{started_at.strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}"
+    candidates = psql_json(
+        f"""
+        SELECT id,source_name,source_url,title,publisher,author,published_at,
+               captured_at,symbols,topics,geography,relevance_score
+        FROM market.news_items
+        WHERE captured_at >= now() - make_interval(mins => {int(lookback_minutes)})
+          AND source_url IS NOT NULL AND btrim(source_url) <> ''
+        ORDER BY coalesce(published_at,captured_at) DESC,id DESC
+        LIMIT 100
+        """
+    )
+    for item in candidates:
+        item["materiality"] = materiality_for_news(item)
+    material = [item for item in candidates if (item.get("materiality") or {}).get("material")]
+    material.sort(
+        key=lambda item: (
+            int((item.get("materiality") or {}).get("score") or 0),
+            str(item.get("published_at") or item.get("captured_at") or ""),
+            int(item.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    if not material:
+        finished_at = datetime.now().astimezone()
+        return record_market_research_heartbeat(
+            run_key=run_key,status="no_material_change",lookback_minutes=lookback_minutes,
+            cooldown_minutes=cooldown_minutes,candidate_count=len(candidates),
+            material_candidate_count=0,selected_news_id=None,source_fingerprint=None,
+            graph_run_id=None,graph_created=False,
+            skip_reason="No new public-news item passed the deterministic materiality threshold.",
+            evidence=[{"source":"market.news_items","bounded_count":len(candidates)}],
+            error_message=None,started_at=started_at,finished_at=finished_at,
+        )
+
+    selected = material[0]
+    selected_id = int(selected["id"])
+    prior = psql_json(
+        f"""
+        SELECT id,run_key,status,graph_run_id,cooldown_until
+        FROM research.market_research_heartbeat_runs
+        WHERE selected_news_id={selected_id}
+          AND cooldown_until > now()
+          AND status IN ('workflow_created','deduped')
+        ORDER BY started_at DESC LIMIT 1
+        """
+    )
+    if prior:
+        finished_at = datetime.now().astimezone()
+        return record_market_research_heartbeat(
+            run_key=run_key,status="deduped",lookback_minutes=lookback_minutes,
+            cooldown_minutes=cooldown_minutes,candidate_count=len(candidates),
+            material_candidate_count=len(material),selected_news_id=selected_id,
+            source_fingerprint=None,graph_run_id=prior[0].get("graph_run_id"),
+            graph_created=False,skip_reason="Selected source is inside its open cooldown window.",
+            evidence=[{"source":"research.market_research_heartbeat_runs","run_id":prior[0].get("id")}],
+            error_message=None,started_at=started_at,finished_at=finished_at,
+        )
+
+    symbols = selected.get("symbols") if isinstance(selected.get("symbols"), list) else []
+    symbol = str(symbols[0]).strip().upper() if symbols else ""
+    graph_input: dict[str, Any] = {
+        "subject": str(selected.get("title") or "Material public-market event")[:500],
+        "objective": "Prepare a bounded public-market research decision brief from current cited evidence.",
+        "decision_question": "Does this source-backed event merit a new long-term research action, watchlist change, or explicit defer/reject outcome?",
+        "lookback_hours": max(6, min(168, (lookback_minutes + 59) // 60)),
+        "trigger_source": {"table": "market.news_items", "id": selected_id},
+    }
+    if symbol:
+        graph_input["symbol"] = symbol
+    packet = build_public_market_evidence_packet(psql_json, graph_input)
+    graph_input["evidence_packet"] = packet
+    quality = packet.get("quality") or {}
+    evidence = [
+        {
+            "source": "market.news_items",
+            "id": selected_id,
+            "source_url": selected.get("source_url"),
+            "captured_at": selected.get("captured_at"),
+            "materiality": selected.get("materiality"),
+        },
+        {
+            "source": "market.public_evidence_packet",
+            "source_fingerprint": packet.get("source_fingerprint"),
+            "quality_status": quality.get("status"),
+        },
+    ]
+    if quality.get("status") == "blocked":
+        finished_at = datetime.now().astimezone()
+        return record_market_research_heartbeat(
+            run_key=run_key,status="source_blocked",lookback_minutes=lookback_minutes,
+            cooldown_minutes=cooldown_minutes,candidate_count=len(candidates),
+            material_candidate_count=len(material),selected_news_id=selected_id,
+            source_fingerprint=str(packet.get("source_fingerprint") or ""),
+            graph_run_id=None,graph_created=False,
+            skip_reason="; ".join(str(value) for value in quality.get("missing_evidence") or []) or "Source quality gate blocked.",
+            evidence=evidence,error_message=None,started_at=started_at,finished_at=finished_at,
+        )
+
+    subject_ref = f"public-news-{selected_id}"
+    idempotency_payload = {
+        "selected_news_id": selected_id,
+        "source_fingerprint": packet.get("source_fingerprint"),
+        "decision_question": graph_input.get("decision_question"),
+    }
+    graph_payload = {
+        "graph_key": "research_to_investment_decision",
+        "actor": "Research Director via AI OS Agent Daemon",
+        "trigger_type": "autonomous_public_market_heartbeat",
+        "subject_type": "public_market_news",
+        "subject_ref": subject_ref,
+        "input_payload": graph_input,
+        "idempotency_key": graph_control_plane.idempotency_key(
+            "research_to_investment_decision",subject_ref,idempotency_payload
+        ),
+    }
+    started = graph_control_plane.start_graph_run(psql_json, psql_json_statement, graph_payload)
+    graph_run_id = int(started["graph_run_id"])
+    graph_control_plane.advance_graph_run(
+        psql_json,psql_json_statement,
+        {"graph_run_id":graph_run_id,"actor":"AI OS Agent Daemon","max_steps":20},
+    )
+    finished_at = datetime.now().astimezone()
+    return record_market_research_heartbeat(
+        run_key=run_key,status="workflow_created" if started.get("created") else "deduped",
+        lookback_minutes=lookback_minutes,cooldown_minutes=cooldown_minutes,
+        candidate_count=len(candidates),material_candidate_count=len(material),
+        selected_news_id=selected_id,source_fingerprint=str(packet.get("source_fingerprint") or ""),
+        graph_run_id=graph_run_id,graph_created=bool(started.get("created")),
+        skip_reason=None if started.get("created") else "Graph idempotency key already exists.",
+        evidence=evidence,error_message=None,started_at=started_at,finished_at=finished_at,
+    )
+
+
+def run_market_calendar_refresh(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "collect_market_calendar.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [
+            sys.executable, str(script),
+            "--lookback-days", "1",
+            "--lookahead-days", os.environ.get("AI_OS_MARKET_CALENDAR_LOOKAHEAD_DAYS", "45"),
+            "--actor", "Corporate Events Analyst",
+        ],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(60, timeout_seconds),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = payload.get("status") or "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "market calendar refresh failed").strip()[:4000]
+    return payload
+
+
+def run_research_hub_refresh(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "inventory_ai_research_outputs.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=max(60, timeout_seconds),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    payload["status"] = "success" if completed.returncode == 0 else "failed"
+    if completed.returncode != 0:
+        payload["error"] = (
+            completed.stderr or completed.stdout or "research hub refresh failed"
+        ).strip()[:4000]
+        return payload
+
+    if os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_VECTOR_REFRESH", "1") == "0":
+        payload["vector_index"] = {"status": "disabled"}
+        return payload
+
+    vector_script = WORKLOAD_SCRIPT_DIR / "index_qdrant_documents.py"
+    if not vector_script.is_file():
+        payload["status"] = "failed"
+        payload["vector_index"] = {
+            "status": "failed",
+            "error": f"required workload script is missing: {vector_script}",
+        }
+        return payload
+
+    vector_completed = subprocess.run(
+        [sys.executable, str(vector_script), "--incremental-research"],
+        cwd=str(RUNTIME_ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=max(
+            300,
+            int(os.environ.get("AI_OS_RESEARCH_HUB_VECTOR_TIMEOUT_SECONDS", "1800")),
+        ),
+    )
+    vector_payload: dict[str, Any] = {}
+    if vector_completed.stdout.strip():
+        try:
+            vector_payload = json.loads(vector_completed.stdout)
+        except json.JSONDecodeError:
+            vector_payload = {"raw_stdout": vector_completed.stdout.strip()[:4000]}
+    vector_payload["status"] = "success" if vector_completed.returncode == 0 else "failed"
+    if vector_completed.returncode != 0:
+        vector_payload["error"] = (
+            vector_completed.stderr
+            or vector_completed.stdout
+            or "incremental research vector refresh failed"
+        ).strip()[:4000]
+        payload["status"] = "failed"
+        payload["error"] = vector_payload["error"]
+    payload["vector_index"] = vector_payload
+    return payload
+
+
+def run_research_following_refresh(timeout_seconds: int, limit: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "run_research_following_monitor.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [sys.executable, str(script), "--limit", str(max(1, min(25, limit))),
+         "--timeout", str(max(5, min(30, timeout_seconds))), "--json"],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(90, timeout_seconds * max(1, min(25, limit)) + 60),
+    )
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"status": "failed", "error": (completed.stderr or completed.stdout or "invalid following monitor output")[-4000:]}
+    if completed.returncode != 0 and payload.get("status") not in {"failed", "degraded"}:
+        payload["status"] = "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "Research Following refresh failed")[-4000:]
+    return payload
+
+
 def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
     rows = psql_json(
         f"""
@@ -548,6 +934,55 @@ def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
     return {"status": "success", **payload}
 
 
+def run_institutional_options_materializer(limit: int, interval_seconds: int, timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "materialize_institutional_options.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [
+            sys.executable, str(script), "--limit", str(max(1, min(100, int(limit)))),
+            "--interval-seconds", str(max(60, int(interval_seconds))),
+        ],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(60, int(timeout_seconds)),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = "failed"
+        payload["error"] = (
+            completed.stderr or completed.stdout or "institutional options materializer failed"
+        ).strip()[:4000]
+    return payload
+
+
+def run_option_valuation_source_refresh(timeout_seconds: int) -> dict[str, Any]:
+    script = WORKLOAD_SCRIPT_DIR / "collect_option_valuation_sources.py"
+    if not script.is_file():
+        return {"status": "failed", "error": f"required workload script is missing: {script}"}
+    completed = subprocess.run(
+        [governed_pdf_python(verify_import=True), str(script), "--actor", "Options Data Quality Agent"],
+        cwd=str(RUNTIME_ROOT), text=True, capture_output=True, check=False,
+        timeout=max(60, int(timeout_seconds)),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw_stdout": completed.stdout.strip()[:4000]}
+    if completed.returncode != 0:
+        payload["status"] = "failed"
+        payload["error"] = (completed.stderr or completed.stdout or "option valuation source refresh failed").strip()[:4000]
+    if payload.get("activated_policy") is not False or payload.get("broker_write_allowed") is not False:
+        return {"status": "failed", "error": "source refresh violated its no-activation contract"}
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI OS agent mailbox daemon.")
     parser.add_argument("--once", action="store_true", help="Run one pass and exit.")
@@ -555,6 +990,9 @@ def main() -> int:
     parser.add_argument("--message-limit", type=int, default=10)
     parser.add_argument("--worker-limit", type=int, default=5)
     parser.add_argument("--include-completed", action="store_true")
+    parser.add_argument("--disable-graph-control", action="store_true", help="Disable automatic bounded graph progression.")
+    parser.add_argument("--graph-run-limit", type=int, default=int(os.environ.get("AI_OS_GRAPH_RUN_LIMIT", "20")))
+    parser.add_argument("--graph-max-steps", type=int, default=int(os.environ.get("AI_OS_GRAPH_MAX_STEPS", "40")))
     parser.add_argument("--disable-source-freshness", action="store_true", help="Disable scheduled source freshness checks.")
     parser.add_argument(
         "--source-freshness-interval",
@@ -564,14 +1002,6 @@ def main() -> int:
     )
     parser.add_argument("--source-freshness-limit", type=int, default=int(os.environ.get("AI_OS_SOURCE_FRESHNESS_LIMIT", "100")))
     parser.add_argument("--source-freshness-timeout", type=int, default=int(os.environ.get("AI_OS_SOURCE_FRESHNESS_TIMEOUT_SECONDS", "180")))
-    parser.add_argument("--disable-tradingview-cdp-check", action="store_true", help="Disable scheduled TradingView CDP heartbeat checks.")
-    parser.add_argument(
-        "--tradingview-cdp-check-interval",
-        type=int,
-        default=int(os.environ.get("AI_OS_TRADINGVIEW_CDP_CHECK_INTERVAL_SECONDS", "60")),
-        help="TradingView CDP heartbeat interval in seconds.",
-    )
-    parser.add_argument("--tradingview-cdp-check-timeout", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_CDP_CHECK_TIMEOUT_SECONDS", "3")))
     parser.add_argument("--disable-ohlcv-aggregation", action="store_true", help="Disable scheduled tick-to-OHLCV aggregation.")
     parser.add_argument(
         "--ohlcv-aggregation-interval",
@@ -580,15 +1010,10 @@ def main() -> int:
         help="Tick-to-OHLCV aggregation interval in seconds.",
     )
     parser.add_argument("--ohlcv-aggregation-timeout", type=int, default=int(os.environ.get("AI_OS_OHLCV_AGGREGATION_TIMEOUT_SECONDS", "120")))
-    parser.add_argument("--disable-tradingview-quote-refresh", action="store_true", help="Disable scheduled TradingView portfolio quote refresh.")
-    parser.add_argument(
-        "--tradingview-quote-refresh-interval",
-        type=int,
-        default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_INTERVAL_SECONDS", "900")),
-        help="TradingView portfolio quote refresh interval in seconds.",
-    )
-    parser.add_argument("--tradingview-quote-refresh-timeout", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_TIMEOUT_SECONDS", "120")))
-    parser.add_argument("--tradingview-quote-refresh-limit", type=int, default=int(os.environ.get("AI_OS_TRADINGVIEW_QUOTE_REFRESH_LIMIT", "100")))
+    parser.add_argument("--disable-paper-monitor-evaluation", action="store_true", help="Disable deterministic paper-monitor evaluation.")
+    parser.add_argument("--paper-monitor-interval", type=int, default=int(os.environ.get("AI_OS_PAPER_MONITOR_INTERVAL_SECONDS", "60")))
+    parser.add_argument("--paper-monitor-timeout", type=int, default=int(os.environ.get("AI_OS_PAPER_MONITOR_TIMEOUT_SECONDS", "120")))
+    parser.add_argument("--paper-monitor-limit", type=int, default=int(os.environ.get("AI_OS_PAPER_MONITOR_LIMIT", "20")))
     parser.add_argument("--disable-strategy-discovery-scheduler", action="store_true", help="Disable scheduled external-source strategy discovery.")
     parser.add_argument("--disable-market-news", action="store_true", help="Disable the dedicated market-news freshness workload.")
     parser.add_argument(
@@ -598,6 +1023,36 @@ def main() -> int:
         help="Dedicated market-news ingestion interval in seconds.",
     )
     parser.add_argument("--market-news-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_NEWS_TIMEOUT_SECONDS", "240")))
+    parser.add_argument("--disable-market-research-heartbeat", action="store_true", help="Disable material public-market research workflow creation.")
+    parser.add_argument("--market-research-heartbeat-interval", type=int, default=int(os.environ.get("AI_OS_MARKET_RESEARCH_HEARTBEAT_INTERVAL_SECONDS", "900")))
+    parser.add_argument("--market-research-heartbeat-lookback-minutes", type=int, default=int(os.environ.get("AI_OS_MARKET_RESEARCH_HEARTBEAT_LOOKBACK_MINUTES", "60")))
+    parser.add_argument("--market-research-heartbeat-cooldown-minutes", type=int, default=int(os.environ.get("AI_OS_MARKET_RESEARCH_HEARTBEAT_COOLDOWN_MINUTES", "240")))
+    parser.add_argument("--disable-market-calendar", action="store_true", help="Disable scheduled NSE results and holiday calendar refresh.")
+    parser.add_argument("--market-calendar-interval", type=int, default=int(os.environ.get("AI_OS_MARKET_CALENDAR_INTERVAL_SECONDS", "21600")))
+    parser.add_argument("--market-calendar-timeout", type=int, default=int(os.environ.get("AI_OS_MARKET_CALENDAR_TIMEOUT_SECONDS", "180")))
+    parser.add_argument("--disable-research-hub-refresh", action="store_true", help="Disable scheduled AI research-output inventory refresh.")
+    parser.add_argument("--disable-research-following-refresh", action="store_true", help="Disable bounded refresh of operator-approved Research Following sources.")
+    parser.add_argument("--research-following-refresh-interval", type=int, default=int(os.environ.get("AI_OS_RESEARCH_FOLLOWING_INTERVAL_SECONDS", "900")))
+    parser.add_argument("--research-following-refresh-timeout", type=int, default=int(os.environ.get("AI_OS_RESEARCH_FOLLOWING_TIMEOUT_SECONDS", "12")))
+    parser.add_argument("--research-following-refresh-limit", type=int, default=int(os.environ.get("AI_OS_RESEARCH_FOLLOWING_LIMIT", "5")))
+    parser.add_argument(
+        "--research-hub-refresh-interval",
+        type=int,
+        default=int(os.environ.get("AI_OS_RESEARCH_HUB_REFRESH_INTERVAL_SECONDS", "1800")),
+        help="Research-output inventory refresh interval in seconds.",
+    )
+    parser.add_argument(
+        "--research-hub-refresh-timeout",
+        type=int,
+        default=int(os.environ.get("AI_OS_RESEARCH_HUB_REFRESH_TIMEOUT_SECONDS", "600")),
+    )
+    parser.add_argument("--disable-institutional-options", action="store_true", help="Disable institutional option-chain materialization and analytics.")
+    parser.add_argument("--institutional-options-interval", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_INTERVAL_SECONDS", "300")))
+    parser.add_argument("--institutional-options-timeout", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_TIMEOUT_SECONDS", "240")))
+    parser.add_argument("--institutional-options-limit", type=int, default=int(os.environ.get("AI_OS_INSTITUTIONAL_OPTIONS_BATCH_LIMIT", "20")))
+    parser.add_argument("--disable-option-valuation-sources", action="store_true", help="Disable official option valuation source refresh.")
+    parser.add_argument("--option-valuation-source-interval", type=int, default=int(os.environ.get("AI_OS_OPTION_VALUATION_SOURCE_INTERVAL_SECONDS", "21600")))
+    parser.add_argument("--option-valuation-source-timeout", type=int, default=int(os.environ.get("AI_OS_OPTION_VALUATION_SOURCE_TIMEOUT_SECONDS", "180")))
     parser.add_argument("--disable-workflow-scheduler", action="store_true", help="Disable governed agent workflow schedule materialization.")
     parser.add_argument(
         "--workflow-scheduler-interval",
@@ -618,36 +1073,66 @@ def main() -> int:
 
     source_freshness_enabled = not args.disable_source_freshness and os.environ.get("AI_OS_ENABLE_SOURCE_FRESHNESS_SCHEDULER", "1") != "0"
     source_freshness_interval = max(60, int(args.source_freshness_interval))
-    tradingview_cdp_enabled = not args.disable_tradingview_cdp_check and os.environ.get("AI_OS_ENABLE_TRADINGVIEW_CDP_CHECKER", "1") != "0"
-    tradingview_cdp_interval = max(30, int(args.tradingview_cdp_check_interval))
     ohlcv_aggregation_enabled = not args.disable_ohlcv_aggregation and os.environ.get("AI_OS_ENABLE_OHLCV_AGGREGATION", "1") != "0"
     ohlcv_aggregation_interval = max(60, int(args.ohlcv_aggregation_interval))
-    tradingview_quote_refresh_enabled = not args.disable_tradingview_quote_refresh and os.environ.get("AI_OS_ENABLE_TRADINGVIEW_QUOTE_REFRESH", "1") != "0"
-    tradingview_quote_refresh_interval = max(300, int(args.tradingview_quote_refresh_interval))
+    paper_monitor_enabled = not args.disable_paper_monitor_evaluation and os.environ.get("AI_OS_ENABLE_PAPER_MONITOR_EVALUATION", "1") != "0"
+    paper_monitor_interval = max(30, int(args.paper_monitor_interval))
     strategy_discovery_enabled = not args.disable_strategy_discovery_scheduler and os.environ.get("AI_OS_ENABLE_STRATEGY_DISCOVERY_SCHEDULER", "1") != "0"
     strategy_discovery_interval = max(300, int(args.strategy_discovery_scheduler_interval))
     market_news_enabled = not args.disable_market_news and os.environ.get("AI_OS_ENABLE_MARKET_NEWS_SCHEDULER", "1") != "0"
     market_news_interval = max(300, int(args.market_news_interval))
+    market_research_heartbeat_enabled = not args.disable_market_research_heartbeat and os.environ.get("AI_OS_ENABLE_MARKET_RESEARCH_HEARTBEAT", "1") != "0"
+    market_research_heartbeat_interval = max(300, int(args.market_research_heartbeat_interval))
+    market_research_heartbeat_lookback_minutes = max(5, min(1440, int(args.market_research_heartbeat_lookback_minutes)))
+    market_research_heartbeat_cooldown_minutes = max(15, min(10080, int(args.market_research_heartbeat_cooldown_minutes)))
+    market_calendar_enabled = not args.disable_market_calendar and os.environ.get("AI_OS_ENABLE_MARKET_CALENDAR_SCHEDULER", "1") != "0"
+    market_calendar_interval = max(1800, int(args.market_calendar_interval))
+    research_hub_refresh_enabled = not args.disable_research_hub_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_HUB_REFRESH", "1") != "0"
+    research_hub_refresh_interval = max(300, int(args.research_hub_refresh_interval))
+    research_following_refresh_enabled = not args.disable_research_following_refresh and os.environ.get("AI_OS_ENABLE_RESEARCH_FOLLOWING_REFRESH", "1") != "0"
+    research_following_refresh_interval = max(300, int(args.research_following_refresh_interval))
+    institutional_options_enabled = not args.disable_institutional_options and os.environ.get("AI_OS_ENABLE_INSTITUTIONAL_OPTIONS", "1") != "0"
+    institutional_options_interval = max(60, int(args.institutional_options_interval))
+    option_valuation_sources_enabled = not args.disable_option_valuation_sources and os.environ.get("AI_OS_ENABLE_OPTION_VALUATION_SOURCES", "1") != "0"
+    option_valuation_source_interval = max(3600, int(args.option_valuation_source_interval))
     workflow_scheduler_enabled = not args.disable_workflow_scheduler and os.environ.get("AI_OS_ENABLE_WORKFLOW_SCHEDULER", "1") != "0"
     workflow_scheduler_interval = max(30, int(args.workflow_scheduler_interval))
+    graph_control_enabled = not args.disable_graph_control and os.environ.get("AI_OS_ENABLE_GRAPH_CONTROL", "1") != "0"
     last_source_freshness_run = 0.0
-    last_tradingview_cdp_run = 0.0
     last_ohlcv_aggregation_run = 0.0
-    last_tradingview_quote_refresh_run = 0.0
+    last_paper_monitor_run = 0.0
     last_strategy_discovery_run = 0.0
     last_market_news_run = 0.0
+    last_market_research_heartbeat_run = 0.0
+    last_market_calendar_run = 0.0
+    last_research_hub_refresh_run = 0.0
+    last_research_following_refresh_run = 0.0
+    last_institutional_options_run = 0.0
+    last_option_valuation_source_run = 0.0
     last_workflow_scheduler_run = 0.0
     daemon_started_at = datetime.now().astimezone()
     daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
     enabled_workloads = {
         "mailbox_worker": True,
         "source_freshness": source_freshness_enabled,
-        "tradingview_cdp": tradingview_cdp_enabled,
         "ohlcv_aggregation": ohlcv_aggregation_enabled,
-        "tradingview_quote_refresh": tradingview_quote_refresh_enabled,
+        "paper_monitor_evaluation": paper_monitor_enabled,
         "strategy_discovery": strategy_discovery_enabled,
         "market_news": market_news_enabled,
+        "market_research_heartbeat": market_research_heartbeat_enabled,
+        "market_calendar": market_calendar_enabled,
+        "research_hub_refresh": research_hub_refresh_enabled,
+        "research_following_refresh": research_following_refresh_enabled,
+        "institutional_options": institutional_options_enabled,
+        "option_valuation_sources": option_valuation_sources_enabled,
         "workflow_scheduler": workflow_scheduler_enabled,
+        "graph_control": graph_control_enabled,
+    }
+    research_worker_workloads = {
+        "integrated_into_agent_message_daemon": True,
+        "sources": True,
+        "models": True,
+        "report_retries": True,
     }
 
     record_daemon_heartbeat(
@@ -658,18 +1143,103 @@ def main() -> int:
         enabled_workloads=enabled_workloads,
         last_pass_summary={"phase": "starting"},
     )
+    record_daemon_heartbeat(
+        daemon_key="research_case_worker",
+        instance_id=daemon_instance_id,
+        started_at=daemon_started_at,
+        status="starting",
+        loop_interval_seconds=args.interval,
+        enabled_workloads=research_worker_workloads,
+        last_pass_summary={"phase": "starting", "integrated": True},
+    )
+
+    heartbeat_state: dict[str, Any] = {
+        "status": "starting",
+        "last_pass_summary": {"phase": "starting"},
+        "last_error": None,
+        "phase_started_monotonic": time.monotonic(),
+    }
+    heartbeat_lock = threading.Lock()
+
+    def set_heartbeat_state(status: str, summary: dict[str, Any], last_error: str | None = None) -> None:
+        with heartbeat_lock:
+            heartbeat_state.update({
+                "status": status,
+                "last_pass_summary": dict(summary),
+                "last_error": last_error,
+                "phase_started_monotonic": time.monotonic(),
+            })
+
+    def heartbeat_watchdog() -> None:
+        interval_seconds = max(10, min(30, int(args.interval)))
+        while True:
+            time.sleep(interval_seconds)
+            with heartbeat_lock:
+                status = str(heartbeat_state["status"])
+                summary = dict(heartbeat_state["last_pass_summary"])
+                summary["phase_elapsed_seconds"] = round(
+                    time.monotonic() - float(heartbeat_state["phase_started_monotonic"]), 1
+                )
+                last_error = heartbeat_state["last_error"]
+            try:
+                record_daemon_heartbeat(
+                    instance_id=daemon_instance_id,
+                    started_at=daemon_started_at,
+                    status=status,
+                    loop_interval_seconds=args.interval,
+                    enabled_workloads=enabled_workloads,
+                    last_pass_summary=summary,
+                    last_error=last_error,
+                )
+                record_daemon_heartbeat(
+                    daemon_key="research_case_worker",
+                    instance_id=daemon_instance_id,
+                    started_at=daemon_started_at,
+                    status=status,
+                    loop_interval_seconds=args.interval,
+                    enabled_workloads=research_worker_workloads,
+                    last_pass_summary={"integrated": True, **summary},
+                    last_error=last_error,
+                )
+            except Exception:  # noqa: BLE001
+                # The main loop records the durable error on its next pass. A
+                # watchdog must never terminate the worker it is observing.
+                pass
+
+    threading.Thread(
+        target=heartbeat_watchdog,
+        name="ai-os-daemon-heartbeat",
+        daemon=True,
+    ).start()
 
     while True:
         try:
-            result = daemon_pass(args.message_limit, args.worker_limit, args.include_completed)
+            result = daemon_pass(
+                args.message_limit,
+                args.worker_limit,
+                args.include_completed,
+                graph_control_enabled=graph_control_enabled,
+                graph_run_limit=max(1, int(args.graph_run_limit)),
+                graph_max_steps=max(1, int(args.graph_max_steps)),
+            )
         except Exception as exc:  # noqa: BLE001
             result = {
                 "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "messages_processed": 0,
                 "message_results": [],
                 "worker": {"count": 0, "status": "failed"},
+                "graph_control_plane": {"status": "failed", "error": "daemon pass aborted before graph progression"},
                 "daemon_pass": {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)},
             }
+        set_heartbeat_state(
+            "running",
+            {
+                "phase": "scheduled_workloads",
+                "generated_at": result.get("generated_at"),
+                "messages_processed": result.get("messages_processed", 0),
+                "worker_runs": (result.get("worker") or {}).get("count", 0),
+            },
+        )
         if workflow_scheduler_enabled and (last_workflow_scheduler_run == 0.0 or time.monotonic() - last_workflow_scheduler_run >= workflow_scheduler_interval):
             try:
                 result["workflow_schedule_materializer"] = run_workflow_schedule_materializer(max(1, int(args.workflow_scheduler_limit)))
@@ -682,27 +1252,94 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["market_news_ingestion"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_market_news_run = time.monotonic()
+        if market_research_heartbeat_enabled and (
+            last_market_research_heartbeat_run == 0.0
+            or time.monotonic() - last_market_research_heartbeat_run >= market_research_heartbeat_interval
+        ):
+            try:
+                result["market_research_heartbeat"] = run_market_research_heartbeat(
+                    market_research_heartbeat_lookback_minutes,
+                    market_research_heartbeat_cooldown_minutes,
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["market_research_heartbeat"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_market_research_heartbeat_run = time.monotonic()
+        if market_calendar_enabled and (last_market_calendar_run == 0.0 or time.monotonic() - last_market_calendar_run >= market_calendar_interval):
+            try:
+                result["market_calendar_refresh"] = run_market_calendar_refresh(max(60, int(args.market_calendar_timeout)))
+            except Exception as exc:  # noqa: BLE001
+                result["market_calendar_refresh"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_market_calendar_run = time.monotonic()
+        if research_hub_refresh_enabled and (
+            last_research_hub_refresh_run == 0.0
+            or time.monotonic() - last_research_hub_refresh_run >= research_hub_refresh_interval
+        ):
+            try:
+                result["research_hub_refresh"] = run_research_hub_refresh(
+                    max(60, int(args.research_hub_refresh_timeout))
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["research_hub_refresh"] = {
+                    "status": "failed",
+                    "error": type(exc).__name__ + ": " + str(exc),
+                }
+            last_research_hub_refresh_run = time.monotonic()
+        if research_following_refresh_enabled and (
+            last_research_following_refresh_run == 0.0
+            or time.monotonic() - last_research_following_refresh_run >= research_following_refresh_interval
+        ):
+            try:
+                result["research_following_refresh"] = run_research_following_refresh(
+                    max(5, int(args.research_following_refresh_timeout)),
+                    max(1, int(args.research_following_refresh_limit)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["research_following_refresh"] = {
+                    "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
+                }
+            last_research_following_refresh_run = time.monotonic()
+        if institutional_options_enabled and (
+            last_institutional_options_run == 0.0
+            or time.monotonic() - last_institutional_options_run >= institutional_options_interval
+        ):
+            try:
+                result["institutional_options_materializer"] = run_institutional_options_materializer(
+                    max(1, int(args.institutional_options_limit)), institutional_options_interval,
+                    max(60, int(args.institutional_options_timeout)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["institutional_options_materializer"] = {
+                    "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
+                }
+            last_institutional_options_run = time.monotonic()
+        if option_valuation_sources_enabled and (
+            last_option_valuation_source_run == 0.0
+            or time.monotonic() - last_option_valuation_source_run >= option_valuation_source_interval
+        ):
+            try:
+                result["option_valuation_source_refresh"] = run_option_valuation_source_refresh(
+                    max(60, int(args.option_valuation_source_timeout))
+                )
+            except Exception as exc:  # noqa: BLE001
+                result["option_valuation_source_refresh"] = {
+                    "status": "failed", "error": type(exc).__name__ + ": " + str(exc)
+                }
+            last_option_valuation_source_run = time.monotonic()
         if ohlcv_aggregation_enabled and (last_ohlcv_aggregation_run == 0.0 or time.monotonic() - last_ohlcv_aggregation_run >= ohlcv_aggregation_interval):
             try:
                 result["ohlcv_aggregation"] = run_ohlcv_aggregation(max(30, int(args.ohlcv_aggregation_timeout)))
             except Exception as exc:  # noqa: BLE001
                 result["ohlcv_aggregation"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
             last_ohlcv_aggregation_run = time.monotonic()
-        if tradingview_quote_refresh_enabled and (last_tradingview_quote_refresh_run == 0.0 or time.monotonic() - last_tradingview_quote_refresh_run >= tradingview_quote_refresh_interval):
+        if paper_monitor_enabled and (last_paper_monitor_run == 0.0 or time.monotonic() - last_paper_monitor_run >= paper_monitor_interval):
             try:
-                result["tradingview_quote_refresh"] = run_tradingview_quote_refresh(
-                    max(30, int(args.tradingview_quote_refresh_timeout)),
-                    max(1, int(args.tradingview_quote_refresh_limit)),
+                result["paper_monitor_evaluation"] = run_paper_monitor_evaluation(
+                    max(30, int(args.paper_monitor_timeout)),
+                    max(1, int(args.paper_monitor_limit)),
                 )
             except Exception as exc:  # noqa: BLE001
-                result["tradingview_quote_refresh"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
-            last_tradingview_quote_refresh_run = time.monotonic()
-        if tradingview_cdp_enabled and (last_tradingview_cdp_run == 0.0 or time.monotonic() - last_tradingview_cdp_run >= tradingview_cdp_interval):
-            try:
-                result["tradingview_cdp_check"] = run_tradingview_cdp_check(max(1, int(args.tradingview_cdp_check_timeout)))
-            except Exception as exc:  # noqa: BLE001
-                result["tradingview_cdp_check"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
-            last_tradingview_cdp_run = time.monotonic()
+                result["paper_monitor_evaluation"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
+            last_paper_monitor_run = time.monotonic()
         if source_freshness_enabled and (last_source_freshness_run == 0.0 or time.monotonic() - last_source_freshness_run >= source_freshness_interval):
             try:
                 result["source_freshness_scheduler"] = run_source_freshness_scheduler(
@@ -728,15 +1365,34 @@ def main() -> int:
             for key, payload in result.items()
             if isinstance(payload, dict) and payload.get("status") == "failed"
         ]
+        heartbeat_status = "degraded" if failures else "running"
+        heartbeat_error = "; ".join(failures)[:2000] if failures else None
+        set_heartbeat_state(heartbeat_status, pass_summary, heartbeat_error)
         try:
             record_daemon_heartbeat(
                 instance_id=daemon_instance_id,
                 started_at=daemon_started_at,
-                status="degraded" if failures else "running",
+                status=heartbeat_status,
                 loop_interval_seconds=args.interval,
                 enabled_workloads=enabled_workloads,
                 last_pass_summary=pass_summary,
-                last_error="; ".join(failures)[:2000] if failures else None,
+                last_error=heartbeat_error,
+            )
+            research_case = result.get("research_case_model") or {}
+            research_status = str(research_case.get("status") or "idle")
+            research_error = str(research_case.get("error") or "")[:2000] or None
+            record_daemon_heartbeat(
+                daemon_key="research_case_worker",
+                instance_id=daemon_instance_id,
+                started_at=daemon_started_at,
+                status="degraded" if research_status in {"error", "failed", "blocked"} else "running",
+                loop_interval_seconds=args.interval,
+                enabled_workloads=research_worker_workloads,
+                last_pass_summary={
+                    "generated_at": result.get("generated_at"),
+                    "research_case": research_case,
+                },
+                last_error=research_error,
             )
         except Exception as exc:  # noqa: BLE001
             result["daemon_heartbeat"] = {"status": "failed", "error": type(exc).__name__ + ": " + str(exc)}
@@ -744,21 +1400,32 @@ def main() -> int:
             print(json.dumps(result, indent=2, default=str), flush=True)
         else:
             scheduler = result.get("source_freshness_scheduler") or {}
-            tradingview_cdp = result.get("tradingview_cdp_check") or {}
             ohlcv_aggregation = result.get("ohlcv_aggregation") or {}
-            tradingview_quotes = result.get("tradingview_quote_refresh") or {}
+            paper_monitors = result.get("paper_monitor_evaluation") or {}
             strategy_discovery = result.get("strategy_discovery_scheduler") or {}
             market_news = result.get("market_news_ingestion") or {}
+            market_calendar = result.get("market_calendar_refresh") or {}
+            research_hub = result.get("research_hub_refresh") or {}
+            research_following = result.get("research_following_refresh") or {}
+            institutional_options = result.get("institutional_options_materializer") or {}
+            valuation_sources = result.get("option_valuation_source_refresh") or {}
             workflow_scheduler = result.get("workflow_schedule_materializer") or {}
+            graph_control = result.get("graph_control_plane") or {}
             print(
                 f"{result['generated_at']} messages={result['messages_processed']} "
                 f"worker_runs={result['worker']['count']} "
                 f"ohlcv={ohlcv_aggregation.get('status', 'skipped')} "
-                f"tradingview_quotes={tradingview_quotes.get('status', 'skipped')} "
-                f"tradingview_cdp={tradingview_cdp.get('status', 'skipped')} "
+                f"paper_monitors={paper_monitors.get('status', 'skipped')} "
                 f"source_freshness={scheduler.get('status', 'skipped')} "
                 f"market_news={market_news.get('status', 'skipped')} "
+                f"market_calendar={market_calendar.get('status', 'skipped')} "
+                f"research_hub={research_hub.get('status', 'skipped')} "
+                f"research_following={research_following.get('status', 'skipped')} "
+                f"institutional_options={institutional_options.get('status', 'skipped')} "
+                f"valuation_sources={valuation_sources.get('status', 'skipped')} "
                 f"workflow_scheduler={workflow_scheduler.get('status', 'skipped')} "
+                f"graph_runs={graph_control.get('count', 0)}/{graph_control.get('active_runs_seen', 0)} "
+                f"graph_status={graph_control.get('status', 'skipped')} "
                 f"strategy_discovery={strategy_discovery.get('status', 'skipped')}",
                 flush=True,
             )

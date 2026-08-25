@@ -17,6 +17,7 @@ from typing import Any
 import psycopg
 from kiteconnect import KiteTicker
 
+from sync_zerodha_market_data import zerodha_timestamp_utc
 from sync_zerodha_read_only import keychain_token, request_json
 
 
@@ -84,7 +85,8 @@ INSERT INTO market.price_quotes (
 ) VALUES (
     %(source_key)s,%(provider)s,%(provider_symbol)s,%(symbol)s,%(exchange)s,
     %(instrument_type)s,'INR',%(last_price)s,%(change_percent)s,
-    date_trunc('minute',%(received_at)s::timestamptz),%(raw_payload)s::jsonb
+    date_trunc('minute',coalesce(%(exchange_timestamp)s,%(last_trade_timestamp)s,%(received_at)s)::timestamptz),
+    %(raw_payload)s::jsonb
 ) ON CONFLICT (source_key,provider_symbol,quote_ts) DO UPDATE SET
     price=EXCLUDED.price,change_percent=EXCLUDED.change_percent,
     raw_payload=EXCLUDED.raw_payload,created_at=now()
@@ -140,10 +142,8 @@ def query_subscriptions(connection: psycopg.Connection) -> dict[int, dict[str, A
         JOIN market.zerodha_instruments instrument
           ON instrument.active
          AND upper(instrument.trading_symbol)=desired.symbol
-         AND (upper(instrument.exchange)=desired.exchange
-              OR (desired.exchange='NSE' AND instrument.exchange IN ('NSE','BSE')))
-        ORDER BY instrument.instrument_token,desired.priority,
-                 CASE WHEN upper(instrument.exchange)=desired.exchange THEN 0 ELSE 1 END
+         AND upper(instrument.exchange)=desired.exchange
+        ORDER BY instrument.instrument_token,desired.priority
     ), indices AS (
         SELECT instrument_token,exchange,trading_symbol,instrument_type,0 AS priority
         FROM market.zerodha_instruments
@@ -248,6 +248,15 @@ def notify_login_required(connection: psycopg.Connection, reason: str) -> None:
     )
 
 
+def normalize_market_timestamp(value: object) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromisoformat(zerodha_timestamp_utc(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_tick(tick: dict[str, Any], instrument: dict[str, Any]) -> dict[str, Any] | None:
     price = tick.get("last_price")
     if price is None:
@@ -261,7 +270,16 @@ def normalize_tick(tick: dict[str, Any], instrument: dict[str, Any]) -> dict[str
     if change is None and close not in (None, 0):
         change = (float(price)-float(close))/float(close)*100
     received_at = utc_now()
-    payload = json.dumps(tick, default=json_default, separators=(",", ":"), sort_keys=True)
+    exchange_timestamp = normalize_market_timestamp(tick.get("exchange_timestamp"))
+    last_trade_timestamp = normalize_market_timestamp(tick.get("last_trade_time"))
+    raw_tick = dict(tick)
+    raw_tick["ai_os_timestamp_basis"] = (
+        "exchange_local_ist" if exchange_timestamp else
+        "last_trade_local_ist" if last_trade_timestamp else
+        "receipt_utc"
+    )
+    raw_tick["ai_os_received_at"] = received_at.isoformat()
+    payload = json.dumps(raw_tick, default=json_default, separators=(",", ":"), sort_keys=True)
     return {
         "source_key": SOURCE_KEY,
         "provider": PROVIDER,
@@ -286,8 +304,8 @@ def normalize_tick(tick: dict[str, Any], instrument: dict[str, Any]) -> dict[str
         "day_low": ohlc.get("low"),
         "previous_close": close,
         "change_percent": change,
-        "exchange_timestamp": tick.get("exchange_timestamp"),
-        "last_trade_timestamp": tick.get("last_trade_time"),
+        "exchange_timestamp": exchange_timestamp,
+        "last_trade_timestamp": last_trade_timestamp,
         "received_at": received_at,
         "raw_payload": payload,
     }
@@ -313,7 +331,7 @@ class TickWriter(threading.Thread):
 
     def run(self) -> None:
         connection = database()
-        pending: dict[int, dict[str, Any]] = {}
+        pending: list[dict[str, Any]] = []
         last_flush = time.monotonic()
         last_heartbeat = 0.0
         last_retention = 0.0
@@ -330,13 +348,13 @@ class TickWriter(threading.Thread):
                             continue
                         normalized = normalize_tick(tick, instrument)
                         if normalized:
-                            pending[token] = normalized
+                            pending.append(normalized)
                             self.last_tick_at = normalized["received_at"]
                 except queue.Empty:
                     pass
                 now_monotonic = time.monotonic()
                 if pending and (now_monotonic-last_flush >= FLUSH_SECONDS or self.stop_event.is_set()):
-                    rows = list(pending.values())
+                    rows = list(pending)
                     with connection.cursor() as cursor:
                         cursor.executemany(UPSERT_LIVE_SQL, rows)
                         cursor.executemany(UPSERT_MINUTE_SQL, rows)
@@ -411,15 +429,12 @@ def run_stream(api_key: str, access_token: str, run_seconds: int | None) -> dict
     reconnects = 0
     connection_lock = threading.Lock()
 
-    def on_ticks(_ws: KiteTicker, ticks: list[dict[str, Any]]) -> None:
+    def on_ticks(ws: KiteTicker, ticks: list[dict[str, Any]]) -> None:
         try:
-            tick_queue.put_nowait(ticks)
+            tick_queue.put(ticks, timeout=max(1.0, FLUSH_SECONDS))
         except queue.Full:
-            try:
-                tick_queue.get_nowait()
-                tick_queue.put_nowait(ticks)
-            except (queue.Empty, queue.Full):
-                pass
+            stop_event.set()
+            ws.stop()
 
     def on_connect(ws: KiteTicker, _response: object) -> None:
         nonlocal instruments

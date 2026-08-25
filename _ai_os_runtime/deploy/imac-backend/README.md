@@ -14,7 +14,7 @@ the MacBook remains the authoritative development, approval, and operator node.
 - UI/API: loopback only, published privately with Tailscale Serve
 - PostgreSQL/Qdrant/Redis/Ollama: loopback only and never exposed publicly
 - Trading execution: remains locked and approval-gated
-- TradingView: optional governed read/capture browser on the iMac; disabled until one-time sign-in and verification
+- TradingView: the user-managed native Desktop app; chart handoff only, never canonical data or execution
 
 The recovered raw database directories are never modified. PostgreSQL is restored
 from the verified custom dump into `imac-runtime/postgres`; Qdrant is restored from
@@ -54,15 +54,10 @@ On the iMac:
 ~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac verify
 ~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac backup
 ~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac reindex
-~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac browser-enable
-~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac browser-verify
+~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac desktop-status
 ~/AI_OS_NODE/ai-investment-os/_ai_os_runtime/deploy/imac-backend/bin/aios-imac stop
 ```
 
-`browser-enable` opens a separate managed Chromium profile stored on the SSD.
-Sign into TradingView in that window once, then run `browser-verify`. The existing
-TradingView desktop app can remain open, but it is not the agent-controlled session.
-Chart opening, indicators, screenshots, and evidence capture are permitted. Broker
-orders and autonomous live execution remain disabled.
+`desktop-status` checks the installed, user-managed TradingView Desktop app. The AI OS can prepare and open chart links in that existing signed-in app. It does not create a second browser profile, treat TradingView as canonical market data, capture unverified evidence automatically, or place broker orders.
 
 Always run `stop` and wait for `SAFE_TO_EJECT` before disconnecting the SSD.

@@ -610,3 +610,42 @@ Rule: do not mark `[x]` without evidence. Add note path, report, command, table,
 - [x] Build client accounting and reporting control plane. Deterministic FIFO, cash/fee ledgers, NAV, Modified Dietz benchmark performance, realized attribution, approval-gated monthly drafts, API/MCP controls, and Client Folio terminal panels are live over real imported data with missing evidence explicitly incomplete. Evidence: [[2026-07-15-client-accounting-performance-reporting-v1]].
 - [~] Build Risk Office v2 with stress tests and portfolio Monte Carlo. The institutional calculation, API, MCP, audited action, responsive terminal, validation, and SSD-artifact foundation are live; options tail risk, richer factor/correlation models, Risk Committee/override workflows, and automated specialist cadence remain. Evidence: [[2026-07-15-institutional-portfolio-risk-engine-v1]].
 - [x] Build Animated AI Office v1 foundation. The procedural WebGL office, static fallback, live rooms, 95-agent directory, status/activity, handoff lines, committee state, employee inspection, room focus, and workspace routing are data-backed. Final art direction, direct avatar hit testing, and chronological playback remain the later refinement pass.
+## 21. Fundamental Research Factory And Long-Term Investment Committee
+
+- [~] Retain the existing thesis, packet, checklist, valuation, Monte Carlo, specialist, committee, coverage, and frontend foundation.
+- [ ] Normalize 10-15 years of statements, schedules, periods, units, sources, restatements, segments, operational KPIs, market share, capacity, and peers.
+- [ ] Build transcript, annual-letter, presentation, guidance, claim-versus-outcome, governance, and capital-allocation intelligence.
+- [ ] Enforce one Financial Quality specialist and add mandatory Portfolio Fit And Opportunity Cost across backend and frontend.
+- [ ] Generate all 15 versioned dossier sections with facts, calculations, judgment, dissent, assumptions, and missing evidence distinguished.
+- [ ] Run one real company through intake, normalization, all specialists, valuation/scenarios, risk, sealed committee, human decision, writeback, indexing, and monitoring.
+- [ ] Add permanent database, API, calculation, agent, committee, artifact, and desktop/mobile acceptance tests.
+
+## 22. Sector Intelligence, Custom Indices, And Flow Engine
+
+- [~] Build effective-dated Indian taxonomy and memberships with provenance. Current official Nifty milestone: 11 sector baskets, 151 source rows, 24 taxonomy nodes, and 302 effective-dated memberships as of 2026-07-31; historical membership and broader industry coverage remain open. Evidence: [[2026-08-04-sector-taxonomy-and-bse-filing-intake-v1]].
+- [ ] Build aggregates, valuation bands, revisions, market share, KPIs, capacity, value-chain, and macro/raw-material histories.
+- [ ] Build reproducible classifications and equal-weight, market-cap/free-float, quality, momentum, and custom index engines.
+- [ ] Build breadth, relative strength, delivery, futures OI, options flow, volatility, ownership, shareholding, bulk/block, and insider monitors.
+- [ ] Activate Sector Portfolio Manager, research, flow, industry, data, risk, and committee workflows.
+- [ ] Generate native TradingView Desktop formula, Pine, chart-pack, and pane-layout handoffs from deterministic state.
+- [ ] Pass one real-sector point-in-time reconciliation, dossier, committee, portfolio-fit, and chart-handoff acceptance.
+
+## 23. Institutional Options Analytics And Monitoring Desk
+
+- [~] Retain the existing chain, OI, PCR, max-pain, walls, straddle, builder, blotter, and agent interface as beta.
+- [ ] Persist minute chains with timestamps, market fields, liquidity, staleness, and source quality.
+- [ ] Implement and reconcile Black-Scholes/Black-76 IV and Greeks with convergence, assumptions, version, and quality.
+- [ ] Build straddle/strangle history, buildup, heatmaps, migration, replay, IV rank, skew, term structure, expected move, and probability bands.
+- [ ] Build GEX, DEX, vanna, charm, gamma flip, positioning, and diagnostics with explicit assumptions.
+- [ ] Activate options, volatility, flow, structuring, data-quality, and independent-risk agents.
+- [ ] Link observations and alerts to paper trades, position Greeks, PnL attribution, and review.
+- [ ] Pass one live multi-minute Zerodha session with deterministic reconciliation, exclusions, replay, specialist brief, paper attribution, and zero broker writes.
+
+## 24. Completion Claim Gate
+
+- [ ] No production seed/demo rows exist in the three programs.
+- [ ] Missing values never become zero; every value exposes source/calculation type and quality.
+- [ ] Every calculation retains inputs, source/as-of, version, quality flags, and reproducible output.
+- [ ] Independent specialist views, dissent, human capital decisions, and live-execution approvals remain separate.
+- [ ] All three real-data acceptance programs pass with database, API, calculation, artifact, UI, freshness, runtime, and broker-lock evidence.
+- [ ] Only then may the product be described as a complete autonomous AI investment office or hedge-fund operating system.

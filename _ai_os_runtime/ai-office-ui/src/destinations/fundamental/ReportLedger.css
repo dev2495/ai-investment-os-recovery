@@ -1,0 +1,2 @@
+.ltw-report-ledger h3{display:flex;gap:6px;align-items:center;font:600 16px Georgia,serif}.ltw-report-ledger article{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid #d8cebd}.ltw-report-ledger p{margin:2px 0;color:#746b5e;font-size:10px}.ltw-report-ledger a{display:flex;align-items:center;gap:4px;color:#6d4c18}
+@media(max-width:700px){.ltw-report-ledger article{display:grid;gap:8px}}
