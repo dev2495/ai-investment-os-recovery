@@ -8,7 +8,7 @@ export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   use: {
-    baseURL: "http://127.0.0.1:5177",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:5177",
     browserName: "chromium",
     headless: true,
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH

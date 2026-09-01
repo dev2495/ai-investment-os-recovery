@@ -50,11 +50,20 @@ try:
 except ImportError:  # Direct script execution on the iMac.
     from report_delivery import select_thesis_report_delivery  # type: ignore
 
+
+try:
+    from .research_case_report import generate_research_case_report, retry_research_case_report_pdf
+except ImportError:  # Direct script execution on the iMac.
+    from research_case_report import (  # type: ignore
+        generate_research_case_report,
+        retry_research_case_report_pdf,
+    )
 try:
     from .research_model_runtime import (
         approve_model_run_preflight as approve_model_run_preflight_helper,
         configure_public_model_canary as configure_public_model_canary_helper,
         create_model_run_preflight as create_model_run_preflight_helper,
+        review_and_promote_public_model_canary as review_and_promote_public_model_canary_helper,
         run_public_model_canary as run_public_model_canary_helper,
     )
 except ImportError:  # Direct script execution on the iMac.
@@ -62,6 +71,7 @@ except ImportError:  # Direct script execution on the iMac.
         approve_model_run_preflight as approve_model_run_preflight_helper,
         configure_public_model_canary as configure_public_model_canary_helper,
         create_model_run_preflight as create_model_run_preflight_helper,
+        review_and_promote_public_model_canary as review_and_promote_public_model_canary_helper,
         run_public_model_canary as run_public_model_canary_helper,
     )
 
@@ -6118,6 +6128,25 @@ def build_department_terminal_snapshot(workspace: str) -> dict:
             "primary": "SELECT * FROM agent.v_model_route_runtime_control ORDER BY runtime_status, route_name",
             "secondary": "SELECT * FROM agent.model_privacy_policies ORDER BY CASE privacy_class WHEN 'public' THEN 1 WHEN 'internal' THEN 2 WHEN 'client_private' THEN 3 ELSE 4 END",
             "tertiary": "SELECT * FROM agent.v_model_call_control ORDER BY created_at DESC LIMIT 100",
+            "canaries": """
+                SELECT canary.id,canary.canary_key,canary.candidate_route,canary.candidate_model,
+                       canary.packet_key,canary.packet_public_only,canary.status,
+                       canary.score,canary.selected_for_role,canary.created_by,
+                       canary.created_at,canary.updated_at,
+                       preflight.id AS preflight_id,preflight.status AS preflight_status,
+                       preflight.estimated_cost_usd,preflight.hard_max_cost_usd,
+                       preflight.exchange_rate_inr_per_usd,
+                       approval.status AS approval_status,
+                       coalesce((canary.score->>'structured_output_valid')::boolean,false)
+                         AS structured_output_valid,
+                       canary.score->>'response_hash' AS response_hash,
+                       canary.score->'human_review' AS human_review
+                FROM research.public_model_canary_runs canary
+                LEFT JOIN research.model_run_preflights preflight ON preflight.id=canary.preflight_id
+                LEFT JOIN agent.approvals approval ON approval.id=preflight.approval_id
+                ORDER BY canary.updated_at DESC,canary.id DESC
+                LIMIT 40
+            """,
         },
         "governance": {
             "summary": "SELECT * FROM core.v_governance_control_summary ORDER BY metric",
@@ -11165,6 +11194,10 @@ def get_fundamental_scanner_run_v1(run_id: int, query: dict[str, list[str]]) -> 
 
 def create_fundamental_scanner_v1(payload: dict) -> dict:
     return research_scanner_service().create_draft({**payload, "actor": "Devarsh"})
+
+
+def clone_fundamental_scanner_v1(scanner_id: int, payload: dict) -> dict:
+    return research_scanner_service().clone_template(scanner_id, {**payload, "actor": "Devarsh"})
 
 
 def create_fundamental_scanner_from_text_v1(payload: dict) -> dict:
@@ -16938,6 +16971,103 @@ def prepare_research_case_resume(payload: dict) -> dict:
     return result
 
 
+def repair_research_case_report_delivery(payload: dict) -> dict:
+    if payload.get("operator_confirmed") is not True:
+        raise ValueError("operator_confirmed must be true before repairing report delivery")
+    case_id = int(payload.get("research_case_id") or payload.get("researchCaseId") or 0)
+    if not case_id:
+        raise ValueError("research_case_id is required")
+    actor = str(payload.get("actor") or "Devarsh").strip()
+    case_rows = run_psql_json(
+        f"SELECT id,status FROM research.research_cases WHERE id={case_id} LIMIT 1"
+    )
+    if not case_rows:
+        raise ValueError("Research Case was not found")
+    blockers = run_psql_json(f"""
+      SELECT blocker_key,status
+      FROM research.research_case_blockers
+      WHERE research_case_id={case_id}
+        AND blocker_key IN ('report_pdf_render','research_pack_generation')
+        AND status IN ('open','retrying')
+      ORDER BY id
+    """)
+    if not blockers:
+        raise ValueError("No open report-delivery blocker exists for this Research Case")
+    report_rows = run_psql_json(f"""
+      SELECT id,report_version,html_path,pdf_path
+      FROM research.research_case_reports
+      WHERE research_case_id={case_id}
+      ORDER BY report_version DESC,id DESC
+      LIMIT 1
+    """)
+    latest = report_rows[0] if report_rows else {}
+    ssd_root = Path("/Volumes/Devarsh SSD").resolve()
+
+    def stored_report_artifact_exists(value: object) -> bool:
+        if not value:
+            return False
+        candidate = Path(str(value)).resolve()
+        if ssd_root not in candidate.parents:
+            raise PermissionError("research case report is outside the mounted Devarsh SSD")
+        return ssd_root.is_mount() and candidate.is_file() and candidate.stat().st_size > 0
+
+    # Tests may inject explicit disk truth; production computes it in the API
+    # process so the database role never needs pg_read_server_files.
+    latest.setdefault("html_exists", stored_report_artifact_exists(latest.get("html_path")))
+    latest.setdefault("pdf_exists", stored_report_artifact_exists(latest.get("pdf_path")))
+    if latest.get("pdf_exists") is True:
+        run_psql_json_statement(f"""
+          UPDATE research.research_case_blockers SET
+            status='resolved',
+            resolution='The stored report artifacts were verified on disk; no research or model work was rerun.',
+            system_action='Resolved by the scoped report-delivery repair.',
+            user_action=NULL,resolved_at=now(),next_retry_at=NULL,updated_at=now()
+          WHERE research_case_id={case_id}
+            AND blocker_key IN ('report_pdf_render','research_pack_generation')
+            AND status IN ('open','retrying')
+          RETURNING id
+        """)
+        raw_result = {
+            "status": "report_already_ready",
+            "ok": True,
+            "research_case_id": case_id,
+            "report_id": int(latest["id"]),
+            "report_version": int(latest.get("report_version") or 0),
+            "delivery_state": "pdf_ready",
+        }
+    elif latest.get("id") and latest.get("html_exists") is True:
+        raw_result = retry_research_case_report_pdf(int(latest["id"]), actor)
+    else:
+        raw_result = generate_research_case_report(case_id, actor)
+    result = {
+        "status": str(raw_result.get("status") or ("report_delivery_rebuilt" if raw_result.get("ok") else "report_delivery_retry_wait")),
+        "ok": bool(raw_result.get("ok")),
+        "research_case_id": case_id,
+        "report_id": int(raw_result.get("report_id") or latest.get("id") or 0) or None,
+        "report_version": int(raw_result.get("report_version") or latest.get("report_version") or 0) or None,
+        "content_state": raw_result.get("content_state"),
+        "delivery_state": raw_result.get("delivery_state") or ("pdf_ready" if raw_result.get("pdf_hash") else "html_ready_pdf_retry"),
+        "html_view_available": bool(raw_result.get("html_path") or latest.get("html_exists") is True),
+        "pdf_download_available": bool(raw_result.get("pdf_path") or latest.get("pdf_exists") is True),
+        "model_preflight_created": False,
+        "model_runs_created": 0,
+        "source_jobs_created": 0,
+        "paid_research_rerun_required": False,
+        "broker_write_allowed": False,
+        "external_write_allowed": False,
+        "capital_action_allowed": False,
+    }
+    audit_api_write(
+        "ai_os_api_repair_research_case_report_delivery",
+        "repair_research_case_report_delivery",
+        actor,
+        "research.research_case_reports",
+        result,
+        {"research_case_id": case_id, "operator_confirmed": True},
+    )
+    return result
+
+
 def repair_research_case(payload: dict) -> dict:
     if payload.get("operator_confirmed") is not True:
         raise ValueError("operator_confirmed must be true before repairing a Research Case")
@@ -17097,7 +17227,33 @@ def run_research_public_model_canary(payload: dict) -> dict:
         sql_jsonb=sql_jsonb,
         openrouter_chat=openrouter_chat,
     )
-    audit_api_write("ai_os_api_run_research_public_model_canary", "run_research_public_model_canary", str(payload.get("actor") or "Devarsh"), "research.public_model_canary_runs", result, payload)
+    audit_result = {
+        key: value
+        for key, value in result.items()
+        if key not in {"response_output", "response_preview"}
+    }
+    audit_result["raw_response_stored"] = False
+    audit_result["response_returned_to_confirmed_operator"] = bool(result.get("response_output"))
+    audit_api_write("ai_os_api_run_research_public_model_canary", "run_research_public_model_canary", str(payload.get("actor") or "Devarsh"), "research.public_model_canary_runs", audit_result, payload)
+    return result
+
+
+def review_and_promote_research_public_model_canary(payload: dict) -> dict:
+    result = review_and_promote_public_model_canary_helper(
+        payload,
+        run_rows=run_psql_json,
+        run_statement=run_psql_json_statement,
+        sql_literal=sql_literal,
+        sql_jsonb=sql_jsonb,
+    )
+    audit_api_write(
+        "ai_os_api_review_and_promote_research_public_model_canary",
+        "review_and_promote_research_public_model_canary",
+        str(payload.get("reviewer") or payload.get("actor") or "Devarsh"),
+        "research.public_model_canary_runs",
+        result,
+        payload,
+    )
     return result
 
 
@@ -23116,28 +23272,35 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                     raise ValueError("research case report was not found")
                 report_row = report_rows[0]
                 ssd_root = Path("/Volumes/Devarsh SSD").resolve()
-                if action == "download" and not report_row.get("pdf_path"):
+
+                def available_report_artifact(value: object) -> Path | None:
+                    if not value:
+                        return None
+                    candidate = Path(str(value)).resolve()
+                    if ssd_root not in candidate.parents:
+                        raise PermissionError("research case report is outside the mounted Devarsh SSD")
+                    if not ssd_root.is_mount() or not candidate.is_file():
+                        return None
+                    return candidate
+
+                html_artifact = available_report_artifact(report_row.get("html_path"))
+                pdf_artifact = available_report_artifact(report_row.get("pdf_path"))
+                selected = pdf_artifact if action == "download" else html_artifact
+                if selected is None:
                     self._send_json({
-                        "error": "report_not_ready",
-                        "message": "The PDF report is not ready. Open the HTML view while local PDF delivery retries.",
+                        "error": "report_delivery_not_ready",
+                        "message": (
+                            "The PDF is not ready. Open the HTML view or run the scoped local delivery repair."
+                            if action == "download" and html_artifact
+                            else "The report artifact is not ready. Run the scoped local delivery repair; saved research and completed analysis remain preserved."
+                        ),
                         "report_id": report_id,
-                        "html_view_available": bool(report_row.get("html_path")),
+                        "html_view_available": bool(html_artifact),
+                        "pdf_download_available": bool(pdf_artifact),
+                        "repair_endpoint": "/api/research/cases/report-delivery/repair",
+                        "paid_research_rerun_required": False,
                     }, 409)
                     return
-                selected_value = report_row.get("pdf_path") if action == "download" else report_row.get("html_path")
-                selected = Path(str(selected_value or "")).resolve()
-                if not ssd_root.is_mount() or ssd_root not in selected.parents:
-                    raise PermissionError("research case report is outside the mounted Devarsh SSD")
-                if not selected.is_file():
-                    if action == "download":
-                        self._send_json({
-                            "error": "report_not_ready",
-                            "message": "The PDF report is not ready. Open the HTML view while local PDF delivery retries.",
-                            "report_id": report_id,
-                            "html_view_available": bool(report_row.get("html_path")),
-                        }, 409)
-                        return
-                    raise PermissionError("research case report HTML is missing")
                 if action == "download":
                     self._send_artifact(selected, "application/pdf", "attachment")
                 else:
@@ -23286,13 +23449,15 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(create_fundamental_scanner_from_text_v1(payload), 201)
                 return
             scanner_action_match = re.fullmatch(
-                r"/(?:api|v1)/fundamental-scanners/(\d+)/(validate|publish-request|publish|run)",
+                r"/(?:api|v1)/fundamental-scanners/(\d+)/(clone|validate|publish-request|publish|run)",
                 request_path,
             )
             if scanner_action_match:
                 scanner_id = int(scanner_action_match.group(1))
                 scanner_action = scanner_action_match.group(2)
-                if scanner_action == "validate":
+                if scanner_action == "clone":
+                    self._send_json(clone_fundamental_scanner_v1(scanner_id, payload), 201)
+                elif scanner_action == "validate":
                     self._send_json(validate_fundamental_scanner_v1(scanner_id, payload), 200)
                 elif scanner_action == "publish-request":
                     self._send_json(request_fundamental_scanner_publish_v1(scanner_id, payload), 201)
@@ -23592,6 +23757,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             if self.path == "/api/research/cases/resume-preflight":
                 self._send_json(prepare_research_case_resume(payload), 201)
                 return
+            if self.path == "/api/research/cases/report-delivery/repair":
+                self._send_json(repair_research_case_report_delivery(payload), 200)
+                return
             if self.path == "/api/research/cases/repair":
                 self._send_json(repair_research_case(payload), 200)
                 return
@@ -23606,6 +23774,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/research/model-runs/canary/run":
                 self._send_json(run_research_public_model_canary(payload), 201)
+                return
+            if self.path == "/api/research/model-runs/canary/review-promote":
+                self._send_json(review_and_promote_research_public_model_canary(payload), 200)
                 return
             if self.path == "/api/research/cases/evidence/link-upload":
                 self._send_json(link_research_case_upload(payload), 201)

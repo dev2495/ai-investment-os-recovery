@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 PUBLIC_CANARY_ROUTES = {
+    "openrouter_public_lead_glm53_flash_canary",
     "openrouter_public_lead_glm52_canary",
     "openrouter_public_lead_deepseek_v4_pro_canary",
 }
@@ -107,7 +108,11 @@ def _route_plan(payload, run_rows, sql_literal):
             reasons.append(f"route_or_agent_unavailable:{route_name}")
             continue
         row = rows[0]
-        if not bool(row.get("enabled")):
+        canary_route_override = (
+            str(payload.get("request_kind") or payload.get("requestKind") or "").strip() == "canary"
+            and route_name in PUBLIC_CANARY_ROUTES
+        )
+        if not bool(row.get("enabled")) and not canary_route_override:
             reasons.append(f"route_disabled:{route_name}")
         if row.get("default_provider") != "openrouter":
             reasons.append(f"non_openrouter_route:{route_name}")
@@ -123,7 +128,7 @@ def _route_plan(payload, run_rows, sql_literal):
         plan.append({
             "agent_name": agent_name, "route_name": route_name, "provider": row.get("default_provider"),
             "model_name": row.get("default_model"), "cost_tier": row.get("max_cost_tier"),
-            "route_enabled": bool(row.get("enabled")), "prompt_tokens_est": prompt_tokens,
+            "route_enabled": bool(row.get("enabled")), "canary_route_override": canary_route_override, "prompt_tokens_est": prompt_tokens,
             "completion_tokens_max": completion_tokens, "max_calls": max_calls,
             "estimated_cost_usd": float(estimate), "hard_max_cost_usd": float(estimate * Decimal("1.20")),
             "rate_id": row.get("rate_id"), "input_usd_per_1m_tokens": float(input_rate),
@@ -305,6 +310,187 @@ def run_public_model_canary(payload, *, run_rows, run_statement, sql_literal, sq
         raise RuntimeError("canary result was not recorded")
     result = rows[0]
     result["receipt"] = {"outcome": outcome, "latency_ms": elapsed, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "actual_cost_usd": float(cost), "response_hash": _sha(response or '')}
-    result["response_preview"] = (response or "")[:600]
+    # Return the fixed public response only to this confirmed caller so the
+    # operator can review every citation. The wrapper must remove this field
+    # before audit persistence; the durable receipt stores only its hash.
+    result["response_output"] = response or ""
     result["lead_model_selected"] = False
+    return result
+
+
+def review_and_promote_public_model_canary(
+    payload, *, run_rows, run_statement, sql_literal, sql_jsonb
+):
+    """Record a named human review and promote one public daily-driver candidate.
+
+    The review is bound to the exact response hash returned by the canary. No
+    model call occurs here. Promotion changes only the public Research Case
+    specialist route; private data, broker writes and external writes remain
+    denied and every paid Research Case still requires its own preflight.
+    """
+    if payload.get("operator_confirmed") is not True and payload.get("operatorConfirmed") is not True:
+        raise ValueError("operator_confirmed must be true before promoting a public research model")
+    if payload.get("approve_for_daily_driver") is not True and payload.get("approveForDailyDriver") is not True:
+        raise ValueError("approve_for_daily_driver must be true before changing the public research daily driver")
+    canary_id = _int(payload.get("canary_id") or payload.get("canaryId") or payload.get("id"))
+    if not canary_id:
+        raise ValueError("canary_id is required")
+    reviewer = str(payload.get("reviewer") or payload.get("actor") or "").strip()
+    rationale = str(payload.get("rationale") or "").strip()
+    reviewed_hash = str(payload.get("reviewed_response_hash") or payload.get("reviewedResponseHash") or "").strip().lower()
+    citation_score = _int(payload.get("citation_accuracy_score") or payload.get("citationAccuracyScore"))
+    numeric_score = _int(payload.get("numeric_accuracy_score") or payload.get("numericAccuracyScore"))
+    unsupported_claims = _int(payload.get("unsupported_claim_count") or payload.get("unsupportedClaimCount"))
+    citations_checked = payload.get("source_citations_checked") is True or payload.get("sourceCitationsChecked") is True
+    if not reviewer or len(rationale) < 20:
+        raise ValueError("reviewer and a rationale of at least 20 characters are required")
+    if len(reviewed_hash) != 64:
+        raise ValueError("reviewed_response_hash must be the exact 64-character canary response hash")
+    if not citations_checked:
+        raise ValueError("source_citations_checked must be true")
+    if citation_score < 90 or numeric_score < 95 or unsupported_claims:
+        raise ValueError("promotion requires citation score >= 90, numeric score >= 95, and zero unsupported claims")
+
+    rows = run_rows(f"""
+      SELECT canary.id,canary.candidate_route,canary.candidate_model,canary.packet_public_only,
+             canary.status,canary.score,route.max_cost_tier
+      FROM research.public_model_canary_runs canary
+      JOIN agent.model_routes route ON route.route_name=canary.candidate_route
+      WHERE canary.id={canary_id}
+      LIMIT 1
+    """)
+    if not rows:
+        raise ValueError("canary was not found")
+    canary = rows[0]
+    score = canary.get("score") if isinstance(canary.get("score"), dict) else {}
+    if (
+        canary.get("status") != "completed"
+        or not bool(canary.get("packet_public_only"))
+        or canary.get("candidate_route") not in PUBLIC_CANARY_ROUTES
+        or not bool(score.get("structured_output_valid"))
+    ):
+        raise ValueError("only a completed, structured-output-valid public canary can be promoted")
+    if str(score.get("response_hash") or "").lower() != reviewed_hash:
+        raise ValueError("reviewed_response_hash does not match the completed canary")
+
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    review = {
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+        "citation_accuracy_score": citation_score,
+        "numeric_accuracy_score": numeric_score,
+        "unsupported_claim_count": unsupported_claims,
+        "source_citations_checked": True,
+        "rationale": rationale,
+        "selection_role": "public_research_daily_driver",
+        "response_hash": reviewed_hash,
+    }
+    promoted_score = {
+        **score,
+        "human_review": review,
+        "human_review_passed": True,
+        "requires_human_citation_review": False,
+        "auto_promotion": False,
+    }
+    model_name = str(canary["candidate_model"])
+    max_cost_tier = str(canary.get("max_cost_tier") or "cloud_low")
+    notes = (
+        "Public-only Research Case specialist daily driver selected after a completed "
+        "structured-output canary and named human citation/numeric review. Every paid "
+        "Research Case still requires preflight approval; private data, broker writes "
+        "and external writes remain denied."
+    )
+    alias_config = {
+        "zdr_required": True,
+        "data_collection": "deny",
+        "public_only": True,
+        "broker_write_allowed": False,
+        "external_write_allowed": False,
+        "private_data_egress_allowed": False,
+        "selected_canary_id": canary_id,
+        "reviewed_response_hash": reviewed_hash,
+        "reviewed_at": reviewed_at,
+        "reviewer": reviewer,
+    }
+    promoted = run_statement(f"""
+      WITH target AS (
+        SELECT id,candidate_route,candidate_model
+        FROM research.public_model_canary_runs
+        WHERE id={canary_id} AND status='completed' AND packet_public_only=true
+        FOR UPDATE
+      ), older_daily_driver AS (
+        UPDATE research.public_model_canary_runs
+        SET selected_for_role=false,updated_at=now()
+        WHERE id<>(SELECT id FROM target)
+          AND selected_for_role=true
+          AND score->'human_review'->>'selection_role'='public_research_daily_driver'
+        RETURNING id
+      ), selected_canary AS (
+        UPDATE research.public_model_canary_runs
+        SET selected_for_role=true,score={sql_jsonb(promoted_score)},updated_at=now()
+        WHERE id=(SELECT id FROM target)
+        RETURNING id,candidate_route,candidate_model,selected_for_role,score,updated_at
+      ), route_update AS (
+        UPDATE agent.model_routes
+        SET task_class='public_research_specialist_daily_driver',
+            default_provider='openrouter',
+            default_model={sql_literal(model_name)},
+            escalation_provider='openrouter',
+            escalation_model='deepseek/deepseek-v4-pro-0813',
+            max_cost_tier={sql_literal(max_cost_tier)},
+            notes={sql_literal(notes)},
+            enabled=true
+        WHERE route_name='openrouter_research_fast'
+        RETURNING route_name,default_provider,default_model,escalation_model,max_cost_tier,enabled
+      ), daily_alias AS (
+        INSERT INTO agent.model_alias_registry (
+          alias_key,route_name,provider_binding,model_binding,secret_ref,
+          data_boundary,approval_required,fallback_alias,escalation_alias,
+          status,notes,config
+        ) VALUES (
+          'research.public.daily_driver','openrouter_research_fast','openrouter',
+          {sql_literal(model_name)},'AI_OS_OPENROUTER_API_KEY','public_only',true,
+          'local.private.default','research.public.lead.deepseek_v4_pro','active',
+          {sql_literal(notes)},{sql_jsonb(alias_config)}
+        )
+        ON CONFLICT (alias_key) DO UPDATE SET
+          route_name=EXCLUDED.route_name,
+          provider_binding=EXCLUDED.provider_binding,
+          model_binding=EXCLUDED.model_binding,
+          secret_ref=EXCLUDED.secret_ref,
+          data_boundary='public_only',
+          approval_required=true,
+          fallback_alias=EXCLUDED.fallback_alias,
+          escalation_alias=EXCLUDED.escalation_alias,
+          status='active',
+          notes=EXCLUDED.notes,
+          config=EXCLUDED.config,
+          updated_at=now()
+        RETURNING alias_key,route_name,model_binding,data_boundary,approval_required,status
+      )
+      SELECT coalesce(json_agg(json_build_object(
+        'canary_id',selected_canary.id,
+        'candidate_route',selected_canary.candidate_route,
+        'daily_driver_route',route_update.route_name,
+        'daily_driver_model',route_update.default_model,
+        'escalation_model',route_update.escalation_model,
+        'selected_for_role',selected_canary.selected_for_role,
+        'human_review',selected_canary.score->'human_review',
+        'alias_key',daily_alias.alias_key,
+        'public_only',true,
+        'private_data_egress_allowed',false,
+        'external_write_allowed',false,
+        'broker_write_allowed',false,
+        'paid_runs_still_require_preflight',true
+      )), '[]'::json)::text
+      FROM selected_canary CROSS JOIN route_update CROSS JOIN daily_alias
+    """)
+    if not promoted:
+        raise RuntimeError("daily-driver promotion was not persisted")
+    result = promoted[0]
+    result["model_invoked"] = False
+    result["detail"] = (
+        f"{model_name} is selected for public Research Case specialist work. "
+        "DeepSeek V4 Pro remains the lead/review escalation; every paid run remains approval-gated."
+    )
     return result

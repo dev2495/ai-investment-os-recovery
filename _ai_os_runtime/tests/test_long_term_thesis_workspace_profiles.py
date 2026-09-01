@@ -65,6 +65,9 @@ class LongTermThesisWorkspaceProfileTests(unittest.TestCase):
         self.assertEqual(response["workspace_profile"], "long_term_thesis_dashboard_v1")
         self.assertIn("FROM research.research_cases latest_case", selector_sql)
         self.assertIn("FROM research.research_pack_sections section", selector_sql)
+        self.assertIn("FROM research.research_case_reports report", selector_sql)
+        self.assertIn("latest_research_case_report_id", selector_sql)
+        self.assertIn("latest_research_case_report_delivery_state", selector_sql)
         self.assertIn("'content',latest_section.content", selector_sql)
         self.assertIn(
             "ORDER BY latest_case.updated_at DESC,latest_case.id DESC\n      LIMIT 1",
@@ -170,6 +173,34 @@ class LongTermThesisWorkspaceProfileTests(unittest.TestCase):
 
         fallback = build_for({"symbol": ["MISSING"], "exchange": ["BSE"]})
         self.assertEqual(fallback["selected_thesis"]["id"], 7)
+
+    def test_requested_symbol_is_prioritized_before_bounded_selector_limit(self):
+        _response, selector_sql, _queries = self.build({
+            "symbol": ["wipro"], "exchange": ["nse"],
+        })
+        self.assertIn(
+            "CASE WHEN upper(thesis.symbol)='WIPRO' AND upper(thesis.exchange)='NSE' THEN 0 ELSE 1 END",
+            selector_sql,
+        )
+        self.assertLess(
+            selector_sql.index("CASE WHEN upper(thesis.symbol)"),
+            selector_sql.index("(company.id IS NOT NULL) DESC"),
+        )
+
+    def test_symbol_selection_allows_missing_exchange_but_keeps_exact_exchange_when_supplied(self):
+        selector_rows = [
+            {"id": 7, "symbol": "ACME", "exchange": "NSE", "company_name": "Acme",
+             "research_company_id": 11, "dossier_version_id": 13},
+            {"id": 12, "symbol": "WIPRO", "exchange": "BSE", "company_name": "Wipro",
+             "research_company_id": 21, "dossier_version_id": 23},
+        ]
+        result = build_long_term_thesis_workspace(
+            {"symbol": ["wipro"]}, run_rows=lambda _sql: selector_rows,
+            run_map=lambda queries, **_kwargs: {key: ([{}] if key == "coverage" else []) for key in queries},
+            sql_literal=lambda value: "'" + str(value).replace("'", "''") + "'",
+            runtime_root=ROOT, vault_root=Path("/Volumes/Devarsh SSD/Obsidian memory"),
+        )
+        self.assertEqual(result["selected_thesis"]["id"], 12)
 
     def test_operations_profile_explicitly_hydrates_control_plane(self):
         response, selector_sql, queries = self.build({"profile": ["operations"]})

@@ -1,4 +1,4 @@
-version: 7
+version: 9
 purpose: >
   Charlie handles natural operator conversation and delegates typed work to Jarvis
   and role-scoped agents. Private context stays on evaluated local models. Public
@@ -37,6 +37,14 @@ model_aliases:
     route: openrouter_public_lead_glm52_canary
     provider_binding: openrouter
     model_binding: z-ai/glm-5.2
+    secret_ref: AI_OS_OPENROUTER_API_KEY
+    data_boundary: public_only
+    approval_required: true
+    status: canary_only_disabled
+  research.public.lead.glm53_flash:
+    route: openrouter_public_lead_glm53_flash_canary
+    provider_binding: openrouter
+    model_binding: z-ai/glm-5.3-flash
     secret_ref: AI_OS_OPENROUTER_API_KEY
     data_boundary: public_only
     approval_required: true
@@ -165,6 +173,16 @@ routes:
     max_cost_tier: cloud_medium
     privacy: public_only
     status: disabled_until_explicit_preflight_approval_and_canary_promotion
+
+  openrouter_public_lead_glm53_flash_canary:
+    task_class: public_company_lead_canary
+    default_provider: openrouter
+    default_model: z-ai/glm-5.3-flash
+    fallback_route: openrouter_public_lead_deepseek_v4_pro_canary
+    escalation_route: human_or_local_review
+    max_cost_tier: cloud_low
+    privacy: public_only
+    status: disabled_until_explicit_preflight_approval_and_human_canary_review
 
   openrouter_public_lead_glm52_canary:
     task_class: public_company_lead_canary
@@ -412,6 +430,24 @@ governance:
   canary_required: true
   rollback: alias_repoint_without_agent_edits
   audit_fields: [trace_id, task_type, alias, resolved_provider, resolved_model, decision_reason, attempts, latency_ms, tokens, estimated_cost_inr, actual_cost_inr, approval_id, data_boundary, preflight_id, receipt_id]
+  public_research_daily_driver:
+    candidate: z-ai/glm-5.3-flash
+    active_route: openrouter_research_fast
+    lead_and_review_escalation: deepseek/deepseek-v4-pro-0813
+    selection_source: research.public_model_canary_runs
+    prepare_and_run_flow: [cost_preflight, explicit_approval, fixed_public_packet_canary, named_human_review]
+    promotion_endpoint: /api/research/model-runs/canary/review-promote
+    thresholds:
+      structured_output_valid: true
+      citation_accuracy_min: 90
+      numeric_accuracy_min: 95
+      unsupported_claim_count: 0
+      reviewed_response_hash_match: true
+    normal_use_before_promotion: blocked
+    paid_runs_after_promotion: per_run_preflight_required
+    private_data_egress_allowed: false
+    broker_write_allowed: false
+    external_write_allowed: false
 
 safety:
   broker_writes: false

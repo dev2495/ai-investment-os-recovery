@@ -51,6 +51,73 @@ function payload(pathname: string) {
     discovery_candidates: [],
     fundamental_intake: []
   };
+  if (pathname === "/api/research/long-term-thesis") return {
+    generated_at: generatedAt,
+    workspace_profile: "long_term_thesis_dashboard_v1",
+    runtime_root: "/Volumes/Devarsh SSD/AI OS Data",
+    privacy: {
+      private_data_egress_allowed: false,
+      broker_write_allowed: false,
+      external_write_allowed: false
+    },
+    pagination: { facts_total: 72, evidence_total: 11, filings_total: 11 },
+    theses: [{ id: 12, exchange: "NSE", symbol: "WIPRO", company_name: "Wipro Limited", legal_name: "Wipro Limited" }],
+    selected_thesis: {
+      id: 12,
+      exchange: "NSE",
+      symbol: "WIPRO",
+      company_name: "Wipro Limited",
+      legal_name: "Wipro Limited",
+      thesis_title: "WIPRO Long-Term Thesis",
+      dossier_version_number: 2,
+      latest_research_case_id: 12,
+      latest_research_case_report_id: 801,
+      latest_research_case_report_version: 2,
+      latest_research_case_report_status: "generated",
+      latest_research_case_report_delivery_state: "html_ready_pdf_retry",
+      research_pack: {
+        investment_conclusion: {
+          title: "Hold while the valuation evidence is completed",
+          narrative: "The operating recovery is supported, while the current valuation remains under review."
+        }
+      }
+    },
+    execution_control: [{
+      global_execution_locked: true,
+      lock_reason: "Research is read-only; broker and external writes remain disabled."
+    }]
+  };
+  if (pathname === "/api/department-terminal/snapshot") return {
+    generated_at: generatedAt,
+    workspace: "models",
+    data_mode: { seed_data_allowed: false, source: "test" },
+    payload_profile: { query_count: 7, row_count: 2 },
+    execution_control: [], widgets: [], summary: [],
+    primary: [{ route_name: "openrouter_research_fast", default_provider: "openrouter", default_model: "deepseek/deepseek-v4-flash", runtime_status: "active" }],
+    secondary: [], tertiary: [],
+    canaries: [{ id: 52, canary_key: "prior-glm53", candidate_route: "openrouter_public_lead_glm53_flash_canary", candidate_model: "z-ai/glm-5.3-flash", status: "completed", structured_output_valid: true, selected_for_role: false, hard_max_cost_usd: 0.002, updated_at: generatedAt }]
+  };
+  if (pathname === "/api/research/model-runs/preflight") return {
+    id: 900, request_kind: "canary", status: "awaiting_approval",
+    estimated_cost_usd: 0.0010, hard_max_cost_usd: 0.0012, hard_max_cost_inr: 0.11,
+    no_model_invocation: true
+  };
+  if (pathname === "/api/research/model-runs/preflight/approve") return {
+    id: 900, request_kind: "canary", status: "approved", execution_enabled: false
+  };
+  if (pathname === "/api/research/model-runs/canary/configure") return {
+    id: 901, status: "awaiting_approval", candidate_model: "z-ai/glm-5.3-flash", execution_enabled: false
+  };
+  if (pathname === "/api/research/model-runs/canary/run") return {
+    id: 901, status: "completed", candidate_model: "z-ai/glm-5.3-flash",
+    response_output: "{\"facts\":[{\"claim\":\"FY26 volume\",\"value\":\"207 KMT\",\"source\":\"official historical disclosure\"}],\"inferences\":[],\"missing\":[],\"disconfirmers\":[]}",
+    receipt: { response_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  };
+  if (pathname === "/api/research/model-runs/canary/review-promote") return {
+    canary_id: 901, daily_driver_route: "openrouter_research_fast",
+    daily_driver_model: "z-ai/glm-5.3-flash",
+    detail: "z-ai/glm-5.3-flash is selected for public Research Case specialist work."
+  };
   if (pathname === "/api/reports/snapshot") return {
     generated_at: generatedAt,
     runtime_root: "/Volumes/Devarsh SSD/AI OS Data",
@@ -144,4 +211,49 @@ test("evidence-debt HTML stays usable while PDF rendering is pending", async ({ 
   await expect(page.getByRole("link", { name: "Open evidence-debt report v2" })).toBeVisible();
   await expect(page.getByText("PDF rendering / retry scheduled", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download PDF" })).toHaveCount(0);
+});
+test("completed Wipro research is visible from its exact company dashboard", async ({ page }) => {
+  await page.goto("/fundamental/theses?symbol=WIPRO&exchange=NSE");
+
+  await expect(page.getByRole("heading", { name: "Wipro Limited", level: 1 })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open latest research pack" })).toHaveAttribute(
+    "href",
+    /\/api\/research\/case-reports\/801\/view$/,
+  );
+  await expect(page.getByRole("link", { name: /PDF pending.*repair delivery/ })).toHaveAttribute(
+    "href",
+    "/research/cases?case_id=12",
+  );
+  await expect(page.getByRole("link", { name: "Download case PDF" })).toHaveCount(0);
+  expect(apiRequests).toContain("/api/research/long-term-thesis");
+});
+
+test("GLM 5.3 daily-driver gate separates cost, spend and human promotion", async ({ page }) => {
+  await page.goto("/firm/models");
+  await expect(page.getByText("GLM 5.3 Flash public-research daily-driver gate")).toBeVisible();
+  await expect(page.getByText("z-ai/glm-5.3-flash", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Prepare GLM 5.3 canary" }).click();
+  await expect(page.getByText(/Estimate \$0\.0010.*hard max \$0\.0012/)).toBeVisible();
+  expect(apiRequests).toContain("/api/research/model-runs/preflight");
+  expect(apiRequests).not.toContain("/api/research/model-runs/canary/run");
+
+  await page.getByRole("button", { name: "Approve and configure" }).click();
+  await expect.poll(() => apiRequests.includes("/api/research/model-runs/canary/configure")).toBe(true);
+  await expect(page.getByText("I confirm this bounded paid canary")).toBeVisible();
+  expect(apiRequests).toContain("/api/research/model-runs/preflight/approve");
+  expect(apiRequests).not.toContain("/api/research/model-runs/canary/run");
+
+  await page.getByText("I confirm this bounded paid canary").click();
+  await expect(page.getByRole("button", { name: "Run paid canary" })).toBeEnabled();
+  await page.getByRole("button", { name: "Run paid canary" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByText(/207 KMT/)).toBeVisible();
+  expect(apiRequests).toContain("/api/research/model-runs/canary/run");
+
+  await page.getByText("I checked every cited fact and numerical value against the fixed public packet.").click();
+  await page.locator(".aios-drawer textarea").fill("Every cited fact and number matches the fixed public packet exactly.");
+  await page.getByRole("button", { name: "Select public daily driver" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(apiRequests).toContain("/api/research/model-runs/canary/review-promote");
 });

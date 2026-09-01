@@ -95,6 +95,9 @@ class ResearchCaseEntityResolutionTests(unittest.TestCase):
         self.assertIsNone(extract_research_entity("What research do we have on Infosys?"))
         self.assertIsNone(extract_research_entity("Summarize Infosys"))
         self.assertIsNone(extract_research_entity("Infosys also looks interesting"))
+        self.assertIsNone(extract_research_entity(
+            "Read and analyze https://example.com/strategy-note as a research source with testable hypotheses"
+        ))
 
     def test_nested_client_command_is_unwrapped_before_entity_resolution(self):
         seen_sql = []

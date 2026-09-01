@@ -33,6 +33,7 @@ const Q = {
   zerodhaAuth: ["zerodha-auth"],
   zerodhaMarket: ["zerodha-market"],
   companyIRSources: ["company-ir-sources"],
+  modelsTerminal: ["department-terminal", "models"],
 } as const;
 
 export interface SecureClientReportUploadInput {
@@ -560,6 +561,19 @@ export function useRepairResearchCase() {
   );
 }
 
+export interface RepairResearchCaseReportDeliveryInput {
+  research_case_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRepairResearchCaseReportDelivery() {
+  return useInvalidating<RepairResearchCaseReportDeliveryInput, LiveRow>(
+    "/api/research/cases/report-delivery/repair",
+    [Q.longTermThesis, Q.researchCases, Q.office],
+  );
+}
+
 export interface ApproveResearchModelPreflightInput {
   preflight_id: number;
   operator_confirmed: true;
@@ -570,6 +584,74 @@ export function useApproveResearchModelPreflight() {
   return useInvalidating<ApproveResearchModelPreflightInput, LiveRow>(
     "/api/research/model-runs/preflight/approve",
     [Q.longTermThesis, Q.researchIdeas, Q.missionControl, Q.researchCases, Q.office],
+  );
+}
+
+export interface PreparePublicResearchCanaryInput {
+  request_kind: "canary";
+  public_only: true;
+  contains_private_data: false;
+  actor?: string;
+  estimated_duration_seconds?: number;
+  runs: Array<{
+    agent_name: string;
+    route_name: string;
+    prompt_tokens_est: number;
+    completion_tokens_max: number;
+    max_calls: number;
+  }>;
+}
+
+export function usePreparePublicResearchCanary() {
+  return useInvalidating<PreparePublicResearchCanaryInput, LiveRow>(
+    "/api/research/model-runs/preflight",
+    [Q.modelsTerminal, Q.office],
+  );
+}
+
+export interface ConfigurePublicResearchCanaryInput {
+  preflight_id: number;
+  candidate_route: string;
+  actor?: string;
+}
+
+export function useConfigurePublicResearchCanary() {
+  return useInvalidating<ConfigurePublicResearchCanaryInput, LiveRow>(
+    "/api/research/model-runs/canary/configure",
+    [Q.modelsTerminal, Q.office],
+  );
+}
+
+export interface RunPublicResearchCanaryInput {
+  canary_id: number;
+  operator_confirmed: true;
+  actor?: string;
+}
+
+export function useRunPublicResearchCanary() {
+  return useInvalidating<RunPublicResearchCanaryInput, LiveRow>(
+    "/api/research/model-runs/canary/run",
+    [Q.modelsTerminal, Q.office],
+  );
+}
+
+export interface ReviewPromotePublicResearchCanaryInput {
+  canary_id: number;
+  operator_confirmed: true;
+  approve_for_daily_driver: true;
+  reviewer: string;
+  rationale: string;
+  reviewed_response_hash: string;
+  source_citations_checked: true;
+  citation_accuracy_score: number;
+  numeric_accuracy_score: number;
+  unsupported_claim_count: number;
+}
+
+export function useReviewPromotePublicResearchCanary() {
+  return useInvalidating<ReviewPromotePublicResearchCanaryInput, LiveRow>(
+    "/api/research/model-runs/canary/review-promote",
+    [Q.modelsTerminal, Q.office, Q.researchCases, Q.longTermThesis],
   );
 }
 

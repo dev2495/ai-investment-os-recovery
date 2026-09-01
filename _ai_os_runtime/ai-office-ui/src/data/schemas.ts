@@ -538,6 +538,7 @@ export const DepartmentTerminalSchema = z.object({
   followups: z.array(liveRow).optional().default([]),
   constitutions: z.array(liveRow).optional().default([]),
   discussion: z.array(liveRow).optional().default([]),
+  canaries: z.array(liveRow).optional().default([]),
 }).passthrough();
 
 export type DepartmentTerminal = z.infer<typeof DepartmentTerminalSchema>;

@@ -40,10 +40,11 @@ SPECIALIST_ROLES = (
     "industry_moat", "valuation", "bear_risk",
 )
 ROLE_PLAN = (
-    # High-volume public-document specialists use the inexpensive DeepSeek
-    # Flash route. The lead, synthesis and challenge roles use the separately
-    # canaried DeepSeek Pro route selected by migration 249. Every role still
-    # receives only the bounded public packet created below.
+    # High-volume public-document specialists resolve through the governed
+    # daily-driver route. That route can be repointed to GLM 5.3 Flash only
+    # after a completed public canary and named human review. Lead, synthesis
+    # and challenge remain on the separately reviewed stronger route. Every
+    # role receives only the bounded public packet created below.
     ("company_business", "Company Analyst", "openrouter_research_fast", 18000, 2600, 2),
     ("filings", "Filings and Transcript Analyst", "openrouter_research_fast", 22000, 2800, 2),
     ("financials", "Financial Statement Analyst", "openrouter_research_fast", 30000, 3400, 2),

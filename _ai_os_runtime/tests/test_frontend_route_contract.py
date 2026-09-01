@@ -267,6 +267,10 @@ class FrontendRouteContractTest(unittest.TestCase):
         read_model = (self.runtime_root / "api" / "long_term_thesis_workspace.py").read_text(encoding="utf-8")
 
         self.assertIn('"/api/research/long-term-thesis"', query_source)
+        self.assertIn("symbol: symbol || undefined", query_source)
+        self.assertIn("exchange: exchange || undefined", query_source)
+        self.assertIn("Open latest research pack", terminal)
+        self.assertIn("Open latest thesis report", terminal)
         self.assertIn('request_path == "/api/research/long-term-thesis"', backend)
         self.assertIn('page_size = bounded("page_size", 12, 6, 24)', read_model)
         self.assertIn("filings_extracted", read_model)

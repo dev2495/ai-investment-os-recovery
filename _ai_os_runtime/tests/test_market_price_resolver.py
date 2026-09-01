@@ -20,6 +20,10 @@ class MarketPriceResolverTests(unittest.TestCase):
             "instrument_token": 42,
             "mapping_status": "verified_zerodha_instrument",
             "timestamp_basis": "exchange_timestamp",
+            "source_mode": "websocket_full",
+            "stream_connection_state": "connected",
+            "stream_health_status": "live",
+            "stream_heartbeat_age_seconds": 10,
         }
         row.update(overrides)
         return row
@@ -132,6 +136,29 @@ class MarketPriceResolverTests(unittest.TestCase):
         self.assertEqual(result["delay_status"], "fallback_current")
         self.assertEqual(result["primary_quote_status"], "stale")
         self.assertTrue(result["decision_usable"])
+
+    def test_stale_live_stream_heartbeat_forces_labelled_secondary_fallback(self):
+        now = datetime(2026, 8, 24, 5, 0, tzinfo=timezone.utc)
+        result = resolve_market_price([
+            self.zerodha_row(symbol="TEST", exchange="NSE", price=101,
+                quote_ts="2026-08-24T04:59:00+00:00", received_at="2026-08-24T04:59:02+00:00",
+                stream_heartbeat_age_seconds=180, stream_health_status="heartbeat_stale"),
+            self.entitled_secondary_row(symbol="TEST", exchange="NSE", price=102,
+                quote_ts="2026-08-24T04:59:30+00:00", received_at="2026-08-24T04:59:35+00:00"),
+        ], symbol="TEST", exchange="NSE", now=now)
+        self.assertEqual(result["provider"], "TradingView")
+        self.assertTrue(result["fallback_used"])
+        self.assertEqual(result["primary_quote_status"], "stale")
+        self.assertTrue(result["decision_usable"])
+
+    def test_live_stream_quote_fails_closed_when_heartbeat_is_missing(self):
+        result = resolve_market_price([self.zerodha_row(
+            symbol="TEST", exchange="NSE", price=101,
+            quote_ts="2026-08-24T04:59:00+00:00", received_at="2026-08-24T04:59:02+00:00",
+            stream_heartbeat_age_seconds=None,
+        )], symbol="TEST", exchange="NSE", now=datetime(2026, 8, 24, 5, 0, tzinfo=timezone.utc))
+        self.assertFalse(result["decision_usable"])
+        self.assertIn("heartbeat", result["freshness_reason"])
 
     def test_secondary_without_explicit_entitlement_fails_closed(self):
         result = resolve_market_price([self.entitled_secondary_row(

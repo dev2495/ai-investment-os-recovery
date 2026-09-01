@@ -69,13 +69,13 @@ class ResearchRuntimeIntegrationContractTests(unittest.TestCase):
         route = server.split('case_report_match = re.fullmatch', 1)[1].split(
             'report_delivery_match = re.fullmatch', 1
         )[0]
-        self.assertIn('if action == "download" and not report_row.get("pdf_path")', route)
-        self.assertIn('"error": "report_not_ready"', route)
+        self.assertIn('pdf_artifact = available_report_artifact(report_row.get("pdf_path"))', route)
+        self.assertIn('selected = pdf_artifact if action == "download" else html_artifact', route)
+        self.assertIn('"error": "report_delivery_not_ready"', route)
+        self.assertIn('"html_view_available": bool(html_artifact)', route)
+        self.assertIn('"pdf_download_available": bool(pdf_artifact)', route)
+        self.assertIn('"repair_endpoint": "/api/research/cases/report-delivery/repair"', route)
         self.assertIn("}, 409)", route)
-        self.assertIn(
-            'selected_value = report_row.get("pdf_path") if action == "download" else report_row.get("html_path")',
-            route,
-        )
         self.assertNotIn(
             'if action == "download" and report_rows[0].get("pdf_path") else',
             route,
@@ -141,6 +141,33 @@ class ResearchRuntimeIntegrationContractTests(unittest.TestCase):
         self.assertIn("status='approved'", publish)
         self.assertIn("scanner_version_id", publish)
         self.assertIn("scope_key", publish)
+
+
+    def test_glm53_daily_driver_promotion_is_reviewed_and_public_only(self):
+        runtime = (ROOT / "api" / "research_model_runtime.py").read_text(encoding="utf-8")
+        server = (ROOT / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+        self.assertIn("def review_and_promote_public_model_canary", runtime)
+        self.assertIn("reviewed_response_hash does not match", runtime)
+        self.assertIn("citation score >= 90, numeric score >= 95", runtime)
+        self.assertIn("'research.public.daily_driver'", runtime)
+        self.assertIn("'broker_write_allowed',false", runtime)
+        self.assertIn("/api/research/model-runs/canary/review-promote", server)
+        self.assertIn('"canaries": """', server)
+        canary_wrapper = server.split("def run_research_public_model_canary", 1)[1].split(
+            "def review_and_promote_research_public_model_canary", 1
+        )[0]
+        self.assertIn('if key not in {"response_output", "response_preview"}', canary_wrapper)
+        self.assertIn('"raw_response_stored"] = False', canary_wrapper)
+
+    def test_report_delivery_repair_uses_api_filesystem_not_database_server_files(self):
+        server = (ROOT / "api" / "ai_os_api_server.py").read_text(encoding="utf-8")
+        repair = server.split("def repair_research_case_report_delivery", 1)[1].split(
+            "def repair_research_case", 1
+        )[0]
+        self.assertNotIn("pg_stat_file", repair)
+        self.assertIn("stored_report_artifact_exists", repair)
+        self.assertIn("ssd_root.is_mount()", repair)
+        self.assertIn("candidate.stat().st_size > 0", repair)
 
 
 if __name__ == "__main__":

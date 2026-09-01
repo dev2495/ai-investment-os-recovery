@@ -53,6 +53,10 @@ def build_long_term_thesis_workspace(
     research_pack_join = """
     LEFT JOIN LATERAL (
       SELECT latest_case.id AS research_case_id,
+             latest_report.id AS report_id,
+             latest_report.report_version,
+             latest_report.report_status,
+             latest_report.delivery_state,
              (
                SELECT jsonb_object_agg(
                  latest_section.section_key,
@@ -78,6 +82,19 @@ def build_long_term_thesis_workspace(
                ) latest_section
              ) AS research_pack
       FROM research.research_cases latest_case
+      LEFT JOIN LATERAL (
+        SELECT report.id,report.report_version,report.report_status,
+               coalesce(
+                 report.coverage_snapshot->>'delivery_state',
+                 CASE WHEN report.pdf_path IS NOT NULL THEN 'pdf_ready'
+                      ELSE 'html_ready_pdf_retry' END
+               ) AS delivery_state
+        FROM research.research_case_reports report
+        WHERE report.research_case_id=latest_case.id
+          AND report.report_status<>'superseded'
+        ORDER BY report.report_version DESC,report.id DESC
+        LIMIT 1
+      ) latest_report ON true
       WHERE (latest_case.holding_thesis_id=thesis.id OR latest_case.company_id=company.id)
         AND latest_case.status IN ('active','review','completed','blocked')
         AND EXISTS (
@@ -102,6 +119,19 @@ def build_long_term_thesis_workspace(
         evidence_projection = "NULL::integer"
         evidence_join = ""
         thesis_order = "thesis.updated_at DESC,thesis.id DESC"
+
+    requested_identity_order = ""
+    if requested_symbol:
+        requested_exchange_clause = (
+            f" AND upper(thesis.exchange)={sql_literal(requested_exchange)}"
+            if requested_exchange
+            else ""
+        )
+        requested_identity_order = (
+            "CASE WHEN upper(thesis.symbol)="
+            f"{sql_literal(requested_symbol)}{requested_exchange_clause} "
+            "THEN 0 ELSE 1 END,"
+        )
 
     theses = run_rows(f"""
         SELECT thesis.id,thesis.symbol,thesis.exchange,thesis.company_name,
@@ -130,7 +160,12 @@ def build_long_term_thesis_workspace(
                dossier.evidence_coverage,dossier.section_count,
                dossier.reviewed_section_count,dossier.specialist_count,
                dossier.updated_at AS dossier_updated_at,
-               {research_pack_projection} AS research_pack
+               {research_pack_projection} AS research_pack,
+               case_pack.research_case_id AS latest_research_case_id,
+               case_pack.report_id AS latest_research_case_report_id,
+               case_pack.report_version AS latest_research_case_report_version,
+               case_pack.report_status AS latest_research_case_report_status,
+               case_pack.delivery_state AS latest_research_case_report_delivery_state
         FROM portfolio.holding_theses thesis
         LEFT JOIN portfolio.v_long_term_thesis_control control ON control.id=thesis.id
         LEFT JOIN research.companies company
@@ -145,7 +180,8 @@ def build_long_term_thesis_workspace(
                    latest.updated_at DESC NULLS LAST LIMIT 1
         ) dossier ON true
         {research_pack_join}
-        ORDER BY (company.id IS NOT NULL) DESC,
+        ORDER BY {requested_identity_order}
+                 (company.id IS NOT NULL) DESC,
                  {thesis_order} LIMIT 50
     """)
     selected_by_id = next(
@@ -157,9 +193,11 @@ def build_long_term_thesis_workspace(
             row
             for row in theses
             if requested_symbol
-            and requested_exchange
             and str(row.get("symbol") or "").strip().upper() == requested_symbol
-            and str(row.get("exchange") or "").strip().upper() == requested_exchange
+            and (
+                not requested_exchange
+                or str(row.get("exchange") or "").strip().upper() == requested_exchange
+            )
         ),
         None,
     )
@@ -243,12 +281,23 @@ def build_long_term_thesis_workspace(
                    ELSE 'unmapped_zerodha_instrument' END AS mapping_status,
               CASE WHEN live.exchange_timestamp IS NOT NULL THEN 'exchange_timestamp'
                    WHEN live.last_trade_timestamp IS NOT NULL THEN 'last_trade_local_ist'
-                   ELSE 'receipt_utc' END AS timestamp_basis
+                   ELSE 'receipt_utc' END AS timestamp_basis,
+              stream.connection_state AS stream_connection_state,
+              stream.health_status AS stream_health_status,
+              stream.last_heartbeat_at AS stream_last_heartbeat_at,
+              stream.stream_heartbeat_age_seconds
             FROM market.live_quote_state live
             LEFT JOIN market.zerodha_instruments instrument
               ON instrument.instrument_token=live.instrument_token AND instrument.active
              AND upper(instrument.exchange)=upper(live.exchange)
              AND upper(instrument.trading_symbol)=upper(live.symbol)
+            LEFT JOIN LATERAL (
+              SELECT connection_state,health_status,last_heartbeat_at,
+                CASE WHEN last_heartbeat_at IS NULL THEN NULL
+                     ELSE greatest(0,extract(epoch FROM (now()-last_heartbeat_at))) END
+                  AS stream_heartbeat_age_seconds
+              FROM market.v_zerodha_stream_health LIMIT 1
+            ) stream ON true
             WHERE upper(live.symbol)={symbol_sql} AND upper(live.exchange)={exchange_sql}
               AND lower(live.provider)='zerodha' AND live.last_price>0
           ), stored_quotes AS (
@@ -271,7 +320,11 @@ def build_long_term_thesis_workspace(
                      THEN 'verified_zerodha_instrument'
                    WHEN lower(quote.provider)='zerodha' THEN 'unmapped_zerodha_instrument'
                    ELSE 'exact_exchange_symbol' END AS mapping_status,
-              coalesce(quote.raw_payload->>'ai_os_timestamp_basis','unknown') AS timestamp_basis
+              coalesce(quote.raw_payload->>'ai_os_timestamp_basis','unknown') AS timestamp_basis,
+              NULL::text AS stream_connection_state,
+              NULL::text AS stream_health_status,
+              NULL::timestamptz AS stream_last_heartbeat_at,
+              NULL::numeric AS stream_heartbeat_age_seconds
             FROM market.price_quotes quote
             LEFT JOIN LATERAL (
               SELECT mapping.instrument_token FROM market.zerodha_instruments mapping

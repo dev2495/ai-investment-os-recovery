@@ -13,11 +13,36 @@ This checklist is the release gate for the Research Desk vertical slice. It maps
 
 | ID | Verified evidence | Scope and limitation |
 |---|---|---|
-| E1 | Blueprint, master prompt, baseline audit, implementation ledger and runbook are present under `docs/`. | Checkout documentation only; the Obsidian copy was not verified in this pass. |
-| E2 | Branch `codex/research-desk-knowledge-scanners-v1` at `f27b4e9a175381a77c5eef6eb45a8d6495b5bb28`. | Checkout identity only; it does not prove the live iMac release commit. |
-| E3 | `npm run build` passed in `_ai_os_runtime/ai-office-ui` on 2026-08-24. | Local checkout build; not deployed assets. |
-| E4 | `research-desk-v1.spec.ts` passed 5/5 against isolated Vite on port 5178, including 390 px layout, redacted repair diagnostics and HTML-ready/PDF-pending delivery. | API responses were mocked; this is not authenticated live-browser evidence. |
-| E5 | Markdown readback and `git diff --check` for this file. | Documentation integrity only. |
+| E1 | The stored blueprint SHA-256 is `7642b19f...391c10`, exactly matching the supplied Downloads file. The stored master prompt SHA-256 is `b7dbc7af...409fb`, exactly matching the supplied attachment. | Exact checkout copies; external Obsidian managed-block writeback still needs live-host verification. |
+| E2 | Branch `codex/research-desk-knowledge-scanners-v1`, starting from tested upstream HEAD `d764db2`. | Checkout identity only; it does not prove the live iMac release commit. |
+| E3 | `npm run build` passed on 2026-09-01 after a clean `npm ci`; Vite produced the production bundle. | Local release checkout; deployed asset equality remains unproven while the iMac is unreachable. |
+| E4 | `research-desk-v1.spec.ts` passed 7/7 in installed Google Chrome against isolated Vite, including 390 px layout, actionable/redacted failures, HTML-ready/PDF-pending delivery and four-gate GLM promotion. | The browser was real; API responses were deterministic fixtures, not the authenticated production database. |
+| E5 | `git diff --check` passed; changed-line credential-pattern scan found no private keys or common API-token formats. | Focused delta scan, not a historical repository secret audit. |
+| E6 | Full backend suite: `645 passed, 1 skipped, 178 subtests passed` on 2026-09-01. | Isolated checkout tests; the single existing skip was not converted into evidence. |
+| E7 | Migrations 250, 251 and 252 parsed through `pglast`; the full Python suite also passed migration/contract assertions. | Syntax and contract proof; disposable production-schema replay remains a live release gate. |
+| E8 | All seven protected Zerodha scripts/services have the recorded baseline SHA-256 values and no diff. | Proves this delta preserves those files; authenticated stream health still requires the iMac. |
+| E9 | `npm audit` and `npm audit --omit=dev` both report `0 vulnerabilities`. | The build still emits a non-security chunk-size advisory. |
+| E10 | Focused unit/contract tests cover stale-stream valuation blocking, exact-symbol dashboard selection, report-only repair, natural-language URL rejection, scanner clone/approval/run gates and named GLM human promotion. | Deterministic code-contract evidence; production rows and artifacts remain to be exercised. |
+
+## 2026-09-01 implementation delta
+
+- [x] Preserve the existing Zerodha acquisition/authentication/stream scripts without modification. Evidence: E8.
+- [x] Fail closed on a stale/missing Zerodha heartbeat during the live session and expose provider, exchange, symbol mapping, quote age, stream age, freshness, delay and fallback state. Evidence: E6, E10.
+- [x] Keep `broker_write_allowed=false` and add no Research Desk order-placement path. Evidence: E6, E8, E10.
+- [x] Repair a PDF-only/report-delivery failure without rerunning sources, analysis or paid models. Evidence: E4, E6, E10.
+- [x] Return an actionable missing-artifact response instead of a broken file link. Evidence: E4, E6, E10.
+- [x] Make exact exchange/symbol navigation prefer the requested company and expose completed Research Case output in the Company Thesis Dashboard. Evidence: E6, E10.
+- [x] Register GLM 5.3 Flash as a disabled public-only canary with conservative non-promotional cost ceilings. Evidence: E6, E7, E10.
+- [x] Require cost preflight, explicit spend approval, a fixed public packet, a completed structured-output canary, exact response-hash review, named reviewer, citation score >=90, numeric score >=95 and zero unsupported claims before daily-driver promotion. Evidence: E4, E6, E10.
+- [x] Keep DeepSeek V4 Pro as lead/review escalation and retain per-run approval after promotion. Evidence: E6, E10.
+- [x] Make executable scanner templates copy-only and idempotent; require deterministic validation, persistent publication approval and explicit run confirmation. Evidence: E6, E7, E10.
+- [x] Prevent URL-led article commands from being misclassified as company names. Evidence: E6, E10.
+- [x] Compile the production UI, pass the complete backend suite, pass real-Chrome interaction tests and clear the dependency audit. Evidence: E3, E4, E6, E9.
+- [ ] Apply migrations 250-252 to the canonical iMac release and prove live API/database compatibility. Blocked: Tailscale SSH timed out on 2026-09-01.
+- [ ] Install/verify the governed external-SSD PDF runtime on the iMac and replay the Shivalik source-extraction repair. Blocked: live host unavailable.
+- [ ] Run an approved GLM 5.3 Flash canary on a fixed public packet and record the required human review. This intentionally cannot be auto-approved by code.
+- [ ] Prove an authenticated Wipro and Shivalik golden path in production Chrome/Safari with live Postgres, SSD artifacts and Zerodha freshness.
+- [ ] Promote/deploy the tested commit to `a02ee0f-live` and verify asset hashes, worker health and zero unexpected browser/API failures. Blocked: live host unavailable.
 
 ## M0 - Safe baseline and refactor boundary
 

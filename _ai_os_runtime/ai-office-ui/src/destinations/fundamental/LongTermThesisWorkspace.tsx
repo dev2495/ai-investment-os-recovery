@@ -350,7 +350,9 @@ export default function LongTermThesisWorkspace() {
   const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
   const [decision, setDecision] = React.useState({ choice: "research_more", rationale: "", confirmed: false });
   const [reportPreflight, setReportPreflight] = React.useState<LiveRow | null>(null);
-  const query = useLongTermThesisWorkspace(thesisId, factsPage, evidencePage, PAGE_SIZE);
+  const requestedSymbol = React.useMemo(() => new URLSearchParams(window.location.search).get("symbol")?.trim().toUpperCase() || "", []);
+  const requestedExchange = React.useMemo(() => new URLSearchParams(window.location.search).get("exchange")?.trim().toUpperCase() || "", []);
+  const query = useLongTermThesisWorkspace(thesisId, factsPage, evidencePage, PAGE_SIZE, requestedSymbol, requestedExchange);
   const pushToast = useUIStore((state) => state.pushToast);
   const setAssistantOpen = useUIStore((state) => state.setAssistantOpen);
   const reportAction = useGenerateThesisReport();
@@ -361,19 +363,21 @@ export default function LongTermThesisWorkspace() {
   const data = query.data;
   const selected = data?.selected_thesis ?? null;
   const selectedId = num(selected, "id", 0);
-  const requestedSymbol = React.useMemo(() => new URLSearchParams(window.location.search).get("symbol")?.trim().toUpperCase() || "", []);
-  const caseReportId = num(record(selected?.metadata), "report_id", 0);
+  const caseReportId = num(selected, "latest_research_case_report_id", num(record(selected?.metadata), "report_id", 0));
+  const caseReportCaseId = num(selected, "latest_research_case_id", 0);
+  const caseReportDelivery = text(selected, "latest_research_case_report_delivery_state");
+  const caseReportPdfReady = caseReportDelivery === "pdf_ready";
 
   React.useEffect(() => {
     if (!requestedSymbol || !data?.theses.length) return;
-    const match = data.theses.find((row) => text(row, "symbol").toUpperCase() === requestedSymbol);
+    const match = data.theses.find((row) => text(row, "symbol").toUpperCase() === requestedSymbol && (!requestedExchange || text(row, "exchange").toUpperCase() === requestedExchange));
     const matchId = num(match, "id", 0);
     if (matchId > 0 && matchId !== selectedId) {
       setThesisId(matchId);
       setFactsPage(1);
       setEvidencePage(1);
     }
-  }, [data?.theses, requestedSymbol, selectedId]);
+  }, [data?.theses, requestedExchange, requestedSymbol, selectedId]);
   const coverage = data?.coverage[0] ?? {};
   const freshness = data?.freshness[0] ?? {};
   const execution = data?.execution_control[0] ?? {};
@@ -449,7 +453,8 @@ export default function LongTermThesisWorkspace() {
         </div>
         <label className="ltw-company-select"><span>Company workspace</span><select value={selectedId} onChange={(event) => { setThesisId(Number(event.target.value)); setFactsPage(1); setEvidencePage(1); }}>{data.theses.map((row) => <option key={num(row, "id")} value={num(row, "id")}>{text(row, "symbol")} · {text(row, "legal_name", text(row, "company_name"))}</option>)}</select></label>
         <div className="ltw-masthead__actions">
-          {latestThesisReport ? <><a className="ltw-case-report-link" href={reportViewUrl(num(latestThesisReport, "id"))} target="_blank" rel="noreferrer"><FileText size={16} />Open latest thesis report</a><a className="ltw-case-report-link ltw-case-report-link--quiet" href={`${API_BASE_URL}/api/research/thesis-reports/${num(latestThesisReport, "id")}/download`}><Download size={16} />Download thesis PDF</a></> : caseReportId ? <><a className="ltw-case-report-link" href={`${API_BASE_URL}/api/research/case-reports/${caseReportId}/view`}><FileText size={16} />Open research pack</a><a className="ltw-case-report-link ltw-case-report-link--quiet" href={`${API_BASE_URL}/api/research/case-reports/${caseReportId}/download`}><Download size={16} />Download case PDF</a></> : null}
+          {caseReportId ? <><a className="ltw-case-report-link" href={`${API_BASE_URL}/api/research/case-reports/${caseReportId}/view`} target="_blank" rel="noreferrer"><FileText size={16} />Open latest research pack</a>{caseReportPdfReady ? <a className="ltw-case-report-link ltw-case-report-link--quiet" href={`${API_BASE_URL}/api/research/case-reports/${caseReportId}/download`}><Download size={16} />Download case PDF</a> : caseReportCaseId ? <a className="ltw-case-report-link ltw-case-report-link--quiet" href={`/research/cases?case_id=${caseReportCaseId}`}><RefreshCw size={16} />PDF pending · repair delivery</a> : null}</> : null}
+          {latestThesisReport ? <><a className="ltw-case-report-link" href={reportViewUrl(num(latestThesisReport, "id"))} target="_blank" rel="noreferrer"><FileText size={16} />Open latest thesis report</a><a className="ltw-case-report-link ltw-case-report-link--quiet" href={`${API_BASE_URL}/api/research/thesis-reports/${num(latestThesisReport, "id")}/download`}><Download size={16} />Download thesis PDF</a></> : null}
           <Button disabled={busy} icon={Download} onClick={() => reportPreflightAction.mutate({ holding_thesis_id: selectedId, actor: "Devarsh" }, { onSuccess: (result) => { setReportPreflight(result); pushToast({ title: "Report estimate ready", message: "Review the local-only scope and explicitly confirm generation.", tone: "info", duration: 5000 }); }, onError: (error) => pushToast({ title: "Report estimate failed", message: error.message, tone: "risk", duration: 6000 }) })}>{reportPreflightAction.isPending ? "Estimating report..." : "Full Report - PDF + HTML"}</Button>
           <Button disabled={busy} icon={RefreshCw} onClick={() => void query.refetch()} variant="primary">Refresh</Button>
         </div>

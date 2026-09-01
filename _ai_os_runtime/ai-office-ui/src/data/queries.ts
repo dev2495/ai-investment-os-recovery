@@ -124,8 +124,8 @@ export const queryKeys = {
   systemHealth: ["system-health"] as const,
   portfolioOffice: ["portfolio-office"] as const,
   researchIdeas: ["research-ideas"] as const,
-  longTermThesis: (thesisId: number | null, factsPage: number, evidencePage: number) =>
-    ["long-term-thesis", thesisId ?? "default", factsPage, evidencePage] as const,
+  longTermThesis: (thesisId: number | null, factsPage: number, evidencePage: number, symbol = "", exchange = "") =>
+    ["long-term-thesis", thesisId ?? "default", factsPage, evidencePage, symbol || "none", exchange || "any"] as const,
   tradingQuantRisk: ["trading-quant-risk"] as const,
   optionsDaily: ["options-daily"] as const,
   sectorIntelligence: ["sector-intelligence"] as const,
@@ -384,7 +384,7 @@ export function useCreateFundamentalScanner() {
 
 export function useScannerAction() {
   const client = useQueryClient();
-  return useMutation<LiveRow, Error, { scannerId: number; action: "validate" | "publish-request" | "publish" | "run"; payload?: LiveRow }>({
+  return useMutation<LiveRow, Error, { scannerId: number; action: "clone" | "validate" | "publish-request" | "publish" | "run"; payload?: LiveRow }>({
     mutationFn: ({ scannerId, action, payload }) => post<LiveRow>(`/api/fundamental-scanners/${scannerId}/${action}`, payload ?? {}),
     onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.fundamentalScanner }),
   });
@@ -421,9 +421,11 @@ export function useLongTermThesisWorkspace(
   factsPage = 1,
   evidencePage = 1,
   pageSize = 12,
+  symbol = "",
+  exchange = "",
 ) {
   return useQuery<LongTermThesisWorkspace>({
-    queryKey: queryKeys.longTermThesis(thesisId, factsPage, evidencePage),
+    queryKey: queryKeys.longTermThesis(thesisId, factsPage, evidencePage, symbol, exchange),
     queryFn: async () => {
       const data = await get("/api/research/long-term-thesis", {
         query: {
@@ -432,6 +434,8 @@ export function useLongTermThesisWorkspace(
           evidence_page: evidencePage,
           page_size: pageSize,
           profile: "dashboard",
+          symbol: symbol || undefined,
+          exchange: exchange || undefined,
         },
         // The authenticated Tailscale bridge adds transport latency to a source-backed
         // ten-year report; keep the loading state rather than aborting a valid response.

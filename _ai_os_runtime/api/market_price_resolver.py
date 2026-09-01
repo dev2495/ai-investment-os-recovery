@@ -81,6 +81,10 @@ def resolve_market_price(
     now_local = now_utc.astimezone(INDIA_TZ)
     closed_days = _holiday_dates(holidays, wanted_exchange)
     expected_day = expected_session_date(now_local, closed_days)
+    in_live_session = (
+        _is_session_day(now_local.date(), closed_days)
+        and SESSION_OPEN <= now_local.time() <= SESSION_CLOSE
+    )
     candidates: list[dict[str, Any]] = []
     for row in rows:
         if str(row.get("symbol") or "").strip().upper() != wanted_symbol:
@@ -139,6 +143,33 @@ def resolve_market_price(
             priority = max(1, int(row.get("source_priority") or 1))
         except (TypeError, ValueError):
             priority = 1
+        source_mode = str(row.get("source_mode") or "").strip().lower()
+        live_stream_candidate = priority == 1 and (
+            "websocket" in source_mode or "live" in source_mode
+        )
+        stream_state = str(
+            row.get("stream_connection_state") or row.get("connection_state") or ""
+        ).strip().lower()
+        stream_health_status = str(row.get("stream_health_status") or "").strip().lower()
+        try:
+            stream_heartbeat_age_seconds = float(row.get("stream_heartbeat_age_seconds"))
+        except (TypeError, ValueError):
+            stream_heartbeat_age_seconds = None
+        stream_health_required = live_stream_candidate and in_live_session
+        stream_healthy = (
+            not stream_health_required
+            or (
+                stream_state == "connected"
+                and stream_health_status in {"live", "connected"}
+                and stream_heartbeat_age_seconds is not None
+                and stream_heartbeat_age_seconds <= 90
+            )
+        )
+        if status == "current" and not stream_healthy:
+            status = "stale"
+            reason = (
+                "primary Zerodha websocket heartbeat is missing or stale during the live session"
+            )
         approved = row.get("approved_for_valuation") is True
         write_locked = row.get("broker_write_allowed") is False
         provider = str(row.get("provider") or "").strip()
@@ -163,7 +194,12 @@ def resolve_market_price(
             "source_priority": priority,
             "approved": approved,
             "provider_authorized": provider_authorized,
-            "decision_usable": status == "current" and approved and provider_authorized and write_locked,
+            "stream_health_required": stream_health_required,
+            "stream_healthy": stream_healthy,
+            "stream_connection_state": stream_state or None,
+            "stream_health_status": stream_health_status or None,
+            "stream_heartbeat_age_seconds": stream_heartbeat_age_seconds,
+            "decision_usable": status == "current" and approved and provider_authorized and write_locked and stream_healthy,
         })
     if not candidates:
         return None
@@ -212,6 +248,11 @@ def resolve_market_price(
         "fallback_used": fallback_used,
         "primary_quote_status": primary_status or "unavailable",
         "delay_status": "fallback_current" if fallback_used and status == "current" else status,
+        "stream_health_required": bool(selected["stream_health_required"]),
+        "stream_healthy": bool(selected["stream_healthy"]),
+        "stream_connection_state": selected["stream_connection_state"],
+        "stream_health_status": selected["stream_health_status"],
+        "stream_heartbeat_age_seconds": selected["stream_heartbeat_age_seconds"],
         "instrument_token": row.get("instrument_token"),
         "mapping_status": row.get("mapping_status") or "exact_exchange_symbol",
         "source": {
@@ -224,6 +265,9 @@ def resolve_market_price(
             "source_mode": row.get("source_mode"),
             "mapping_status": row.get("mapping_status"),
             "timestamp_basis": row.get("timestamp_basis"),
+            "stream_connection_state": selected["stream_connection_state"],
+            "stream_health_status": selected["stream_health_status"],
+            "stream_heartbeat_age_seconds": selected["stream_heartbeat_age_seconds"],
             "provider_entitlement_key": row.get("provider_entitlement_key"),
         },
         "source_class": row.get("source_class") or "market_fact",

@@ -64,7 +64,7 @@ class ModelRouterContractTest(unittest.TestCase):
 
     def test_registry_matches_hybrid_cost_and_privacy_policy(self) -> None:
         required_registry_fragments = (
-            "version: 7",
+            "version: 9",
             "model: mlx-community/Qwen3.5-9B-4bit",
             "production_fallback_model: prism-ml/Bonsai-27B-Q1_0",
             "status: production_conversation_only",
@@ -93,6 +93,10 @@ class ModelRouterContractTest(unittest.TestCase):
             "cloud.complex.escalation:",
             "default_model: z-ai/glm-5.2",
             "specialist.lead_engineer:",
+            "public_research_daily_driver:",
+            "candidate: z-ai/glm-5.3-flash",
+            "promotion_endpoint: /api/research/model-runs/canary/review-promote",
+            "paid_runs_after_promotion: per_run_preflight_required",
             "explicit_human_confirmation_before_live_execution: true",
         )
         for fragment in required_registry_fragments:

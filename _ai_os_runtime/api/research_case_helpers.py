@@ -96,6 +96,10 @@ def extract_research_entity(command):
     entity_first = _RESEARCH_ENTITY_FIRST_RE.match(candidate)
     if entity_first and _RESEARCH_SCOPE_RE.search(entity_first.group("scope")):
         entity = _clean_entity_candidate(entity_first.group("entity"))
+        # A URL-led article command can otherwise resemble entity-first intake.
+        # URLs are governed evidence inputs, never company identities.
+        if re.search(r"https?://", entity, flags=re.IGNORECASE):
+            return None
         return entity or None
     return None
 

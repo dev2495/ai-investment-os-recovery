@@ -286,9 +286,16 @@ export function FundamentalScanners() {
     });
   }
 
-  function act(scannerId: number, action: "validate" | "publish-request" | "publish" | "run") {
-    const approvalId = pendingApprovals[scannerId];
-    scannerAction.mutate({ scannerId, action, payload: action === "publish" ? { approval_id: approvalId } : {} }, {
+  function act(scannerId: number, action: "clone" | "validate" | "publish-request" | "publish" | "run") {
+    const scanner = scanners.find((row) => num(row, "id") === scannerId);
+    const approvalId = pendingApprovals[scannerId] || num(scanner ?? {}, "publish_approval_id");
+    if (action === "run" && !window.confirm("Run this published scanner against the stored point-in-time universe? This creates durable local results but no alerts, orders, or external writes.")) return;
+    const payload = action === "publish"
+      ? { approval_id: approvalId }
+      : action === "run"
+        ? { operator_confirmed: true }
+        : {};
+    scannerAction.mutate({ scannerId, action, payload }, {
       onSuccess: (result) => {
         if (action === "publish-request") {
           const approval = (result.approval ?? {}) as LiveRow;
@@ -298,7 +305,7 @@ export function FundamentalScanners() {
             openEvidence({ kind: "approval", key: String(id), title: "Approve fundamental scanner publication", subtitle: "Read-only deterministic screen" });
           }
         }
-        pushToast({ title: action.replace(/-/g, " "), message: action === "publish-request" ? "Approval opened. Publication remains blocked until you explicitly approve it." : "The governed scanner state was updated.", tone: "ok", duration: 4500 });
+        pushToast({ title: action.replace(/-/g, " "), message: action === "publish-request" ? "Approval opened. Publication remains blocked until you explicitly approve it." : action === "clone" ? "A reviewable workspace copy was created. The global template remains unchanged." : action === "run" ? "The confirmed point-in-time run was stored locally. No alert, order, or external write was created." : "The governed scanner state was updated.", tone: "ok", duration: 4500 });
       },
       onError: (error) => pushToast({ title: "Scanner action blocked", message: failureToast(error), tone: "risk", duration: 6500 }),
     });
@@ -312,7 +319,43 @@ export function FundamentalScanners() {
           <form className="rd-scanner-builder" onSubmit={create}><label>Plain-English screen<textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={3} /></label><button type="submit" disabled={createScanner.isPending}>{createScanner.isPending ? <LoaderCircle size={14} /> : <Sparkles size={14} />} Create reviewable draft</button></form>
           <div className="rd-formula-strip"><span>Available now</span><code>Revenue CAGR 5y</code><code>PAT CAGR 5y</code><code>ROCE proxy</code><code>ROE</code><code>CFO/PAT</code><code>Margins</code><code>D/E</code><code>Interest cover</code><code>DSO</code><code>Asset turns</code><code>Governance flags</code></div>
           {scan.data && !scanners.length ? <div className="rd-state"><Radar size={19} /><div><strong>No scanner is stored</strong><p>Create a draft above. Nothing runs or publishes until its separate gates are satisfied.</p></div></div> : null}
-          <div className="rd-scan-list">{scanners.map((row) => { const scannerId = num(row, "id"); const versionStatus = text(row, "version_status", text(row, "status")); const validations = (row.validation_summary ?? {}) as Record<string, unknown>; return <article className="rd-scan rd-scan--workflow" key={scannerId}><div className="rd-scan__head"><div><strong>{text(row, "name")}</strong><span>v{num(row, "version", 1)} · {text(row, "scope_key") === "global:public" ? "template" : "your workspace"}</span></div><Badge tone={toneFor(versionStatus)}>{versionStatus.replace(/_/g, " ")}</Badge></div><p>{text(row, "description", "No description stored.")}</p><div className="rd-validation-line">{["schema", "metric_availability", "point_in_time", "known_fixture"].map((kind) => <span key={kind} className={String(validations[kind] ?? "pending") === "passed" ? "is-pass" : ""}>{kind.replace(/_/g, " ")}: {String(validations[kind] ?? "pending")}</span>)}</div><footer><span>{num(row, "run_count")} durable run{num(row, "run_count") === 1 ? "" : "s"} · last {formatRelative(text(row, "last_run_as_of"))}</span><span className="rd-actions">{versionStatus === "draft" ? <button onClick={() => act(scannerId, "validate")} disabled={scannerAction.isPending}>Validate</button> : null}{versionStatus === "validated" && !pendingApprovals[scannerId] ? <button onClick={() => act(scannerId, "publish-request")} disabled={scannerAction.isPending}>Request publication</button> : null}{versionStatus === "validated" && pendingApprovals[scannerId] ? <><button onClick={() => openEvidence({ kind: "approval", key: String(pendingApprovals[scannerId]), title: "Scanner publication approval" })}>Review approval</button><button onClick={() => act(scannerId, "publish")} disabled={scannerAction.isPending}>Publish after approval</button></> : null}{versionStatus === "published" ? <button onClick={() => act(scannerId, "run")} disabled={scannerAction.isPending}>Run point-in-time screen</button> : null}</span></footer></article>; })}</div>
+          <div className="rd-scan-list">
+            {scanners.map((row) => {
+              const scannerId = num(row, "id");
+              const versionStatus = text(row, "version_status", text(row, "status"));
+              const isTemplate = text(row, "scope_key") === "global:public";
+              const templateExecutable = Boolean(row.template_executable);
+              const validations = (row.validation_summary ?? {}) as Record<string, unknown>;
+              const validationDetails = (row.validation_details ?? {}) as Record<string, LiveRow>;
+              const availability = (validationDetails.metric_availability?.report ?? {}) as LiveRow;
+              const unavailable = Array.isArray(availability.unavailable_metrics) ? availability.unavailable_metrics.map(String) : [];
+              const approvalId = pendingApprovals[scannerId] || num(row, "publish_approval_id");
+              const approvalStatus = text(row, "publish_approval_status");
+              return (
+                <article className="rd-scan rd-scan--workflow" key={scannerId}>
+                  <div className="rd-scan__head">
+                    <div><strong>{text(row, "name")}</strong><span>v{num(row, "version", 1)} · {isTemplate ? "global read-only template" : "your workspace"}</span></div>
+                    <Badge tone={toneFor(versionStatus)}>{isTemplate ? (templateExecutable ? "ready to copy" : "reference only") : versionStatus.replace(/_/g, " ")}</Badge>
+                  </div>
+                  <p>{text(row, "description", "No description stored.")}</p>
+                  <div className="rd-validation-line">{["schema", "metric_availability", "point_in_time", "known_fixture"].map((kind) => <span key={kind} className={String(validations[kind] ?? "pending") === "passed" ? "is-pass" : ""}>{kind.replace(/_/g, " ")}: {String(validations[kind] ?? "pending")}</span>)}</div>
+                  {unavailable.length ? <p className="rd-template-note">Unavailable validated metrics: {unavailable.join(", ")}. Companies are excluded; values are never zero-filled.</p> : null}
+                  {isTemplate && !templateExecutable ? <p className="rd-template-note">Reference only: this framework needs metrics outside the current deterministic library, so it cannot be copied, validated, published, or run.</p> : null}
+                  <footer>
+                    <span>{num(row, "run_count")} durable run{num(row, "run_count") === 1 ? "" : "s"} · last {formatRelative(text(row, "last_run_as_of"))}</span>
+                    <span className="rd-actions">
+                      {isTemplate && templateExecutable ? <button onClick={() => act(scannerId, "clone")} disabled={scannerAction.isPending}>Copy to workspace</button> : null}
+                      {!isTemplate && versionStatus === "draft" ? <button onClick={() => act(scannerId, "validate")} disabled={scannerAction.isPending}>Validate</button> : null}
+                      {!isTemplate && versionStatus === "validated" && !approvalId ? <button onClick={() => act(scannerId, "publish-request")} disabled={scannerAction.isPending}>Request publication</button> : null}
+                      {!isTemplate && versionStatus === "validated" && approvalId ? <button onClick={() => openEvidence({ kind: "approval", key: String(approvalId), title: "Scanner publication approval" })}>Review {approvalStatus || "pending"} approval</button> : null}
+                      {!isTemplate && versionStatus === "validated" && approvalId && approvalStatus === "approved" ? <button onClick={() => act(scannerId, "publish")} disabled={scannerAction.isPending}>Publish approved version</button> : null}
+                      {!isTemplate && versionStatus === "published" ? <button onClick={() => act(scannerId, "run")} disabled={scannerAction.isPending}>Run point-in-time screen</button> : null}
+                    </span>
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
         </section>
       </div>
     </ResearchShell>

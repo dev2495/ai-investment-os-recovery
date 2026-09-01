@@ -12,9 +12,9 @@ import {
   Inbox, ChevronRight, MessageSquare, Play, Send, Search, RefreshCw,
   ClipboardList,
 } from "lucide-react";
-import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Drawer, Field, Select, TextArea, TextInput } from "../../system/primitives";
+import { Panel, DataTable, StatusPill, Badge, Empty, MetricTile, Metric, Avatar, ScrollList, Button, Checkbox, Drawer, Field, Select, TextArea, TextInput } from "../../system/primitives";
 import { useAction, useOfficeSnapshot, useSystemHealth, useDepartmentTerminal, useReports, useBlueprintRequirements } from "../../data/queries";
-import { useCreateAgentMessage, useDelegateAgentTask, useReconcileBlueprintEvidence, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useReviewBlueprintEvidence, useRunAgentWorker } from "../../data/actions";
+import { useApproveResearchModelPreflight, useConfigurePublicResearchCanary, useCreateAgentMessage, useDelegateAgentTask, usePreparePublicResearchCanary, useReconcileBlueprintEvidence, useResolveLongTermCommittee, useResolveSpecialSituationDecision, useResolveStrategyCommittee, useReviewBlueprintEvidence, useReviewPromotePublicResearchCanary, useRunAgentWorker, useRunPublicResearchCanary } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials, value } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
@@ -526,9 +526,118 @@ export function ModelsView() {
   const routes = terminal.data?.primary?.length ? terminal.data.primary : data?.model_routes ?? [];
   const policies = terminal.data?.secondary ?? [];
   const calls = terminal.data?.tertiary ?? [];
+  const canaries = terminal.data?.canaries ?? [];
   const isLoading = health.isLoading || terminal.isLoading;
-  const readyRoutes = routes.filter((row) => ["ready", "available", "healthy", "active"].some((value) => text(row, "runtime_status", text(row, "status")).toLowerCase().includes(value))).length;
+  const readyRoutes = routes.filter((row) => ["ready", "available", "healthy", "active"].some((status) => text(row, "runtime_status", text(row, "status")).toLowerCase().includes(status))).length;
   const blockedCalls = calls.filter((row) => text(row, "decision_status", text(row, "status")).toLowerCase().includes("block")).length;
+  const dailyDriver = routes.find((row) => text(row, "route_name") === "openrouter_research_fast");
+
+  const prepareCanaryMutation = usePreparePublicResearchCanary();
+  const approvePreflightMutation = useApproveResearchModelPreflight();
+  const configureCanaryMutation = useConfigurePublicResearchCanary();
+  const runCanaryMutation = useRunPublicResearchCanary();
+  const promoteCanaryMutation = useReviewPromotePublicResearchCanary();
+  const pushToast = useUIStore((state) => state.pushToast);
+
+  const [preflight, setPreflight] = React.useState<LiveRow | null>(null);
+  const [configuredCanary, setConfiguredCanary] = React.useState<LiveRow | null>(null);
+  const [runResult, setRunResult] = React.useState<LiveRow | null>(null);
+  const [runConfirmed, setRunConfirmed] = React.useState(false);
+  const [reviewOpen, setReviewOpen] = React.useState(false);
+  const [reviewer, setReviewer] = React.useState("Devarsh");
+  const [citationScore, setCitationScore] = React.useState(100);
+  const [numericScore, setNumericScore] = React.useState(100);
+  const [unsupportedClaims, setUnsupportedClaims] = React.useState(0);
+  const [citationsChecked, setCitationsChecked] = React.useState(false);
+  const [reviewRationale, setReviewRationale] = React.useState("");
+
+  const receipt = value<LiveRow>(runResult, "receipt", {});
+  const reviewedResponseHash = text(receipt, "response_hash");
+  const responseOutput = text(runResult, "response_output", text(runResult, "response_preview"));
+  const canaryBusy = prepareCanaryMutation.isPending || approvePreflightMutation.isPending
+    || configureCanaryMutation.isPending || runCanaryMutation.isPending || promoteCanaryMutation.isPending;
+
+  const prepareGlm53Canary = async () => {
+    try {
+      const result = await prepareCanaryMutation.mutateAsync({
+        request_kind: "canary",
+        public_only: true,
+        contains_private_data: false,
+        actor: "Devarsh",
+        estimated_duration_seconds: 120,
+        runs: [{
+          agent_name: "Company Analyst",
+          route_name: "openrouter_public_lead_glm53_flash_canary",
+          prompt_tokens_est: 1800,
+          completion_tokens_max: 1400,
+          max_calls: 1,
+        }],
+      });
+      setPreflight(result);
+      setConfiguredCanary(null);
+      setRunResult(null);
+      setRunConfirmed(false);
+      pushToast({ title: "GLM 5.3 canary cost plan ready", message: "No model was called. Review the exact ceiling before approval.", tone: "ok", duration: 4000 });
+    } catch (error) {
+      pushToast({ title: "Canary cost plan failed", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 5000 });
+    }
+  };
+
+  const approveAndConfigureCanary = async () => {
+    const preflightId = num(preflight, "id");
+    if (!preflightId) return;
+    try {
+      await approvePreflightMutation.mutateAsync({ preflight_id: preflightId, operator_confirmed: true, actor: "Devarsh" });
+      const configured = await configureCanaryMutation.mutateAsync({
+        preflight_id: preflightId,
+        candidate_route: "openrouter_public_lead_glm53_flash_canary",
+        actor: "Devarsh",
+      });
+      setConfiguredCanary(configured);
+      pushToast({ title: "Bounded public canary configured", message: "Still no model call. Running it requires the separate confirmation below.", tone: "ok", duration: 4000 });
+    } catch (error) {
+      pushToast({ title: "Canary setup failed", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 5000 });
+    }
+  };
+
+  const runGlm53Canary = async () => {
+    const canaryId = num(configuredCanary, "id");
+    if (!canaryId || !runConfirmed) return;
+    try {
+      const result = await runCanaryMutation.mutateAsync({ canary_id: canaryId, operator_confirmed: true, actor: "Devarsh" });
+      setRunResult(result);
+      setCitationsChecked(false);
+      setReviewRationale("");
+      setReviewOpen(true);
+      pushToast({ title: "Canary completed", message: "Review the returned output before any daily-driver change.", tone: text(result, "status") === "completed" ? "ok" : "warn", duration: 4500 });
+    } catch (error) {
+      pushToast({ title: "Canary run failed", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 5000 });
+    }
+  };
+
+  const promoteReviewedCanary = async () => {
+    const canaryId = num(runResult, "id");
+    if (!canaryId || !reviewedResponseHash) return;
+    try {
+      const result = await promoteCanaryMutation.mutateAsync({
+        canary_id: canaryId,
+        operator_confirmed: true,
+        approve_for_daily_driver: true,
+        reviewer,
+        rationale: reviewRationale,
+        reviewed_response_hash: reviewedResponseHash,
+        source_citations_checked: true,
+        citation_accuracy_score: citationScore,
+        numeric_accuracy_score: numericScore,
+        unsupported_claim_count: unsupportedClaims,
+      });
+      setReviewOpen(false);
+      pushToast({ title: "Public research daily driver updated", message: text(result, "detail"), tone: "ok", duration: 6000 });
+    } catch (error) {
+      pushToast({ title: "Daily-driver promotion blocked", message: error instanceof Error ? error.message : String(error), tone: "risk", duration: 6000 });
+    }
+  };
+
   return (
     <div className="aios-destination">
       <Header icon={Cpu} code="MODELS" title="Model Router & Cost Control" subtitle="Private local default, explicit cloud escalation, privacy gates, runtime readiness, and audited calls." />
@@ -537,49 +646,100 @@ export function ModelsView() {
         <MetricTile tone={readyRoutes ? "ok" : "warn"}><Metric label="Runtime Ready" value={readyRoutes} /></MetricTile>
         <MetricTile><Metric label="Privacy Policies" value={policies.length} /></MetricTile>
         <MetricTile tone={blockedCalls ? "warn" : "ok"}><Metric label="Blocked Calls" value={blockedCalls} /></MetricTile>
-        <MetricTile><Metric label="Recent Decisions" value={calls.length} /></MetricTile>
+        <MetricTile><Metric label="Canary Receipts" value={canaries.length} /></MetricTile>
+        <MetricTile tone={dailyDriver ? "ok" : "warn"}><Metric label="Research Daily Driver" value={dailyDriver ? text(dailyDriver, "default_model") : "Not selected"} /></MetricTile>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-4)", alignItems: "start" }}>
         <Panel icon={Cpu} title="Model Routes">
-          {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
+          {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading...</div> : (
             <DataTable
               columns={[
-                { key: "route", header: "Route", render: (r) => <strong>{text(r, "route_name", text(r, "name"))}</strong> },
-                { key: "model", header: "Model", render: (r) => text(r, "default_model", text(r, "model_name", text(r, "preferred_model", "—"))) },
-                { key: "provider", header: "Provider", render: (r) => text(r, "default_provider", text(r, "provider", "—")) },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "runtime_status", text(r, "status", "info"))} /> },
+                { key: "route", header: "Route", render: (row) => <strong>{text(row, "route_name", text(row, "name"))}</strong> },
+                { key: "model", header: "Model", render: (row) => text(row, "default_model", text(row, "model_name", text(row, "preferred_model", "-"))) },
+                { key: "provider", header: "Provider", render: (row) => text(row, "default_provider", text(row, "provider", "-")) },
+                { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "runtime_status", text(row, "status", "info"))} /> },
               ]}
               rows={routes}
-              rowKey={(r, i) => text(r, "route_name", `r-${i}`)}
+              rowKey={(row, index) => text(row, "route_name", `r-${index}`)}
             />
           )}
         </Panel>
         <Panel icon={Cpu} title="Model Endpoints">
-          {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
+          {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading...</div> : (
             <DataTable
               columns={[
-                { key: "name", header: "Endpoint", render: (r) => <strong>{text(r, "endpoint_name", text(r, "name"))}</strong> },
-                { key: "provider", header: "Provider", render: (r) => text(r, "provider", "—") },
-                { key: "status", header: "Status", render: (r) => <StatusPill status={text(r, "status", text(r, "health", "info"))} /> },
+                { key: "name", header: "Endpoint", render: (row) => <strong>{text(row, "endpoint_name", text(row, "name"))}</strong> },
+                { key: "provider", header: "Provider", render: (row) => text(row, "provider", "-") },
+                { key: "status", header: "Status", render: (row) => <StatusPill status={text(row, "status", text(row, "health", "info"))} /> },
               ]}
               rows={data?.model_endpoints ?? []}
-              rowKey={(r, i) => text(r, "endpoint_name", `e-${i}`)}
+              rowKey={(row, index) => text(row, "endpoint_name", `e-${index}`)}
             />
           )}
         </Panel>
       </div>
+
+      <Panel icon={ShieldCheck} title="GLM 5.3 Flash public-research daily-driver gate" actions={<Badge>{canaries.length} receipts</Badge>}>
+        <div style={{ padding: "var(--space-4)", display: "grid", gap: "var(--space-4)" }}>
+          <div style={{ maxWidth: 900, color: "var(--text-muted)", fontSize: "var(--text-sm)", lineHeight: 1.6 }}>
+            GLM 5.3 Flash may handle high-volume public Research Case specialist work only after a fixed public-packet canary and named citation/numeric review. DeepSeek V4 Pro remains lead and independent-review escalation. No step grants private-data access, broker writes, or automatic capital authority.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--space-3)" }}>
+            <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", padding: "var(--space-3)" }}>
+              <strong>1 - Cost plan</strong>
+              <p className="micro">Preparing a plan calls no model.</p>
+              <Button size="sm" variant="ghost" onClick={prepareGlm53Canary} disabled={canaryBusy}>Prepare GLM 5.3 canary</Button>
+            </div>
+            <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", padding: "var(--space-3)" }}>
+              <strong>2 - Approve bounded setup</strong>
+              {preflight ? (
+                <>
+                  <p className="micro">{`Estimate $${num(preflight, "estimated_cost_usd").toFixed(4)} | hard max $${num(preflight, "hard_max_cost_usd").toFixed(4)} | INR ${num(preflight, "hard_max_cost_inr").toFixed(2)}`}</p>
+                  <Button size="sm" variant="ghost" onClick={approveAndConfigureCanary} disabled={canaryBusy || Boolean(configuredCanary)}>Approve and configure</Button>
+                </>
+              ) : <p className="micro">Waiting for a costed preflight.</p>}
+            </div>
+            <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", padding: "var(--space-3)" }}>
+              <strong>3 - Run once</strong>
+              <p className="micro">This is the only paid step. It uses the fixed USHAMART public packet.</p>
+              <Checkbox checked={runConfirmed} onChange={setRunConfirmed} disabled={!configuredCanary} label="I confirm this bounded paid canary" />
+              <Button size="sm" variant="primary" onClick={runGlm53Canary} disabled={canaryBusy || !configuredCanary || !runConfirmed}>Run paid canary</Button>
+            </div>
+            <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", padding: "var(--space-3)" }}>
+              <strong>4 - Human review</strong>
+              <p className="micro">Promotion is bound to the exact response hash and cannot happen from an old or hidden response.</p>
+              <Button size="sm" variant="ghost" onClick={() => setReviewOpen(true)} disabled={!runResult || !reviewedResponseHash}>Review current output</Button>
+            </div>
+          </div>
+          {canaries.length === 0 ? <Empty icon={ShieldCheck} title="No public model canary receipts yet" /> : (
+            <DataTable
+              columns={[
+                { key: "candidate", header: "Candidate", render: (row) => <><strong>{text(row, "candidate_model")}</strong><div className="micro">{text(row, "candidate_route")}</div></> },
+                { key: "status", header: "Run", render: (row) => <StatusPill status={text(row, "status", "unknown")} /> },
+                { key: "structured", header: "Structured", render: (row) => <StatusPill status={value<boolean>(row, "structured_output_valid", false) ? "passed" : "not_passed"} /> },
+                { key: "review", header: "Selected", render: (row) => <StatusPill status={value<boolean>(row, "selected_for_role", false) ? "daily_driver" : "not_selected"} /> },
+                { key: "cost", header: "Ceiling", align: "right", render: (row) => `$${num(row, "hard_max_cost_usd").toFixed(4)}` },
+                { key: "updated", header: "Updated", render: (row) => formatRelative(text(row, "updated_at")) },
+              ]}
+              rows={canaries}
+              rowKey={(row, index) => text(row, "canary_key", `canary-${index}`)}
+            />
+          )}
+        </div>
+      </Panel>
+
       <Panel icon={ShieldCheck} title="Privacy & Cloud Gates">
-        {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : policies.length === 0 ? <Empty icon={ShieldCheck} title="No model privacy policies returned" /> : (
+        {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading...</div> : policies.length === 0 ? <Empty icon={ShieldCheck} title="No model privacy policies returned" /> : (
           <DataTable
             columns={[
-              { key: "class", header: "Data Class", render: (r) => <strong>{text(r, "privacy_class")}</strong> },
-              { key: "cloud", header: "Cloud", render: (r) => <StatusPill status={String(r.cloud_model_allowed) === "true" ? "allowed" : "blocked"} /> },
-              { key: "cache", header: "Cache", render: (r) => <StatusPill status={String(r.cache_allowed) === "true" ? "allowed" : "blocked"} /> },
-              { key: "context", header: "Max Context", align: "right", render: (r) => num(r, "max_context_chars", 0).toLocaleString() },
-              { key: "notes", header: "Control", render: (r) => text(r, "notes", text(r, "policy_statement", "—")) },
+              { key: "class", header: "Data Class", render: (row) => <strong>{text(row, "privacy_class")}</strong> },
+              { key: "cloud", header: "Cloud", render: (row) => <StatusPill status={String(row.cloud_model_allowed) === "true" ? "allowed" : "blocked"} /> },
+              { key: "cache", header: "Cache", render: (row) => <StatusPill status={String(row.cache_allowed) === "true" ? "allowed" : "blocked"} /> },
+              { key: "context", header: "Max Context", align: "right", render: (row) => num(row, "max_context_chars", 0).toLocaleString() },
+              { key: "notes", header: "Control", render: (row) => text(row, "notes", text(row, "policy_statement", "-")) },
             ]}
             rows={policies}
-            rowKey={(r, i) => text(r, "privacy_class", `policy-${i}`)}
+            rowKey={(row, index) => text(row, "privacy_class", `policy-${index}`)}
           />
         )}
       </Panel>
@@ -587,18 +747,44 @@ export function ModelsView() {
         {calls.length === 0 ? <Empty icon={Activity} title="No recent model calls" /> : (
           <DataTable
             columns={[
-              { key: "route", header: "Route", render: (r) => <strong>{text(r, "selected_route", text(r, "requested_route", "—"))}</strong> },
-              { key: "model", header: "Model", render: (r) => text(r, "selected_model", "—") },
-              { key: "privacy", header: "Privacy", render: (r) => <StatusPill status={text(r, "privacy_class", "unknown")} /> },
-              { key: "cache", header: "Cache", render: (r) => text(r, "cache_status", "—") },
-              { key: "status", header: "Decision", render: (r) => <StatusPill status={text(r, "decision_status", "unknown")} /> },
-              { key: "time", header: "Time", render: (r) => formatRelative(text(r, "created_at")) },
+              { key: "route", header: "Route", render: (row) => <strong>{text(row, "selected_route", text(row, "requested_route", "-"))}</strong> },
+              { key: "model", header: "Model", render: (row) => text(row, "selected_model", "-") },
+              { key: "privacy", header: "Privacy", render: (row) => <StatusPill status={text(row, "privacy_class", "unknown")} /> },
+              { key: "cache", header: "Cache", render: (row) => text(row, "cache_status", "-") },
+              { key: "status", header: "Decision", render: (row) => <StatusPill status={text(row, "decision_status", "unknown")} /> },
+              { key: "time", header: "Time", render: (row) => formatRelative(text(row, "created_at")) },
             ]}
             rows={calls.slice(0, 40)}
-            rowKey={(r, i) => String(text(r, "decision_key", text(r, "id", i)))}
+            rowKey={(row, index) => String(text(row, "decision_key", text(row, "id", index)))}
           />
         )}
       </Panel>
+
+      <Drawer
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        title="Review GLM 5.3 Flash canary"
+        subtitle={reviewedResponseHash ? `Response ${reviewedResponseHash.slice(0, 12)}...` : "No current response"}
+        icon={ShieldCheck}
+        width={640}
+        footer={<div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}><Button variant="ghost" onClick={() => setReviewOpen(false)}>Cancel</Button><Button variant="primary" onClick={promoteReviewedCanary} disabled={canaryBusy || !citationsChecked || citationScore < 90 || numericScore < 95 || unsupportedClaims !== 0 || reviewRationale.trim().length < 20 || !reviewedResponseHash}>Select public daily driver</Button></div>}
+      >
+        <div style={{ display: "grid", gap: "var(--space-4)" }}>
+          <div>
+            <strong>Exact canary output</strong>
+            <pre style={{ marginTop: "var(--space-2)", padding: "var(--space-3)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", background: "var(--surface-soft)", fontSize: "var(--text-xs)" }}>{responseOutput || "The response is not present in this browser session. Run a fresh canary; promotion from an unseen stored hash is intentionally blocked."}</pre>
+          </div>
+          <Field label="Named reviewer" required><TextInput value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+            <Field label="Citation accuracy" hint="Minimum 90"><TextInput type="number" min={0} max={100} value={citationScore} onChange={(event) => setCitationScore(Number(event.target.value))} /></Field>
+            <Field label="Numeric accuracy" hint="Minimum 95"><TextInput type="number" min={0} max={100} value={numericScore} onChange={(event) => setNumericScore(Number(event.target.value))} /></Field>
+            <Field label="Unsupported claims" hint="Must be zero"><TextInput type="number" min={0} value={unsupportedClaims} onChange={(event) => setUnsupportedClaims(Number(event.target.value))} /></Field>
+          </div>
+          <Checkbox checked={citationsChecked} onChange={setCitationsChecked} label="I checked every cited fact and numerical value against the fixed public packet." />
+          <Field label="Review rationale" required hint="Explain what was checked and why the result is safe for bounded public specialist work."><TextArea rows={5} value={reviewRationale} onChange={(event) => setReviewRationale(event.target.value)} /></Field>
+          <div style={{ color: "var(--status-warn)", fontSize: "var(--text-xs)", lineHeight: 1.5 }}>This selects only the public Research Case specialist route. Private context stays local; every paid run still needs a cost preflight; DeepSeek V4 Pro remains lead/review escalation; no broker or capital action is enabled.</div>
+        </div>
+      </Drawer>
     </div>
   );
 }

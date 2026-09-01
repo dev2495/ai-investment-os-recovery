@@ -244,10 +244,45 @@ class FundamentalScannerService:
                    definition.status,definition.tags,definition.updated_at,
                    version.id scanner_version_id,version.version,version.status version_status,
                    version.definition_hash,
+                   version.definition_json->>'api_version' definition_api_version,
+                   CASE
+                     WHEN definition.scope_key={self.sql_literal(GLOBAL_SCOPE_KEY)}
+                      AND version.definition_json->>'api_version'='aios.scanner/v1'
+                     THEN true ELSE false
+                   END template_executable,
                    coalesce((SELECT jsonb_object_agg(validation.validation_kind,validation.status)
                              FROM market.scanner_validations validation
                              WHERE validation.scope_key=definition.scope_key
                                AND validation.scanner_version_id=version.id),'{{}}'::jsonb) validation_summary,
+                   coalesce((SELECT jsonb_object_agg(latest.validation_kind,jsonb_build_object(
+                               'status',latest.status,'report',latest.report,'coverage',latest.coverage,
+                               'completed_at',latest.completed_at))
+                             FROM (
+                               SELECT DISTINCT ON (validation_kind)
+                                      validation_kind,status,report,coverage,completed_at
+                               FROM market.scanner_validations selected_validation
+                               WHERE selected_validation.scope_key=definition.scope_key
+                                 AND selected_validation.scanner_version_id=version.id
+                               ORDER BY validation_kind,created_at DESC
+                             ) latest),'{{}}'::jsonb) validation_details,
+                   (SELECT approval.id
+                    FROM agent.approvals approval
+                    WHERE approval.approval_type='scanner_publish'
+                      AND approval.status IN ('pending','approved')
+                      AND approval.requested_action->>'scanner_id'=definition.id::text
+                      AND approval.requested_action->>'scanner_version_id'=version.id::text
+                      AND approval.requested_action->>'scope_key'=definition.scope_key
+                    ORDER BY CASE approval.status WHEN 'approved' THEN 1 ELSE 2 END,
+                             approval.created_at DESC LIMIT 1) publish_approval_id,
+                   (SELECT approval.status
+                    FROM agent.approvals approval
+                    WHERE approval.approval_type='scanner_publish'
+                      AND approval.status IN ('pending','approved')
+                      AND approval.requested_action->>'scanner_id'=definition.id::text
+                      AND approval.requested_action->>'scanner_version_id'=version.id::text
+                      AND approval.requested_action->>'scope_key'=definition.scope_key
+                    ORDER BY CASE approval.status WHEN 'approved' THEN 1 ELSE 2 END,
+                             approval.created_at DESC LIMIT 1) publish_approval_status,
                    (SELECT count(*) FROM market.scanner_runs run WHERE run.scanner_version_id=version.id) run_count,
                    (SELECT max(run.as_of_cutoff_at) FROM market.scanner_runs run WHERE run.scanner_version_id=version.id) last_run_as_of
             FROM market.scanner_definitions definition
@@ -296,22 +331,24 @@ class FundamentalScannerService:
         definition = validate_definition(payload.get("definition"))
         definition_hash = _hash(definition)
         actor = str(payload.get("actor") or "Devarsh")[:120]
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         rows = self.run_statement(
             f"""
             WITH scanner AS (
               INSERT INTO market.scanner_definitions
-                (scope_key,scanner_key,name,description,owner_agent,status,tags,created_by)
+                (scope_key,scanner_key,name,description,owner_agent,status,tags,metadata,created_by)
               VALUES ({self.sql_literal(self.scope_key)},{self.sql_literal(scanner_key)},{self.sql_literal(name)},
                       {self.sql_literal(str(payload.get('description') or 'User-defined deterministic fundamental scanner')[:500])},
                       'Fundamental Research Analyst','draft',
                       {_text_array([str(item) for item in payload.get('tags') or []], self.sql_literal)},
-                      {self.sql_literal(actor)})
-              ON CONFLICT (scope_key,scanner_key) DO UPDATE SET updated_at=now()
+                      {self.sql_jsonb(metadata)},{self.sql_literal(actor)})
+              ON CONFLICT (scope_key,scanner_key) DO UPDATE SET
+                metadata=market.scanner_definitions.metadata||EXCLUDED.metadata,updated_at=now()
               RETURNING *
             ), next_version AS (
               SELECT coalesce(max(version),0)+1 number FROM market.scanner_versions
               WHERE scanner_definition_id=(SELECT id FROM scanner)
-            ), version AS (
+            ), inserted_version AS (
               INSERT INTO market.scanner_versions
                 (scope_key,scanner_definition_id,version,api_version,dsl_version,status,definition_json,
                  definition_hash,universe_config,filter_config,score_config,output_config,
@@ -323,17 +360,83 @@ class FundamentalScannerService:
                      {self.sql_jsonb({'missing_data_policy':'exclude_and_report','broker_write_allowed':False})},
                      'research-desk-v1',{self.sql_literal(str(payload.get('description') or '')[:2000])},
                      {self.sql_literal(actor)}
-              FROM scanner,next_version RETURNING *
+              FROM scanner,next_version
+              ON CONFLICT (scope_key,scanner_definition_id,definition_hash) DO NOTHING
+              RETURNING *
+            ), version AS (
+              SELECT * FROM inserted_version
+              UNION ALL
+              SELECT existing.*
+              FROM market.scanner_versions existing,scanner
+              WHERE existing.scope_key={self.sql_literal(self.scope_key)}
+                AND existing.scanner_definition_id=scanner.id
+                AND existing.definition_hash={self.sql_literal(definition_hash)}
+              LIMIT 1
             )
             SELECT jsonb_build_array(jsonb_build_object(
               'scanner',(SELECT to_jsonb(scanner) FROM scanner),
               'version',(SELECT to_jsonb(version) FROM version),
-              'created',true,'broker_write_allowed',false,'external_write_allowed',false
+              'created',EXISTS(SELECT 1 FROM inserted_version),
+              'broker_write_allowed',false,'external_write_allowed',false
             ))::text
             """
         )
         return rows[0] if rows else {}
 
+    def clone_template(self, scanner_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        template = self.get_scanner(scanner_id)
+        if template.get("scope_key") != GLOBAL_SCOPE_KEY:
+            raise ScannerValidationError("only a global scanner template can be copied into your workspace")
+        definition = validate_definition(template.get("definition"))
+        definition_hash = _hash(definition)
+        scanner_key = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            str(payload.get("scanner_key") or template.get("scanner_key") or template.get("name") or "scanner").lower(),
+        ).strip("_")[:80]
+        existing = self.run_rows(
+            f"""
+            SELECT definition.*,version.id scanner_version_id,version.version,
+                   version.status version_status,version.definition_json AS definition,
+                   version.definition_hash,version.calculation_revision
+            FROM market.scanner_definitions definition
+            JOIN market.scanner_versions version
+              ON version.scanner_definition_id=definition.id
+             AND version.scope_key=definition.scope_key
+            WHERE definition.scope_key={self.sql_literal(self.scope_key)}
+              AND definition.scanner_key={self.sql_literal(scanner_key)}
+              AND version.definition_hash={self.sql_literal(definition_hash)}
+            ORDER BY version.version DESC LIMIT 1
+            """
+        )
+        if existing:
+            return {
+                "scanner": existing[0],
+                "version": existing[0],
+                "created": False,
+                "cloned_from": {"scanner_id": scanner_id, "scope_key": GLOBAL_SCOPE_KEY},
+                "broker_write_allowed": False,
+                "external_write_allowed": False,
+            }
+        result = self.create_draft({
+            "name": payload.get("name") or template.get("name"),
+            "scanner_key": scanner_key,
+            "description": payload.get("description") or template.get("description"),
+            "definition": definition,
+            "tags": ["workspace_copy", f"template:{template.get('scanner_key') or scanner_id}"],
+            "metadata": {
+                "cloned_from_scope": GLOBAL_SCOPE_KEY,
+                "cloned_from_scanner_id": scanner_id,
+                "cloned_from_scanner_key": template.get("scanner_key"),
+                "cloned_from_version": template.get("version"),
+                "cloned_from_definition_hash": template.get("definition_hash"),
+            },
+            "actor": payload.get("actor") or "Devarsh",
+        })
+        result["cloned_from"] = {"scanner_id": scanner_id, "scope_key": GLOBAL_SCOPE_KEY}
+        result["broker_write_allowed"] = False
+        result["external_write_allowed"] = False
+        return result
     def create_from_natural_language(self, payload: dict[str, Any]) -> dict[str, Any]:
         instruction = re.sub(r"\s+", " ", str(payload.get("instruction") or payload.get("text") or "").strip())[:2000]
         if len(instruction) < 12:
@@ -368,7 +471,11 @@ class FundamentalScannerService:
             "universe": {"countries": ["IN"], "exchanges": ["NSE", "BSE"], "as_of_policy": "point_in_time"},
             "requirements": {"required_metrics": required, "minimum_data_completeness_pct": completeness, "missing_data_policy": "exclude_and_report"},
             "filters": {"all": conditions},
-            "score": {"components": [{"metric": metric, "weight": 1 / len(required), "direction": "higher"} for metric in required]},
+            "score": {"components": [
+                {"metric": metric, "weight": 1 / len(required),
+                 "direction": "lower" if metric in {"debt_to_equity", "dso", "capex_to_revenue"} else "higher"}
+                for metric in required
+            ]},
         }
         result = self.create_draft({
             "name": payload.get("name") or "Natural language scanner",
@@ -486,15 +593,31 @@ class FundamentalScannerService:
         control_statement = self.run_control_statement or self.run_statement
         rows = control_statement(
             f"""
-            WITH approval AS (
+            WITH existing AS (
+              SELECT *
+              FROM agent.approvals
+              WHERE approval_type='scanner_publish'
+                AND status IN ('pending','approved')
+                AND requested_action->>'scanner_id'={self.sql_literal(str(int(scanner_id)))}
+                AND requested_action->>'scanner_version_id'={self.sql_literal(str(int(scanner['scanner_version_id'])))}
+                AND requested_action->>'scope_key'={self.sql_literal(self.scope_key)}
+              ORDER BY CASE status WHEN 'approved' THEN 1 ELSE 2 END,created_at DESC
+              LIMIT 1
+            ), inserted AS (
               INSERT INTO agent.approvals
                 (approval_type,title,owner_agent,risk_level,status,requested_action,rationale)
-              VALUES ('scanner_publish',
-                      {self.sql_literal('Publish fundamental scanner: ' + str(scanner.get('name') or scanner_id))},
-                      'Fundamental Research Analyst','low','pending',
-                      {self.sql_jsonb({'scanner_id': scanner_id, 'scanner_version_id': scanner['scanner_version_id'], 'scope_key': self.scope_key, 'broker_write_allowed': False})},
-                      {self.sql_literal('Explicit publication authorizes only deterministic read-only research screening; no alert schedule, external write or broker action.')})
+              SELECT 'scanner_publish',
+                     {self.sql_literal('Publish fundamental scanner: ' + str(scanner.get('name') or scanner_id))},
+                     'Fundamental Research Analyst','low','pending',
+                     {self.sql_jsonb({'scanner_id': scanner_id, 'scanner_version_id': scanner['scanner_version_id'], 'scope_key': self.scope_key, 'broker_write_allowed': False})},
+                     {self.sql_literal('Explicit publication authorizes only deterministic read-only research screening; no alert schedule, external write or broker action.')}
+              WHERE NOT EXISTS (SELECT 1 FROM existing)
               RETURNING *
+            ), approval AS (
+              SELECT * FROM existing
+              UNION ALL
+              SELECT * FROM inserted
+              LIMIT 1
             )
             SELECT jsonb_build_array(to_jsonb(approval))::text FROM approval
             """
@@ -503,12 +626,11 @@ class FundamentalScannerService:
             raise RuntimeError("scanner publication approval could not be created")
         return {
             "approval": rows[0],
-            "status": "awaiting_explicit_approval",
+            "status": "awaiting_explicit_approval" if rows[0].get("status") == "pending" else "approved",
             "requested_by": actor,
             "broker_write_allowed": False,
             "external_write_allowed": False,
         }
-
     def publish_scanner(self, scanner_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         scanner = self.get_scanner(scanner_id)
         try:
@@ -522,8 +644,8 @@ class FundamentalScannerService:
             WHERE id={approval_id}
               AND approval_type='scanner_publish'
               AND status='approved'
-              AND (requested_action->>'scanner_id')::bigint={int(scanner_id)}
-              AND (requested_action->>'scanner_version_id')::bigint={int(scanner['scanner_version_id'])}
+              AND requested_action->>'scanner_id'={self.sql_literal(str(int(scanner_id)))}
+              AND requested_action->>'scanner_version_id'={self.sql_literal(str(int(scanner['scanner_version_id'])))}
               AND requested_action->>'scope_key'={self.sql_literal(self.scope_key)}
             LIMIT 1
             """
@@ -927,6 +1049,8 @@ class FundamentalScannerService:
         scanner = self.get_scanner(scanner_id)
         if scanner.get("scope_key") != self.scope_key or scanner.get("version_status") != "published":
             raise ScannerValidationError("scanner runs require the explicitly published workspace version")
+        if payload.get("operator_confirmed") is not True:
+            raise ScannerValidationError("operator_confirmed=true is required for a durable point-in-time scanner run")
         normalized = validate_definition(scanner.get("definition"))
         as_of_raw = str(payload.get("as_of_at") or payload.get("asOf") or datetime.now(timezone.utc).isoformat())
         as_of_at = datetime.fromisoformat(as_of_raw.replace("Z", "+00:00"))

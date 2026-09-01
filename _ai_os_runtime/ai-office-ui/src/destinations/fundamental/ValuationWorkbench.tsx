@@ -26,7 +26,7 @@ function MethodRange({ row, price }: { row: LiveRow; price: number | null }) {
   const status = text(row, "status", "blocked");
   const output = status !== "blocked";
   const base = row.base === null || row.base === undefined ? null : num(row, "base");
-  const expectedReturn = price && base ? ((base / price) - 1) * 100 : null;
+  const expectedReturn = price && base && row.decision_usable === true ? ((base / price) - 1) * 100 : null;
   const assumptions = object(row.assumptions);
   const outputs = object(row.outputs);
   return <article className={`valuation-method is-${status.replace(/_/g, "-")}`}>
@@ -60,9 +60,12 @@ export function ValuationWorkbench({ workbench }: { workbench: LiveRow }) {
   const scenarios = object(dcfAssumptions.scenarios);
   const currentPrice = price.value === null || price.value === undefined ? null : num(price, "value");
   const priceDecisionUsable = price.decision_usable === true;
-  const priceExchange = text(price, "exchange", text(object(price.source), "exchange", "exchange unavailable"));
-  const priceSymbol = text(price, "provider_symbol", text(price, "symbol", text(object(price.source), "symbol", "symbol unavailable")));
-  const delaySeconds = price.delay_seconds === null || price.delay_seconds === undefined ? null : num(price, "delay_seconds");
+  const priceSource = object(price.source);
+  const priceExchange = text(price, "exchange", text(priceSource, "exchange", "exchange unavailable"));
+  const rawPriceSymbol = text(price, "provider_symbol", text(price, "symbol", text(priceSource, "symbol", "symbol unavailable")));
+  const priceInstrument = rawPriceSymbol.includes(":") ? rawPriceSymbol : priceExchange + ":" + rawPriceSymbol;
+  const quoteAgeMinutes = price.age_minutes === null || price.age_minutes === undefined ? null : num(price, "age_minutes");
+  const timestampBasis = text(priceSource, "timestamp_basis", "timestamp basis unavailable").replace(/_/g, " ");
   const impliedGrowth = num(object(reverse?.outputs), "implied_annual_fcf_growth", Number.NaN);
 
   return <div className="valuation-workbench">
@@ -75,10 +78,11 @@ export function ValuationWorkbench({ workbench }: { workbench: LiveRow }) {
       <article>
         <span>Canonical market-price anchor</span>
         <strong>{currentPrice === null ? "Missing" : money(currentPrice)}</strong>
-        <p>{text(price, "provider", "No provider")} · {priceExchange}:{priceSymbol}</p>
-        <small>{displayDate(price.as_of)}{delaySeconds === null ? " · delay unavailable" : ` · ${delaySeconds.toFixed(0)}s delay`}</small>
+        <p>{text(price, "provider", "No provider")} · {priceInstrument}</p>
+        <small>{displayDate(price.quote_timestamp || price.as_of)}{quoteAgeMinutes === null ? " · age unavailable" : ` · ${quoteAgeMinutes.toFixed(1)} min old`} · {timestampBasis}</small>
         <small className={`state-${text(price, "freshness_status", "missing")}`}>{text(price, "verification_status", "missing").replace(/_/g, " ")} · {text(price, "freshness_status", "missing")} · {priceDecisionUsable ? "usable for valuation" : "lineage only"}</small>
         <small>{text(price, "freshness_reason", "A fresh canonical read-only quote is required before valuation can be decision-usable.")}</small>
+        <small>Mapping {text(price, "mapping_status", "unverified").replace(/_/g, " ")} · primary {text(price, "primary_quote_status", "unavailable")} · stream {text(price, "stream_health_status", price.stream_health_required === true ? "unavailable" : "not required")}</small>
         <small>Broker writes {price.broker_write_allowed === true ? "enabled" : "locked"}{price.fallback_used === true ? " · labelled fallback" : ""}</small>
       </article>
       <article><span>Share basis</span><strong>{shareBasis.shares_crore === null || shareBasis.shares_crore === undefined ? "Missing" : `${num(shareBasis, "shares_crore").toFixed(2)}cr`}</strong><p>FY{num(shareBasis, "period", num(actuals, "fiscal_year_end"))} · {text(shareBasis, "method", "No method")}</p><small>{text(shareBasis, "status", "missing").replace(/_/g, " ")}</small></article>
@@ -88,7 +92,7 @@ export function ValuationWorkbench({ workbench }: { workbench: LiveRow }) {
 
     <section className="valuation-classification"><Scale size={17}/><div><strong>Read the labels before the values</strong><p><b>Actual:</b> issuer-reported and validated. <b>Guidance:</b> management claim. <b>Estimate:</b> unavailable unless lawfully sourced. <b>Scenario:</b> analyst calculation, never a historical fact.</p></div></section>
 
-    <section className="valuation-methods"><header><div><span>Method comparison</span><h3>Each method answers a different investment question</h3></div><p>{num(workbench, "scenario_count")} calculated method{num(workbench, "scenario_count") === 1 ? "" : "s"}; none becomes decision-ready without fresh price and human review.</p></header><div>{methods.map((row) => <MethodRange key={text(row, "key")} row={row} price={currentPrice} />)}</div></section>
+    <section className="valuation-methods"><header><div><span>Method comparison</span><h3>Each method answers a different investment question</h3></div><p>{num(workbench, "scenario_count")} calculated method{num(workbench, "scenario_count") === 1 ? "" : "s"}; none becomes decision-ready without fresh price and human review.</p></header><div>{methods.map((row) => <MethodRange key={text(row, "key")} row={row} price={priceDecisionUsable ? currentPrice : null} />)}</div></section>
 
     {dcf && text(dcf, "status") !== "blocked" ? <section className="valuation-sensitivity"><header><span>DCF sensitivity</span><h3>Growth, discount rate and terminal value drive the range</h3><p>Outputs are persisted scenarios, not point-forecast certainty.</p></header><div className="valuation-scenario-grid">
       {Object.entries(scenarios).map(([key, raw]) => { const row = object(raw); const value = key === "low" ? dcf.bear : key === "high" ? dcf.bull : dcf.base; return <article key={key}><span>{key === "low" ? "Bear" : key === "high" ? "Bull" : "Base"}</span><strong>{money(value)}</strong><dl><div><dt>FCF growth</dt><dd>{percent(row.growth)}</dd></div><div><dt>Discount</dt><dd>{percent(row.discount)}</dd></div><div><dt>Terminal</dt><dd>{percent(row.terminal_growth)}</dd></div></dl></article>; })}
