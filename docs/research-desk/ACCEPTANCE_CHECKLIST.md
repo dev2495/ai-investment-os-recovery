@@ -38,7 +38,7 @@ This checklist is the release gate for the Research Desk vertical slice. It maps
 - [x] Make executable scanner templates copy-only and idempotent; require deterministic validation, persistent publication approval and explicit run confirmation. Evidence: E6, E7, E10.
 - [x] Prevent URL-led article commands from being misclassified as company names. Evidence: E6, E10.
 - [x] Compile the production UI, pass the complete backend suite, pass real-Chrome interaction tests and clear the dependency audit. Evidence: E3, E4, E6, E9.
-- [ ] Apply migrations 250-252 to the canonical iMac release and prove live API/database compatibility. Blocked: Tailscale SSH timed out on 2026-09-01.
+- [ ] Apply migrations 250-252 to the canonical iMac release and prove live API/database compatibility. Blocked: Tailscale reported the iMac peer offline and SSH timed out on 2026-09-01.
 - [ ] Install/verify the governed external-SSD PDF runtime on the iMac and replay the Shivalik source-extraction repair. Blocked: live host unavailable.
 - [ ] Run an approved GLM 5.3 Flash canary on a fixed public packet and record the required human review. This intentionally cannot be auto-approved by code.
 - [ ] Prove an authenticated Wipro and Shivalik golden path in production Chrome/Safari with live Postgres, SSD artifacts and Zerodha freshness.

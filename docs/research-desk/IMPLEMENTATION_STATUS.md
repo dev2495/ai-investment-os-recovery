@@ -26,7 +26,7 @@ Status meanings:
 | Zerodha guardrail | CODE_VERIFIED | LIVE_BLOCKED | Seven protected scripts/services are byte-for-byte unchanged; no parallel quote pipeline or broker write was added. Live stream/login/reconnect health needs the iMac. |
 | Dependency/security gate | CODE_VERIFIED | — | `npm audit` and `npm audit --omit=dev`: zero vulnerabilities. Focused changed-line credential scan found no private keys or common token forms. |
 | Final commit/push | VERIFIED | — | The tested release candidate is committed and pushed to the named origin branch; the delivery response records the final Git SHA and remote comparison. |
-| Canonical iMac migration/deploy | — | LIVE_BLOCKED | `devarshs-imac.tail8dd383.ts.net:22` timed out on 2026-09-01. No production mutation or deployment claim was made. |
+| Canonical iMac migration/deploy | — | LIVE_BLOCKED | Tailscale reported the iMac peer `Online=false` (last seen `2026-08-30T05:55:45.1Z`), and `devarshs-imac.tail8dd383.ts.net:22` timed out on 2026-09-01. No production mutation or deployment claim was made. |
 
 ## Model operating policy
 

@@ -6,7 +6,7 @@ The Research Desk defect/reliability milestone is **implemented and verified as 
 
 This release closes the code gaps behind the reported Wipro/Shivalik visibility, PDF repair, stale valuation price, scanner execution and model-routing failures. It also adds an audited, human-gated path for GLM 5.3 Flash to become the economical public-research specialist model while DeepSeek V4 Pro remains the lead/review escalation.
 
-It is **not honestly production-accepted yet**. The canonical iMac SSH endpoint timed out on 1 September 2026, so migrations, the governed SSD PDF runtime, live Postgres/Zerodha data, authenticated Chrome/Safari and deployed asset equality could not be verified. No production mutation was attempted and no live/model credential was requested.
+It is **not honestly production-accepted yet**. A read-only Tailscale status check reported the canonical iMac peer `Online=false` (last seen `2026-08-30T05:55:45.1Z`), and SSH timed out on 1 September 2026, so migrations, the governed SSD PDF runtime, live Postgres/Zerodha data, authenticated Chrome/Safari and deployed asset equality could not be verified. No production mutation was attempted and no live/model credential was requested.
 
 ## User-visible flow
 
@@ -85,7 +85,7 @@ Research Desk adds health/valuation reads only. It does not alter Keychain handl
 | Changed-line credential-pattern scan | **PASS** — no private key/common token pattern found |
 | `npm audit` | **PASS** — 0 vulnerabilities |
 | `npm audit --omit=dev` | **PASS** — 0 vulnerabilities |
-| Canonical iMac SSH | **BLOCKED** — port 22 timeout |
+| Canonical iMac connectivity | **BLOCKED** — Tailscale peer `Online=false`; SSH port 22 timed out |
 | Live migration/SSD/PDF runtime replay | **NOT RUN** — requires iMac |
 | Authenticated live Chrome/Safari Wipro + Shivalik | **NOT RUN** — requires iMac |
 | Paid GLM canary and named human review | **NOT RUN** — deliberately requires operator approval |
