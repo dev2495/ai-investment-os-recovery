@@ -12,6 +12,18 @@ class ResearchRuntimeIntegrationContractTests(unittest.TestCase):
         self.assertIn('AI_OS_ENABLE_RESEARCH_AGENT_DAEMON:-0', supervisor)
         self.assertIn('AI_OS_PDF_PYTHON', supervisor)
 
+    def test_supervisor_replaces_only_expected_non_loopback_ollama(self):
+        supervisor = (ROOT / "deploy" / "imac-backend" / "bin" / "supervisor.sh").read_text(encoding="utf-8")
+        self.assertIn("stop_non_loopback_ollama_listener", supervisor)
+        self.assertIn('[[ "${command_line}" == *"ollama serve"* ]]', supervisor)
+        self.assertIn('/Applications/Ollama.app/Contents/MacOS/Ollama', supervisor)
+        self.assertIn('OLLAMA_HOST="127.0.0.1:${AI_OS_OLLAMA_PORT}"', supervisor)
+        self.assertIn('grep -Ev \'^(127\\.0\\.0\\.1|\\[::1\\]):\'', supervisor)
+
+    def test_backend_start_and_stop_cover_the_runtime_api_entrypoint(self):
+        control = (ROOT / "deploy" / "imac-backend" / "bin" / "aios-imac").read_text(encoding="utf-8")
+        self.assertGreaterEqual(control.count("/_ai_os_runtime/api/ai_os_api_runtime.py"), 2)
+
     def test_standalone_daemon_pdf_runtime_is_external_ssd_and_fails_closed(self):
         service = (ROOT / "launchd" / "aios-agent-daemon-service.sh").read_text(encoding="utf-8")
         plist = (ROOT / "launchd" / "com.devarsh.aios.agent-daemon.plist").read_text(encoding="utf-8")

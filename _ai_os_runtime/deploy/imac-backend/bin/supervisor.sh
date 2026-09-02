@@ -88,6 +88,41 @@ stop_stale_listener() {
   die "${label} port ${port} did not clear after stopping the stale AI OS process"
 }
 
+stop_non_loopback_ollama_listener() {
+  local listeners pid command_line parent_pid parent_command
+  command -v lsof >/dev/null 2>&1 || return 0
+  listeners="$(lsof -nP -iTCP:"${AI_OS_OLLAMA_PORT}" -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -n "${listeners}" ]] || return 0
+  if ! printf '%s\n' "${listeners}" | awk 'NR>1 {print $9}' | grep -Ev '^(127\.0\.0\.1|\[::1\]):' >/dev/null; then
+    return 0
+  fi
+
+  log "Replacing non-loopback Ollama listener with the governed loopback service"
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    [[ "${command_line}" == *"ollama serve"* ]] \
+      || die "Ollama port ${AI_OS_OLLAMA_PORT} is owned by unexpected process ${pid}"
+    parent_pid="$(ps -p "${pid}" -o ppid= 2>/dev/null | tr -d ' ' || true)"
+    parent_command=""
+    if [[ -n "${parent_pid}" ]]; then
+      parent_command="$(ps -p "${parent_pid}" -o command= 2>/dev/null || true)"
+    fi
+    if [[ "${parent_command}" == *"/Applications/Ollama.app/Contents/MacOS/Ollama"* ]]; then
+      kill -TERM "${parent_pid}" 2>/dev/null || true
+    fi
+    kill -TERM "${pid}" 2>/dev/null || true
+  done < <(lsof -tiTCP:"${AI_OS_OLLAMA_PORT}" -sTCP:LISTEN 2>/dev/null || true)
+
+  for _ in {1..20}; do
+    if ! lsof -tiTCP:"${AI_OS_OLLAMA_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  die "Non-loopback Ollama listener did not stop"
+}
+
 # Keep the always-on backend awake while allowing the display to sleep and lock.
 if command -v caffeinate >/dev/null 2>&1; then
   caffeinate -is -w "$$" &
@@ -165,9 +200,11 @@ wait_container_healthy ai_os_postgres
 wait_container_healthy ai_os_redis
 wait_http "http://127.0.0.1:${AI_OS_QDRANT_HTTP_PORT}/collections" Qdrant 120
 
+stop_non_loopback_ollama_listener
 if ! curl --max-time 2 -fsS "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" >/dev/null 2>&1; then
   log "Starting Ollama"
-  ollama serve >>"${LOG_ROOT}/ollama.log" 2>>"${LOG_ROOT}/ollama.err" &
+  OLLAMA_HOST="127.0.0.1:${AI_OS_OLLAMA_PORT}" \
+    ollama serve >>"${LOG_ROOT}/ollama.log" 2>>"${LOG_ROOT}/ollama.err" &
   children+=("$!")
 fi
 wait_http "http://127.0.0.1:${AI_OS_OLLAMA_PORT}/api/version" Ollama 90

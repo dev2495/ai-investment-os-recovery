@@ -364,6 +364,7 @@ start_backend() {
   rm -f "${legacy_tradingview_plist}"
   pkill -TERM -f '/Library/Application Support/AIOS/browser-profiles/tradingview-direct-cdp-v1' 2>/dev/null || true
   launchctl bootout "${LAUNCHD_DOMAIN}" "${SUPERVISOR_PLIST}" 2>/dev/null || true
+  pkill -TERM -f '/_ai_os_runtime/api/ai_os_api_runtime.py' 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/api/ai_os_api_server.py' 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/scripts/serve_spa.py' 2>/dev/null || true
   pkill -TERM -f '/_ai_os_runtime/scripts/run_agent_message_daemon.py' 2>/dev/null || true
@@ -399,6 +400,7 @@ stop_backend() {
     compose down --timeout 30 || true
     colima stop --profile ai-os || true
   fi
+  pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_runtime.py" 2>/dev/null || true
   pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/api/ai_os_api_server.py" 2>/dev/null || true
   pkill -f '/_ai_os_runtime/scripts/serve_spa.py' 2>/dev/null || true
   pkill -f "${AI_OS_REPO_ROOT}/_ai_os_runtime/scripts/run_agent_message_daemon.py" 2>/dev/null || true
