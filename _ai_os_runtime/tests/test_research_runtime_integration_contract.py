@@ -59,6 +59,19 @@ class ResearchRuntimeIntegrationContractTests(unittest.TestCase):
         for terminal_status in ("cost_ceiling_blocked", "independent_review_blocked", "agent_run_blocked"):
             self.assertIn(terminal_status, source_runtime)
 
+    def test_historical_independent_review_terminal_state_is_reconciled_without_rerun(self):
+        migration = (ROOT / "postgres" / "init" / "255_research_independent_review_terminal_repair_v1.sql").read_text(encoding="utf-8")
+        self.assertIn("blocker.blocker_key='independent_review'", migration)
+        self.assertIn("model_run.role_key='independent_review'", migration)
+        self.assertIn("model_run.status='needs_revision'", migration)
+        self.assertIn("model_run.status IN ('queued','running')", migration)
+        self.assertIn("status='blocked',lead_status='independent_review_blocked'", migration)
+        self.assertIn("run_status='paused'", migration)
+        self.assertIn("capital_action_allowed", migration)
+        self.assertIn("paid_model_call", migration)
+        self.assertNotIn("status='queued'", migration)
+        self.assertNotIn("status='running'", migration)
+
     def test_new_approved_preflight_advances_iteration_instead_of_overwriting_history(self):
         runtime = (ROOT / "api" / "research_case_agent_runtime.py").read_text(encoding="utf-8")
         self.assertIn("lifetime_run_count", runtime)
