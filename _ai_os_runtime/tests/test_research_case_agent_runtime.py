@@ -332,6 +332,8 @@ class ResearchCaseAgentRuntimeTests(unittest.TestCase):
         combined = "\n".join(statements)
         self.assertIn("cost_ceiling", combined)
         self.assertIn("evidence_debt_pack_published", combined)
+        self.assertIn("UPDATE research.research_case_agent_runs", combined)
+        self.assertIn("THEN 'completed' ELSE 'blocked' END", combined)
         self.assertFalse(result["capital_action_allowed"])
         self.assertFalse(result["external_write_allowed"])
 

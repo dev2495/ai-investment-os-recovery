@@ -998,6 +998,19 @@ def _block_for_cost_ceiling(
           finished_at=coalesce(finished_at,now()),updated_at=now()
         WHERE research_case_id={case_id} AND iteration={iteration} AND id<>{run_id}
           AND status IN ('queued','awaiting_dependencies') RETURNING id
+      ), agent_runs_updated AS (
+        UPDATE research.research_case_agent_runs agent_run SET
+          status=CASE WHEN EXISTS (
+            SELECT 1 FROM research.research_case_model_runs model_run
+            WHERE model_run.research_case_id={case_id}
+              AND model_run.iteration={iteration}
+              AND model_run.role_key=agent_run.role_key
+              AND model_run.status='completed'
+          ) THEN 'completed' ELSE 'blocked' END,
+          evidence=coalesce(agent_run.evidence,'{{}}'::jsonb) ||
+            {sql_jsonb({'terminal_reason': 'cost_ceiling', 'iteration': iteration, 'capital_action_allowed': False})},
+          updated_at=now()
+        WHERE agent_run.research_case_id={case_id} RETURNING id
       ), case_updated AS (
         UPDATE research.research_cases SET status='blocked',lead_status='cost_ceiling_blocked',
           current_goal='Review the published evidence-debt pack before approving any additional model budget',
