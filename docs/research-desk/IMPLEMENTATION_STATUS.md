@@ -62,3 +62,25 @@ passed
 ## Release decision
 
 The branch is a tested release candidate and is safe to commit/push. It is **not yet a production-accepted Research Desk**: the canonical iMac, migrations, external-SSD PDF runtime, live data, human model approval and authenticated browser flow have not been verified in this pass.
+
+## Live iMac acceptance delta — 2 September 2026
+
+The iMac-only gates above were subsequently exercised against the canonical `a02ee0f-live` release. The dated source of truth is `RESEARCH_DESK_LIVE_ACCEPTANCE_REPORT_2026-09-02.md`; this delta supersedes the earlier `LIVE_BLOCKED` statements only where live evidence now exists.
+
+| Surface | Updated production acceptance | Evidence |
+|---|---|---|
+| M0 runtime/recovery | LIVE_VERIFIED | SSD mounted with 786 GiB available; Postgres/Redis healthy; Qdrant running; critical backup and disposable restore receipt verified; `IMAC_BACKEND_VERIFIED`. |
+| M1/M2 intake and acquisition | LIVE_VERIFIED_WITH_DATA_GATES | Natural-language Shivalik intake resolves the existing entity; governed `pypdf` extraction works; late source updates preserve terminal cases. |
+| M3 quote/calculation boundary | LIVE_VERIFIED | Existing Zerodha stream/account binding is healthy; provider/timestamps/delay visible; after-hours no-recent-ticks is labelled and valuation fails closed. |
+| M4 workflow/report | LIVE_VERIFIED_WITH_EVIDENCE_DEBT | Wipro report v3 and Shivalik report v5 serve as HTML/PDF; neither pack is independent-review/decision ready. |
+| M5 graph/memory | LIVE_VERIFIED_WITH_CONTENT_GATES | Live Charlie reports current graph/Obsidian counts; dated acceptance artifacts are written without overwriting human notes. Full blueprint lineage acceptance remains open. |
+| M6/M10 monitoring | LIVE_VERIFIED_WITH_PUBLICATION_GATES | Six companies are monitored and new filing/news changes surface; zero public Following sources are operator-approved, so feed publication remains open. |
+| M7 scanners | LIVE_SCHEMA_VERIFIED | Thirteen definitions are present; zero are published/validated, so production scanner runs remain open. |
+| M8 Charlie/model routing | LIVE_VERIFIED_WITH_MODEL_GATE | Named Wipro/Shivalik status is warehouse-backed and correct. GLM 5.3 Flash remains a disabled canary pending approved run and named review. |
+| M9 UI | LIVE_CHROME_VERIFIED | Desktop, 390 px, Workstreams, thesis/report, Charlie and Zerodha safety paths passed with zero console errors. Safari/user acceptance remains open. |
+| Zerodha guardrail | LIVE_VERIFIED | Protected scripts are unchanged; daily auth/account binding, stream supervision, canonical quote storage and `broker_write_allowed=false` are live. |
+| Git/deployment | LIVE_VERIFIED | Code through `e24a1cf` is pushed/deployed; the final docs commit and deployment marker are reconciled in the publication handoff. |
+
+### Revised release decision
+
+The correct label is **live operational Research Desk, ready for operator testing**. It is not honest to label the entire blueprint complete: Wipro/Shivalik evidence acceptance, public Following approval, scanner publication, GLM canary review, fresh market-hours quote evidence and Safari/user acceptance remain explicit gates.
