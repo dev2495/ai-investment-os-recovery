@@ -198,3 +198,6 @@ def test_migration_adds_only_copyable_supported_templates_and_starts_no_run():
         assert scanner_key in migration
     assert "INSERT INTO market.scanner_runs" not in migration
     assert '"scanner_runs_started":false' in migration
+    assert "version.id=alert.scanner_version_id" not in migration
+    assert "run.id=alert.scanner_run_id" in migration
+    assert "version.id=run.scanner_version_id" in migration

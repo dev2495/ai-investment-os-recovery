@@ -109,7 +109,8 @@ BEGIN
         WHERE definition.created_by='migration:250'
     ) OR EXISTS (
         SELECT 1 FROM market.scanner_alerts alert
-        JOIN market.scanner_versions version ON version.id=alert.scanner_version_id
+        JOIN market.scanner_runs run ON run.id=alert.scanner_run_id
+        JOIN market.scanner_versions version ON version.id=run.scanner_version_id
         JOIN market.scanner_definitions definition ON definition.id=version.scanner_definition_id
         WHERE definition.created_by='migration:250'
     ) OR EXISTS (
