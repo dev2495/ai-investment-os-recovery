@@ -70,8 +70,7 @@ SET config = coalesce(config, '{}'::jsonb) || jsonb_build_object(
             'delay_status'
         ),
         'broker_write_allowed', false
-    ),
-    updated_at = now()
+    )
 WHERE tool_name = 'ai_os_zerodha_live_prices';
 
 INSERT INTO core.schema_migrations (

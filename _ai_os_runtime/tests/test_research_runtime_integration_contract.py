@@ -134,6 +134,12 @@ class ResearchRuntimeIntegrationContractTests(unittest.TestCase):
         self.assertIn("--rebuild-all", indexer)
         self.assertIn("external Devarsh SSD data root is unavailable", indexer)
 
+    def test_zerodha_health_migration_matches_live_tool_registry_schema(self):
+        migration = (ROOT / "postgres" / "init" / "252_zerodha_research_quote_health_v1.sql").read_text(encoding="utf-8")
+        self.assertIn("UPDATE agent.tool_registry", migration)
+        self.assertIn("WHERE tool_name = 'ai_os_zerodha_live_prices'", migration)
+        self.assertNotIn("updated_at = now()", migration)
+
     def test_scanner_publication_verifies_exact_approved_request(self):
         service = (ROOT / "services" / "scanner_engine" / "service.py").read_text(encoding="utf-8")
         publish = service.split("def publish_scanner", 1)[1].split("def _load_company_metrics", 1)[0]
