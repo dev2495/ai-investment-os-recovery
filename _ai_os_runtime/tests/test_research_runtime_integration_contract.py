@@ -49,6 +49,16 @@ class ResearchRuntimeIntegrationContractTests(unittest.TestCase):
             source_runtime,
         )
 
+    def test_source_and_monitor_refresh_preserve_terminal_research_blocks(self):
+        source_runtime = (ROOT / "api" / "research_case_source_runtime.py").read_text(encoding="utf-8")
+        monitor_runtime = (ROOT / "api" / "research_monitor_runtime.py").read_text(encoding="utf-8")
+        self.assertIn("TERMINAL_RESEARCH_LEAD_STATUS_SQL", source_runtime)
+        self.assertIn("ready.get(\"case_status\") != \"blocked\"", source_runtime)
+        self.assertIn("status IN ('proposed','blocked')", source_runtime)
+        self.assertIn("status IN ('completed','review','blocked')", monitor_runtime)
+        for terminal_status in ("cost_ceiling_blocked", "independent_review_blocked", "agent_run_blocked"):
+            self.assertIn(terminal_status, source_runtime)
+
     def test_new_approved_preflight_advances_iteration_instead_of_overwriting_history(self):
         runtime = (ROOT / "api" / "research_case_agent_runtime.py").read_text(encoding="utf-8")
         self.assertIn("lifetime_run_count", runtime)

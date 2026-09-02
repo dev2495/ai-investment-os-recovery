@@ -237,9 +237,9 @@ def run_company_research_monitor_once(
         mutate(
             f"""
             UPDATE research.research_cases SET
-              status=CASE WHEN status IN ('completed','review') THEN status ELSE 'collecting' END,
-              lead_status=CASE WHEN status IN ('completed','review') THEN lead_status ELSE 'monitoring_update_extraction' END,
-              current_goal=CASE WHEN status IN ('completed','review') THEN current_goal ELSE 'Extract new official monitored filings' END,
+              status=CASE WHEN status IN ('completed','review','blocked') THEN status ELSE 'collecting' END,
+              lead_status=CASE WHEN status IN ('completed','review','blocked') THEN lead_status ELSE 'monitoring_update_extraction' END,
+              current_goal=CASE WHEN status IN ('completed','review','blocked') THEN current_goal ELSE 'Extract new official monitored filings' END,
               last_progress_at=now(),updated_at=now()
             WHERE id={case_id} RETURNING id
             """

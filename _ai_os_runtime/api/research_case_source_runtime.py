@@ -16,6 +16,11 @@ if str(SCRIPT_ROOT) not in sys.path:
 from governed_pdf_runtime import governed_pdf_python  # noqa: E402
 
 
+TERMINAL_RESEARCH_LEAD_STATUS_SQL = (
+    "'cost_ceiling_blocked','independent_review_blocked','agent_run_blocked'"
+)
+
+
 def _extractor_python() -> str:
     """Use the governed SSD PDF runtime; never fall back when it is unavailable."""
     return governed_pdf_python(verify_import=True)
@@ -66,9 +71,11 @@ def queue_case_sources(case_id: int, actor: str, *, run_statement, sql_literal) 
         WHERE research_case_id={int(case_id)} AND blocker_key='official_source_discovery'
           AND (SELECT count FROM source_count)>0 AND status<>'resolved' RETURNING id
       ), updated_case AS (
-        UPDATE research.research_cases SET status=CASE WHEN status='proposed' THEN status ELSE 'collecting' END,
-          lead_status=CASE WHEN status='proposed' THEN lead_status ELSE 'collecting_official_sources' END,
-          current_goal=CASE WHEN status='proposed' THEN current_goal ELSE 'Collect and parse bounded official filings automatically' END,
+        UPDATE research.research_cases SET
+          status=CASE WHEN status IN ('proposed','blocked') THEN status ELSE 'collecting' END,
+          lead_status=CASE WHEN status IN ('proposed','blocked') THEN lead_status ELSE 'collecting_official_sources' END,
+          current_goal=CASE WHEN status IN ('proposed','blocked') THEN current_goal
+            ELSE 'Collect and parse bounded official filings automatically' END,
           last_progress_at=now(),updated_at=now()
         WHERE id={int(case_id)} AND (SELECT count(*) FROM inserted WHERE status='queued')>0 RETURNING id
       ), event AS (
@@ -142,10 +149,19 @@ def run_source_once(*, run_statement, sql_literal, sql_jsonb) -> dict[str, Any]:
               count(*) FILTER(WHERE status IN ('queued','running','retry_wait'))::integer remaining,
               count(*) FILTER(WHERE status='blocked')::integer blocked
             FROM research.research_case_source_jobs WHERE research_case_id={case_id}),
-          updated AS (UPDATE research.research_cases SET
-            status=CASE WHEN (SELECT blocked FROM counts)>0 THEN 'blocked' WHEN (SELECT remaining FROM counts)=0 THEN 'active' ELSE 'collecting' END,
-            lead_status=CASE WHEN (SELECT blocked FROM counts)>0 THEN 'source_extraction_blocked' WHEN (SELECT remaining FROM counts)=0 THEN 'sources_ready' ELSE 'collecting_official_sources' END,
-            current_goal=CASE WHEN (SELECT remaining FROM counts)=0 THEN 'Run specialist analysis from the qualified public packet' ELSE current_goal END,
+          updated AS (UPDATE research.research_cases case_row SET
+            status=CASE
+              WHEN case_row.lead_status IN ({TERMINAL_RESEARCH_LEAD_STATUS_SQL}) THEN case_row.status
+              WHEN (SELECT blocked FROM counts)>0 THEN 'blocked'
+              WHEN (SELECT remaining FROM counts)=0 THEN 'active' ELSE 'collecting' END,
+            lead_status=CASE
+              WHEN case_row.lead_status IN ({TERMINAL_RESEARCH_LEAD_STATUS_SQL}) THEN case_row.lead_status
+              WHEN (SELECT blocked FROM counts)>0 THEN 'source_extraction_blocked'
+              WHEN (SELECT remaining FROM counts)=0 THEN 'sources_ready' ELSE 'collecting_official_sources' END,
+            current_goal=CASE
+              WHEN case_row.lead_status IN ({TERMINAL_RESEARCH_LEAD_STATUS_SQL}) THEN case_row.current_goal
+              WHEN (SELECT remaining FROM counts)=0 THEN 'Run specialist analysis from the qualified public packet'
+              ELSE case_row.current_goal END,
             last_progress_at=now(),updated_at=now() WHERE id={case_id} RETURNING id)
           SELECT coalesce(json_agg(json_build_object('remaining',counts.remaining,'blocked',counts.blocked)),'[]'::json)::text FROM counts
         """)
@@ -160,12 +176,18 @@ def run_source_once(*, run_statement, sql_literal, sql_jsonb) -> dict[str, Any]:
               SELECT preflight.id preflight_id,preflight.status preflight_status,
                 (SELECT count(*) FROM research.research_case_model_runs
                   WHERE research_case_id={case_id} AND preflight_id=preflight.id)::integer model_run_count
+                ,case_row.status case_status,case_row.lead_status case_lead_status
               FROM research.model_run_preflights preflight
+              JOIN research.research_cases case_row ON case_row.id=preflight.research_case_id
               WHERE preflight.research_case_id={case_id} AND preflight.request_kind='research_case'
               ORDER BY preflight.id DESC LIMIT 1
             """)
             ready = readiness[0] if readiness else {}
-            if ready.get("preflight_status") == "approved" and int(ready.get("model_run_count") or 0) == 0:
+            if (
+                ready.get("preflight_status") == "approved"
+                and int(ready.get("model_run_count") or 0) == 0
+                and ready.get("case_status") != "blocked"
+            ):
                 runtime = server.prepare_research_case_runtime(
                     case_id,int(ready["preflight_id"]),actor="Research Source Collector",
                     run_rows=psql_json,run_statement=run_statement,sql_literal=sql_literal,sql_jsonb=sql_jsonb,

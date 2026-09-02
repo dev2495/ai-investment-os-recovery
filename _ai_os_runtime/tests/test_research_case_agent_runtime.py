@@ -334,6 +334,9 @@ class ResearchCaseAgentRuntimeTests(unittest.TestCase):
         self.assertIn("evidence_debt_pack_published", combined)
         self.assertIn("UPDATE research.research_case_agent_runs", combined)
         self.assertIn("THEN 'completed' ELSE 'blocked' END", combined)
+        self.assertIn("UPDATE agent.graph_node_runs", combined)
+        self.assertIn("UPDATE agent.tasks", combined)
+        self.assertIn("run_status='paused'", combined)
         self.assertFalse(result["capital_action_allowed"])
         self.assertFalse(result["external_write_allowed"])
 

@@ -525,7 +525,24 @@ def prepare_research_case_runtime(
         UPDATE research.research_case_agent_runs agent_run SET
           status=CASE WHEN agent_run.role_key IN ({','.join(sql_literal(role) for role in SPECIALIST_ROLES)}) THEN 'queued' ELSE 'awaiting_dependencies' END,
           updated_at=now()
-        WHERE agent_run.research_case_id={int(case_id)} RETURNING id
+        WHERE agent_run.research_case_id={int(case_id)}
+        RETURNING id,graph_node_run_id,task_id,status
+      ), node_updated AS (
+        UPDATE agent.graph_node_runs node SET
+          status=CASE WHEN agent_run.status='queued' THEN 'queued' ELSE 'blocked' END,
+          error='{{}}'::jsonb,finished_at=NULL,updated_at=now()
+        FROM updated agent_run WHERE node.id=agent_run.graph_node_run_id
+        RETURNING node.graph_run_id,node.task_id,node.status
+      ), task_updated AS (
+        UPDATE agent.tasks task SET
+          status=CASE WHEN node.status='queued' THEN 'queued' ELSE 'blocked' END,
+          updated_at=now()
+        FROM node_updated node WHERE task.id=node.task_id RETURNING task.id
+      ), graph_updated AS (
+        UPDATE agent.graph_runs graph SET run_status='running',finished_at=NULL,
+          pending_decision='{{}}'::jsonb,failure='{{}}'::jsonb,updated_at=now()
+        WHERE graph.id IN (SELECT DISTINCT graph_run_id FROM node_updated)
+        RETURNING graph.id
       ), case_iteration AS (
         UPDATE research.research_cases SET iteration_count=GREATEST(iteration_count,{iteration}),
           status='active',lead_status='specialists_running',
@@ -536,7 +553,7 @@ def prepare_research_case_runtime(
         UPDATE research.research_case_blockers SET status='resolved',resolved_at=now(),next_retry_at=NULL,
           resolution='The corrected public packet and cost ceiling were approved; a fresh specialist and independent-review iteration started.',
           system_action='Fresh analysis iteration is running automatically.',user_action=NULL,updated_at=now()
-        WHERE research_case_id={int(case_id)} AND blocker_key='independent_review'
+        WHERE research_case_id={int(case_id)} AND blocker_key IN ('independent_review','cost_ceiling')
           AND status<>'resolved' RETURNING id
       ), event AS (
         INSERT INTO research.research_case_events (research_case_id,event_type,event_status,event_summary,actor,event_payload)
@@ -1010,7 +1027,27 @@ def _block_for_cost_ceiling(
           evidence=coalesce(agent_run.evidence,'{{}}'::jsonb) ||
             {sql_jsonb({'terminal_reason': 'cost_ceiling', 'iteration': iteration, 'capital_action_allowed': False})},
           updated_at=now()
-        WHERE agent_run.research_case_id={case_id} RETURNING id
+        WHERE agent_run.research_case_id={case_id}
+        RETURNING id,graph_node_run_id,task_id,status
+      ), node_runs_updated AS (
+        UPDATE agent.graph_node_runs node SET
+          status=CASE WHEN agent_run.status='completed' THEN 'completed' ELSE 'blocked' END,
+          error=coalesce(node.error,'{{}}'::jsonb) ||
+            {sql_jsonb({'terminal_reason': 'cost_ceiling', 'capital_action_allowed': False})},
+          finished_at=coalesce(node.finished_at,now()),updated_at=now()
+        FROM agent_runs_updated agent_run WHERE node.id=agent_run.graph_node_run_id
+        RETURNING node.graph_run_id,node.task_id,node.status
+      ), tasks_updated AS (
+        UPDATE agent.tasks task SET
+          status=CASE WHEN node.status='completed' THEN 'completed' ELSE 'blocked' END,
+          updated_at=now()
+        FROM node_runs_updated node WHERE task.id=node.task_id RETURNING task.id
+      ), graph_runs_updated AS (
+        UPDATE agent.graph_runs graph SET run_status='paused',finished_at=now(),
+          pending_decision={sql_jsonb({'reason': 'cost_ceiling', 'human_review_required': True, 'capital_action_allowed': False})},
+          updated_at=now()
+        WHERE graph.id IN (SELECT DISTINCT graph_run_id FROM node_runs_updated)
+        RETURNING graph.id
       ), case_updated AS (
         UPDATE research.research_cases SET status='blocked',lead_status='cost_ceiling_blocked',
           current_goal='Review the published evidence-debt pack before approving any additional model budget',
