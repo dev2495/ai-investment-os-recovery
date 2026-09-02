@@ -121,6 +121,20 @@ class LongTermThesisWorkspaceProfileTests(unittest.TestCase):
         self.assertEqual(pack["citation_ids"], [101, 102])
         self.assertEqual(pack["coverage_gaps"], ["current market price"])
 
+    def test_market_price_anchor_bounds_stored_quotes_before_lateral_joins(self):
+        _response, _selector_sql, queries = self.build({"symbol": ["ACME"]})
+
+        market_sql = queries["market_price_anchor"]
+        self.assertIn("stored_quote_candidates AS", market_sql)
+        self.assertIn("FROM market.price_quotes candidate", market_sql)
+        self.assertIn(
+            "ORDER BY CASE WHEN lower(candidate.provider)='zerodha' THEN 2 ELSE 3 END",
+            market_sql,
+        )
+        self.assertIn("LIMIT 16", market_sql)
+        self.assertIn("FROM stored_quote_candidates quote", market_sql)
+        self.assertNotIn("FROM market.price_quotes quote", market_sql)
+
     def test_explicit_dashboard_profile_remains_lightweight(self):
         response, selector_sql, queries = self.build({"profile": ["dashboard"]})
 

@@ -300,6 +300,15 @@ def build_long_term_thesis_workspace(
             ) stream ON true
             WHERE upper(live.symbol)={symbol_sql} AND upper(live.exchange)={exchange_sql}
               AND lower(live.provider)='zerodha' AND live.last_price>0
+          ), stored_quote_candidates AS (
+            SELECT candidate.*
+            FROM market.price_quotes candidate
+            WHERE upper(candidate.symbol)={symbol_sql}
+              AND upper(candidate.exchange)={exchange_sql}
+              AND candidate.price>0
+            ORDER BY CASE WHEN lower(candidate.provider)='zerodha' THEN 2 ELSE 3 END,
+                     candidate.quote_ts DESC,candidate.id DESC
+            LIMIT 16
           ), stored_quotes AS (
             SELECT quote.id,quote.source_key,quote.provider,quote.provider_symbol,
               quote.symbol,quote.exchange,quote.currency,quote.price,quote.quote_ts,
@@ -325,7 +334,7 @@ def build_long_term_thesis_workspace(
               NULL::text AS stream_health_status,
               NULL::timestamptz AS stream_last_heartbeat_at,
               NULL::numeric AS stream_heartbeat_age_seconds
-            FROM market.price_quotes quote
+            FROM stored_quote_candidates quote
             LEFT JOIN LATERAL (
               SELECT mapping.instrument_token FROM market.zerodha_instruments mapping
               WHERE mapping.active AND upper(mapping.exchange)=upper(quote.exchange)
@@ -337,8 +346,6 @@ def build_long_term_thesis_workspace(
              AND registry.status IN ('active','installed','mapped')
              AND lower(coalesce(registry.provider,''))=lower(quote.provider)
              AND coalesce(registry.metadata->>'valuation_price_entitled','false')='true'
-            WHERE upper(quote.symbol)={symbol_sql} AND upper(quote.exchange)={exchange_sql}
-              AND quote.price>0
           )
           SELECT * FROM (SELECT * FROM live_quotes UNION ALL SELECT * FROM stored_quotes) quotes
           ORDER BY source_priority,quote_ts DESC,id DESC LIMIT 16""",
