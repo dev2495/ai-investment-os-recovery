@@ -948,6 +948,49 @@ class CharlieOperatorActionsTest(unittest.TestCase):
         self.assertIn("run 9 Review risk objection", reply)
         self.assertIn("Broker execution remains locked", reply)
 
+    def test_fast_stack_status_prioritizes_every_named_research_case(self) -> None:
+        rows = [
+            {"id": index, "ticker": f"OTHER{index}", "company_name": f"Other Business {index}"}
+            for index in range(1, 9)
+        ] + [
+            {"id": 12, "ticker": "WIPRO", "company_name": "Wipro"},
+            {"id": 15, "ticker": "SBCL", "company_name": "Shivalik Bimetal Controls Limited"},
+        ]
+        named, recent = ai_os_api_server.prioritized_research_case_rows(
+            "What is the exact Wipro and Shivalik research status?", rows
+        )
+        self.assertEqual([row["id"] for row in named], [12, 15])
+        self.assertEqual(len(recent), 4)
+        self.assertNotIn(12, [row["id"] for row in recent])
+        self.assertNotIn(15, [row["id"] for row in recent])
+
+    def test_fast_stack_status_line_shows_terminal_truth_and_saved_report(self) -> None:
+        line = ai_os_api_server.research_case_status_line({
+            "id": 12,
+            "exchange": "NSE",
+            "ticker": "WIPRO",
+            "status": "blocked",
+            "lead_status": "independent_review_blocked",
+            "open_blockers": 1,
+            "agent_done": 7,
+            "agent_total": 7,
+            "agent_running": 0,
+            "model_running": 0,
+            "report_id": 6,
+            "report_version": 3,
+            "report_content_state": "evidence_debt",
+        })
+        self.assertIn("independent review blocked", line)
+        self.assertIn("no model call is reported running", line)
+        self.assertIn("7/7 specialist lanes complete", line)
+        self.assertIn("evidence-debt report v3 available", line)
+        self.assertIn("/research/cases?case_id=12", line)
+
+    def test_specific_research_status_uses_verified_fast_route(self) -> None:
+        self.assertTrue(ai_os_api_server.is_fast_verified_stack_request(
+            "What is the Wipro research status?", True
+        ))
+
     def test_zerodha_exchange_restarts_read_only_stream(self) -> None:
         with (
             mock.patch.object(

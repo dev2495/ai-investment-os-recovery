@@ -22067,11 +22067,79 @@ def is_fast_verified_stack_request(message: str, include_client_context: bool) -
         "research is waiting", "research waiting", "what is waiting for me",
         "current ai os", "research cases waiting", "our stack", "the stack",
         "what do you know about the stack", "what is running", "daemon status",
-        "company monitoring", "followed companies",
+        "company monitoring", "followed companies", "research status",
+        "research progress", "research report", "case status", "company status",
     ))
     return asks_status and any(term in normalized for term in (
         "stack", "system", "office", "research", "waiting", "running", "monitoring", "followed"
     ))
+
+
+_RESEARCH_CASE_GENERIC_TOKENS = {
+    "and", "company", "controls", "financial", "india", "indian", "limited", "ltd",
+    "services", "software", "technology", "technologies", "the",
+}
+
+
+def research_case_named_in_message(message: str, row: dict) -> bool:
+    """Match an explicitly named ticker/company without treating generic words as entities."""
+    normalized = str(message or "").lower()
+    ticker = str(row.get("ticker") or "").strip().lower()
+    if ticker and re.search(rf"(?<![a-z0-9]){re.escape(ticker)}(?![a-z0-9])", normalized):
+        return True
+    company_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(row.get("company_name") or "").lower())
+        if len(token) >= 4 and token not in _RESEARCH_CASE_GENERIC_TOKENS
+    }
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", normalized) for token in company_tokens)
+
+
+def prioritized_research_case_rows(message: str, rows: list[dict], limit: int = 6) -> tuple[list[dict], list[dict]]:
+    """Return every explicitly named case first, then a bounded recent-case sample."""
+    named = [row for row in rows if research_case_named_in_message(message, row)]
+    named_ids = {row.get("id") for row in named}
+    remaining_slots = max(0, max(limit, len(named)) - len(named))
+    recent = [row for row in rows if row.get("id") not in named_ids][:remaining_slots]
+    return named, recent
+
+
+def research_case_status_line(row: dict) -> str:
+    status = str(row.get("status") or "unknown")
+    if status == "proposed":
+        rate = float(row.get("exchange_rate_inr_per_usd") or 87)
+        estimate = float(row.get("estimated_cost_usd") or 0)
+        hard_max = float(row.get("hard_max_cost_usd") or 0)
+        action = f"waiting for explicit cost approval (estimated INR {estimate * rate:.2f}; hard stop INR {hard_max * rate:.2f})"
+    elif status == "blocked":
+        lead_status = str(row.get("lead_status") or "blocked").replace("_", " ")
+        model_running = int(row.get("model_running") or 0)
+        runtime_truth = (
+            f"{model_running} model call(s) still queued or running" if model_running
+            else "no model call is reported running"
+        )
+        action = f"{lead_status}; {int(row.get('open_blockers') or 0)} open blocker(s); {runtime_truth}"
+    elif status == "collecting":
+        action = "collecting and extracting authorized public sources"
+    elif status == "review":
+        action = "waiting for human review"
+    elif status == "active":
+        action = str(row.get("current_goal") or "specialist research is running")
+    elif status == "completed":
+        action = "completed pack is available"
+    else:
+        action = str(row.get("current_goal") or "inspect case history")
+    detail: list[str] = []
+    agent_total = int(row.get("agent_total") or 0)
+    if agent_total:
+        detail.append(f"{int(row.get('agent_done') or 0)}/{agent_total} specialist lanes complete")
+    if int(row.get("report_id") or 0):
+        detail.append(f"{str(row.get('report_content_state') or 'stored').replace('_', '-')} report v{int(row.get('report_version') or 1)} available")
+    suffix = ("; " + "; ".join(detail)) if detail else ""
+    return (
+        f"- [Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')}]"
+        f"(/research/cases?case_id={row.get('id')}): {status}; {action}{suffix}."
+    )
 
 
 def fast_verified_stack_response(payload: dict, message: str) -> dict:
@@ -22081,7 +22149,14 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
                case_row.status,case_row.lead_status,case_row.current_goal,
                case_row.exception_count,case_row.updated_at,case_row.holding_thesis_id,
                preflight.status AS preflight_status,preflight.estimated_cost_usd,
-               preflight.hard_max_cost_usd,preflight.exchange_rate_inr_per_usd
+               preflight.hard_max_cost_usd,preflight.exchange_rate_inr_per_usd,
+               coalesce(agent_stats.total,0)::integer agent_total,
+               coalesce(agent_stats.done,0)::integer agent_done,
+               coalesce(agent_stats.running,0)::integer agent_running,
+               coalesce(blocker_stats.open_count,0)::integer open_blockers,
+               coalesce(model_stats.running,0)::integer model_running,
+               latest_report.id report_id,latest_report.report_version,
+               latest_report.coverage_snapshot->>'content_state' report_content_state
         FROM research.research_cases case_row
         LEFT JOIN LATERAL (
             SELECT status,estimated_cost_usd,hard_max_cost_usd,exchange_rate_inr_per_usd
@@ -22089,10 +22164,28 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
             WHERE research_case_id=case_row.id AND request_kind='research_case'
             ORDER BY id DESC LIMIT 1
         ) preflight ON true
+        LEFT JOIN LATERAL (
+            SELECT count(*) total,
+                   count(*) FILTER (WHERE status IN ('completed','done','accepted')) done,
+                   count(*) FILTER (WHERE status IN ('active','running','queued')) running
+            FROM research.research_case_agent_runs WHERE research_case_id=case_row.id
+        ) agent_stats ON true
+        LEFT JOIN LATERAL (
+            SELECT count(*) FILTER (WHERE status IN ('open','retrying')) open_count
+            FROM research.research_case_blockers WHERE research_case_id=case_row.id
+        ) blocker_stats ON true
+        LEFT JOIN LATERAL (
+            SELECT count(*) FILTER (WHERE status IN ('queued','running')) running
+            FROM research.research_case_model_runs WHERE research_case_id=case_row.id
+        ) model_stats ON true
+        LEFT JOIN LATERAL (
+            SELECT id,report_version,coverage_snapshot FROM research.research_case_reports
+            WHERE research_case_id=case_row.id ORDER BY report_version DESC,id DESC LIMIT 1
+        ) latest_report ON true
         ORDER BY CASE case_row.status WHEN 'review' THEN 1 WHEN 'active' THEN 2
                  WHEN 'collecting' THEN 3 WHEN 'proposed' THEN 4 WHEN 'blocked' THEN 5
                  WHEN 'completed' THEN 6 ELSE 7 END,case_row.updated_at DESC,case_row.id DESC
-        LIMIT 12
+        LIMIT 50
         """
     )
     heartbeat_rows = run_psql_json(
@@ -22191,26 +22284,15 @@ def fast_verified_stack_response(payload: dict, message: str) -> dict:
             "stale prices are never silently accepted for valuation and broker_write_allowed=false."
         ),
     ]
-    for row in rows[:6]:
-        status = str(row.get("status") or "unknown")
-        if status == "proposed":
-            rate = float(row.get("exchange_rate_inr_per_usd") or 87)
-            estimate = float(row.get("estimated_cost_usd") or 0)
-            hard_max = float(row.get("hard_max_cost_usd") or 0)
-            action = f"waiting for explicit cost approval (estimated INR {estimate * rate:.2f}; hard stop INR {hard_max * rate:.2f})"
-        elif status == "blocked":
-            action = f"needs repair; {int(row.get('exception_count') or 0)} recorded exceptions"
-        elif status == "collecting":
-            action = "collecting and extracting authorized public sources"
-        elif status == "review":
-            action = "waiting for human review"
-        elif status == "active":
-            action = str(row.get("current_goal") or "specialist research is running")
-        elif status == "completed":
-            action = "completed pack is available"
-        else:
-            action = str(row.get("current_goal") or "inspect case history")
-        lines.append(f"- [Case #{row.get('id')} {row.get('exchange')}:{row.get('ticker')}](/research/cases?case_id={row.get('id')}): {status}; {action}.")
+    named_rows, recent_rows = prioritized_research_case_rows(message, rows)
+    if named_rows:
+        lines.append("Requested company status:")
+        lines.extend(research_case_status_line(row) for row in named_rows)
+        if recent_rows:
+            lines.append("Other recent cases (bounded sample):")
+            lines.extend(research_case_status_line(row) for row in recent_rows)
+    else:
+        lines.extend(research_case_status_line(row) for row in recent_rows)
     if update_rows:
         lines.append("Latest material followed-company changes:")
         lines.extend(
