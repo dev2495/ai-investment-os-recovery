@@ -71,7 +71,7 @@ class RuntimeAPI:
         data = self._value("""
             SELECT json_build_object(
                 'agents',(SELECT coalesce(json_agg(row_to_json(r)),'[]') FROM
-                    (SELECT * FROM agent.v_runtime_presence ORDER BY agent_id LIMIT 500) r),
+                    (SELECT * FROM agent.v_runtime_presence p WHERE p.task_id IS NULL OR EXISTS(SELECT 1 FROM agent.tasks t WHERE t.id=p.task_id AND t.runtime_scope='internal' AND t.book_id IS NULL AND t.client_id IS NULL) ORDER BY agent_id LIMIT 500) r),
                 'workers',(SELECT coalesce(json_agg(row_to_json(r)),'[]') FROM
                     (SELECT id,runtime_version,max_parallel_tasks,shutdown_requested,started_at,last_heartbeat_at,
                         CASE WHEN last_heartbeat_at<clock_timestamp()-interval '180 seconds'
@@ -85,11 +85,11 @@ class RuntimeAPI:
                         CASE WHEN l.status='ACTIVE' THEN l.status ELSE NULL END lease_status,
                         EXISTS(SELECT 1 FROM agent.task_steps s WHERE s.task_id=t.id AND s.side_effect_status<>'none') has_side_effects
                      FROM agent.tasks t LEFT JOIN LATERAL(SELECT * FROM agent.task_leases WHERE task_id=t.id ORDER BY id DESC LIMIT 1) l ON true
-                     WHERE t.runtime_protocol='lease_v1' AND t.runtime_scope='internal'
+                     WHERE t.runtime_protocol='lease_v1' AND t.runtime_scope='internal' AND t.book_id IS NULL AND t.client_id IS NULL
                      ORDER BY t.updated_at DESC,t.id DESC LIMIT 100) r),
                 'events',(SELECT coalesce(json_agg(row_to_json(r)),'[]') FROM
                     (SELECT id,task_id,agent_id,worker_id,lease_id,event_type,state,reason_code,occurred_at
-                     FROM agent.task_events ORDER BY id DESC LIMIT 30) r),
+                     FROM agent.task_events e WHERE e.runtime_scope='internal' AND e.book_id IS NULL AND e.client_id IS NULL AND (e.task_id IS NULL OR EXISTS(SELECT 1 FROM agent.tasks t WHERE t.id=e.task_id AND t.runtime_scope='internal' AND t.book_id IS NULL AND t.client_id IS NULL)) ORDER BY id DESC LIMIT 30) r),
                 'event_cursor',(SELECT coalesce(max(id),0) FROM agent.task_events)
             )::text;
         """)
@@ -99,7 +99,7 @@ class RuntimeAPI:
     def task(self, task_id) -> dict:
         task_id = positive_id(task_id)
         rows = self.rows(f"""SELECT id,agent_id,status,runtime_state,control_requested,recovery_policy,updated_at
-            FROM agent.tasks WHERE id={task_id} AND runtime_protocol='lease_v1' AND runtime_scope='internal'""")
+            FROM agent.tasks WHERE id={task_id} AND runtime_protocol='lease_v1' AND runtime_scope='internal' AND book_id IS NULL AND client_id IS NULL""")
         if not rows:
             raise RuntimeRequestError("Managed task not found in the shared runtime scope.", 404)
         steps = self.rows(f"""SELECT id,lease_id,step_key,state,side_effect_status,started_at,finished_at,
@@ -149,7 +149,7 @@ class RuntimeAPI:
                 'latest',(SELECT coalesce(max(id),0) FROM agent.task_events),
                 'events',(SELECT coalesce(json_agg(row_to_json(r)),'[]') FROM
                     (SELECT id,task_id,agent_id,worker_id,lease_id,event_type,state,reason_code,occurred_at
-                     FROM agent.task_events WHERE id>{after} ORDER BY id LIMIT 201) r)
+                     FROM agent.task_events e WHERE id>{after} AND e.runtime_scope='internal' AND e.book_id IS NULL AND e.client_id IS NULL AND (e.task_id IS NULL OR EXISTS(SELECT 1 FROM agent.tasks t WHERE t.id=e.task_id AND t.runtime_scope='internal' AND t.book_id IS NULL AND t.client_id IS NULL)) ORDER BY id LIMIT 201) r)
                 )::text;""")
             result["reset_required"] = len(result["events"]) > 200 or after > result["latest"]
             if result["reset_required"]:

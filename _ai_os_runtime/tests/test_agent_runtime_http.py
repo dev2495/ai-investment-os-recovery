@@ -100,7 +100,7 @@ def test_sse_resume_and_backpressure_reset(job, monkeypatch):
             last = event["id"]
         assert all(row["id"] > last for row in api.replay(last)["events"])
         assert api.replay(999999999)["reset_required"] is True
-        execute(f"SELECT agent.append_runtime_event({task},NULL,NULL,NULL,'synthetic','READING') FROM generate_series(1,201)")
+        execute(f"SELECT agent.append_runtime_event({task},NULL,NULL,NULL,'state_changed','READING') FROM generate_series(1,201)")
         assert api.replay(0)["reset_required"] is True
         with pytest.raises(urllib.error.HTTPError) as failure:
             request(base, "/api/v1/office/events/stream?after_event_id=0&token=never-in-url")

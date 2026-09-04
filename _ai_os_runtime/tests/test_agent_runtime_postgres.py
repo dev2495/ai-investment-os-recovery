@@ -62,6 +62,10 @@ def database():
     execute(migration)
     # Reapply proves non-destructive migration idempotence.
     execute(migration)
+    for name in ("257_agent_runtime_policy_events_v1.sql",):
+        extension = (SQL_ROOT / name).read_text()
+        execute(extension)
+        execute(extension)
     yield execute, test_dsn
     assert re.fullmatch(r"phase2_test_[a-f0-9]{32}", dbname)
     admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(dbname)))

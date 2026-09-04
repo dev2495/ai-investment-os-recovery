@@ -99,6 +99,10 @@ class AgentRuntime:
     def reap(self, limit: int = 20) -> dict:
         return self._call("reap_runtime_leases", max(1, min(100, int(limit))))
 
+    def idle(self) -> dict:
+        """Idle cadence for the pooled daemon, without claiming an agent is working."""
+        return self._call("idle_runtime_worker", self.worker_id)
+
 
 @dataclass
 class LeaseSession:
@@ -120,7 +124,7 @@ class LeaseSession:
             raise LeaseLost("Task lease unavailable; stop and inspect recovery state")
 
     def _pulse(self) -> None:
-        while not self._stop.wait(15):
+        while not self._stop.wait(max(1, int(self.claim.get("heartbeat_seconds", 15)))):
             try:
                 self.runtime.heartbeat(self.claim["lease_id"], self.token)
             except Exception:
