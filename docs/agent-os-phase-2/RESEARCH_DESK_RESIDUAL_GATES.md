@@ -14,4 +14,3 @@ These are retained from the supplied Phase 2 prompt and accepted Research Desk r
 | Capital/broker actions | Human-owned; GET-only broker boundary and all execution locks unchanged. |
 
 Phase 2 runtime metadata describes who owns a task and what its next safe step is. It never certifies source quality, valuation correctness, research review or permission to invest.
-

@@ -18,4 +18,3 @@ Source baseline: `b42cc5d`. No production schema inventory was possible on 2026-
 | Zerodha/market/portfolio surfaces | No changes | Read-only health verification only |
 
 New tables are ownership, audit and dependency records referencing canonical task/profile IDs. They are not a second task, message, model or office control plane.
-
