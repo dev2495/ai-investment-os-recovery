@@ -30,6 +30,8 @@ import {
 import { formatRelative, initials, num, text, value } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
 import { useUIStore } from "../../store";
+import { hasLiveLease, runtimePresence, useLeaseClock } from "../../data/runtimePresence";
+import { RuntimeControlPanel } from "./RuntimeControlPanel";
 
 const LiveOffice = React.lazy(() => import("../../office3d/LiveOffice").then((module) => ({ default: module.LiveOffice })));
 
@@ -46,7 +48,7 @@ function mergedEmployees(data: ReturnType<typeof useOfficeSnapshot>["data"]): Li
 }
 
 function employeeState(row: LiveRow): string {
-  return text(row, "presence_state", text(row, "live_state", text(row, "current_task_status", "available")));
+  return runtimePresence(row);
 }
 
 function employeeDepartment(row: LiveRow): string {
@@ -54,6 +56,7 @@ function employeeDepartment(row: LiveRow): string {
 }
 
 export function OfficeView() {
+  useLeaseClock();
   const { data, isLoading, error } = useOfficeSnapshot();
   const navigate = useNavigate();
   const setAssistantScope = useUIStore((state) => state.setAssistantScope);
@@ -86,10 +89,7 @@ export function OfficeView() {
     ].join(" ").toLowerCase();
     return matchesDepartment && haystack.includes(search.trim().toLowerCase());
   });
-  const working = employees.filter((row) => {
-    const state = employeeState(row).toLowerCase();
-    return ["working", "running", "executing", "in_progress", "processing"].some((candidate) => state.includes(candidate));
-  }).length;
+  const working = employees.filter((row) => hasLiveLease(row)).length;
   const blocked = employees.filter((row) => employeeState(row).toLowerCase().includes("block") || num(row, "blocked_task_count") > 0).length;
   const rooms = data?.live_office_rooms ?? [];
   const graphRuns = data?.graph_runs ?? [];
@@ -136,6 +136,8 @@ export function OfficeView() {
         <MetricTile tone={graphRuns.length ? "ok" : "default"}><Metric label="Graph Runs" value={graphRuns.length} /></MetricTile>
         <MetricTile tone={graphAttention.length ? "warn" : "ok"}><Metric label="Graph Attention" value={graphAttention.length} /></MetricTile>
       </div>
+
+      <RuntimeControlPanel runtime={(data?.runtime ?? {}) as LiveRow} />
 
       <Panel icon={LockKeyhole} title="Shared Office Contract">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--space-3)", padding: "var(--space-1) 0" }}>
@@ -208,7 +210,7 @@ export function OfficeView() {
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-3)", alignItems: "start" }}>
-          <Panel icon={Users} title="Department Occupancy" actions={<Badge>{rooms.length}</Badge>}>
+          <Panel icon={Users} title="Department Occupancy" bodyTabIndex={0} actions={<Badge>{rooms.length}</Badge>}>
             {rooms.length === 0 ? (
               <Empty icon={Users} title="No room telemetry" description="The live-office room view returned no department rows." />
             ) : (

@@ -10,8 +10,8 @@ import { useUIStore } from "../store";
 import { formatRelative, num, text } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { LiveOfficeCss } from "./LiveOffice.css";
+import { hasLiveLease, runtimePresence, useLeaseClock } from "../data/runtimePresence";
 
-const ACTIVE_STATES = ["active", "working", "running", "executing", "in_progress", "processing"];
 const BLOCKED_STATES = ["blocked", "error", "failed", "critical"];
 
 function normalizeDepartment(raw: string): string {
@@ -51,20 +51,11 @@ function agentRoomKey(agent: LiveRow): string {
 }
 
 function liveState(agent: LiveRow): string {
-  return text(
-    agent,
-    "presence_state",
-    text(
-      agent,
-      "live_state",
-      text(agent, "current_task_status", text(agent, "latest_worker_status", "idle")),
-    ),
-  ).toLowerCase();
+  return runtimePresence(agent).toLowerCase();
 }
 
 function isBusy(agent: LiveRow): boolean {
-  const state = liveState(agent);
-  return ACTIVE_STATES.some((candidate) => state.includes(candidate));
+  return hasLiveLease(agent);
 }
 
 function isBlocked(agent: LiveRow): boolean {
@@ -152,7 +143,7 @@ function Room({
   const [centerX, centerZ] = room.center;
   const wallHeight = 2.8;
   const placements = React.useMemo(() => agentPlacements(room, agents), [agents, room]);
-  const workingCount = stats ? num(stats, "executing_agent_count") : agents.filter(isBusy).length;
+  const workingCount = agents.filter(isBusy).length;
   const queuedCount = stats ? num(stats, "queued_agent_count") : agents.filter((agent) => liveState(agent) === "queued").length;
   const blockedCount = stats ? num(stats, "blocked_task_count") : agents.filter(isBlocked).length;
   const groupRef = React.useRef<THREE.Group>(null);
@@ -592,6 +583,7 @@ function isOfficeRedacted(row: LiveRow | null | undefined): boolean {
 }
 
 export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
+  useLeaseClock();
   const officeQuery = useOfficeSnapshot();
   const { data, isLoading, error } = officeQuery;
   const navigate = useNavigate();

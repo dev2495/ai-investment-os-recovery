@@ -84,6 +84,7 @@ export interface PanelProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "
   title?: React.ReactNode;
   actions?: React.ReactNode;
   bodyClassName?: string;
+  bodyTabIndex?: number;
   bodyFlush?: boolean;
   footer?: React.ReactNode;
 }
@@ -94,6 +95,7 @@ export function Panel({
   title,
   actions,
   bodyClassName,
+  bodyTabIndex,
   bodyFlush,
   footer,
   className,
@@ -111,7 +113,7 @@ export function Panel({
           {actions && <div className="aios-panel__actions">{actions}</div>}
         </div>
       )}
-      <div className={`aios-panel__body ${bodyFlush ? "aios-panel__body--flush" : ""} ${bodyClassName ?? ""}`.trim()}>
+      <div tabIndex={bodyTabIndex} role={bodyTabIndex !== undefined ? "region" : undefined} aria-label={bodyTabIndex !== undefined && typeof title === "string" ? title : undefined} className={`aios-panel__body ${bodyFlush ? "aios-panel__body--flush" : ""} ${bodyClassName ?? ""}`.trim()}>
         {children}
       </div>
       {footer && <div className="aios-panel__footer">{footer}</div>}

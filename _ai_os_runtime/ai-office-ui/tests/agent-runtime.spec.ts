@@ -1,0 +1,53 @@
+import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+const api = process.env.AI_OS_SYNTHETIC_API_URL || "http://127.0.0.1:18765";
+test.describe.configure({ mode: "serial" });
+
+test("real task controls, replay recovery, honest states and mobile layout", async ({ page, request, context }) => {
+  test.setTimeout(60000);
+  const fixture = await (await request.get(`${api}/test-fixture/info`)).json();
+  expect(fixture.synthetic_only).toBe(true);
+  const id = fixture.tasks[0];
+  if ((await (await request.get(`${api}/api/v1/tasks/${id}`)).json()).task.status === "paused")
+    await request.post(`${api}/api/v1/tasks/${id}/resume`, { data: {} });
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/firm/office", { waitUntil: "domcontentloaded" });
+  if (await page.getByRole("button", { name: "Collapse assistant", exact: true }).isVisible()) await page.getByRole("button", { name: "Collapse assistant", exact: true }).click();
+  const panel = page.locator(".aios-panel").filter({ hasText: "Worker & task control" }).first();
+  await expect(panel).toContainText("Synthetic local test");
+  await expect(panel).toContainText("STALE");
+  await expect(panel).toContainText("receipt");
+  await expect(panel.getByRole("button", { name: `Pause task ${id}`, exact: true })).toBeVisible();
+  await page.screenshot({ path: "output/playwright/phase2-office-desktop.png", fullPage: true });
+  await panel.getByRole("button", { name: `Pause task ${id}`, exact: true }).click();
+  await expect(panel.getByRole("button", { name: `Resume task ${id}`, exact: true })).toBeVisible({ timeout: 15000 });
+  expect((await (await request.get(`${api}/api/v1/tasks/${id}`)).json()).task.status).toBe("paused");
+  await panel.getByRole("button", { name: `Task #${id} · inspect steps`, exact: true }).click();
+  await expect(panel).toContainText("read local test");
+  await panel.getByRole("button", { name: `Resume task ${id}`, exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`${api}/api/v1/tasks/${id}`)).json()).task.status).toBe("in_progress");
+  await expect(panel).toContainText("resume local test", { timeout: 15000 });
+  await expect(panel.getByRole("button", { name: `Pause task ${id}`, exact: true })).toBeEnabled({ timeout: 15000 });
+  await context.setOffline(true);
+  await request.post(`${api}/api/v1/tasks/${id}/pause`, { data: {} });
+  await context.setOffline(false);
+  await expect(panel.getByRole("button", { name: `Resume task ${id}`, exact: true })).toBeVisible({ timeout: 15000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const axe = await new AxeBuilder({ page }).include(".aios-panel").withTags(["wcag2a", "wcag2aa"]).analyze();
+  expect(axe.violations.filter((v) => v.impact === "critical" || v.impact === "serious")).toEqual([]);
+  await page.screenshot({ path: "output/playwright/phase2-office-mobile.png", fullPage: true });
+  await panel.getByRole("button", { name: `Cancel task ${id}`, exact: true }).click();
+  await panel.getByRole("button", { name: "Keep task", exact: true }).click();
+  expect((await (await request.get(`${api}/api/v1/tasks/${id}`)).json()).task.status).toBe("paused");
+  await panel.getByRole("button", { name: `Cancel task ${id}`, exact: true }).click();
+  await panel.getByRole("button", { name: "Confirm cancellation", exact: true }).click();
+  await expect(panel).toContainText("CANCELLED");
+  expect((await (await request.get(`${api}/api/v1/tasks/${id}`)).json()).task.status).toBe("cancelled");
+  expect(errors).toEqual([]);
+});

@@ -40,6 +40,8 @@ sync_launchd_payload() {
   cp -f "${RUNTIME_ROOT}/api/client_import_api.py" "${AIOS_SERVICE_DIR}/api/client_import_api.py"
   cp -f "${RUNTIME_ROOT}/api/ai_os_api_runtime.py" "${AIOS_SERVICE_DIR}/api/ai_os_api_runtime.py"
   cp -f "${RUNTIME_ROOT}/api/graph_control_plane.py" "${AIOS_SERVICE_DIR}/api/graph_control_plane.py"
+  cp -f "${RUNTIME_ROOT}/api/agent_runtime.py" "${AIOS_SERVICE_DIR}/api/agent_runtime.py"
+  cp -f "${RUNTIME_ROOT}/api/agent_runtime_api.py" "${AIOS_SERVICE_DIR}/api/agent_runtime_api.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_worker_once.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_worker_once.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_agent_message_daemon.py" "${AIOS_SERVICE_DIR}/scripts/run_agent_message_daemon.py"
   cp -f "${RUNTIME_ROOT}/scripts/run_kronos_forecast.py" "${AIOS_SERVICE_DIR}/scripts/run_kronos_forecast.py"

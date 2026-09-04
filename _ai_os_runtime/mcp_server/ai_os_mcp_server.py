@@ -105,13 +105,18 @@ def run_command(command: list[str]) -> dict:
     return {"returncode": completed.returncode, "stdout": completed.stdout.strip(), "stderr": completed.stderr.strip()}
 
 
+def api_auth_headers() -> dict[str, str]:
+    token = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def post_api_json(path: str, payload: dict, timeout: float = 60.0) -> dict:
     data = json.dumps(payload, default=str).encode("utf-8")
     request = urllib.request.Request(
         f"{API_BASE_URL}{path}",
         data=data,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **api_auth_headers()},
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -124,7 +129,7 @@ def post_api_json(path: str, payload: dict, timeout: float = 60.0) -> dict:
 def get_api_json(path: str, query: dict[str, object] | None = None, timeout: float = 60.0) -> dict:
     encoded = urllib.parse.urlencode({key: value for key, value in (query or {}).items() if value not in (None, "")})
     url = f"{API_BASE_URL}{path}" + (f"?{encoded}" if encoded else "")
-    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json", **api_auth_headers()})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -6030,7 +6035,40 @@ def fundamental_scanner_action(arguments: dict) -> dict:
     return tool_result(post_api_json(f"/api/fundamental-scanners/{scanner_id}/{action}", payload, timeout=180.0))
 
 
+def runtime_task_control(arguments: dict) -> dict:
+    if arguments.get("operator_confirmed") is not True:
+        raise ValueError("Explicit operator instruction is required for task control")
+    task_id = str(arguments.get("task_id", ""))
+    action = arguments.get("action")
+    if not re.fullmatch(r"[1-9][0-9]{0,17}", task_id) or action not in ("pause", "resume", "cancel"):
+        raise ValueError("A valid managed task and pause/resume/cancel action are required")
+    return tool_result(post_api_json(f"/api/v1/tasks/{task_id}/{action}", {}, timeout=15))
+
+
+def runtime_status(arguments: dict) -> dict:
+    kind = arguments.get("kind", "agents")
+    if kind not in ("agents", "workers", "tasks"):
+        raise ValueError("Runtime kind must be agents, workers or tasks")
+    return tool_result(get_api_json(f"/api/v1/{kind}", timeout=15))
+
+
 TOOLS = {
+    "ai_os_runtime_status": {
+        "description": "Read bounded canonical agent/worker/task metadata. Only an unexpired lease proves live work. Does not expose private task contents or invoke models.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "kind": {"type": "string", "enum": ["agents", "workers", "tasks"], "default": "agents"}
+        }},
+        "handler": runtime_status,
+    },
+    "ai_os_runtime_task_control": {
+        "description": "On the operator's explicit instruction, pause/resume/cancel an existing lease-managed task at a safe boundary. Preserve evidence. Never retries uncertain writes, approves investment decisions or enables broker actions.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "task_id": {"type": "integer", "minimum": 1},
+            "action": {"type": "string", "enum": ["pause", "resume", "cancel"]},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["task_id", "action", "operator_confirmed"]},
+        "handler": runtime_task_control,
+    },
     "ai_os_research_knowledge": {
         "description": "Search the owner-scoped local Research Desk knowledge graph and indexed Obsidian notes. Read-only; returns bounded nodes, edges, notes and unresolved links without private-data egress.",
         "inputSchema": {"type": "object", "additionalProperties": False, "properties": {

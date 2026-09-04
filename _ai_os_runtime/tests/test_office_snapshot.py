@@ -9,6 +9,11 @@ from _ai_os_runtime.api import ai_os_api_server
 
 
 class OfficeSnapshotContractTest(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = mock.patch.object(ai_os_api_server.RUNTIME_API, "snapshot", return_value={"available": False, "agents": []})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_graph_node_worker_summary_uses_view_output_column(self) -> None:
         captured: dict[str, str] = {}
 
@@ -115,7 +120,7 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         live_office_css = (runtime_root / "ai-office-ui" / "src" / "office3d" / "LiveOffice.css.ts").read_text(encoding="utf-8")
 
         for source in (office_view, live_office):
-            self.assertIn("\"executing\"", source)
+            self.assertIn("hasLiveLease", source)
         self.assertIn('Metric label="Working Now" value={working}', office_view)
         self.assertIn("{workingAgents} working", live_office)
         self.assertNotIn("{workingAgents} active", live_office)

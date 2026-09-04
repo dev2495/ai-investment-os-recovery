@@ -345,6 +345,7 @@ class KronosAdapterTest(unittest.TestCase):
             "task": {"id": 595, "status": "needs_review"},
         }
         with (
+            mock.patch.object(run_agent_worker_once, "lease_runtime", return_value=None),
             mock.patch.object(run_agent_worker_once, "get_queue", return_value=[job]),
             mock.patch.object(run_agent_worker_once, "skill_for", return_value={"skill_key": "kronos_forecast_feature_generation"}),
             mock.patch.object(run_agent_worker_once, "routed_agent_for", return_value="Feature Engineer"),

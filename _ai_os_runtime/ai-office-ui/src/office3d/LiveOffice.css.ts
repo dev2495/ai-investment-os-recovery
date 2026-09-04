@@ -528,7 +528,7 @@ export const LiveOfficeCss = `
   .office-spatial-shell { min-height: 620px; }
   .office-spatial-toolbar { grid-template-columns: 1fr; align-items: start; }
   .office-spatial-toolbar__controls { justify-content: flex-start; }
-  .office-spatial-toolbar__status { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .office-spatial-toolbar__status { flex-wrap: wrap; padding-bottom: 2px; }
   .office-spatial-toolbar__status span { flex: 0 0 auto; }
   .office-spatial-help { text-align: left; }
   .office-hud { padding: var(--space-2); }

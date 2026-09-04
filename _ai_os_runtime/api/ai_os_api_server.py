@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 try:
+    from .agent_runtime_api import RuntimeAPI, RuntimeRequestError, cursor_id, overlay_office_presence, require_worker_auth, stream_events
+except ImportError:
+    from agent_runtime_api import RuntimeAPI, RuntimeRequestError, cursor_id, overlay_office_presence, require_worker_auth, stream_events
+
+try:
     from . import graph_control_plane
 except ImportError:  # Direct script execution on the iMac.
     import graph_control_plane  # type: ignore
@@ -351,17 +356,19 @@ def psql_command_candidates() -> list[list[str]]:
     # avoids a host-port recovery delay on every bounded API query.
     return [docker_command, host_command]
 
-def run_psql_text(sql: str) -> str:
+def run_psql_text(sql: str, *, timeout_seconds: float | None = None) -> str:
     errors: list[tuple[str, str]] = []
     env = os.environ.copy()
     env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
     for command in psql_command_candidates():
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env)
+        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env, timeout=timeout_seconds)
         if completed.returncode == 0:
             return completed.stdout.strip()
         errors.append((command[0], (completed.stderr or completed.stdout).strip()))
     joined_errors = " | ".join(f"{source}: {error}" for source, error in errors)
     raise RuntimeError(joined_errors)
+
+RUNTIME_API = RuntimeAPI(lambda sql: run_psql_text(sql, timeout_seconds=10))
 
 
 def run_psql_json(query: str) -> list[dict]:
@@ -862,7 +869,7 @@ def build_office_snapshot() -> dict:
     )
 
     projected, projection_meta = _office_projection(data, issues)
-    return {
+    snapshot = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "runtime_root": str(RUNTIME_ROOT),
         "vault_root": str(VAULT_ROOT),
@@ -875,6 +882,11 @@ def build_office_snapshot() -> dict:
         "issues": issues,
         **projected,
     }
+    try:
+        runtime = RUNTIME_API.snapshot()
+    except Exception:
+        runtime = {"available": False, "reason": "runtime_unavailable", "agents": [], "workers": [], "tasks": [], "events": [], "event_cursor": 0, "broker_write_allowed": False}
+    return overlay_office_presence(snapshot, runtime)
 
 
 def build_agent_message_evidence(message_id: int) -> dict:
@@ -23147,7 +23159,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: object) -> None:
         message = fmt % args
-        message = re.sub(r"(?i)(request_token=)[^&\s]+", r"\1[redacted]", message)
+        message = re.sub(r"(?i)((?:request_token|lease_token|access_token|token|api_key)=)[^&\s]+", r"\1[redacted]", message)
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), message))
 
     def _cors_origin(self) -> str:
@@ -23233,6 +23245,55 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         except PermissionError as exc:
             self._send_json({"error": "forbidden", "message": str(exc)}, 403)
 
+    def _runtime_request(self, method: str, path: str, query: dict) -> bool:
+        if not path.startswith("/api/v1/"):
+            return False
+        handled = bool(re.fullmatch(r"/api/v1/(?:agents(?:/\d+/(?:heartbeat|presence))?|workers|tasks(?:/\d+(?:/(?:pause|resume|cancel))?)?|office/(?:snapshot|events/stream))", path))
+        if not handled:
+            return False
+        try:
+            if any("token" in key.lower() for key in query):
+                raise RuntimeRequestError("Credentials must never be supplied in a URL.")
+            if method == "GET":
+                if path == "/api/v1/office/events/stream":
+                    after = cursor_id((query.get("after_event_id") or [self.headers.get("Last-Event-ID", "0")])[0])
+                    stream_events(self, RUNTIME_API, after)
+                elif path == "/api/v1/office/snapshot":
+                    self._send_json(build_office_snapshot())
+                elif re.fullmatch(r"/api/v1/tasks/\d+", path):
+                    self._send_json(RUNTIME_API.task(int(path.rsplit("/", 1)[1])))
+                else:
+                    snapshot = RUNTIME_API.snapshot()
+                    if not snapshot["available"]:
+                        raise RuntimeRequestError("Lease runtime is not installed or available.", 503)
+                    if path.endswith("/presence"):
+                        agent_id = int(path.split("/")[-2])
+                        self._send_json({"items": [r for r in snapshot["agents"] if r["agent_id"] == agent_id]})
+                    elif path in ("/api/v1/agents", "/api/v1/workers", "/api/v1/tasks"):
+                        self._send_json({"items": snapshot[path.rsplit("/", 1)[1]], "bounded": True, "broker_write_allowed": False})
+                    else:
+                        raise RuntimeRequestError("Method not allowed.", 405)
+            else:
+                if int(self.headers.get("Content-Length", "0")) not in range(1, 16385):
+                    raise RuntimeRequestError("Runtime request must be a bounded JSON object.", 413)
+                if path.endswith("/heartbeat"):
+                    require_worker_auth(self.headers, OPERATOR_TOKEN)
+                    self._send_json(RUNTIME_API.heartbeat(int(path.split("/")[-2]), self._read_body()))
+                elif re.fullmatch(r"/api/v1/tasks/\d+/(?:pause|resume|cancel)", path):
+                    payload = self._read_body()
+                    if payload != {}:
+                        raise RuntimeRequestError("Task controls do not accept arbitrary payloads.")
+                    self._send_json(RUNTIME_API.control(int(path.split("/")[-2]), path.rsplit("/", 1)[1]))
+                else:
+                    raise RuntimeRequestError("Method not allowed.", 405)
+        except RuntimeRequestError as exc:
+            self._send_json({"error": "runtime_request_rejected", "message": str(exc)}, exc.status)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json({"error": "invalid_runtime_request", "message": "Invalid runtime request."}, 400)
+        except Exception:
+            self._send_json({"error": "runtime_unavailable", "message": "Runtime evidence is unavailable; no task action was confirmed."}, 503)
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
         try:
             parsed_path = urllib.parse.urlparse(self.path)
@@ -23252,6 +23313,8 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._authorize_request(write=False)
+            if self._runtime_request("GET", request_path, query):
+                return
             if request_path == "/api/liveness":
                 self._send_json({"ok": True, "generated_at": datetime.now(timezone.utc).isoformat(), "service": "api"})
                 return
@@ -23511,6 +23574,8 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         try:
             self._authorize_request(write=True)
             request_path = urllib.parse.urlparse(self.path).path
+            if self._runtime_request("POST", request_path, urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)):
+                return
             if request_path == "/api/artifacts/local/upload":
                 self._send_json(receive_local_artifact_upload(self), 201)
                 return

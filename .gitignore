@@ -42,6 +42,9 @@ ai memory/00 AI OS/Reports/Scheduled/
 ai memory/02 Portfolio/Long-Term Monte Carlo/
 
 # Build/dependency caches
+# Browser captures may contain private runtime data. Only explicitly reviewed
+# synthetic acceptance images under docs are versioned.
+_ai_os_runtime/ai-office-ui/output/playwright/
 _ai_os_runtime/ai-office-ui/node_modules
 _ai_os_runtime/ai-office-ui/node_modules/
 _ai_os_runtime/ai-office-ui/dist/

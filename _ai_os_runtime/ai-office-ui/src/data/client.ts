@@ -32,6 +32,17 @@ function resolveApiBaseUrl(): string {
 const BASE_URL = resolveApiBaseUrl();
 const OPERATOR_TOKEN = String(import.meta.env.VITE_AI_OS_OPERATOR_TOKEN || "").trim();
 
+/** SSE shares the canonical URL/auth header; credentials never go in a URL. */
+export function openRuntimeEventStream(cursor: number, signal: AbortSignal): Promise<Response> {
+  return fetch(`${BASE_URL}/api/v1/office/events/stream?after_event_id=${cursor}`, {
+    cache: "no-store", signal,
+    headers: {
+      Accept: "text/event-stream",
+      ...(OPERATOR_TOKEN ? { Authorization: `Bearer ${OPERATOR_TOKEN}` } : {}),
+    },
+  });
+}
+
 /** Default request timeout (5 min — Charlie chat + model runs can be slow). */
 const DEFAULT_TIMEOUT_MS = 300_000;
 

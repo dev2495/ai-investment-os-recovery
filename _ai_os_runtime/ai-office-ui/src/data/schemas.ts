@@ -576,6 +576,7 @@ export type GraphControlSnapshot = z.infer<typeof GraphControlSnapshotSchema>;
  * ============================================================ */
 export const OfficeSnapshotSchema = z.object({
   generated_at: z.string(),
+  runtime: liveRow.optional().default({}),
   projection_meta: liveRow.optional().default({}),
   agents: z.array(liveRow).default([]),
   agent_messages: z.array(liveRow).default([]),

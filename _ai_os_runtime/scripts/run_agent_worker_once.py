@@ -14,6 +14,11 @@ from typing import Any
 
 
 RUNTIME_ROOT = Path(os.environ.get("AI_OS_RUNTIME_ROOT") or Path(__file__).resolve().parents[1])
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
+from api.agent_runtime import AgentRuntime, TaskControl, fence_sql
+
+_LEASE_RUNTIME: AgentRuntime | None = None
 VAULT_ROOT = Path(
     os.environ.get("AI_OS_VAULT_ROOT")
     or os.environ.get("AI_OS_VAULT_PATH")
@@ -83,7 +88,7 @@ def sql_jsonb(value: Any) -> str:
     return sql_literal(json.dumps(value, default=str)) + "::jsonb"
 
 
-def psql_text(sql: str) -> str:
+def _psql_text_unfenced(sql: str) -> str:
     configured_psql = str(RUNTIME_ENV.get("AI_OS_PSQL_BIN") or "").strip()
     psql_candidates = [
         configured_psql,
@@ -150,6 +155,25 @@ def psql_text(sql: str) -> str:
         detail = (completed.stderr or completed.stdout or "psql command failed").strip()
         raise RuntimeError(detail)
     return completed.stdout.strip()
+
+
+def psql_text(sql: str) -> str:
+    return _psql_text_unfenced(fence_sql(sql))
+
+
+def lease_runtime() -> AgentRuntime | None:
+    global _LEASE_RUNTIME
+    # Rollout is explicit; install/schema inspection alone never changes workers.
+    if str(RUNTIME_ENV.get("AI_OS_AGENT_LEASE_RUNTIME_ENABLED", "false")).lower() not in ("1", "true"):
+        return None
+    if _LEASE_RUNTIME is None:
+        candidate = AgentRuntime(_psql_text_unfenced)
+        if not candidate.available():
+            raise RuntimeError("Lease runtime enabled but migration 256 is unavailable; worker stopped")
+        _LEASE_RUNTIME = candidate
+    _LEASE_RUNTIME.reap(20)
+    _LEASE_RUNTIME.register()  # Process heartbeat; never renews a task lease.
+    return _LEASE_RUNTIME
 
 
 def psql_json(query: str) -> list[dict[str, Any]]:
@@ -2023,6 +2047,7 @@ def record_worker_failure(job: dict[str, Any], profile: dict[str, Any], skill: d
 
 
 def run_once(limit: int, include_completed: bool, task_id: int | None = None) -> dict[str, Any]:
+    runtime = lease_runtime()
     jobs = get_queue(limit, include_completed, task_id)
     results: list[dict[str, Any]] = []
     for job in jobs:
@@ -2036,9 +2061,12 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             profile = profile_for(str(job.get("owner_agent") or "Jarvis"))
         if not profile:
             profile = profile_for("Jarvis")
-        claim = claim_task(
-            job.get("task_id"),
-            str(profile.get("agent_name") or "Jarvis"),
+        lease = runtime.claim(
+            int(job["task_id"]), str(profile.get("agent_name") or "Jarvis"),
+            committee_reclaim=job.get("source_kind") == "committee_packet_position",
+        ) if runtime else None
+        claim = lease.claim if lease else {} if runtime else claim_task(
+            job.get("task_id"), str(profile.get("agent_name") or "Jarvis"),
             job.get("source_kind") == "committee_packet_position",
         )
         if not claim:
@@ -2056,6 +2084,9 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             )
             continue
         try:
+            if lease:
+                lease.__enter__()
+                lease.checkpoint("preflight", "PLANNING")
             if job.get("source_kind") == "employee_activation":
                 gate_result = {
                     "overall_status": "passed",
@@ -2091,6 +2122,8 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             else:
                 gate_result = evaluate_task_provider_gates(job.get("task_id"), str(profile.get("agent_name") or "Jarvis"))
             if gate_result.get("overall_status") != "passed":
+                if lease:
+                    lease.finish("blocked")
                 results.append(
                     {
                         "task_id": job.get("task_id"),
@@ -2105,6 +2138,8 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     }
                 )
                 continue
+            if lease:
+                lease.checkpoint("bounded_evidence", "READING")
             context = context_for(skill_key, job.get("widget_key"), job)
             context["execution_envelope"] = execution_envelope_for(profile, skill)
             market_packet = context.get("market_research_packet") or {}
@@ -2115,6 +2150,10 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             ):
                 missing = "; ".join(str(value) for value in (market_packet.get("quality") or {}).get("missing_evidence") or [])
                 raise RuntimeError("public market evidence gate blocked: " + (missing or "source evidence unavailable"))
+            if lease:
+                # Persist before an adapter, artifact or committee side effect.
+                # Unknown outcomes require receipt reconciliation, never replay.
+                lease.checkpoint("analysis_and_output", "ANALYZING", side_effect=True)
             if skill_key == "kronos_forecast_feature_generation" and job.get("source_kind") != "employee_activation":
                 run_kronos_adapter(job, context)
             if (
@@ -2124,6 +2163,8 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
             ):
                 run_kronos_calibration(job, context)
             summary, next_actions = summary_for(job, profile, skill, context)
+            if lease:
+                lease.checkpoint("before_artifact", "WRITING", side_effect=True)
             note_path = write_note(job, profile, skill, context, summary, next_actions)
             completed = complete_job(job, profile, skill, context, summary, note_path)
             committee_result: dict[str, Any] | None = None
@@ -2138,6 +2179,8 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     f"SELECT id,status,output_note_path,updated_at FROM agent.tasks WHERE id={int(job.get('task_id'))}"
                 )
                 completed["task"] = current_task
+            if lease:
+                lease.finish("needs_review", f"agent.worker_runs:{int(completed['worker_run']['id'])}")
             results.append(
                 {
                     "task_id": job.get("task_id"),
@@ -2150,8 +2193,23 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     "committee": committee_result,
                 }
             )
+        except TaskControl as exc:
+            results.append({"task_id": job["task_id"], "task_status": "paused" if exc.action == "pause" else "cancelled",
+                            "output_note_path": None, "agent_name": profile.get("agent_name"), "skill_key": skill_key})
         except Exception as exc:
-            failed = record_worker_failure(job, profile, skill, exc)
+            try:
+                if lease:
+                    lease.ensure_alive()
+                failed = record_worker_failure(job, profile, skill, exc)
+                if lease:
+                    lease.finish("failed")
+            except Exception:
+                # Ownership or DB outcome is uncertain: no late writes and no
+                # generic rerun. The receipt-aware lease reaper owns recovery.
+                results.append({"task_id": job["task_id"], "task_status": "lease_lost",
+                                "agent_name": profile.get("agent_name"), "skill_key": skill_key,
+                                "output_note_path": None, "error": "Ownership unavailable; inspect runtime recovery."})
+                continue
             results.append(
                 {
                     "task_id": job.get("task_id"),
@@ -2164,9 +2222,13 @@ def run_once(limit: int, include_completed: bool, task_id: int | None = None) ->
                     "error": str(exc),
                 }
             )
+        finally:
+            if lease:
+                lease.__exit__(None, None, None)
     return {
         "count": len(results),
         "results": results,
+        "ownership_protocol": "lease_v1" if runtime else "legacy_unleased",
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
 
