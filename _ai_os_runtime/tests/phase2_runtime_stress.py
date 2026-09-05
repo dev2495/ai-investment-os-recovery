@@ -210,13 +210,6 @@ def _bootstrap(connection: Any) -> dict[str, str]:
         statement = (SQL_ROOT / name).read_text(encoding="utf-8")
         _run_script(connection, statement)
         _run_script(connection, statement)
-    # Installed environments intentionally remain fail-closed. This disposable
-    # provider-free stress database opts into claims explicitly so the test can
-    # exercise contention, fencing, replay, and reconnect behavior without
-    # weakening the production default.
-    connection.execute("UPDATE agent.runtime_settings SET claim_mode='enabled' WHERE singleton")
-    if connection.execute("SELECT claim_mode FROM agent.runtime_settings WHERE singleton").fetchone()[0] != "enabled":
-        raise AssertionError("disposable stress runtime did not explicitly enable claims")
     return fingerprints
 
 
@@ -507,6 +500,12 @@ def run(dsn: str) -> dict[str, Any]:
         with psycopg.connect(test_dsn, autocommit=True) as connection:
             setup_started = time.perf_counter()
             fingerprints = _bootstrap(connection)
+            # Installed environments intentionally remain fail-closed. This
+            # provider-free stress run opts into claims only inside its own
+            # disposable database before seeding any lifecycle work.
+            connection.execute("UPDATE agent.runtime_settings SET claim_mode='enabled' WHERE singleton")
+            if connection.execute("SELECT claim_mode FROM agent.runtime_settings WHERE singleton").fetchone()[0] != "enabled":
+                raise AssertionError("disposable stress runtime did not explicitly enable claims")
             tasks = _seed(connection)
 
             def connection_factory():
