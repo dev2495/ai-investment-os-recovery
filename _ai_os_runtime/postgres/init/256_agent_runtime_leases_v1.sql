@@ -414,4 +414,25 @@ LEFT JOIN LATERAL(SELECT count(*) lease_count FROM agent.task_leases WHERE agent
 
 COMMENT ON TABLE agent.task_leases IS 'Fenced ownership of canonical agent.tasks. Tokens are hashes. Expiry never authorizes replay of unreceipted writes or paid calls.';
 COMMENT ON VIEW agent.v_runtime_presence IS 'Shared-safe metadata only. A configured profile or old task status is never proof of an active worker.';
+
+DO $migration_256$
+BEGIN
+    IF to_regclass('core.schema_migrations') IS NOT NULL THEN
+        INSERT INTO core.schema_migrations(
+            migration_number,migration_key,definition_checksum_sha256,description,metadata
+        ) VALUES (
+            256,'256_agent_runtime_leases_v1',
+            '3aa19ffced26f4ac3709ade35ec13193a833249ac3f22ae71a2b228ba4d19cd5',
+            'Durable fenced worker and lease runtime',
+            '{"broker_write_allowed":false,"auto_enable":false}'::jsonb
+        ) ON CONFLICT(migration_number) DO NOTHING;
+        IF NOT EXISTS (
+            SELECT 1 FROM core.schema_migrations
+            WHERE migration_number=256
+              AND migration_key='256_agent_runtime_leases_v1'
+              AND definition_checksum_sha256='3aa19ffced26f4ac3709ade35ec13193a833249ac3f22ae71a2b228ba4d19cd5'
+        ) THEN RAISE EXCEPTION 'migration 256 ledger mismatch'; END IF;
+    END IF;
+END
+$migration_256$;
 COMMIT;

@@ -233,4 +233,25 @@ BEGIN
     RETURN jsonb_build_object('handoff_id',p_id,'child_task_id',task.id,'parent_task_id',handoff.parent_task_id,
         'state',state_value,'research_readiness_changed',false,'broker_write_allowed',false);
 END $$;
+
+DO $migration_258$
+BEGIN
+    IF to_regclass('core.schema_migrations') IS NOT NULL THEN
+        INSERT INTO core.schema_migrations(
+            migration_number,migration_key,definition_checksum_sha256,description,metadata
+        ) VALUES (
+            258,'258_agent_conversations_handoffs_v1',
+            'b14d772e2b8a964f40ba0fbc792454f4a0819ca1e676ff615e53925a1d55c797',
+            'Scoped canonical conversations, messages, receipts and handoffs',
+            '{"broker_write_allowed":false}'::jsonb
+        ) ON CONFLICT(migration_number) DO NOTHING;
+        IF NOT EXISTS (
+            SELECT 1 FROM core.schema_migrations
+            WHERE migration_number=258
+              AND migration_key='258_agent_conversations_handoffs_v1'
+              AND definition_checksum_sha256='b14d772e2b8a964f40ba0fbc792454f4a0819ca1e676ff615e53925a1d55c797'
+        ) THEN RAISE EXCEPTION 'migration 258 ledger mismatch'; END IF;
+    END IF;
+END
+$migration_258$;
 COMMIT;

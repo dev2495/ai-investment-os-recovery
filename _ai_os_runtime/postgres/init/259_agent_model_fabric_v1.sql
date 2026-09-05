@@ -191,4 +191,24 @@ CREATE OR REPLACE TRIGGER model_fabric_attempt_contract
     BEFORE UPDATE OR DELETE ON agent.model_fabric_attempts
     FOR EACH ROW EXECUTE FUNCTION agent.guard_model_fabric_attempt();
 
+DO $migration_259$
+BEGIN
+    IF to_regclass('core.schema_migrations') IS NOT NULL THEN
+        INSERT INTO core.schema_migrations(
+            migration_number,migration_key,definition_checksum_sha256,description,metadata
+        ) VALUES (
+            259,'259_agent_model_fabric_v1',
+            'ff523f10530ee7a58e21943bb1a16ea9dc1abfaf2dbe20a55062bf46e6b41c17',
+            'Governed versioned Model Fabric bindings and attempts',
+            '{"paid_auto_promote":false,"broker_write_allowed":false}'::jsonb
+        ) ON CONFLICT(migration_number) DO NOTHING;
+        IF NOT EXISTS (
+            SELECT 1 FROM core.schema_migrations
+            WHERE migration_number=259
+              AND migration_key='259_agent_model_fabric_v1'
+              AND definition_checksum_sha256='ff523f10530ee7a58e21943bb1a16ea9dc1abfaf2dbe20a55062bf46e6b41c17'
+        ) THEN RAISE EXCEPTION 'migration 259 ledger mismatch'; END IF;
+    END IF;
+END
+$migration_259$;
 COMMIT;

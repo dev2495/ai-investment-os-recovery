@@ -7,9 +7,10 @@ CREATE TABLE IF NOT EXISTS agent.runtime_settings (
     active_heartbeat_seconds integer NOT NULL DEFAULT 15 CHECK(active_heartbeat_seconds BETWEEN 1 AND 60),
     idle_heartbeat_seconds integer NOT NULL DEFAULT 60 CHECK(idle_heartbeat_seconds BETWEEN 2 AND 300),
     lease_seconds integer NOT NULL DEFAULT 45,
-    claim_mode text NOT NULL DEFAULT 'enabled' CHECK(claim_mode IN ('enabled','draining','disabled')),
+    claim_mode text NOT NULL DEFAULT 'disabled' CHECK(claim_mode IN ('enabled','draining','disabled')),
     CHECK(lease_seconds BETWEEN active_heartbeat_seconds*3 AND 600)
 );
+ALTER TABLE agent.runtime_settings ALTER COLUMN claim_mode SET DEFAULT 'disabled';
 INSERT INTO agent.runtime_settings DEFAULT VALUES ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS agent.agent_workspaces (
@@ -29,8 +30,8 @@ CREATE TABLE IF NOT EXISTS agent.agent_workspaces (
     capability_status text NOT NULL DEFAULT 'PARTIAL' CHECK(capability_status IN ('UNAVAILABLE','PARTIAL','READY')),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-INSERT INTO agent.agent_workspaces(agent_id,workspace_key,room_key)
-SELECT id,agent_key,department FROM agent.profiles ON CONFLICT DO NOTHING;
+INSERT INTO agent.agent_workspaces(agent_id,workspace_key,room_key,role_version)
+SELECT id,agent_key,department,role_version FROM agent.profiles ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION agent.ensure_runtime_workspace() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO agent.agent_workspaces(agent_id,workspace_key,room_key,role_version)
@@ -271,7 +272,13 @@ BEGIN
 END $$;
 
 -- PG remains the only replay authority. Store typed references, not prompts or PII.
-ALTER TABLE agent.task_events ADD COLUMN IF NOT EXISTS recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+-- Backfill the historical recording timestamp from the original event timestamp;
+-- assigning clock_timestamp() while adding the column would falsify old history.
+ALTER TABLE agent.task_events ADD COLUMN IF NOT EXISTS recorded_at timestamptz;
+UPDATE agent.task_events SET recorded_at=occurred_at WHERE recorded_at IS NULL;
+ALTER TABLE agent.task_events
+    ALTER COLUMN recorded_at SET DEFAULT clock_timestamp(),
+    ALTER COLUMN recorded_at SET NOT NULL,
     ADD COLUMN IF NOT EXISTS runtime_scope text NOT NULL DEFAULT 'internal',
     ADD COLUMN IF NOT EXISTS book_id bigint, ADD COLUMN IF NOT EXISTS client_id bigint,
     ADD COLUMN IF NOT EXISTS actor_type text NOT NULL DEFAULT 'runtime',
@@ -329,4 +336,25 @@ BEGIN
     RETURNING id INTO checkpoint_id;
     RETURN checkpoint_id;
 END $$;
+
+DO $migration_257$
+BEGIN
+    IF to_regclass('core.schema_migrations') IS NOT NULL THEN
+        INSERT INTO core.schema_migrations(
+            migration_number,migration_key,definition_checksum_sha256,description,metadata
+        ) VALUES (
+            257,'257_agent_runtime_policy_events_v1',
+            '9c02ed6de61e0d9435ed5320a31a4e60eeaaad76f70d88ac38003add031999e5',
+            'Runtime policy snapshots, legal transitions, event replay and conservative recovery',
+            '{"broker_write_allowed":false,"auto_enable":false}'::jsonb
+        ) ON CONFLICT(migration_number) DO NOTHING;
+        IF NOT EXISTS (
+            SELECT 1 FROM core.schema_migrations
+            WHERE migration_number=257
+              AND migration_key='257_agent_runtime_policy_events_v1'
+              AND definition_checksum_sha256='9c02ed6de61e0d9435ed5320a31a4e60eeaaad76f70d88ac38003add031999e5'
+        ) THEN RAISE EXCEPTION 'migration 257 ledger mismatch'; END IF;
+    END IF;
+END
+$migration_257$;
 COMMIT;

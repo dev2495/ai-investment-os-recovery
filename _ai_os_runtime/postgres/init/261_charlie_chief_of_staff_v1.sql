@@ -242,4 +242,24 @@ BEGIN
         'local_work_paused',false,'broker_write_allowed',false);
 END $$;
 
+DO $migration_261$
+BEGIN
+    IF to_regclass('core.schema_migrations') IS NOT NULL THEN
+        INSERT INTO core.schema_migrations(
+            migration_number,migration_key,definition_checksum_sha256,description,metadata
+        ) VALUES (
+            261,'261_charlie_chief_of_staff_v1',
+            '6408acc5b8b256fbd81710471aa98345f6fc685173aedd06a3e48fa5ea5ae055',
+            'Persisted Charlie objectives, plans, redirects and committee invitations',
+            '{"paid_model_calls":0,"broker_write_allowed":false}'::jsonb
+        ) ON CONFLICT(migration_number) DO NOTHING;
+        IF NOT EXISTS (
+            SELECT 1 FROM core.schema_migrations
+            WHERE migration_number=261
+              AND migration_key='261_charlie_chief_of_staff_v1'
+              AND definition_checksum_sha256='6408acc5b8b256fbd81710471aa98345f6fc685173aedd06a3e48fa5ea5ae055'
+        ) THEN RAISE EXCEPTION 'migration 261 ledger mismatch'; END IF;
+    END IF;
+END
+$migration_261$;
 COMMIT;
