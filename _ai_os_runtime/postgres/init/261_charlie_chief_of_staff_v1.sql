@@ -119,6 +119,66 @@ BEGIN
         'task_id',task_id,'duplicate',false,'broker_write_allowed',false);
 END $$;
 
+CREATE OR REPLACE FUNCTION agent.create_charlie_repair_plan(
+    p_request text,p_user text,p_command text,p_understood text,p_context jsonb,p_entities jsonb,
+    p_scope text,p_book bigint,p_client bigint,p_data_class text,p_lead_agent bigint,
+    p_lead_title text,p_lead_objective text,p_specialists jsonb,p_sources jsonb,p_missing jsonb
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE result jsonb; specialist jsonb; child_id bigint; sequence_no integer:=1;
+        lead_task bigint; resolved_ids jsonb:='[]'::jsonb; specialist_name text;
+BEGIN
+    IF jsonb_typeof(p_specialists)<>'array' OR jsonb_array_length(p_specialists)>8
+       OR jsonb_typeof(p_sources)<>'array' OR jsonb_array_length(p_sources)>50
+       OR jsonb_typeof(p_missing)<>'array' OR jsonb_array_length(p_missing)>50 THEN
+        RAISE EXCEPTION 'bounded Charlie repair arrays required';
+    END IF;
+    result:=agent.create_charlie_plan(
+        p_request,p_user,p_command,'evidence_debt_repair',p_understood,p_context,p_entities,
+        p_scope,p_book,p_client,p_data_class,p_lead_agent,p_lead_title,p_lead_objective,
+        'research','bounded_internal_draft','internal_draft','{"paid_model_calls":0}'::jsonb
+    );
+    IF coalesce((result->>'duplicate')::boolean,false) THEN RETURN result; END IF;
+    lead_task:=(result->>'task_id')::bigint;
+    resolved_ids:=resolved_ids||to_jsonb(lead_task);
+    UPDATE agent.plans SET sources=p_sources,missing_data=p_missing,
+        budget='{"paid_model_calls":0,"paid_model_requires_approval":true}'::jsonb,
+        next_action='Await cited specialist receipts and independent Research Director validation.',
+        updated_at=clock_timestamp() WHERE id=(result->>'plan_id')::bigint;
+    UPDATE agent.tasks SET runtime_context=runtime_context||jsonb_build_object(
+        'paid_model_work_paused',true,'paid_model_requires_approval',true,
+        'source_packet_count',jsonb_array_length(p_sources)) WHERE id=lead_task;
+    FOR specialist IN SELECT value FROM jsonb_array_elements(p_specialists) value LOOP
+        IF (specialist->>'agent_id') IS NULL OR (specialist->>'agent_id') !~ '^[1-9][0-9]{0,17}$'
+           OR length(coalesce(specialist->>'title','')) NOT BETWEEN 1 AND 500
+           OR length(coalesce(specialist->>'objective','')) NOT BETWEEN 1 AND 8000 THEN
+            RAISE EXCEPTION 'invalid bounded specialist plan entry';
+        END IF;
+        SELECT agent_name INTO specialist_name FROM agent.profiles
+          WHERE id=(specialist->>'agent_id')::bigint AND status='active';
+        IF specialist_name IS NULL THEN RAISE EXCEPTION 'active specialist required'; END IF;
+        sequence_no:=sequence_no+1;
+        INSERT INTO agent.tasks(title,objective,owner_agent,status,priority,source_kind,source_ref,
+            agent_id,runtime_protocol,runtime_state,task_class,runtime_scope,recovery_policy,
+            book_id,client_id,data_class,runtime_context)
+        VALUES(specialist->>'title',specialist->>'objective',specialist_name,'queued','high',
+            'charlie_plan',p_request||':specialist:'||(specialist->>'agent_id'),
+            (specialist->>'agent_id')::bigint,'lease_v1','PLANNING','research',p_scope,
+            'idempotent_read',p_book,p_client,p_data_class,p_context||jsonb_build_object(
+                'objective_id',(result->>'objective_id')::bigint,'plan_id',(result->>'plan_id')::bigint,
+                'paid_model_work_paused',true,'paid_model_requires_approval',true,
+                'source_packet_count',jsonb_array_length(p_sources))) RETURNING id INTO child_id;
+        INSERT INTO agent.plan_tasks(plan_id,task_id,sequence_no,assignment_reason)
+        VALUES((result->>'plan_id')::bigint,child_id,sequence_no,
+            'Charlie assigned a bounded evidence-debt lane to the resolved specialist.');
+        INSERT INTO agent.task_dependencies(task_id,depends_on_task_id) VALUES(lead_task,child_id);
+        PERFORM agent.append_scoped_runtime_event('plan_updated','PLANNING',child_id,
+            (specialist->>'agent_id')::bigint,'operator',p_user,'evidence_debt_specialist_assigned');
+        resolved_ids:=resolved_ids||to_jsonb(child_id);
+    END LOOP;
+    RETURN result||jsonb_build_object('task_ids',resolved_ids,'specialist_count',sequence_no-1,
+        'source_count',jsonb_array_length(p_sources),'broker_write_allowed',false);
+END $$;
+
 CREATE OR REPLACE FUNCTION agent.redirect_runtime_task(p_task bigint,p_actor text,p_objective text,p_context jsonb DEFAULT '{}')
 RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE task agent.tasks; redirect_id bigint; active_lease boolean;

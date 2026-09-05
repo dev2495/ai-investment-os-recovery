@@ -96,6 +96,17 @@ def database():
         id bigserial PRIMARY KEY, case_key text NOT NULL UNIQUE, request_text text NOT NULL DEFAULT 'synthetic',
         company_id bigint REFERENCES research.companies(id), company_name text, ticker text, exchange text,
         status text NOT NULL DEFAULT 'active', updated_at timestamptz NOT NULL DEFAULT now())""")
+    execute("""CREATE TABLE research.research_case_evidence(
+        id bigserial PRIMARY KEY,research_case_id bigint NOT NULL REFERENCES research.research_cases(id),
+        source_kind text NOT NULL,source_identifier text NOT NULL,source_url text,local_artifact_path text,
+        publication_date date,effective_date date,captured_at timestamptz NOT NULL DEFAULT now(),
+        parser_status text NOT NULL DEFAULT 'pending',validation_status text NOT NULL DEFAULT 'pending',
+        citation_locator jsonb NOT NULL DEFAULT '{}')""")
+    execute("""CREATE TABLE research.research_case_blockers(
+        id bigserial PRIMARY KEY,research_case_id bigint NOT NULL REFERENCES research.research_cases(id),
+        blocker_key text NOT NULL,stage_key text NOT NULL,title text NOT NULL,detail text NOT NULL,
+        system_action text,user_action text,status text NOT NULL DEFAULT 'open',severity text NOT NULL DEFAULT 'high',
+        retry_count integer NOT NULL DEFAULT 0,next_retry_at timestamptz,updated_at timestamptz NOT NULL DEFAULT now())""")
     migration = (SQL_ROOT / "256_agent_runtime_leases_v1.sql").read_text()
     execute(migration)
     # Reapply proves non-destructive migration idempotence.
@@ -389,15 +400,39 @@ def test_charlie_exact_commands_create_durable_work_and_report_truth(job):
     execute("INSERT INTO agent.committee_registry(committee_key,committee_name) VALUES('long_term','Long-term committee')")
     packet = int(execute("""INSERT INTO agent.committee_packets(packet_key,committee_key,title,decision_question,opened_by)
         VALUES('wipro-test-packet','long_term','Wipro committee','What evidence remains?','test') RETURNING id"""))
+    evidence = int(execute(f"""INSERT INTO research.research_case_evidence(
+        research_case_id,source_kind,source_identifier,source_url,local_artifact_path,publication_date,
+        parser_status,validation_status,citation_locator)
+        VALUES({wipro_case},'annual_report','wipro-fy26','https://example.invalid/wipro-fy26',
+        'artifacts/wipro/fy26.pdf','2026-06-30','parsed','validated','{{"page":84}}') RETURNING id"""))
+    blocker = int(execute(f"""INSERT INTO research.research_case_blockers(
+        research_case_id,blocker_key,stage_key,title,detail,system_action,user_action,severity)
+        VALUES({wipro_case},'cash_conversion_denominator','financials','Cash conversion denominator missing',
+        'CFO and PAT periods are not aligned.','Re-extract audited statements.',NULL,'high') RETURNING id"""))
     charlie = CharlieAPI(execute, Principal(user_id="charlie_operator"))
 
     status = charlie.command({"request_key": "charlie:test:live", "command": "Charlie, show every live agent and what each is doing.", "context": {}})
     assert status["current_state"] == "OBSERVED"
     assert status["broker_write_allowed"] is False
 
-    delegated = charlie.command({"request_key": "charlie:test:forensic", "command": "Charlie, ask the Forensic Analyst why Wipro cash conversion weakened.", "context": {}})
+    repair = charlie.command({
+        "request_key": "charlie:test:repair",
+        "command": "Charlie, review Wipro's current evidence debt and create a bounded repair plan. Use no paid model without approval.",
+        "context": {},
+    })
+    assert repair["current_state"] == "QUEUED"
+    assert len(repair["tasks"]) == 4
+    assert repair["sources"][0]["evidence_id"] == evidence
+    assert f"high:Cash conversion denominator missing" in repair["risk_flags"]
+    assert execute(f"SELECT count(*) FROM agent.task_dependencies WHERE task_id={repair['tasks'][0]['task_id']}") == "3"
+    assert execute(f"SELECT missing_data @> '[]'::jsonb FROM agent.plans WHERE id={repair['plan_id']}") == "true"
+    assert execute(f"SELECT bool_and(runtime_context->>'paid_model_work_paused'='true') FROM agent.tasks WHERE id IN ({','.join(str(row['task_id']) for row in repair['tasks'])})") == "true"
+
+    delegated = charlie.command({"request_key": "charlie:test:forensic", "command": "Charlie, ask the Forensic Analyst why Wipro cash conversion weakened and show the exact source packet.", "context": {}})
     assert delegated["current_state"] == "QUEUED"
     assert delegated["tasks"][0]["completion"] is False
+    assert delegated["sources"][0]["evidence_id"] == evidence
+    assert delegated["sources"][0]["citation_locator"] == {"page": 84}
     forensic_task = delegated["tasks"][0]["task_id"]
     assert execute(f"SELECT count(*) FROM agent.plan_tasks WHERE task_id={forensic_task}") == "1"
     assert execute(f"SELECT runtime_context->>'research_case_id' FROM agent.tasks WHERE id={forensic_task}") == str(wipro_case)
@@ -442,8 +477,8 @@ def test_charlie_exact_commands_create_durable_work_and_report_truth(job):
     assert routed["approvals_needed"]
     assert execute("SELECT public_cloud_requires_approval FROM agent.charlie_route_policies LIMIT 1") == "true"
 
-    unknown = charlie.command({"request_key": "charlie:test:unknown", "command": "Please do something helpful.", "context": {}})
-    assert unknown["current_state"] == "WAITING_FOR_INPUT"
+    with pytest.raises(RuntimeRequestError, match="not handled"):
+        charlie.command({"request_key": "charlie:test:unknown", "command": "Please do something helpful.", "context": {}})
     assert execute("SELECT count(*) FROM agent.tasks WHERE source_ref='charlie:test:unknown'") == "0"
     assert execute("SELECT count(*) FROM agent.charlie_commands") == "9"
 
