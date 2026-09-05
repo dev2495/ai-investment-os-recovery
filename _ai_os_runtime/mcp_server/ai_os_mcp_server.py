@@ -6052,7 +6052,250 @@ def runtime_status(arguments: dict) -> dict:
     return tool_result(get_api_json(f"/api/v1/{kind}", timeout=15))
 
 
+def _record_id(arguments: dict, name: str) -> int:
+    value = arguments.get(name)
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive record ID")
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive record ID") from exc
+    if value < 1:
+        raise ValueError(f"{name} must be a positive record ID")
+    return value
+
+
+def _operator_write(arguments: dict) -> None:
+    if arguments.get("operator_confirmed") is not True:
+        raise ValueError("Explicit operator confirmation is required for this durable Agent OS write")
+
+
+def agent_os_overview(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/v1/agent-os/overview", timeout=15))
+
+
+def inspect_agent(arguments: dict) -> dict:
+    return tool_result(get_api_json(f"/api/v1/agents/{_record_id(arguments, 'agent_id')}", timeout=15))
+
+
+def list_agent_threads(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/v1/threads", {"limit": limit_arg(arguments, 50, 200)}, timeout=15))
+
+
+def create_agent_thread(arguments: dict) -> dict:
+    _operator_write(arguments)
+    payload = {
+        key: arguments[key]
+        for key in ("thread_key", "room_type", "title", "book_id", "client_id", "data_class", "context", "retention_days")
+        if key in arguments
+    }
+    return tool_result(post_api_json("/api/v1/threads", payload, timeout=15))
+
+
+def send_agent_message(arguments: dict) -> dict:
+    _operator_write(arguments)
+    agent_id = _record_id(arguments, "agent_id")
+    payload = {
+        key: arguments[key]
+        for key in ("thread_key", "request_key", "subject", "body", "priority", "attachments", "mentions", "related_task_id")
+        if key in arguments
+    }
+    return tool_result(post_api_json(f"/api/v1/agents/{agent_id}/message", payload, timeout=15))
+
+
+def acknowledge_agent_message(arguments: dict) -> dict:
+    _operator_write(arguments)
+    message_id = _record_id(arguments, "message_id")
+    return tool_result(post_api_json(
+        f"/api/v1/messages/{message_id}/ack", {"acknowledge": arguments.get("acknowledge", True)}, timeout=15
+    ))
+
+
+def create_agent_handoff(arguments: dict) -> dict:
+    _operator_write(arguments)
+    payload = {
+        key: arguments[key]
+        for key in (
+            "request_key", "thread_key", "from_agent_id", "to_agent_id", "parent_task_id",
+            "question", "expected_output_schema", "evidence_refs",
+        )
+        if key in arguments
+    }
+    return tool_result(post_api_json("/api/v1/handoffs", payload, timeout=15))
+
+
+def advance_agent_handoff(arguments: dict) -> dict:
+    _operator_write(arguments)
+    handoff_id = _record_id(arguments, "handoff_id")
+    action = arguments.get("action")
+    if action not in {"acknowledge", "accept", "reject", "start", "return", "validate", "cancel", "fail"}:
+        raise ValueError("action is not a supported handoff transition")
+    payload = {
+        key: arguments[key]
+        for key in ("actor_agent_id", "receipt_id", "note")
+        if key in arguments
+    }
+    return tool_result(post_api_json(f"/api/v1/handoffs/{handoff_id}/{action}", payload, timeout=15))
+
+
+def charlie_agent_command(arguments: dict) -> dict:
+    _operator_write(arguments)
+    payload = {
+        key: arguments[key]
+        for key in ("request_key", "command", "context")
+        if key in arguments
+    }
+    return tool_result(post_api_json("/api/v1/charlie/commands", payload, timeout=30))
+
+
 TOOLS = {
+    "ai_os_agent_os_overview": {
+        "description": "Read the principal-scoped Agent OS overview. Live work requires an unexpired lease; this returns no private task bodies, credentials, model calls, research approval, or broker capability.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "handler": agent_os_overview,
+    },
+    "ai_os_inspect_agent": {
+        "description": "Inspect one canonical agent's scoped policy, lease-backed presence, task states, and handoffs without exposing task bodies or granting any new authority.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"agent_id": {"type": "integer", "minimum": 1}},
+            "required": ["agent_id"],
+        },
+        "handler": inspect_agent,
+    },
+    "ai_os_list_agent_threads": {
+        "description": "List bounded conversation metadata visible to the authenticated server principal. Client-private threads are omitted unless explicitly granted by server policy.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
+        },
+        "handler": list_agent_threads,
+    },
+    "ai_os_create_agent_thread": {
+        "description": "Create one durable, principal-scoped internal conversation after explicit operator confirmation. This cannot promote client scope, invoke a model, approve research, or place an order.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "thread_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,120}$"},
+                "room_type": {"type": "string", "enum": ["direct", "department", "case", "strategy", "client", "committee", "incident", "approval"]},
+                "title": {"type": "string", "minLength": 1, "maxLength": 240},
+                "book_id": {"type": "integer", "minimum": 1},
+                "client_id": {"type": "integer", "minimum": 1},
+                "data_class": {"type": "string", "enum": ["public", "internal", "house_confidential", "client_private"]},
+                "context": {"type": "object", "maxProperties": 30},
+                "retention_days": {"type": "integer", "minimum": 30, "maximum": 3650},
+                "operator_confirmed": {"type": "boolean", "const": True},
+            },
+            "required": ["thread_key", "room_type", "title", "operator_confirmed"],
+        },
+        "handler": create_agent_thread,
+    },
+    "ai_os_send_agent_message": {
+        "description": "Send one idempotent, principal-authored message to a canonical agent in an existing scoped thread. Delivery is never reported as task completion and no model or broker action is invoked.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "agent_id": {"type": "integer", "minimum": 1},
+                "thread_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,120}$"},
+                "request_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,120}$"},
+                "subject": {"type": "string", "minLength": 1, "maxLength": 240},
+                "body": {"type": "string", "minLength": 1, "maxLength": 8000},
+                "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+                "attachments": {
+                    "type": "array", "maxItems": 50,
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {
+                            "table": {"type": "string", "pattern": "^(research|knowledge|core|agent)\\.[a-z_]+$"},
+                            "id": {"type": "integer", "minimum": 1},
+                            "locator": {"type": "string", "maxLength": 240},
+                            "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                        },
+                        "required": ["table", "id"],
+                    },
+                },
+                "mentions": {"type": "array", "maxItems": 20, "items": {"type": "integer", "minimum": 1}},
+                "related_task_id": {"type": "integer", "minimum": 1},
+                "operator_confirmed": {"type": "boolean", "const": True},
+            },
+            "required": ["agent_id", "thread_key", "request_key", "body", "operator_confirmed"],
+        },
+        "handler": send_agent_message,
+    },
+    "ai_os_ack_agent_message": {
+        "description": "Record a durable read or acknowledgement receipt for one scoped message. It cannot complete a task or approve an artifact.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "message_id": {"type": "integer", "minimum": 1},
+                "acknowledge": {"type": "boolean", "default": True},
+                "operator_confirmed": {"type": "boolean", "const": True},
+            },
+            "required": ["message_id", "operator_confirmed"],
+        },
+        "handler": acknowledge_agent_message,
+    },
+    "ai_os_create_agent_handoff": {
+        "description": "Create one idempotent, scoped specialist handoff after explicit operator confirmation. Acceptance, live work, cited return, and independent validation remain separate recorded transitions.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "request_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,120}$"},
+                "thread_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,120}$"},
+                "from_agent_id": {"type": "integer", "minimum": 1},
+                "to_agent_id": {"type": "integer", "minimum": 1},
+                "parent_task_id": {"type": "integer", "minimum": 1},
+                "question": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "expected_output_schema": {"type": "object", "maxProperties": 30},
+                "evidence_refs": {
+                    "type": "array", "maxItems": 50,
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {
+                            "table": {"type": "string", "pattern": "^(research|knowledge|core|agent)\\.[a-z_]+$"},
+                            "id": {"type": "integer", "minimum": 1},
+                            "locator": {"type": "string", "maxLength": 240},
+                            "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                        },
+                        "required": ["table", "id"],
+                    },
+                },
+                "operator_confirmed": {"type": "boolean", "const": True},
+            },
+            "required": ["request_key", "thread_key", "from_agent_id", "to_agent_id", "parent_task_id", "question", "operator_confirmed"],
+        },
+        "handler": create_agent_handoff,
+    },
+    "ai_os_advance_agent_handoff": {
+        "description": "Advance one existing handoff through a legal, ownership-checked transition. Return requires a cited receipt; validation must be independent; no capital or broker authority is added.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "handoff_id": {"type": "integer", "minimum": 1},
+                "action": {"type": "string", "enum": ["acknowledge", "accept", "reject", "start", "return", "validate", "cancel", "fail"]},
+                "actor_agent_id": {"type": "integer", "minimum": 1},
+                "receipt_id": {"type": "integer", "minimum": 1},
+                "note": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "operator_confirmed": {"type": "boolean", "const": True},
+            },
+            "required": ["handoff_id", "action", "operator_confirmed"],
+        },
+        "handler": advance_agent_handoff,
+    },
+    "ai_os_charlie_command": {
+        "description": "Submit one idempotent natural-language command to the deterministic Charlie chief-of-staff adapter. Unknown entities stop for input; queued work is not complete; paid, research, client, and broker gates remain intact.",
+        "inputSchema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "request_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,120}$"},
+                "command": {"type": "string", "minLength": 1, "maxLength": 8000},
+                "context": {"type": "object", "maxProperties": 30},
+                "operator_confirmed": {"type": "boolean", "const": True},
+            },
+            "required": ["request_key", "command", "operator_confirmed"],
+        },
+        "handler": charlie_agent_command,
+    },
     "ai_os_runtime_status": {
         "description": "Read bounded canonical agent/worker/task metadata. Only an unexpired lease proves live work. Does not expose private task contents or invoke models.",
         "inputSchema": {"type": "object", "additionalProperties": False, "properties": {

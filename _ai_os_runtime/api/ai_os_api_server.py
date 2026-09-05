@@ -26,6 +26,15 @@ except ImportError:
     from agent_runtime_api import RuntimeAPI, RuntimeRequestError, cursor_id, overlay_office_presence, require_worker_auth, stream_events
 
 try:
+    from .agent_charlie import CharlieAPI
+    from .agent_collaboration import CollaborationAPI
+    from .agent_os_policy import Principal
+except ImportError:
+    from agent_charlie import CharlieAPI  # type: ignore
+    from agent_collaboration import CollaborationAPI  # type: ignore
+    from agent_os_policy import Principal  # type: ignore
+
+try:
     from . import graph_control_plane
 except ImportError:  # Direct script execution on the iMac.
     import graph_control_plane  # type: ignore
@@ -164,6 +173,37 @@ OPERATOR_TOKEN = os.environ.get("AI_OS_OPERATOR_TOKEN", "").strip()
 ALLOW_TOKENLESS_LOOPBACK = os.environ.get("AI_OS_ALLOW_TOKENLESS_LOOPBACK", "1").strip().lower() in {"1", "true", "yes"}
 ZERODHA_AUTH_CHALLENGE_TTL_SECONDS = max(60, min(900, int(os.environ.get("AI_OS_ZERODHA_AUTH_CHALLENGE_TTL_SECONDS", "300"))))
 RESEARCH_DESK_SCOPE_KEY = os.environ.get("AI_OS_RESEARCH_SCOPE_KEY", "owner:devarsh").strip() or "owner:devarsh"
+
+
+def _principal_ids(environment_key: str) -> tuple[int, ...]:
+    """Read grants only from the supervised server environment, never JSON."""
+    raw = os.environ.get(environment_key, "").strip()
+    if not raw:
+        return ()
+    values = tuple(int(value.strip()) for value in raw.split(",") if value.strip())
+    if any(value < 1 for value in values) or len(values) != len(set(values)):
+        raise RuntimeError(f"{environment_key} must contain unique positive IDs")
+    return values
+
+
+def _principal_agent_id() -> int | None:
+    raw = os.environ.get("AI_OS_PRINCIPAL_AGENT_ID", "").strip()
+    if not raw:
+        return None
+    if not re.fullmatch(r"[1-9][0-9]{0,17}", raw):
+        raise RuntimeError("AI_OS_PRINCIPAL_AGENT_ID must be a positive record ID")
+    return int(raw)
+
+
+# This is the sole HTTP principal for the existing local/Tailscale operator
+# token. Request bodies may narrow to one of these grants, never promote them.
+AGENT_OS_PRINCIPAL = Principal(
+    user_id=os.environ.get("AI_OS_PRINCIPAL_USER_ID", "local_operator").strip() or "local_operator",
+    scope=os.environ.get("AI_OS_PRINCIPAL_SCOPE", "internal").strip() or "internal",
+    books=_principal_ids("AI_OS_PRINCIPAL_BOOK_IDS"),
+    clients=_principal_ids("AI_OS_PRINCIPAL_CLIENT_IDS"),
+    agent_id=_principal_agent_id(),
+)
 
 CHARLIE_TRUTH_SYSTEM_PROMPT = (
     "You are Charlie Munger, the evidence-bound orchestrator for a private AI portfolio office. "
@@ -23245,7 +23285,137 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         except PermissionError as exc:
             self._send_json({"error": "forbidden", "message": str(exc)}, 403)
 
+    def _read_agent_os_body(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError as exc:
+            raise RuntimeRequestError("Content-Length must be an integer.") from exc
+        if length not in range(1, 65537):
+            raise RuntimeRequestError("Agent OS requests must be bounded JSON objects.", 413)
+        payload = self._read_body()
+        if not isinstance(payload, dict):
+            raise RuntimeRequestError("Agent OS requests must be JSON objects.")
+        return payload
+
+    @staticmethod
+    def _scope_agent_projection(payload: dict) -> dict:
+        """Hide presence tied to a task outside the principal's visible rows."""
+        visible_tasks = {
+            int(row["id"])
+            for row in payload.get("tasks", [])
+            if isinstance(row, dict) and row.get("id") is not None
+        }
+        for row in payload.get("agents", []):
+            if not isinstance(row, dict):
+                continue
+            task_id = row.get("task_id")
+            if task_id is not None and int(task_id) not in visible_tasks:
+                row.update({
+                    "state": "UNVERIFIED", "task_id": None, "worker_id": None,
+                    "expires_at": None, "has_live_lease": False,
+                })
+        presence = payload.get("presence")
+        if isinstance(presence, dict) and presence.get("task_id") is not None:
+            if int(presence["task_id"]) not in visible_tasks:
+                payload["presence"] = {"state": "UNVERIFIED", "has_live_lease": False}
+        return payload
+
+    def _agent_os_request(self, method: str, path: str, query: dict) -> bool:
+        agent_detail = re.fullmatch(r"/api/v1/agents/(\d+)", path)
+        agent_message = re.fullmatch(r"/api/v1/agents/(\d+)/message", path)
+        thread_read = re.fullmatch(r"/api/v1/threads/([^/]+)", path)
+        thread_messages = re.fullmatch(r"/api/v1/threads/([^/]+)/messages", path)
+        message_ack = re.fullmatch(r"/api/v1/messages/(\d+)/ack", path)
+        handoff_action = re.fullmatch(
+            r"/api/v1/handoffs/(\d+)/(acknowledge|accept|reject|start|return|validate|cancel|fail)",
+            path,
+        )
+        collaboration_paths = {
+            "/api/v1/agent-os/overview", "/api/v1/threads", "/api/v1/handoffs",
+            "/api/v1/charlie/commands",
+        }
+        if not any((agent_detail, agent_message, thread_read, thread_messages, message_ack, handoff_action)) and path not in collaboration_paths:
+            return False
+        try:
+            if any("token" in key.lower() or "credential" in key.lower() for key in query):
+                raise RuntimeRequestError("Credentials must never be supplied in a URL.")
+            require_charlie = path == "/api/v1/charlie/commands"
+            ready = RUNTIME_API._value(
+                "SELECT (to_regclass('agent.conversation_threads') IS NOT NULL "
+                "AND to_regclass('agent.task_handoffs') IS NOT NULL "
+                + ("AND to_regclass('agent.charlie_commands') IS NOT NULL " if require_charlie else "")
+                + ")::text;"
+            )
+            if not ready:
+                raise RuntimeRequestError(
+                    "The additive Agent OS collaboration schema is not installed; no action was taken.", 503
+                )
+            collaboration = CollaborationAPI(RUNTIME_API.execute, AGENT_OS_PRINCIPAL)
+            charlie = CharlieAPI(RUNTIME_API.execute, AGENT_OS_PRINCIPAL) if require_charlie else None
+
+            if method == "GET":
+                if path == "/api/v1/agent-os/overview":
+                    self._send_json(self._scope_agent_projection(collaboration.overview()))
+                elif path == "/api/v1/threads":
+                    self._send_json(collaboration.threads((query.get("limit") or [100])[0]))
+                elif agent_detail:
+                    self._send_json(self._scope_agent_projection(collaboration.agent_detail(agent_detail.group(1))))
+                elif thread_read:
+                    key = urllib.parse.unquote(thread_read.group(1))
+                    self._send_json(collaboration.messages(
+                        key,
+                        (query.get("after_id") or [0])[0],
+                        (query.get("limit") or [100])[0],
+                    ))
+                else:
+                    raise RuntimeRequestError("Method not allowed.", 405)
+                return True
+
+            payload = self._read_agent_os_body()
+            if path == "/api/v1/threads":
+                self._send_json(collaboration.create_thread(payload), 201)
+            elif agent_message:
+                if "from_agent_id" in payload:
+                    raise RuntimeRequestError("Message sender identity comes from the authenticated principal.", 403)
+                key = payload.pop("thread_key", None)
+                self._send_json(collaboration.send_message(key, payload, to_agent_id=agent_message.group(1)), 201)
+            elif thread_messages:
+                if "from_agent_id" in payload:
+                    raise RuntimeRequestError("Message sender identity comes from the authenticated principal.", 403)
+                key = urllib.parse.unquote(thread_messages.group(1))
+                self._send_json(collaboration.send_message(key, payload), 201)
+            elif message_ack:
+                if set(payload) - {"acknowledge"} or not isinstance(payload.get("acknowledge", True), bool):
+                    raise RuntimeRequestError("Message acknowledgement accepts only an optional boolean acknowledge field.")
+                self._send_json(collaboration.acknowledge(message_ack.group(1), acknowledge=payload.get("acknowledge", True)))
+            elif path == "/api/v1/handoffs":
+                if AGENT_OS_PRINCIPAL.agent_id is not None and payload.get("from_agent_id") not in (None, AGENT_OS_PRINCIPAL.agent_id):
+                    raise RuntimeRequestError("Handoff sender identity conflicts with the authenticated principal.", 403)
+                self._send_json(collaboration.create_handoff(payload), 201)
+            elif handoff_action:
+                if AGENT_OS_PRINCIPAL.agent_id is not None and payload.get("actor_agent_id") not in (None, AGENT_OS_PRINCIPAL.agent_id):
+                    raise RuntimeRequestError("Handoff actor identity conflicts with the authenticated principal.", 403)
+                self._send_json(collaboration.advance_handoff(
+                    handoff_action.group(1), handoff_action.group(2), payload
+                ))
+            elif require_charlie and charlie is not None:
+                self._send_json(self._scope_agent_projection(charlie.command(payload)), 201)
+            else:
+                raise RuntimeRequestError("Method not allowed.", 405)
+        except RuntimeRequestError as exc:
+            self._send_json({"error": "agent_os_request_rejected", "message": str(exc)}, exc.status)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json({"error": "invalid_agent_os_request", "message": "Invalid Agent OS request."}, 400)
+        except Exception:
+            self._send_json({
+                "error": "agent_os_unavailable",
+                "message": "Agent OS evidence is unavailable; no action was confirmed.",
+            }, 503)
+        return True
+
     def _runtime_request(self, method: str, path: str, query: dict) -> bool:
+        if self._agent_os_request(method, path, query):
+            return True
         if not path.startswith("/api/v1/"):
             return False
         handled = bool(re.fullmatch(r"/api/v1/(?:agents(?:/\d+/(?:heartbeat|presence))?|workers|tasks(?:/\d+(?:/(?:pause|resume|cancel))?)?|office/(?:snapshot|events/stream))", path))
