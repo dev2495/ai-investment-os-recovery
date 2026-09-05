@@ -494,13 +494,16 @@
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border);
   min-height: 60px;
+  flex-shrink: 0;
 }
 .aios-drawer__body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: var(--space-5);
 }
 .aios-drawer__footer {
+  flex-shrink: 0;
   padding: var(--space-4) var(--space-5);
   border-top: 1px solid var(--border);
   background: var(--surface-soft);

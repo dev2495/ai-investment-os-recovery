@@ -395,6 +395,7 @@ export interface DrawerProps {
   children: React.ReactNode;
 }
 export function Drawer({ open, onClose, title, subtitle, icon: Icon, actions, footer, width, children }: DrawerProps) {
+  const titleId = React.useId();
   if (!open) return null;
   return (
     <>
@@ -404,11 +405,12 @@ export function Drawer({ open, onClose, title, subtitle, icon: Icon, actions, fo
         style={width ? ({ "--evidence-drawer-width": typeof width === "number" ? `${width}px` : width } as React.CSSProperties) : undefined}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
       >
         <header className="aios-drawer__header">
           {Icon && <Icon size={20} />}
           <div style={{ flex: 1, minWidth: 0 }}>
-            {title && <div style={{ fontSize: "var(--text-lg)", fontWeight: "var(--weight-semibold)" }}>{title}</div>}
+            {title && <div id={titleId} style={{ fontSize: "var(--text-lg)", fontWeight: "var(--weight-semibold)" }}>{title}</div>}
             {subtitle && <div className="micro">{subtitle}</div>}
           </div>
           {actions}

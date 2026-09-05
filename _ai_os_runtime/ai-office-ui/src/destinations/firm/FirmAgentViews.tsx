@@ -18,6 +18,7 @@ import { useApproveResearchModelPreflight, useConfigurePublicResearchCanary, use
 import { useUIStore } from "../../store";
 import { text, num, formatRelative, initials, value } from "../../data/liveRow";
 import type { LiveRow } from "../../data/liveRow";
+import { ModelFabricConsole, SystemOperationsConsole } from "./OperatorControlConsole";
 
 /* ============================================================
  * AGENTS VIEW
@@ -649,6 +650,7 @@ export function ModelsView() {
         <MetricTile><Metric label="Canary Receipts" value={canaries.length} /></MetricTile>
         <MetricTile tone={dailyDriver ? "ok" : "warn"}><Metric label="Research Daily Driver" value={dailyDriver ? text(dailyDriver, "default_model") : "Not selected"} /></MetricTile>
       </div>
+      <ModelFabricConsole legacyRoutes={routes} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-4)", alignItems: "start" }}>
         <Panel icon={Cpu} title="Model Routes">
           {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading...</div> : (
@@ -805,6 +807,7 @@ export function SystemView() {
           <Metric label="Stale Sources" value={data?.source_freshness?.filter((r) => text(r, "status").includes("stale")).length ?? 0} />
         </MetricTile>
       </div>
+      <SystemOperationsConsole />
       <Panel icon={Activity} title="Runtime Daemons">
         {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading…</div> : (
           <DataTable
