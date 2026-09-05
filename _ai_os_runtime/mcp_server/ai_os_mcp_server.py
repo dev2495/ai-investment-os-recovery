@@ -6148,7 +6148,213 @@ def charlie_agent_command(arguments: dict) -> dict:
     return tool_result(post_api_json("/api/v1/charlie/commands", payload, timeout=30))
 
 
+def model_fabric_overview(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/v1/model-fabric", timeout=15))
+
+
+def model_fabric_propose(arguments: dict) -> dict:
+    _operator_write(arguments)
+    payload = {
+        key: arguments[key]
+        for key in (
+            "binding_key", "selector_kind", "selector_value", "task_class",
+            "primary_route", "fallback_routes", "fallback_policy",
+            "reasoning_profile", "context_budget", "max_output_tokens",
+            "temperature", "privacy_classes", "required_evaluations",
+        )
+        if key in arguments
+    }
+    payload["confirmed"] = True
+    return tool_result(post_api_json("/api/v1/model-fabric/propose", payload, timeout=30))
+
+
+def model_fabric_qualify(arguments: dict) -> dict:
+    _operator_write(arguments)
+    payload = {
+        "route_name": required_text(arguments, "route_name"),
+        "task_class": required_text(arguments, "task_class"),
+        "confirmed": True,
+    }
+    return tool_result(post_api_json("/api/v1/model-fabric/qualify", payload, timeout=120))
+
+
+def model_fabric_test(arguments: dict) -> dict:
+    _operator_write(arguments)
+    payload = {"version_id": _record_id(arguments, "version_id"), "confirmed": True}
+    return tool_result(post_api_json("/api/v1/model-fabric/test", payload, timeout=120))
+
+
+def model_fabric_control(arguments: dict) -> dict:
+    _operator_write(arguments)
+    action = str(arguments.get("action") or "").strip().lower()
+    if action not in {"promote", "rollback", "disable"}:
+        raise ValueError("action must be promote, rollback, or disable")
+    payload: dict[str, object] = {"confirmed": True}
+    if action in {"promote", "rollback"}:
+        payload["version_id"] = _record_id(arguments, "version_id")
+    if action in {"rollback", "disable"}:
+        payload["binding_key"] = required_text(arguments, "binding_key")
+    if action in {"promote", "rollback"} and arguments.get("approval_id") is not None:
+        payload["approval_id"] = _record_id(arguments, "approval_id")
+    return tool_result(post_api_json(f"/api/v1/model-fabric/{action}", payload, timeout=30))
+
+
+def doctor_overview(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/v1/doctor", timeout=15))
+
+
+def doctor_run(arguments: dict) -> dict:
+    _operator_write(arguments)
+    mode = str(arguments.get("mode") or "scan").strip().lower()
+    if mode not in {"scan", "test"}:
+        raise ValueError("mode must be scan or test")
+    payload = {
+        key: arguments[key]
+        for key in ("component", "agent_key", "model_route", "check_key")
+        if key in arguments
+    }
+    payload.update({"mode": mode, "confirmed": True})
+    return tool_result(post_api_json("/api/v1/doctor/run", payload, timeout=120))
+
+
+def doctor_safe_fix(arguments: dict) -> dict:
+    _operator_write(arguments)
+    check_key = str(arguments.get("check_key") or "").strip()
+    if check_key != "expired_task_leases":
+        raise ValueError("Only the reviewed expired_task_leases safe fix is available")
+    return tool_result(post_api_json(
+        "/api/v1/doctor/fixes", {"check_key": check_key, "confirmed": True}, timeout=30
+    ))
+
+
+def routine_overview(arguments: dict) -> dict:
+    return tool_result(get_api_json("/api/v1/routines", timeout=15))
+
+
+def routine_test(arguments: dict) -> dict:
+    _operator_write(arguments)
+    routine_key = required_text(arguments, "routine_key")
+    return tool_result(post_api_json(
+        f"/api/v1/routines/{urllib.parse.quote(routine_key, safe='')}/test",
+        {"confirmed": True}, timeout=180,
+    ))
+
+
+def routine_control(arguments: dict) -> dict:
+    _operator_write(arguments)
+    routine_key = required_text(arguments, "routine_key")
+    action = str(arguments.get("action") or "").strip().lower()
+    if action not in {"enable", "pause"}:
+        raise ValueError("action must be enable or pause")
+    payload = {"reason": required_text(arguments, "reason"), "confirmed": True}
+    return tool_result(post_api_json(
+        f"/api/v1/routines/{urllib.parse.quote(routine_key, safe='')}/{action}",
+        payload, timeout=30,
+    ))
+
+
 TOOLS = {
+    "ai_os_model_fabric_overview": {
+        "description": "Read governed Model Fabric bindings, qualifications, call receipts, and audit history. This never invokes a provider or grants model, research, client, capital, or broker authority.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "handler": model_fabric_overview,
+    },
+    "ai_os_model_fabric_propose": {
+        "description": "Propose one disabled, immutable Model Fabric binding version after explicit operator confirmation. Promotion and paid-route approval remain separate gates.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "binding_key": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"},
+            "selector_kind": {"type": "string", "enum": ["agent", "role"]},
+            "selector_value": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "task_class": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"},
+            "primary_route": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"},
+            "fallback_routes": {"type": "array", "maxItems": 3, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"}},
+            "fallback_policy": {"type": "string", "enum": ["fail_closed", "explicit_degraded"]},
+            "reasoning_profile": {"type": "string", "enum": ["none", "low", "medium", "high", "xhigh"]},
+            "context_budget": {"type": "integer", "minimum": 256, "maximum": 131072},
+            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 16384},
+            "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+            "privacy_classes": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["public", "internal", "client_private", "restricted"]}},
+            "required_evaluations": {"type": "array", "items": {"type": "string", "enum": ["numeric", "citation", "missing_data", "prompt_injection"]}},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["binding_key", "selector_kind", "selector_value", "task_class", "primary_route", "operator_confirmed"]},
+        "handler": model_fabric_propose,
+    },
+    "ai_os_model_fabric_qualify": {
+        "description": "Run the fixed public, zero-cost local qualification packet for one existing route and task class. Paid or cloud canaries remain refused.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "route_name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"},
+            "task_class": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["route_name", "task_class", "operator_confirmed"]},
+        "handler": model_fabric_qualify,
+    },
+    "ai_os_model_fabric_test": {
+        "description": "Test a proposed binding's primary route using the fixed public local qualification packet. This never promotes the binding.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "version_id": {"type": "integer", "minimum": 1},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["version_id", "operator_confirmed"]},
+        "handler": model_fabric_test,
+    },
+    "ai_os_model_fabric_control": {
+        "description": "Promote, roll back, or disable a governed binding after explicit confirmation. Existing qualification and approval authorities remain mandatory and are not created here.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "action": {"type": "string", "enum": ["promote", "rollback", "disable"]},
+            "binding_key": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,120}$"},
+            "version_id": {"type": "integer", "minimum": 1},
+            "approval_id": {"type": "integer", "minimum": 1},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["action", "operator_confirmed"]},
+        "handler": model_fabric_control,
+    },
+    "ai_os_doctor_overview": {
+        "description": "Read the latest redacted Doctor evidence, check registry, and bounded run history. No probes, fixes, models, external writes, or broker actions are started.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "handler": doctor_overview,
+    },
+    "ai_os_doctor_run": {
+        "description": "Run a bounded read-only Doctor scan or test after explicit confirmation. Baseline capture and safe fixes are separate controls.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "component": {"type": "string", "maxLength": 120},
+            "agent_key": {"type": "string", "maxLength": 120},
+            "model_route": {"type": "string", "maxLength": 120},
+            "check_key": {"type": "string", "maxLength": 120},
+            "mode": {"type": "string", "enum": ["scan", "test"]},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["operator_confirmed"]},
+        "handler": doctor_run,
+    },
+    "ai_os_doctor_safe_fix": {
+        "description": "Apply only the reviewed expired-task-lease release after explicit operator confirmation. No other fix, model, client, research, capital, or broker authority is available.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "check_key": {"type": "string", "const": "expired_task_leases"},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["check_key", "operator_confirmed"]},
+        "handler": doctor_safe_fix,
+    },
+    "ai_os_routine_overview": {
+        "description": "Read five governed routines, their versioned control state, and bounded history. This does not run or enable them.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "handler": routine_overview,
+    },
+    "ai_os_routine_test": {
+        "description": "Run one allowlisted routine in fixture-safe test mode after explicit confirmation. No live schedule, provider call, external write, model authority, or broker action is enabled.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "routine_key": {"type": "string", "enum": ["daily_system_health", "obsidian_incremental_index", "research_company_change_monitor", "stale_task_and_lease_reaper", "zerodha_session_and_stream_watch"]},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["routine_key", "operator_confirmed"]},
+        "handler": routine_test,
+    },
+    "ai_os_routine_control": {
+        "description": "Enable or pause one allowlisted routine after explicit operator confirmation and a recorded reason. Existing workflow schedules remain the only periodic authority.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+            "routine_key": {"type": "string", "enum": ["daily_system_health", "obsidian_incremental_index", "research_company_change_monitor", "stale_task_and_lease_reaper", "zerodha_session_and_stream_watch"]},
+            "action": {"type": "string", "enum": ["enable", "pause"]},
+            "reason": {"type": "string", "minLength": 8, "maxLength": 500},
+            "operator_confirmed": {"type": "boolean", "const": True}
+        }, "required": ["routine_key", "action", "reason", "operator_confirmed"]},
+        "handler": routine_control,
+    },
     "ai_os_agent_os_overview": {
         "description": "Read the principal-scoped Agent OS overview. Live work requires an unexpired lease; this returns no private task bodies, credentials, model calls, research approval, or broker capability.",
         "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}},

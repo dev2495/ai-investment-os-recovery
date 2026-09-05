@@ -26,11 +26,11 @@ except ImportError:
     from agent_runtime_api import RuntimeAPI, RuntimeRequestError, cursor_id, overlay_office_presence, require_worker_auth, stream_events
 
 try:
-    from .agent_charlie import CharlieAPI
+    from .agent_charlie import CharlieAPI, is_phase2_control_command
     from .agent_collaboration import CollaborationAPI
     from .agent_os_policy import Principal
 except ImportError:
-    from agent_charlie import CharlieAPI  # type: ignore
+    from agent_charlie import CharlieAPI, is_phase2_control_command  # type: ignore
     from agent_collaboration import CollaborationAPI  # type: ignore
     from agent_os_policy import Principal  # type: ignore
 
@@ -128,6 +128,24 @@ if str(RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNTIME_ROOT))
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
+
+# Runtime launchd imports this file as a top-level module from the copied
+# service tree. Import the Phase 2 modules through the local ``api`` namespace
+# in that mode so routine_runtime's relative imports keep working.
+try:
+    from .agent_model_fabric import FabricError, ModelFabric
+    from .doctor_runtime import DoctorRuntime
+    from .routine_runtime import ROUTINE_KEYS, RoutineRuntime, canonical_event_hash
+except ImportError:  # Direct script/service execution on the iMac.
+    local_service_root = Path(__file__).resolve().parent.parent
+    if str(local_service_root) not in sys.path:
+        sys.path.insert(0, str(local_service_root))
+    from api.agent_model_fabric import FabricError, ModelFabric  # type: ignore
+    from api.doctor_runtime import DoctorRuntime  # type: ignore
+    from api.routine_runtime import (  # type: ignore
+        ROUTINE_KEYS, RoutineRuntime, canonical_event_hash,
+    )
+
 from governed_pdf_runtime import governed_pdf_python  # noqa: E402
 from services.scanner_engine.service import FundamentalScannerService, ScannerValidationError  # noqa: E402
 
@@ -497,6 +515,159 @@ def run_psql_json_object(
 def run_psql_json_statement(sql: str) -> list[dict]:
     output = run_psql_text(sql)
     return json.loads(output or "[]")
+
+
+def _phase2_rows(sql: str) -> list[dict]:
+    """Run a bounded row projection through the canonical runtime adapter."""
+    return RUNTIME_API.rows(sql)
+
+
+def _phase2_single_statement(sql: str) -> str:
+    """Accept one generated SQL statement; ignore semicolons inside literals."""
+    if not isinstance(sql, str) or not sql.strip() or len(sql) > 262144 or "\x00" in sql:
+        raise RuntimeError("Phase 2 persistence statement is invalid")
+    clean = sql.strip()
+    if clean.endswith(";"):
+        clean = clean[:-1].rstrip()
+    quoted = False
+    offset = 0
+    while offset < len(clean):
+        char = clean[offset]
+        if char == "'":
+            if quoted and offset + 1 < len(clean) and clean[offset + 1] == "'":
+                offset += 2
+                continue
+            quoted = not quoted
+        elif char == ";" and not quoted:
+            raise RuntimeError("Multiple Phase 2 SQL statements are not allowed")
+        offset += 1
+    if quoted:
+        raise RuntimeError("Phase 2 persistence statement has an invalid literal")
+    return clean
+
+
+def _phase2_statement(sql: str) -> list[dict]:
+    """Execute generated Doctor/Routine SQL and return only receipt rows."""
+    clean = _phase2_single_statement(sql)
+    leading = re.sub(r"^(?:\s|/\*.*?\*/)*", "", clean, flags=re.DOTALL).upper()
+    if leading.startswith(("INSERT", "UPDATE", "DELETE")) and not re.search(
+        r"\bRETURNING\b", clean, flags=re.IGNORECASE
+    ):
+        wrapped = f"WITH phase2_write AS ({clean}) SELECT '[]'::text;"
+    else:
+        wrapped = (
+            f"WITH phase2_result AS ({clean}) "
+            "SELECT coalesce(json_agg(row_to_json(phase2_result)),'[]'::json)::text "
+            "FROM phase2_result;"
+        )
+    output = run_psql_text(
+        "SET statement_timeout='10s'; SET lock_timeout='2s'; " + wrapped,
+        timeout_seconds=15,
+    )
+    rows = json.loads(output or "[]")
+    if not isinstance(rows, list):
+        raise RuntimeError("Phase 2 persistence did not return a bounded row list")
+    return rows
+
+
+def _phase2_relations_ready(*relations: str) -> bool:
+    names = ",".join(sql_literal(name) for name in relations)
+    return bool(RUNTIME_API._value(
+        f"SELECT bool_and(to_regclass(name) IS NOT NULL)::text "
+        f"FROM unnest(ARRAY[{names}]) name"
+    ))
+
+
+def _build_doctor_runtime(actor: str) -> DoctorRuntime:
+    try:
+        from ai_os_doctor import probes as doctor_probes
+        configured_probes = doctor_probes()
+    except ImportError:
+        # Missing local probes are unknown evidence, never a healthy result.
+        configured_probes = {}
+    return DoctorRuntime(
+        _phase2_rows, _phase2_statement, probes=configured_probes, actor=actor
+    )
+
+
+def _build_routine_runtime(actor: str) -> RoutineRuntime:
+    command_runner = None
+    artifact_writer = None
+    try:
+        from run_ai_os_routine import run_allowlisted_command, write_artifact
+        command_runner = run_allowlisted_command
+        artifact_writer = write_artifact
+    except ImportError:
+        # The runtime returns a failed receipt if a required local helper is absent.
+        pass
+    return RoutineRuntime(
+        _phase2_rows,
+        _phase2_statement,
+        doctor_factory=lambda: _build_doctor_runtime(actor),
+        command_runner=command_runner,
+        artifact_writer=artifact_writer,
+        actor=actor,
+    )
+
+
+def _doctor_snapshot() -> dict:
+    if not _phase2_relations_ready(
+        "ops.doctor_check_registry", "ops.doctor_runs", "ops.v_doctor_latest"
+    ):
+        return {
+            "available": False, "reason": "doctor_authorities_unavailable",
+            "status": "unavailable", "latest_run": {}, "checks": [],
+            "registry": [], "history": [], "broker_write_allowed": False,
+        }
+    registry = _phase2_rows("""
+        SELECT check_key,component,check_name,description,runner_key,
+               failure_severity,timeout_seconds,safe_fix_key,enabled,configuration
+        FROM ops.doctor_check_registry WHERE enabled ORDER BY component,check_key
+    """)
+    checks = _phase2_rows("""
+        SELECT check_key,check_name,component,status,severity,headline,observed,
+               evidence,actionable_fix,last_known_good_at,observed_at,duration_ms,
+               run_key,mode,run_status,requested_by,broker_write_allowed
+        FROM ops.v_doctor_latest ORDER BY component,check_key LIMIT 100
+    """)
+    history = _phase2_rows("""
+        SELECT id,run_key,mode,status,requested_by,selected_component,
+               selected_agent_key,selected_model_route,check_count,passed_count,
+               warning_count,failed_count,unknown_count,summary,started_at,finished_at,
+               broker_write_allowed,external_write_allowed
+        FROM ops.doctor_runs ORDER BY started_at DESC,id DESC LIMIT 50
+    """)
+    latest = dict(history[0]) if history else {}
+    if latest:
+        latest["checks"] = [row for row in checks if row.get("run_key") == latest.get("run_key")]
+    return {
+        "available": True,
+        "reason": None,
+        "status": latest.get("status") or "not_run",
+        "latest_run": latest,
+        "checks": checks,
+        "registry": registry,
+        "history": history,
+        "broker_write_allowed": False,
+    }
+
+
+def _routine_snapshot(actor: str) -> dict:
+    if not _phase2_relations_ready(
+        "agent.routine_definitions", "agent.routine_runs", "agent.v_routine_control"
+    ):
+        return {
+            "available": False, "reason": "routine_authorities_unavailable",
+            "routines": [], "history": [], "broker_write_allowed": False,
+        }
+    runtime = _build_routine_runtime(actor)
+    return {
+        "available": True,
+        "reason": None,
+        "routines": runtime.list_routines(),
+        "history": runtime.history(limit=100),
+        "broker_write_allowed": False,
+    }
 
 
 def run_research_scoped_json(query: str) -> list[dict]:
@@ -23320,6 +23491,325 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 payload["presence"] = {"state": "UNVERIFIED", "has_live_lease": False}
         return payload
 
+    @staticmethod
+    def _require_internal_phase2(action: str) -> None:
+        AGENT_OS_PRINCIPAL.require(action)
+        if AGENT_OS_PRINCIPAL.scope != "internal":
+            raise RuntimeRequestError(
+                "This global operator surface is not authorized for the current workspace.", 403
+            )
+
+    def _confirmed_phase2_body(self, allowed: set[str]) -> dict:
+        payload = self._read_agent_os_body()
+        if set(payload) - (allowed | {"confirmed"}):
+            raise RuntimeRequestError("Phase 2 request contains unsupported fields.")
+        if payload.pop("confirmed", None) is not True:
+            raise RuntimeRequestError("Explicit operator confirmation is required.", 403)
+        return payload
+
+    def _phase2_operator_request(self, method: str, path: str, query: dict) -> bool:
+        model_action = re.fullmatch(
+            r"/api/v1/model-fabric/(propose|qualify|test|compare|promote|disable|rollback)", path
+        )
+        model_binding_action = re.fullmatch(
+            r"/api/v1/model-bindings/(test|compare|promote|rollback)", path
+        )
+        routine_action = re.fullmatch(
+            r"/api/v1/routines/([^/]+)/(test|enable|pause)", path
+        )
+        read_paths = {
+            "/api/v1/model-fabric", "/api/v1/model-bindings", "/api/v1/doctor",
+            "/api/v1/system/doctor", "/api/v1/routines",
+        }
+        doctor_paths = {"/api/v1/doctor/run", "/api/v1/doctor/fixes"}
+        if path not in read_paths | doctor_paths and not model_action and not model_binding_action and not routine_action:
+            return False
+        try:
+            if query:
+                raise RuntimeRequestError("Phase 2 operator routes do not accept URL parameters.")
+            if method == "GET":
+                if path not in read_paths:
+                    raise RuntimeRequestError("Method not allowed.", 405)
+                self._require_internal_phase2("read")
+                if path in {"/api/v1/model-fabric", "/api/v1/model-bindings"}:
+                    snapshot = ModelFabric(RUNTIME_API.execute).snapshot()
+                    snapshot.setdefault("provider_calls_made", False)
+                    self._send_json(snapshot)
+                elif path in {"/api/v1/doctor", "/api/v1/system/doctor"}:
+                    self._send_json(_doctor_snapshot())
+                else:
+                    self._send_json(_routine_snapshot(AGENT_OS_PRINCIPAL.user_id))
+                return True
+
+            if method != "POST":
+                raise RuntimeRequestError("Method not allowed.", 405)
+            actor = AGENT_OS_PRINCIPAL.user_id
+            if model_action or model_binding_action:
+                action = (model_action or model_binding_action).group(1)
+                required_action = (
+                    "routine_test" if action in {"qualify", "test"}
+                    else "read" if action == "compare" else "control"
+                )
+                self._require_internal_phase2(required_action)
+                fabric = ModelFabric(RUNTIME_API.execute)
+                if action == "propose":
+                    body = self._confirmed_phase2_body({
+                        "binding_key", "selector_kind", "selector_value", "task_class",
+                        "primary_route", "fallback_routes", "fallback_policy",
+                        "reasoning_profile", "context_budget", "max_output_tokens",
+                        "temperature", "privacy_classes", "required_evaluations",
+                    })
+                    result = fabric.propose(body, actor)
+                elif action == "qualify":
+                    body = self._confirmed_phase2_body({"route_name", "task_class"})
+                    result = fabric.qualify(body.get("route_name"), body.get("task_class"), actor)
+                elif action == "test":
+                    body = self._confirmed_phase2_body({"version_id"})
+                    version = fabric._version(body.get("version_id"))
+                    qualification = fabric.qualify(
+                        version.get("primary_route"), version.get("task_class"), actor
+                    )
+                    reasoning_profiles = qualification.get("reasoning_profiles") or []
+                    result = {
+                        "status": qualification.get("state") or "unknown",
+                        "tested_version_id": version.get("id"),
+                        "binding_key": version.get("binding_key"),
+                        "qualification": qualification,
+                        "binding_ready_for_promotion": (
+                            qualification.get("state") == "passed"
+                            and version.get("reasoning_profile") in reasoning_profiles
+                        ),
+                        "promotion_performed": False,
+                        "provider_response_stored": False,
+                        "broker_write_allowed": False,
+                    }
+                elif action == "compare":
+                    body = self._confirmed_phase2_body({"qualification_ids"})
+                    result = fabric.compare(body.get("qualification_ids"))
+                    result.setdefault("provider_calls_made", False)
+                    result.setdefault("promotion_performed", False)
+                    result.setdefault("broker_write_allowed", False)
+                elif action == "promote":
+                    body = self._confirmed_phase2_body({"version_id", "approval_id"})
+                    result = fabric.promote(
+                        body.get("version_id"), actor, approval_id=body.get("approval_id")
+                    )
+                elif action == "rollback":
+                    body = self._confirmed_phase2_body(
+                        {"binding_key", "version_id", "approval_id"}
+                    )
+                    result = fabric.rollback(
+                        body.get("binding_key"), body.get("version_id"), actor,
+                        approval_id=body.get("approval_id"),
+                    )
+                else:
+                    body = self._confirmed_phase2_body({"binding_key"})
+                    result = fabric.disable(body.get("binding_key"), actor)
+                self._send_json(result)
+                return True
+
+            if path in doctor_paths:
+                self._require_internal_phase2("doctor")
+                if not _phase2_relations_ready(
+                    "ops.doctor_check_registry", "ops.doctor_runs", "ops.doctor_check_results"
+                ):
+                    raise RuntimeRequestError(
+                        "Doctor authorities are unavailable; no action was taken.", 503
+                    )
+                doctor = _build_doctor_runtime(actor)
+                if path.endswith("/run"):
+                    body = self._confirmed_phase2_body({
+                        "component", "agent_key", "model_route", "check_key", "mode"
+                    })
+                    mode = body.get("mode", "scan")
+                    if mode not in {"scan", "test"}:
+                        raise RuntimeRequestError(
+                            "HTTP Doctor runs allow only scan or test mode.", 403
+                        )
+                    result = doctor.run(
+                        component=body.get("component"), agent_key=body.get("agent_key"),
+                        model_route=body.get("model_route"), check_key=body.get("check_key"),
+                        mode=mode, persist=True,
+                    )
+                else:
+                    body = self._confirmed_phase2_body({"check_key"})
+                    if body.get("check_key") != "expired_task_leases":
+                        raise RuntimeRequestError(
+                            "Only the reviewed expired-lease safe fix is exposed over HTTP.", 403
+                        )
+                    result = doctor.safe_fix(
+                        check_key="expired_task_leases", confirmed=True
+                    )
+                self._send_json(result)
+                return True
+
+            self._require_internal_phase2(
+                "routine_test" if routine_action.group(2) == "test" else "control"
+            )
+            if not _phase2_relations_ready(
+                "agent.routine_definitions", "agent.routine_runs", "agent.v_routine_control"
+            ):
+                raise RuntimeRequestError(
+                    "Routine authorities are unavailable; no action was taken.", 503
+                )
+            routine_key = urllib.parse.unquote(routine_action.group(1))
+            if routine_key not in ROUTINE_KEYS:
+                raise RuntimeRequestError("Routine is not in the reviewed allowlist.", 404)
+            action = routine_action.group(2)
+            routine = _build_routine_runtime(actor)
+            if action == "test":
+                self._confirmed_phase2_body(set())
+                payload: dict[str, object] = {}
+                trigger = "manual"
+                event_hash = None
+                if routine_key == "research_company_change_monitor":
+                    payload = {
+                        "event_type": "filing",
+                        "source_kind": "fixture_safe_official_filing",
+                        "source_identifier": "fixture:research.corporate_filings:26001",
+                        "exchange": "NSE",
+                        "symbol": "FIXTURE",
+                        "title": "Fixture-safe quarterly filing event",
+                        "effective_at": "2026-09-05T00:00:00Z",
+                        "authorized_stored_source_only": True,
+                    }
+                    trigger = "event"
+                    event_hash = canonical_event_hash(payload)
+                result = routine.run(
+                    routine_key, trigger_kind=trigger, payload=payload,
+                    event_hash=event_hash, test_mode=True, actor=actor,
+                )
+            else:
+                body = self._confirmed_phase2_body({"reason"})
+                result = routine.control(
+                    routine_key, action, confirmed=True,
+                    reason=body.get("reason"), actor=actor,
+                )
+            self._send_json(result)
+        except FabricError as exc:
+            self._send_json({
+                "error": "model_fabric_request_rejected", "code": exc.code,
+                "retryable": exc.retryable, "uncertain": exc.uncertain,
+                "message": "Model Fabric action was not completed.",
+            }, exc.status)
+        except RuntimeRequestError as exc:
+            self._send_json({"error": "agent_os_request_rejected", "message": str(exc)}, exc.status)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json({
+                "error": "invalid_phase2_request", "message": "Invalid Phase 2 operator request."
+            }, 400)
+        except Exception:
+            self._send_json({
+                "error": "phase2_operator_unavailable",
+                "message": "Operator evidence is unavailable; no action was confirmed.",
+            }, 503)
+        return True
+
+    def _charlie_chat_context(self, payload: dict, command: str) -> dict:
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise RuntimeRequestError("Chat metadata must be a bounded object.")
+        context: dict[str, object] = {}
+        task_id = metadata.get("task_id")
+        command_task = re.search(r"\btask\s*#?\s*([1-9][0-9]{0,17})\b", command, re.IGNORECASE)
+        if task_id is None and command_task:
+            task_id = int(command_task.group(1))
+        if task_id is not None:
+            if isinstance(task_id, bool) or not str(task_id).isdigit() or int(task_id) < 1:
+                raise RuntimeRequestError("task_id must be a positive record ID.")
+            task_id = int(task_id)
+            visible = RUNTIME_API._value(
+                f"SELECT EXISTS(SELECT 1 FROM agent.tasks t WHERE t.id={task_id} "
+                f"AND {AGENT_OS_PRINCIPAL.clause('t')})::text"
+            )
+            if not visible:
+                raise RuntimeRequestError("Task was not found in the authorized workspace.", 404)
+            context["task_id"] = task_id
+        case_id = metadata.get("research_case_id")
+        if case_id is not None:
+            if isinstance(case_id, bool) or not str(case_id).isdigit() or int(case_id) < 1:
+                raise RuntimeRequestError("research_case_id must be a positive record ID.")
+            context["research_case_id"] = int(case_id)
+        if metadata.get("confirm_cancel") is True:
+            context["confirm_cancel"] = True
+        return context
+
+    def _durable_charlie_chat(self, payload: dict) -> bool:
+        command = payload.get("message")
+        if not isinstance(command, str) or not is_phase2_control_command(command):
+            return False
+        try:
+            self._require_internal_phase2("plan")
+            if not _phase2_relations_ready(
+                "agent.conversation_threads", "agent.task_handoffs", "agent.charlie_commands"
+            ):
+                raise RuntimeRequestError(
+                    "Durable Charlie authorities are unavailable; no action was taken.", 503
+                )
+            session_key = payload.get("session_key") or "sidebar"
+            if not isinstance(session_key, str) or not 1 <= len(session_key) <= 160:
+                raise RuntimeRequestError("Chat session key must be bounded.")
+            context = self._charlie_chat_context(payload, command)
+            seed = json.dumps(
+                [AGENT_OS_PRINCIPAL.user_id, session_key, command, context],
+                sort_keys=True, separators=(",", ":"),
+            )
+            request_key_value = "chat.phase2." + hashlib.sha256(seed.encode()).hexdigest()[:48]
+            result = CharlieAPI(RUNTIME_API.execute, AGENT_OS_PRINCIPAL).command({
+                "request_key": request_key_value, "command": command, "context": context,
+            })
+            message_parts = [
+                str(result.get("conclusion") or "").strip(),
+                str(result.get("next_action") or "").strip(),
+            ]
+            message = " ".join(part for part in message_parts if part) or str(
+                result.get("understood_objective") or "Charlie recorded the command."
+            )
+            self._send_json({
+                "chat_turn": {
+                    "request_key": request_key_value,
+                    "status": result.get("current_state") or "RECORDED",
+                    "durable_control": True,
+                },
+                "message": message,
+                "assistant_identity": {
+                    "agent_key": "charlie", "display_name": "Charlie",
+                    "evidence_bound": True,
+                },
+                "conversation_mode": "durable_control",
+                "route": {
+                    "route_name": "charlie_durable_control_v1",
+                    "default_provider": "deterministic_local",
+                    "default_model": "none",
+                },
+                "model_status": "not_called",
+                "retrieval_status": "stored_records_only",
+                "retrieval_hits": result.get("sources") or [],
+                "widget_intents": [], "materialization": {}, "dashboard_widgets": [],
+                "agent_jobs": result.get("tasks") or [],
+                "tool_intents": [{
+                    "tool": "charlie_durable_control", "status": result.get("current_state")
+                }],
+                "model_runtime": {
+                    "model_calls": 0, "provider_calls_made": False,
+                    "private_data_egress_allowed": False, "broker_write_allowed": False,
+                },
+                "phase2_control": result,
+                "broker_write_allowed": False,
+            }, 201)
+        except RuntimeRequestError as exc:
+            self._send_json({"error": "agent_os_request_rejected", "message": str(exc)}, exc.status)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self._send_json({
+                "error": "invalid_agent_os_request", "message": "Invalid durable Charlie request."
+            }, 400)
+        except Exception:
+            self._send_json({
+                "error": "agent_os_unavailable",
+                "message": "Durable Charlie evidence is unavailable; no action was confirmed.",
+            }, 503)
+        return True
+
     def _agent_os_request(self, method: str, path: str, query: dict) -> bool:
         agent_detail = re.fullmatch(r"/api/v1/agents/(\d+)", path)
         agent_message = re.fullmatch(r"/api/v1/agents/(\d+)/message", path)
@@ -23414,6 +23904,8 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         return True
 
     def _runtime_request(self, method: str, path: str, query: dict) -> bool:
+        if self._phase2_operator_request(method, path, query):
+            return True
         if self._agent_os_request(method, path, query):
             return True
         if not path.startswith("/api/v1/"):
@@ -24357,6 +24849,8 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(materialize_agent_schedules(payload), 201)
                 return
             if self.path == "/api/chat":
+                if self._durable_charlie_chat(payload):
+                    return
                 self._send_json(chat_with_charlie(payload), 201)
                 return
             self._send_json({"error": "not_found", "path": self.path}, 404)

@@ -9,12 +9,12 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from run_agent_worker_once import psql_json, psql_text, run_once, sql_jsonb, sql_literal
+from run_agent_worker_once import lease_runtime, psql_json, psql_text, run_once, sql_jsonb, sql_literal
 from run_research_case_agent_once import run_once as run_research_case_agent_once
 from governed_pdf_runtime import governed_pdf_python
 
@@ -25,6 +25,10 @@ if str(RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNTIME_ROOT))
 
 from api import graph_control_plane  # noqa: E402
+from api.doctor_runtime import DoctorRuntime  # noqa: E402
+from api.routine_runtime import ROUTINE_KEYS, RoutineRuntime  # noqa: E402
+from ai_os_doctor import probes as doctor_probes  # noqa: E402
+from run_ai_os_routine import run_allowlisted_command, write_artifact  # noqa: E402
 from api.research_monitor_runtime import run_company_research_monitor_once  # noqa: E402
 from api.market_research_workflow import (  # noqa: E402
     build_public_market_evidence_packet,
@@ -84,6 +88,7 @@ def daemon_pass_summary(result: dict[str, Any]) -> dict[str, Any]:
         "messages_processed": result.get("messages_processed", 0),
         "worker_runs": (result.get("worker") or {}).get("count", 0),
         "research_case_model": result.get("research_case_model") or {"status": "idle", "count": 0},
+        "routine_dispatch": result.get("routine_dispatch") or {"status": "idle", "count": 0},
     }
     for key in (
         "ohlcv_aggregation",
@@ -266,6 +271,203 @@ def psql_json_statement(sql: str) -> list[dict[str, Any]]:
     return payload
 
 
+SCHEDULED_ROUTINE_KEYS = frozenset(ROUTINE_KEYS - {"research_company_change_monitor"})
+
+
+def _canonical_due_at(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("materialized routine is missing its canonical due_at")
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("materialized routine due_at must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _scheduled_routine_runtime() -> RoutineRuntime:
+    actor = "Jarvis Agent Daemon"
+    return RoutineRuntime(
+        psql_json,
+        psql_json_statement,
+        doctor_factory=lambda: DoctorRuntime(
+            psql_json, psql_json_statement, probes=doctor_probes(), actor=actor
+        ),
+        command_runner=run_allowlisted_command,
+        artifact_writer=write_artifact,
+        actor=actor,
+    )
+
+
+def _scheduled_routine_candidates(limit: int) -> tuple[str, list[dict[str, Any]]]:
+    try:
+        readiness = psql_json("""
+            SELECT bool_and(to_regclass(relation_name) IS NOT NULL) AS ready
+            FROM unnest(ARRAY[
+              'agent.routine_definitions','agent.routine_versions',
+              'agent.workflow_schedules','agent.workflow_schedule_runs'
+            ]) relation_name
+        """)
+    except Exception:
+        return "blocked", []
+    if not readiness or readiness[0].get("ready") is not True:
+        return "unavailable", []
+    allowed = ",".join(sql_literal(key) for key in sorted(SCHEDULED_ROUTINE_KEYS))
+    try:
+        rows = psql_json(f"""
+            SELECT schedule_run.id AS schedule_run_id,schedule_run.schedule_key,
+                   schedule_run.due_at,schedule_run.task_id,schedule_run.inbox_item_id,
+                   schedule.owner_agent,schedule.skill_key,definition.routine_key,
+                   version.trigger_kind
+            FROM agent.workflow_schedule_runs schedule_run
+            JOIN agent.workflow_schedules schedule
+              ON schedule.schedule_key=schedule_run.schedule_key
+            JOIN agent.routine_definitions definition
+              ON definition.schedule_key=schedule.schedule_key
+            JOIN agent.routine_versions version
+              ON version.routine_key=definition.routine_key
+             AND version.version=definition.current_version
+            JOIN agent.tasks task ON task.id=schedule_run.task_id
+            WHERE schedule_run.status='materialized'
+              AND schedule_run.inbox_item_id IS NOT NULL
+              AND definition.control_state='enabled'
+              AND schedule.enabled=true
+              AND version.trigger_kind='schedule'
+              AND version.skill_key=schedule.skill_key
+              AND definition.routine_key IN ({allowed})
+              AND task.status='queued'
+              AND task.source_kind='workflow_schedule'
+              AND task.source_ref=schedule.schedule_key
+            ORDER BY schedule_run.due_at,schedule_run.id
+            LIMIT {max(1, min(50, int(limit)))}
+        """)
+    except Exception:
+        return "blocked", []
+    return "ready", rows
+
+
+def _record_scheduled_routine_result(
+    candidate: dict[str, Any], result: dict[str, Any], *, failed: bool
+) -> str:
+    run_id = result.get("run_id")
+    run_key = str(result.get("run_key") or "")[:240]
+    routine_status = str(result.get("status") or ("failed" if failed else "unknown"))[:80]
+    if result.get("duplicate_suppressed") is True:
+        schedule_status = "routine_duplicate"
+    elif failed:
+        schedule_status = "routine_failed"
+    elif routine_status == "partial":
+        schedule_status = "routine_partial"
+    else:
+        schedule_status = "routine_completed"
+    evidence = [{
+        "source": "agent.routine_runs",
+        "id": run_id,
+        "run_key": run_key,
+        "status": routine_status,
+        "broker_write_allowed": False,
+    }]
+    inbox_status = "blocked" if failed else "needs_review"
+    recommended = (
+        "Inspect the failed governed routine receipt before any retry."
+        if failed else
+        "Review the governed routine receipt; no model, research, capital, or broker authority was granted."
+    )
+    psql_text(f"""
+        UPDATE agent.workflow_schedule_runs
+        SET status={sql_literal(schedule_status)},
+            evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)}
+        WHERE id={int(candidate['schedule_run_id'])}
+          AND status='materialized';
+        UPDATE agent.inbox_items
+        SET status={sql_literal(inbox_status)},
+            recommended_action={sql_literal(recommended)},
+            evidence=coalesce(evidence,'[]'::jsonb) || {sql_jsonb(evidence)},
+            updated_at=clock_timestamp()
+        WHERE id={int(candidate['inbox_item_id'])}
+          AND task_id={int(candidate['task_id'])};
+    """)
+    return f"agent.routine_runs:{int(run_id)}" if run_id is not None else ""
+
+
+def dispatch_materialized_routine_tasks(limit: int = 10) -> dict[str, Any]:
+    readiness, candidates = _scheduled_routine_candidates(limit)
+    if readiness == "unavailable":
+        return {
+            "status": "unavailable", "reason": "routine_authorities_unavailable",
+            "count": 0, "broker_write_allowed": False,
+        }
+    if readiness == "blocked":
+        return {
+            "status": "blocked", "reason": "routine_dispatch_evidence_unavailable",
+            "count": 0, "broker_write_allowed": False,
+        }
+    if not candidates:
+        return {"status": "idle", "count": 0, "broker_write_allowed": False}
+    try:
+        runtime = lease_runtime()
+    except Exception:
+        runtime = None
+    if runtime is None:
+        return {
+            "status": "blocked", "reason": "lease_runtime_required_for_routine_dispatch",
+            "count": 0, "pending": len(candidates), "broker_write_allowed": False,
+        }
+    routine = _scheduled_routine_runtime()
+    dispatched: list[dict[str, Any]] = []
+    blocked = False
+    for candidate in candidates:
+        try:
+            lease = runtime.claim(int(candidate["task_id"]), str(candidate["owner_agent"]))
+            if lease is None:
+                blocked = True
+                dispatched.append({
+                    "task_id": candidate.get("task_id"),
+                    "routine_key": candidate.get("routine_key"),
+                    "status": "not_claimed",
+                })
+                continue
+            with lease as session:
+                session.checkpoint("routine_dispatch", "ANALYZING", side_effect=True)
+                result = routine.run(
+                    str(candidate["routine_key"]),
+                    trigger_kind="schedule",
+                    payload={"due_at": _canonical_due_at(candidate.get("due_at"))},
+                    actor="Jarvis Agent Daemon",
+                )
+                failed = result.get("status") == "failed"
+                receipt = _record_scheduled_routine_result(candidate, result, failed=failed)
+                if failed:
+                    session.finish("failed")
+                elif not receipt:
+                    raise RuntimeError("routine receipt was not returned")
+                else:
+                    session.finish("needs_review", receipt)
+                dispatched.append({
+                    "task_id": candidate.get("task_id"),
+                    "routine_key": candidate.get("routine_key"),
+                    "routine_run_id": result.get("run_id"),
+                    "status": "failed" if failed else (
+                        "duplicate" if result.get("duplicate_suppressed") else result.get("status")
+                    ),
+                })
+                blocked = blocked or failed
+        except Exception as exc:  # uncertain writes remain lease-blocked for reconciliation
+            blocked = True
+            dispatched.append({
+                "task_id": candidate.get("task_id"),
+                "routine_key": candidate.get("routine_key"),
+                "status": "blocked",
+                "error_type": type(exc).__name__,
+            })
+    return {
+        "status": "blocked" if blocked else "success",
+        "count": sum(item.get("status") not in {"blocked", "not_claimed"} for item in dispatched),
+        "pending_seen": len(candidates),
+        "results": dispatched,
+        "broker_write_allowed": False,
+    }
+
+
 def advance_active_graph_runs(run_limit: int, max_steps: int) -> dict[str, Any]:
     runs = psql_json(
         f"""
@@ -322,7 +524,16 @@ def daemon_pass(
     graph_max_steps: int = 40,
 ) -> dict[str, Any]:
     message_results = process_messages(message_limit)
-    worker_results = run_once(max(1, worker_limit), include_completed)
+    routine_dispatch = dispatch_materialized_routine_tasks(max(1, worker_limit))
+    if routine_dispatch.get("status") == "blocked":
+        # The generic worker must not consume a routine task after an uncertain
+        # or unfenced dispatch. Leave it for receipt-aware reconciliation.
+        worker_results = {
+            "status": "blocked", "count": 0,
+            "reason": "routine_dispatch_requires_reconciliation",
+        }
+    else:
+        worker_results = run_once(max(1, worker_limit), include_completed)
     try:
         research_case_model = run_research_case_agent_once()
     except Exception as exc:  # keep the daemon alive; durable run remains retryable or blocked
@@ -342,6 +553,7 @@ def daemon_pass(
         "messages_processed": len(message_results),
         "message_results": message_results,
         "worker": worker_results,
+        "routine_dispatch": routine_dispatch,
         "research_case_model": research_case_model,
         "company_research_monitor": company_research_monitor,
     }
@@ -931,7 +1143,13 @@ def run_workflow_schedule_materializer(limit: int) -> dict[str, Any]:
     payload = rows[0].get("result") if rows else None
     if not isinstance(payload, dict):
         return {"status": "failed", "error": "workflow schedule materializer returned no result"}
-    return {"status": "success", **payload}
+    routine_dispatch = dispatch_materialized_routine_tasks(limit)
+    status = "degraded" if routine_dispatch.get("status") == "blocked" else "success"
+    return {
+        "status": status,
+        **payload,
+        "routine_dispatch": routine_dispatch,
+    }
 
 
 def run_institutional_options_materializer(limit: int, interval_seconds: int, timeout_seconds: int) -> dict[str, Any]:
@@ -1114,6 +1332,7 @@ def main() -> int:
     daemon_instance_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
     enabled_workloads = {
         "mailbox_worker": True,
+        "routine_dispatch": True,
         "source_freshness": source_freshness_enabled,
         "ohlcv_aggregation": ohlcv_aggregation_enabled,
         "paper_monitor_evaluation": paper_monitor_enabled,
@@ -1363,7 +1582,7 @@ def main() -> int:
         failures = [
             str(payload.get("error") or key)
             for key, payload in result.items()
-            if isinstance(payload, dict) and payload.get("status") == "failed"
+            if isinstance(payload, dict) and payload.get("status") in {"failed", "blocked"}
         ]
         heartbeat_status = "degraded" if failures else "running"
         heartbeat_error = "; ".join(failures)[:2000] if failures else None
