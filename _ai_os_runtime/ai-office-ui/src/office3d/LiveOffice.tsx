@@ -5,12 +5,13 @@ import { useNavigate } from "react-router-dom";
 import * as THREE from "three";
 import { ROOMS, floorY, roomByKey, type RoomDef } from "./officeLayout";
 import { useOfficeSnapshot } from "../data/queries";
-import { useDelegateAgentTask } from "../data/actions";
 import { useUIStore } from "../store";
 import { formatRelative, num, text } from "../data/liveRow";
 import type { LiveRow } from "../data/liveRow";
 import { LiveOfficeCss } from "./LiveOffice.css";
 import { hasLiveLease, runtimePresence, useLeaseClock } from "../data/runtimePresence";
+import { LivingAgentPanel } from "../destinations/firm/LivingAgentPanel";
+import type { LivingAgentContext } from "../destinations/firm/LivingAgentPanel";
 
 const BLOCKED_STATES = ["blocked", "error", "failed", "critical"];
 
@@ -592,7 +593,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   const setAssistantScope = useUIStore((state) => state.setAssistantScope);
   const openEvidence = useUIStore((state) => state.openEvidence);
   const [hoveredRoom, setHoveredRoom] = React.useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = React.useState<LiveRow | null>(null);
+  const [selectedAgentName, setSelectedAgentName] = React.useState<string | null>(null);
   const [errored, setErrored] = React.useState(false);
   const [webglOk, setWebglOk] = React.useState<boolean | null>(null);
   const [renderMode, setRenderMode] = React.useState<OfficeRenderMode>(initialOfficeRenderMode);
@@ -621,6 +622,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   }, [renderMode]);
 
   const agents = React.useMemo(() => mergeAgents(data), [data]);
+  const selectedAgent = agents.find((agent) => text(agent, "agent_name") === selectedAgentName) ?? null;
   const roomAgents = React.useMemo(() => {
     const map = new Map<string, LiveRow[]>();
     for (const room of ROOMS) map.set(room.key, []);
@@ -652,21 +654,13 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   const showStatic = forceStatic || renderMode === "static";
 
   function selectAgent(agent: LiveRow) {
-    setSelectedAgent(agent);
+    setSelectedAgentName(text(agent, "agent_name"));
     focusRoom(agentRoomKey(agent));
   }
 
   function talkToAgent(agent: LiveRow) {
     const name = text(agent, "agent_name");
     setAssistantScope({ agentKey: name, agentName: name });
-  }
-
-  function delegateToAgent(agent: LiveRow) {
-    const name = text(agent, "agent_name");
-    setAssistantScope("charlie");
-    window.dispatchEvent(new CustomEvent("aios:assistant-prefill", {
-      detail: `Delegate a task to ${name}: `,
-    }));
   }
 
   function inspectAgentTask(agent: LiveRow) {
@@ -699,7 +693,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
   function focusFloor(floor: number) {
     const first = ROOMS.find((room) => room.floor === floor);
     if (!first) return;
-    setSelectedAgent(null);
+    setSelectedAgentName(null);
     focusRoom(first.key);
   }
 
@@ -708,7 +702,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     if (target.closest("button, input, select, textarea, a")) return;
     if (event.key === "Escape" || event.key === "Home") {
       event.preventDefault();
-      setSelectedAgent(null);
+      setSelectedAgentName(null);
       focusRoom(null);
       return;
     }
@@ -722,7 +716,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     const current = Math.max(0, ROOMS.findIndex((room) => room.key === cameraTarget.roomKey));
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
     const next = (current + step + ROOMS.length) % ROOMS.length;
-    setSelectedAgent(null);
+    setSelectedAgentName(null);
     focusRoom(ROOMS[next].key);
   }
 
@@ -732,10 +726,11 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     roomAgents,
     selectedRoom: cameraTarget.roomKey,
     selectedAgent,
+    context: data,
     onFocusRoom: focusRoom,
+    onClearAgent: () => setSelectedAgentName(null),
     onSelectAgent: selectAgent,
     onTalk: talkToAgent,
-    onDelegate: delegateToAgent,
     onInspectTask: inspectAgentTask,
     onNavigate: (path: string) => navigate(path),
   };
@@ -767,7 +762,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
             <span className="office-safety-lock">Broker writes locked</span>
           </div>
           <div className="office-spatial-toolbar__controls" aria-label="Office view controls">
-            <button type="button" onClick={() => { setSelectedAgent(null); focusRoom(null); }}>Overview</button>
+            <button type="button" onClick={() => { setSelectedAgentName(null); focusRoom(null); }}>Overview</button>
             <button type="button" onClick={() => focusFloor(-1)}>Infrastructure</button>
             <button type="button" onClick={() => focusFloor(0)}>Dealing floor</button>
             <button type="button" onClick={() => focusFloor(1)}>Mezzanine</button>
@@ -855,7 +850,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
                     selectedAgentName={text(selectedAgent, "agent_name")}
                     onHover={(hovered) => setHoveredRoom(hovered ? room.key : null)}
                     onClick={() => {
-                      setSelectedAgent(null);
+                      setSelectedAgentName(null);
                       focusRoom(room.key);
                     }}
                     onSelectAgent={selectAgent}
@@ -879,6 +874,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
             <OfficeHud
               focusedRoom={cameraTarget.roomKey}
               selectedAgent={selectedAgent}
+              context={data}
               roomAgents={cameraTarget.roomKey ? roomAgents.get(cameraTarget.roomKey) ?? [] : []}
               workingAgents={workingAgents}
               totalAgents={agents.length}
@@ -886,12 +882,11 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
               generatedAt={data?.generated_at ?? ""}
               activity={data?.agent_messages ?? []}
               onBack={() => {
-                setSelectedAgent(null);
+                setSelectedAgentName(null);
                 focusRoom(null);
               }}
-              onClearAgent={() => setSelectedAgent(null)}
+              onClearAgent={() => setSelectedAgentName(null)}
               onTalk={talkToAgent}
-              onDelegate={delegateToAgent}
               onInspectTask={inspectAgentTask}
               onInspectMessage={inspectMessage}
               onNavigate={(path) => navigate(path)}
@@ -920,6 +915,7 @@ function Floor({ floor }: { floor: number }) {
 function OfficeHud({
   focusedRoom,
   selectedAgent,
+  context,
   roomAgents,
   workingAgents,
   totalAgents,
@@ -929,13 +925,13 @@ function OfficeHud({
   onBack,
   onClearAgent,
   onTalk,
-  onDelegate,
   onInspectTask,
   onInspectMessage,
   onNavigate,
 }: {
   focusedRoom: string | null;
   selectedAgent: LiveRow | null;
+  context?: Partial<LivingAgentContext>;
   roomAgents: LiveRow[];
   workingAgents: number;
   totalAgents: number;
@@ -945,44 +941,11 @@ function OfficeHud({
   onBack: () => void;
   onClearAgent: () => void;
   onTalk: (agent: LiveRow) => void;
-  onDelegate: (agent: LiveRow) => void;
   onInspectTask: (agent: LiveRow) => void;
   onInspectMessage: (message: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
-  const delegateTask = useDelegateAgentTask();
-  const pushToast = useUIStore((state) => state.pushToast);
-  const [showDelegate, setShowDelegate] = React.useState(false);
-  const [delegateObjective, setDelegateObjective] = React.useState("");
   const room = focusedRoom ? roomByKey(focusedRoom) : null;
-  React.useEffect(() => {
-    setShowDelegate(false);
-    setDelegateObjective("");
-  }, [selectedAgent]);
-
-  function submitDelegation() {
-    if (!selectedAgent || !delegateObjective.trim()) return;
-    const agentName = text(selectedAgent, "agent_name");
-    delegateTask.mutate({
-      to_agent: agentName,
-      objective: delegateObjective.trim(),
-      priority: "high",
-      workspace: agentRoomKey(selectedAgent),
-      actor: "Devarsh",
-    }, {
-      onSuccess: (result) => {
-        pushToast({
-          title: `Task queued to ${agentName}`,
-          message: `Task #${num(result, "task_id")} is durable and visible in the office.`,
-          tone: "ok",
-          duration: 5000,
-        });
-        setShowDelegate(false);
-        setDelegateObjective("");
-      },
-      onError: (error) => pushToast({ title: "Delegation failed", message: error.message, tone: "risk", duration: 6000 }),
-    });
-  }
   return (
     <div className="office-hud">
       <div className="office-hud__top">
@@ -1018,55 +981,15 @@ function OfficeHud({
       </div>
       <div className="office-hud__bottom">
         {selectedAgent ? (
-          <div className="office-hud__agent-card">
-            <div className="office-hud__agent-head">
-              <div>
-                <strong>{text(selectedAgent, "agent_name")}</strong>
-                <span>{text(selectedAgent, "display_title", text(selectedAgent, "role_scope"))}</span>
-              </div>
-              <span className={`office-hud__state ${isBlocked(selectedAgent) ? "is-blocked" : isBusy(selectedAgent) ? "is-working" : "is-idle"}`}>
-                {liveState(selectedAgent).replace(/_/g, " ")}
-              </span>
-            </div>
-            <div className="office-hud__work">
-              <b>{text(selectedAgent, "presence_title", "Available for assignment")}</b>
-              <span>{text(selectedAgent, "presence_detail", text(selectedAgent, "presence_reason", "No fresh assignment."))}</span>
-            </div>
-            <div className="office-hud__agent-facts">
-              <span>Tasks <b>{num(selectedAgent, "open_task_count")}</b></span>
-              <span>Inbox <b>{num(selectedAgent, "open_inbox_count")}</b></span>
-              <span>Model <b>{text(selectedAgent, "latest_worker_skill_name", text(selectedAgent, "default_model_route", "route-managed"))}</b></span>
-            </div>
-            <div className="office-hud__room-actions">
-              <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
-              <button className="office-hud__btn" onClick={() => setShowDelegate((open) => !open)}>Delegate task</button>
-              {isOfficeRedacted(selectedAgent) ? (
-                room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open private workspace</button>
-              ) : num(selectedAgent, "current_task_id") > 0 ? (
-                <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>
-              ) : null}
-              {room?.link && <button className="office-hud__btn" onClick={() => onNavigate(room.link!)}>Open department</button>}
-              <button className="office-hud__btn" onClick={onClearAgent}>Close employee</button>
-            </div>
-            {showDelegate && (
-              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                <textarea
-                  aria-label={`Assignment for ${text(selectedAgent, "agent_name")}`}
-                  value={delegateObjective}
-                  onChange={(event) => setDelegateObjective(event.target.value)}
-                  placeholder="State the exact deliverable, evidence required, deadline or review gate."
-                  rows={3}
-                  style={{ width: "100%", resize: "vertical", background: "rgba(5,10,12,.88)", color: "#f5f7f6", border: "1px solid rgba(255,255,255,.2)", padding: 10, font: "inherit" }}
-                />
-                <div className="office-hud__room-actions">
-                  <button className="office-hud__btn office-hud__btn--primary" disabled={!delegateObjective.trim() || delegateTask.isPending} onClick={submitDelegation}>
-                    {delegateTask.isPending ? "Queuing…" : "Queue assignment"}
-                  </button>
-                  <button className="office-hud__btn" onClick={() => setShowDelegate(false)}>Cancel</button>
-                </div>
-              </div>
-            )}
-          </div>
+          <LivingAgentPanel
+            agent={selectedAgent}
+            context={context}
+            variant="overlay"
+            onClose={onClearAgent}
+            onTalk={onTalk}
+            onInspectTask={onInspectTask}
+            onOpenWorkspace={room?.link ? () => onNavigate(room.link!) : undefined}
+          />
         ) : room ? (
           <div className="office-hud__room-card">
             <div className="office-hud__room-name">{room.label}</div>
@@ -1098,10 +1021,11 @@ function OfficeFallback({
   roomAgents,
   selectedRoom,
   selectedAgent,
+  context,
   onFocusRoom,
+  onClearAgent,
   onSelectAgent,
   onTalk,
-  onDelegate,
   onInspectTask,
   onNavigate,
 }: {
@@ -1110,10 +1034,11 @@ function OfficeFallback({
   roomAgents: Map<string, LiveRow[]>;
   selectedRoom: string | null;
   selectedAgent: LiveRow | null;
+  context?: Partial<LivingAgentContext>;
   onFocusRoom: (key: string | null) => void;
+  onClearAgent: () => void;
   onSelectAgent: (agent: LiveRow) => void;
   onTalk: (agent: LiveRow) => void;
-  onDelegate: (agent: LiveRow) => void;
   onInspectTask: (agent: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
@@ -1125,22 +1050,15 @@ function OfficeFallback({
         <div className="office-fallback__title">AI Investment Firm · Live Floor Plan</div>
         <div className="office-fallback__sub">{agents.length} employees across {ROOMS.filter((room) => room.key !== "lobby" && room.key !== "committee").length} departments</div>
         {selectedAgent && (
-          <section className="office-fallback__selected">
-            <div>
-              <strong>{text(selectedAgent, "agent_name")}</strong>
-              <span>{text(selectedAgent, "display_title", text(selectedAgent, "role_scope"))}</span>
-              <b>{text(selectedAgent, "current_work_title", text(selectedAgent, "current_task_title", "No active assignment"))}</b>
-              <small>{text(selectedAgent, "current_work_detail", text(selectedAgent, "latest_worker_summary", "No worker output recorded."))}</small>
-            </div>
-            <div className="office-hud__room-actions">
-              <button className="office-hud__btn office-hud__btn--primary" onClick={() => onTalk(selectedAgent)}>Talk</button>
-              <button className="office-hud__btn" onClick={() => onDelegate(selectedAgent)}>Delegate task</button>
-              {isOfficeRedacted(selectedAgent)
-                ? selectedRoomDefinition?.link && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open private workspace</button>
-                : num(selectedAgent, "current_task_id") > 0 && <button className="office-hud__btn" onClick={() => onInspectTask(selectedAgent)}>Inspect task</button>}
-              {selectedRoomDefinition?.link && !isOfficeRedacted(selectedAgent) && <button className="office-hud__btn" onClick={() => onNavigate(selectedRoomDefinition.link!)}>Open accepted workspace</button>}
-            </div>
-          </section>
+          <LivingAgentPanel
+            agent={selectedAgent}
+            context={context}
+            lowPower
+            onClose={onClearAgent}
+            onTalk={onTalk}
+            onInspectTask={onInspectTask}
+            onOpenWorkspace={selectedRoomDefinition?.link ? () => onNavigate(selectedRoomDefinition.link!) : undefined}
+          />
         )}
         <div className="office-fallback__grid">
           {ROOMS.map((room) => {

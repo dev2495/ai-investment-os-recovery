@@ -32,6 +32,7 @@ import type { LiveRow } from "../../data/liveRow";
 import { useUIStore } from "../../store";
 import { hasLiveLease, runtimePresence, useLeaseClock } from "../../data/runtimePresence";
 import { RuntimeControlPanel } from "./RuntimeControlPanel";
+import { LivingAgentPanel } from "./LivingAgentPanel";
 
 const LiveOffice = React.lazy(() => import("../../office3d/LiveOffice").then((module) => ({ default: module.LiveOffice })));
 
@@ -66,6 +67,7 @@ export function OfficeView() {
   const operability = useRunOfficeOperabilityAcceptance();
   const [department, setDepartment] = React.useState("all");
   const [search, setSearch] = React.useState("");
+  const [selectedAgentName, setSelectedAgentName] = React.useState<string | null>(null);
 
   if (error) {
     return (
@@ -78,6 +80,7 @@ export function OfficeView() {
   }
 
   const employees = mergedEmployees(data);
+  const selectedAgent = employees.find((row) => text(row, "agent_name") === selectedAgentName) ?? null;
   const departments = [...new Set(employees.map(employeeDepartment).filter(Boolean))].sort();
   const filtered = employees.filter((employee) => {
     const matchesDepartment = department === "all" || employeeDepartment(employee) === department;
@@ -111,6 +114,27 @@ export function OfficeView() {
       }),
       onError: (failure) => pushToast({ title: "Operability check failed", message: failure.message, tone: "risk", duration: 6500 }),
     });
+  }
+
+  function talkToAgent(agent: LiveRow) {
+    const name = text(agent, "agent_name");
+    setAssistantScope({ agentKey: name, agentName: name });
+  }
+
+  function inspectAgentTask(agent: LiveRow) {
+    const taskId = num(agent, "current_task_id");
+    if (!taskId) return;
+    openEvidence({
+      kind: "task",
+      key: String(taskId),
+      title: text(agent, "current_task_title", "Task " + taskId),
+      subtitle: text(agent, "agent_name") + " · current assignment",
+    });
+  }
+
+  function selectAgent(agent: LiveRow) {
+    setSelectedAgentName(text(agent, "agent_name"));
+    focusRoom(text(agent, "department_key", text(agent, "department")));
   }
 
   return (
@@ -295,9 +319,9 @@ export function OfficeView() {
                   <button
                     onClick={(event) => {
                       event.stopPropagation();
-                      const name = text(row, "agent_name");
-                      setAssistantScope({ agentKey: name, agentName: name });
+                      selectAgent(row);
                     }}
+                    aria-label={"Inspect " + text(row, "agent_name")}
                     style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--accent)", background: "none", border: 0, cursor: "pointer", textAlign: "left" }}
                   >
                     <span style={{ width: 28, height: 28, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", background: "var(--accent-soft)", fontSize: "var(--text-xs)", fontWeight: 650 }}>{initials(text(row, "agent_name"))}</span>
@@ -314,10 +338,20 @@ export function OfficeView() {
             ]}
             rows={filtered}
             rowKey={(row, index) => text(row, "agent_name", `employee-${index}`)}
-            onRowClick={(row) => focusRoom(text(row, "department_key", text(row, "department")))}
+            onRowClick={selectAgent}
           />
         )}
       </Panel>
+
+      {selectedAgent && (
+        <LivingAgentPanel
+          agent={selectedAgent}
+          context={data}
+          onClose={() => setSelectedAgentName(null)}
+          onTalk={talkToAgent}
+          onInspectTask={inspectAgentTask}
+        />
+      )}
 
       <Panel icon={Inbox} title="Latest Inter-Agent Handoffs" actions={<Badge>{messages.length}</Badge>}>
         {messages.length === 0 ? (

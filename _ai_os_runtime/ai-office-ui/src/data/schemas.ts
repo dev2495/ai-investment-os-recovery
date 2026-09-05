@@ -594,9 +594,42 @@ export const OfficeSnapshotSchema = z.object({
   graph_runs: z.array(liveRow).optional().default([]),
   graph_node_runs: z.array(liveRow).optional().default([]),
   graph_attention: z.array(liveRow).optional().default([]),
+  // Forward-compatible detail collections for the shared 2D/3D agent inspector.
+  // Older servers omit these; the UI says "Not recorded" instead of borrowing
+  // unrelated rows or inventing activity.
+  task_steps: z.array(liveRow).optional().default([]),
+  agent_handoffs: z.array(liveRow).optional().default([]),
+  agent_sources: z.array(liveRow).optional().default([]),
+  agent_artifacts: z.array(liveRow).optional().default([]),
+  agent_model_calls: z.array(liveRow).optional().default([]),
+  agent_tool_calls: z.array(liveRow).optional().default([]),
+  agent_approvals: z.array(liveRow).optional().default([]),
+  agent_incidents: z.array(liveRow).optional().default([]),
+  agent_routines: z.array(liveRow).optional().default([]),
+  agent_scorecards: z.array(liveRow).optional().default([]),
 }).passthrough();
 
 export type OfficeSnapshot = z.infer<typeof OfficeSnapshotSchema>;
+
+/** Typed contract for a future bounded per-agent detail endpoint. */
+export const OfficeAgentInspectorSchema = z.object({
+  generated_at: z.string(),
+  agent: liveRow,
+  task: liveRow.optional().default({}),
+  steps: z.array(liveRow).default([]),
+  messages: z.array(liveRow).default([]),
+  handoffs: z.array(liveRow).default([]),
+  sources: z.array(liveRow).default([]),
+  artifacts: z.array(liveRow).default([]),
+  model_calls: z.array(liveRow).default([]),
+  tool_calls: z.array(liveRow).default([]),
+  approvals: z.array(liveRow).default([]),
+  incidents: z.array(liveRow).default([]),
+  routines: z.array(liveRow).default([]),
+  scorecard: liveRow.optional().default({}),
+}).passthrough();
+
+export type OfficeAgentInspector = z.infer<typeof OfficeAgentInspectorSchema>;
 
 /* ============================================================
  * Evidence

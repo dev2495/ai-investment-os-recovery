@@ -118,6 +118,8 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         office_view = (runtime_root / "ai-office-ui" / "src" / "destinations" / "firm" / "OfficeView.tsx").read_text(encoding="utf-8")
         live_office = (runtime_root / "ai-office-ui" / "src" / "office3d" / "LiveOffice.tsx").read_text(encoding="utf-8")
         live_office_css = (runtime_root / "ai-office-ui" / "src" / "office3d" / "LiveOffice.css.ts").read_text(encoding="utf-8")
+        agent_panel = (runtime_root / "ai-office-ui" / "src" / "destinations" / "firm" / "LivingAgentPanel.tsx").read_text(encoding="utf-8")
+        agent_panel_css = (runtime_root / "ai-office-ui" / "src" / "destinations" / "firm" / "LivingAgentPanel.css.ts").read_text(encoding="utf-8")
 
         for source in (office_view, live_office):
             self.assertIn("hasLiveLease", source)
@@ -128,11 +130,15 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertIn("leftLegRef", live_office)
         self.assertIn('activity={data?.agent_messages ?? []}', live_office)
         self.assertIn("Latest inter-agent handoffs", live_office)
-        self.assertIn("Delegate task", live_office)
-        self.assertIn("Inspect task", live_office)
-        self.assertIn("aios:assistant-prefill", live_office)
+        for source in (office_view, live_office):
+            self.assertIn("LivingAgentPanel", source)
+        self.assertIn("Delegate task", agent_panel)
+        self.assertIn("Inspect task", agent_panel)
         self.assertIn('kind: "task"', live_office)
         self.assertIn("selectedAgent={selectedAgent}", live_office)
+        self.assertIn("Not recorded", agent_panel)
+        self.assertIn("data-low-power", agent_panel)
+        self.assertIn("prefers-reduced-motion: reduce", agent_panel_css)
         self.assertIn("function agentRoomKey", live_office)
         self.assertIn('return roomByKey(department) ? department : "lobby"', live_office)
         self.assertIn(".office-fallback__selected", live_office_css)
