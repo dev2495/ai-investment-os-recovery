@@ -115,6 +115,11 @@ def database():
         extension = (SQL_ROOT / name).read_text()
         execute(extension)
         execute(extension)
+    # Production intentionally boots fail-closed. This disposable fixture opts
+    # into claim execution explicitly so ownership, fencing, and replay tests
+    # exercise the runtime without weakening the installed default.
+    execute("UPDATE agent.runtime_settings SET claim_mode='enabled' WHERE singleton")
+    assert execute("SELECT claim_mode FROM agent.runtime_settings WHERE singleton") == "enabled"
     yield execute, test_dsn
     assert re.fullmatch(r"phase2_test_[a-f0-9]{32}", dbname)
     admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(dbname)))
