@@ -52,9 +52,16 @@ def fence_sql(sql: str) -> str:
 
 
 class AgentRuntime:
-    def __init__(self, execute: Callable[[str], str], *, worker_id: str | None = None):
+    def __init__(self, execute: Callable[[str], str], *, worker_id: str | None = None,
+                 supported_task_classes: tuple[str, ...] = ("general",), supported_tools: tuple[str, ...] = ()):
         self.execute = execute
         self.worker_id = str(UUID(worker_id)) if worker_id else str(uuid4())
+        if not supported_task_classes or any(not isinstance(value, str) or not value.replace("_", "").isalnum() for value in supported_task_classes):
+            raise ValueError("supported task classes must be bounded internal identifiers")
+        if any(not isinstance(value, str) or len(value) > 100 for value in supported_tools):
+            raise ValueError("supported tools must be bounded internal identifiers")
+        self.supported_task_classes = tuple(dict.fromkeys(supported_task_classes))
+        self.supported_tools = tuple(dict.fromkeys(supported_tools))
         self.registered = False
 
     def _call(self, name: str, *args: object) -> dict:
@@ -70,6 +77,15 @@ class AgentRuntime:
 
     def register(self) -> dict:
         result = self._call("register_runtime_worker", self.worker_id, socket.gethostname(), os.getpid(), RUNTIME_VERSION, 1)
+        has_capability_config = self.execute(
+            "SELECT (to_regprocedure('agent.configure_runtime_worker(uuid,text[],text[])') IS NOT NULL)::text;"
+        ).strip() == "true"
+        if has_capability_config:
+            classes = "{" + ",".join(self.supported_task_classes) + "}"
+            tools = "{" + ",".join(self.supported_tools) + "}"
+            result.update(self._call("configure_runtime_worker", self.worker_id, classes, tools))
+        elif self.supported_task_classes != ("general",) or self.supported_tools:
+            raise RuntimeError("worker capability migration is required for non-default task classes or tools")
         self.registered = True
         return result
 
