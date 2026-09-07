@@ -280,7 +280,9 @@ class CollaborationAPI(RuntimeAPI):
     def handoffs(self) -> list:
         self.principal.require("read")
         return self.rows(f"""SELECT h.id,h.thread_key,h.parent_task_id,h.child_task_id,h.from_agent_id,h.to_agent_id,
-            h.state,h.updated_at,r.recovery_action FROM agent.task_handoffs h
+            h.state,h.created_at,h.updated_at,r.recovery_action,
+            (SELECT agent_name FROM agent.profiles WHERE id=h.from_agent_id) AS from_agent,
+            (SELECT agent_name FROM agent.profiles WHERE id=h.to_agent_id) AS to_agent FROM agent.task_handoffs h
             LEFT JOIN agent.v_handoff_recovery r ON r.id=h.id WHERE {self.principal.clause('h')}
             ORDER BY h.updated_at DESC LIMIT 100""")
 
