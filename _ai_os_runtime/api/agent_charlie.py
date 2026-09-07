@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 
 try:
     from .agent_collaboration import CollaborationAPI, _json
@@ -56,6 +57,25 @@ def is_phase2_control_command(command: str) -> bool:
         " local research route " in tokens and " red team " in tokens,
     )
     return any(checks)
+
+
+def roster_summary(overview: dict) -> str:
+    agents = overview.get("agents", [])
+    tasks = {row["id"]: row for row in overview.get("tasks", [])}
+    states = Counter(str(row.get("state") or "UNVERIFIED") for row in agents)
+    live = sum(row.get("has_live_lease") is True for row in agents)
+    lines = [f"{len(agents)} registered agents; {live} have live worker leases.",
+             "Recorded states: " + (", ".join(f"{count} {state.lower()}" for state, count in sorted(states.items())) or "none"),
+             f"Observed at {overview.get('generated_at') or 'timestamp unavailable'}."]
+    ordered = sorted(agents, key=lambda row: (row.get("has_live_lease") is not True, str(row.get("agent_name") or "")))
+    for row in ordered[:20]:
+        state = str(row.get("state") or "UNVERIFIED")
+        task = tasks.get(row.get("task_id"))
+        detail = f"task #{task['id']} · {task.get('task_class') or task.get('runtime_state') or task.get('status') or 'state unavailable'}" if task else "no visible current task"
+        lines.append(f"• {row.get('agent_name') or 'Unnamed agent'} — {state.lower()} · {detail}")
+    if len(agents) > 20:
+        lines.append(f"Showing 20 of {len(agents)} agents, with live leases first. Open the Office for the complete roster.")
+    return "\n".join(lines)
 
 
 class CharlieAPI:
@@ -324,8 +344,9 @@ class CharlieAPI:
             response = self._response(
                 understood_objective="Show current evidence-backed agent runtime state.", current_state="OBSERVED",
                 agents=overview["agents"], tasks=overview["tasks"],
-                conclusion="Presence is shown only for healthy workers with unexpired leases.",
-                next_action="Open an agent to inspect its lease, task, handoffs and policy snapshot.",
+                conclusion=roster_summary(overview),
+                view="office",
+                next_action="Open the Office to inspect each agent's lease, task, handoffs and policy snapshot.",
             )
             return self._record(request, command, "show_live_agents", "APPLIED", response)
 

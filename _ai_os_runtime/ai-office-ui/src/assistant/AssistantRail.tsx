@@ -318,6 +318,9 @@ export function AssistantRail() {
           for (const intent of data.tool_intents ?? []) {
             const toolName = text(intent, "tool", text(intent, "tool_name", text(intent, "name", "")));
             const reason = text(intent, "reason", text(intent, "description", ""));
+            if (toolName === "charlie_durable_control" && text(intent, "view") === "office") {
+              actions.push({ id: `office-${Date.now()}`, kind: "navigate", label: "Open live Office roster", description: "Inspect all registered agents, task evidence and current lease state.", payload: { path: "/firm/office" } });
+            }
             if (toolName === "propose_research_case") {
               const rawResult = intent.result && typeof intent.result === "object" ? intent.result as Record<string, unknown> : {};
               const caseRow = rawResult.research_case && typeof rawResult.research_case === "object" ? rawResult.research_case as Record<string, unknown> : {};

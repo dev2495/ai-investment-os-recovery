@@ -130,7 +130,8 @@ test("Charlie opens by keyboard and returns a tracked durable-job entry without 
         route: { route_name: "local_reasoning" },
         model_status: "completed",
         retrieval_status: "not_requested",
-        retrieval_hits: [], widget_intents: [], dashboard_widgets: [], tool_intents: [],
+        retrieval_hits: [], widget_intents: [], dashboard_widgets: [],
+        tool_intents: [{ tool: "charlie_durable_control", status: "OBSERVED", view: "office" }],
         agent_jobs: [{ agent_key: "Asha", task_name: "Verify lease recovery" }],
         phase2_control: { action: "inspect", status: "recorded" },
       }),
@@ -155,6 +156,9 @@ test("Charlie opens by keyboard and returns a tracked durable-job entry without 
   await expect(assistant.getByText("I queued the durable replay check.")).toBeVisible();
   await expect(assistant.getByRole("button", { name: "Track Asha" })).toBeVisible();
   expect(chatPosts).toBe(1);
+  await expect(assistant.getByRole("button", { name: "Open live Office roster" })).toBeVisible();
+  await assistant.getByRole("button", { name: "Open live Office roster" }).click();
+  await expect(page).toHaveURL(/\/firm\/office/);
 });
 
 test("mobile reduced-motion Office stays keyboard-operable without horizontal overflow", async ({ page }) => {

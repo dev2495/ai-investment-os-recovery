@@ -23816,6 +23816,10 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 [AGENT_OS_PRINCIPAL.user_id, session_key, command, context],
                 sort_keys=True, separators=(",", ":"),
             )
+            roster_tokens = " " + re.sub(r"[^a-z0-9]+", " ", command.lower()).strip() + " "
+            if " every live agent " in roster_tokens or " what each is doing " in roster_tokens:
+                # Read-only observations must reflect this request, not replay an old snapshot.
+                seed += secrets.token_hex(16)
             request_key_value = "chat.phase2." + hashlib.sha256(seed.encode()).hexdigest()[:48]
             result = CharlieAPI(RUNTIME_API.execute, AGENT_OS_PRINCIPAL).command({
                 "request_key": request_key_value, "command": command, "context": context,
@@ -23848,9 +23852,10 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 "retrieval_status": "stored_records_only",
                 "retrieval_hits": result.get("sources") or [],
                 "widget_intents": [], "materialization": {}, "dashboard_widgets": [],
-                "agent_jobs": result.get("tasks") or [],
+                "agent_jobs": [] if result.get("current_state") == "OBSERVED" else result.get("tasks") or [],
                 "tool_intents": [{
-                    "tool": "charlie_durable_control", "status": result.get("current_state")
+                    "tool": "charlie_durable_control", "status": result.get("current_state"),
+                    "view": result.get("view")
                 }],
                 "model_runtime": {
                     "model_calls": 0, "provider_calls_made": False,

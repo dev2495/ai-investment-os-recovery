@@ -301,9 +301,9 @@ def test_sidebar_chat_routes_only_classified_phase2_commands_to_durable_charlie(
     assert first_status == second_status == 201
     assert first["conversation_mode"] == "durable_control"
     assert first["model_runtime"]["model_calls"] == 0
-    assert first["chat_turn"]["request_key"] == second["chat_turn"]["request_key"]
+    assert first["chat_turn"]["request_key"] != second["chat_turn"]["request_key"]
     assert FakeCharlie.calls[0]["context"] == {"research_case_id": 12}
-    assert FakeCharlie.calls[0]["request_key"] == FakeCharlie.calls[1]["request_key"]
+    assert FakeCharlie.calls[0]["request_key"] != FakeCharlie.calls[1]["request_key"]
 
     class RefusingCharlie(FakeCharlie):
         def command(self, _payload):
