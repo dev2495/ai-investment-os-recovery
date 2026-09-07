@@ -267,6 +267,23 @@ class CollaborationAPI(RuntimeAPI):
         return {"agent": agent, "presence": presence[0] if presence else {"state": "OFFLINE", "has_live_lease": False},
                 "tasks": tasks, "handoffs": handoffs, "broker_write_allowed": False}
 
+    def redirect_task(self, task_id, payload: dict) -> dict:
+        self.principal.require("control")
+        task_id = positive_id(task_id)
+        if not isinstance(payload, dict) or set(payload) - {"objective", "source_policy"} or payload.get("source_policy") != "primary_only":
+            raise RuntimeRequestError("Redirect requires an objective and primary_only source policy.")
+        objective = safe_text(payload.get("objective"), 4000)
+        if not self.rows(f"SELECT id FROM agent.tasks t WHERE id={task_id} AND {self.principal.clause('t')}"):
+            raise RuntimeRequestError("Task not found in the authorized workspace.", 404)
+        return self._value(f"SELECT agent.redirect_runtime_task({task_id},{literal(self.principal.user_id)},{literal(objective)},'{{\"source_policy\":\"primary_only\"}}'::jsonb)::text;")
+
+    def handoffs(self) -> list:
+        self.principal.require("read")
+        return self.rows(f"""SELECT h.id,h.thread_key,h.parent_task_id,h.child_task_id,h.from_agent_id,h.to_agent_id,
+            h.state,h.updated_at,r.recovery_action FROM agent.task_handoffs h
+            LEFT JOIN agent.v_handoff_recovery r ON r.id=h.id WHERE {self.principal.clause('h')}
+            ORDER BY h.updated_at DESC LIMIT 100""")
+
     def overview(self) -> dict:
         self.principal.require("read")
         agents = self.rows("""SELECT p.id,p.agent_key,p.agent_name,p.display_title,p.department,p.status,

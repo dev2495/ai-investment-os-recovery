@@ -1097,6 +1097,11 @@ def build_office_snapshot() -> dict:
         runtime = RUNTIME_API.snapshot()
     except Exception:
         runtime = {"available": False, "reason": "runtime_unavailable", "agents": [], "workers": [], "tasks": [], "events": [], "event_cursor": 0, "broker_write_allowed": False}
+    try:
+        snapshot["agent_handoffs"] = CollaborationAPI(RUNTIME_API.execute, Principal()).handoffs()
+    except Exception:
+        snapshot["agent_handoffs"] = []
+        snapshot["issues"].append("handoff_projection_unavailable")
     return overlay_office_presence(snapshot, runtime)
 
 
@@ -23811,6 +23816,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
         return True
 
     def _agent_os_request(self, method: str, path: str, query: dict) -> bool:
+        task_redirect = re.fullmatch(r"/api/v1/tasks/(\d+)/redirect", path)
         agent_detail = re.fullmatch(r"/api/v1/agents/(\d+)", path)
         agent_message = re.fullmatch(r"/api/v1/agents/(\d+)/message", path)
         thread_read = re.fullmatch(r"/api/v1/threads/([^/]+)", path)
@@ -23824,7 +23830,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
             "/api/v1/agent-os/overview", "/api/v1/threads", "/api/v1/handoffs",
             "/api/v1/charlie/commands",
         }
-        if not any((agent_detail, agent_message, thread_read, thread_messages, message_ack, handoff_action)) and path not in collaboration_paths:
+        if not any((task_redirect, agent_detail, agent_message, thread_read, thread_messages, message_ack, handoff_action)) and path not in collaboration_paths:
             return False
         try:
             if any("token" in key.lower() or "credential" in key.lower() for key in query):
@@ -23862,7 +23868,9 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 return True
 
             payload = self._read_agent_os_body()
-            if path == "/api/v1/threads":
+            if task_redirect:
+                self._send_json(collaboration.redirect_task(task_redirect.group(1), payload))
+            elif path == "/api/v1/threads":
                 self._send_json(collaboration.create_thread(payload), 201)
             elif agent_message:
                 if "from_agent_id" in payload:
