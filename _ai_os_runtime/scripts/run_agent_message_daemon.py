@@ -29,6 +29,7 @@ from api.doctor_runtime import DoctorRuntime  # noqa: E402
 from api.routine_runtime import ROUTINE_KEYS, RoutineRuntime  # noqa: E402
 from ai_os_doctor import probes as doctor_probes  # noqa: E402
 from run_ai_os_routine import run_allowlisted_command, write_artifact  # noqa: E402
+from project_company_routine_note import project_company_note  # noqa: E402
 from api.research_monitor_runtime import run_company_research_monitor_once  # noqa: E402
 from api.market_research_workflow import (  # noqa: E402
     build_public_market_evidence_packet,
@@ -294,6 +295,7 @@ def _scheduled_routine_runtime() -> RoutineRuntime:
         ),
         command_runner=run_allowlisted_command,
         artifact_writer=write_artifact,
+        note_projector=project_company_note,
         actor=actor,
     )
 
@@ -548,6 +550,10 @@ def daemon_pass(
         )
     except Exception as exc:  # monitoring is durable and isolated from other daemon work
         company_research_monitor = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        company_research_monitor["routine_events"] = _scheduled_routine_runtime().dispatch_company_events(limit=20)
+    except Exception as exc:
+        company_research_monitor["routine_events"] = {"status": "error", "error_type": type(exc).__name__, "count": 0}
     result = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "messages_processed": len(message_results),

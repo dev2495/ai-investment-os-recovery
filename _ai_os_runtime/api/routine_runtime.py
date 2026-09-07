@@ -77,6 +77,7 @@ class RoutineRuntime:
         doctor_factory: DoctorFactoryFn | None = None,
         command_runner: CommandRunnerFn | None = None,
         artifact_writer: ArtifactWriterFn | None = None,
+        note_projector: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         actor: str = "Jarvis",
     ):
         self.query = query
@@ -84,7 +85,51 @@ class RoutineRuntime:
         self.doctor_factory = doctor_factory
         self.command_runner = command_runner
         self.artifact_writer = artifact_writer
+        self.note_projector = note_projector
         self.actor = str(actor or "Jarvis")[:160]
+
+    def dispatch_company_events(self, *, limit: int = 20) -> dict[str, Any]:
+        """Publish immutable stored events; pending rows survive daemon restarts."""
+        definition = self._definition("research_company_change_monitor")
+        if definition.get("control_state") != "enabled":
+            return {"status": "disabled", "count": 0, "model_calls": 0, "broker_write_allowed": False}
+        if definition.get("schedule_enabled") is not False:
+            raise RuntimeError("event routine must not enable periodic materialization")
+        if self.artifact_writer is None:
+            raise RuntimeError("company monitor requires a durable external-SSD artifact writer")
+        bounded = max(1, min(100, int(limit)))
+        self.statement(f"SELECT agent.materialize_company_routine_events({bounded}) AS created")
+        rows = self.query(f"""/* routine:company_outbox */
+            SELECT run_key,artifact FROM agent.company_routine_outputs
+            WHERE artifact_status='pending' ORDER BY created_at,run_key LIMIT {bounded}""")
+        completed = 0
+        failures = []
+        for row in rows:
+            try:
+                artifact = self.artifact_writer("research_company_change_monitor",
+                    row["run_key"], _json_object(row["artifact"]))
+                self.statement(f"SELECT agent.complete_company_routine_artifact("
+                    f"{sql_literal(row['run_key'])},{sql_literal(artifact['path'])},"
+                    f"{sql_literal(artifact['sha256'])}) AS result")
+                completed += 1
+            except Exception as exc:
+                # Retry only publication on the next existing daemon pass.
+                failures.append({"run_key": row["run_key"], "error_type": type(exc).__name__})
+        if self.note_projector:
+            projections = self.query(f"""SELECT run_key,artifact,managed_note_path
+                FROM agent.company_routine_outputs WHERE artifact_status='stored'
+                AND projection_status='pending' ORDER BY created_at,run_key LIMIT {bounded}""")
+            for row in projections:
+                try:
+                    row['artifact'] = _json_object(row['artifact'])
+                    self.note_projector(row)
+                    self.statement(f"UPDATE agent.company_routine_outputs SET projection_status='projected' "
+                        f"WHERE run_key={sql_literal(row['run_key'])} AND artifact_status='stored' RETURNING run_key")
+                except Exception as exc:
+                    failures.append({"run_key": row["run_key"], "error_type": type(exc).__name__})
+        return {"status": "partial" if failures else "completed", "count": completed,
+                "errors": failures, "model_calls": 0, "broker_write_allowed": False,
+                "obsidian_projection": "attempted" if self.note_projector else "pending_managed_output"}
 
     def list_routines(self) -> list[dict[str, Any]]:
         return self.query(
