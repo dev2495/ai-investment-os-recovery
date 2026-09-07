@@ -4,12 +4,14 @@ from _ai_os_runtime.scripts.project_company_routine_note import project_company_
 
 
 def setup(monkeypatch, tmp_path):
+    notes = tmp_path / 'ai memory'
+    notes.mkdir()
     monkeypatch.setenv('AI_OS_SSD_ROOT', str(tmp_path))
     monkeypatch.setenv('AI_OS_VAULT_ROOT', str(tmp_path))
     monkeypatch.setattr(Path, 'is_mount', lambda self: self == tmp_path)
     row = {'managed_note_path': '00 AI OS/Managed/Company Updates/'+'a'*64+'.md',
            'artifact': {'symbol': 'WIPRO', 'model_calls': 0}}
-    return row, tmp_path / row['managed_note_path']
+    return row, notes / row['managed_note_path']
 
 
 def test_projection_preserves_human_text_and_replays_identically(monkeypatch, tmp_path):

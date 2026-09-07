@@ -17,6 +17,10 @@ END = '<!-- END aios-company-update-v1 -->'
 def project_company_note(row: dict) -> dict:
     volume = Path(os.environ.get('AI_OS_SSD_ROOT') or '/Volumes/Devarsh SSD')
     vault = Path(os.environ.get('AI_OS_VAULT_ROOT') or '/Volumes/Devarsh SSD/Obsidian memory ')
+    # Deployment accepts the enclosing storage root; Obsidian notes live in
+    # its canonical ai memory child. An explicit notes root is also valid.
+    if vault.name != 'ai memory':
+        vault = vault / 'ai memory'
     if not volume.is_mount() or not vault.is_dir():
         raise RuntimeError('canonical SSD vault unavailable')
     vault.resolve().relative_to(volume.resolve())
