@@ -1,5 +1,13 @@
 # Agent OS Phase 2 — implementation ledger
 
+## Continuation checkpoint — 2026-09-07
+
+Resumed at `3fa02bd` with preserved Office UI edits after the interruption. Remote `2dcbbce` is an ancestor, with no divergent commits. The iMac is reachable, SSD mounted, Postgres/Redis healthy, and API reports `ok=true` from `a02ee0f-live`. A fresh compact backup is running before release work.
+
+Later commits implement runtime contracts, collaboration, Charlie plans, Model Fabric, Doctor, routines, and operator surfaces. The first-increment tables below are historical and await the final acceptance rewrite. Prior local evidence: 753 passing tests, one optional restore test skipped, 178 passing subtests. Final verification will supersede those counts.
+
+Remaining: validated handoff propagation, canonical company-update routine and managed Obsidian output, Office control/proposal UI acceptance, restore/migration replay, deployment, live behavior, and the required 24-hour soak. No completion claim is made at this checkpoint.
+
 Started 2026-09-04. Specification: the user-supplied v13 Living Investment Office blueprint and Phase 2 build prompt. This is an additive continuation of Research Desk, not a replacement control plane.
 
 **Current checkpoint: first local implementation increment passed; not deployed; full Phase 2 is not complete.**
