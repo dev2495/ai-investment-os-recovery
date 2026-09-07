@@ -87,6 +87,31 @@ fi
 docker exec ai_os_postgres psql -q -U "${AI_OS_POSTGRES_USER}" -d "${RESTORE_DB}" -v ON_ERROR_STOP=1 \
   -c "SELECT timescaledb_post_restore();" > "${DRILL_WORK}/timescale-post-restore.log"
 
+# Explicit Phase 2 rehearsal runs only in the disposable restored database.
+# Roll back DDL after replay so the ordinary backup inventory stays comparable.
+if [[ "${AI_OS_RESTORE_PHASE2_REPLAY:-0}" == "1" ]]; then
+  [[ "${RESTORE_DB}" =~ ^ai_os_restore_verify_[0-9]+$ ]] || exit 10
+  phase2_sql_root="${AI_OS_REPO_ROOT}/_ai_os_runtime/postgres/init"
+  [[ -f "${phase2_sql_root}/264_company_routine_event_bridge_v1.sql" ]] || {
+    echo "ERROR: complete Phase 2 migrations are required for replay" >&2
+    exit 11
+  }
+  (
+    printf '%s\n' 'BEGIN;' "SET LOCAL lock_timeout='5s';" "SET LOCAL statement_timeout='120s';"
+    for phase2_pass in 1 2; do
+      for phase2_migration in "${phase2_sql_root}"/25[6-9]_*.sql "${phase2_sql_root}"/26[0-4]_*.sql; do
+        [[ -r "${phase2_migration}" ]] || exit 12
+        sed '/^BEGIN;$/d; /^COMMIT;$/d' "${phase2_migration}"
+      done
+    done
+    printf '%s\n' "DO \$verify\$ BEGIN IF (SELECT claim_mode FROM agent.runtime_settings WHERE singleton) <> 'disabled' THEN RAISE EXCEPTION 'restore replay enabled worker claims'; END IF; END \$verify\$;"
+    printf '%s\n' "SELECT json_build_object('phase2_replay','passed','passes',2,'claim_mode',(SELECT claim_mode FROM agent.runtime_settings WHERE singleton),'agents',(SELECT count(*) FROM agent.profiles));"
+    printf '%s\n' 'ROLLBACK;'
+  ) | docker exec -i ai_os_postgres psql -q -U "${AI_OS_POSTGRES_USER}" -d "${RESTORE_DB}" \
+    -v ON_ERROR_STOP=1 > "${DRILL_WORK}/phase2-migration-replay.log"
+  cp "${DRILL_WORK}/phase2-migration-replay.log" "${EVIDENCE_ROOT}/${DRILL_KEY}-phase2-replay.log"
+fi
+
 docker exec ai_os_postgres psql -q -t -A -U "${AI_OS_POSTGRES_USER}" -d "${RESTORE_DB}" \
   -v ON_ERROR_STOP=1 -c "
     SELECT json_build_object(
