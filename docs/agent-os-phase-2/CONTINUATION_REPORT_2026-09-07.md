@@ -18,8 +18,8 @@ Verdict at this checkpoint: **PHASE_2_INCOMPLETE**. Implementation is ready for 
 
 ## Verification receipts
 
-- Full backend suite: **766 passed, 1 skipped, 178 subtests passed** in 15.95 seconds before the final notes-root/test-harness adjustments.
-- The separately enabled restore-role integration then passed after correcting its subprocess log destination. Its original captured pipe held the test open; the fix changes only the disposable test harness.
+- Full backend suite: **768 passed, 178 subtests passed**, no skips, in 17.67 seconds with the restore-role integration enabled. Subsequent live-integration corrections have their own focused regressions and require a final full rerun.
+- Restore-role integration passed after correcting its subprocess log destination. Its original captured pipe held the test open; the fix changes only the disposable test harness.
 - Notes-root correction: four focused tests passed, including parent-root and already-vault-root configuration.
 - UI: **16/16** browser tests passed; TypeScript/Vite production build passed (764 modules); production dependency audit found **zero vulnerabilities**.
 - Stress: **100 agents, four workers, 1,000 exactly-once task claims, 10,000 typed events, 100 durable replay checks**, no provider/model/external writes; 1.062 seconds total on the isolated test host. This is not a 24-hour live soak.
@@ -32,8 +32,12 @@ Verdict at this checkpoint: **PHASE_2_INCOMPLETE**. Implementation is ready for 
 - Previous release: `/Users/devarshthakkar/AI_OS_NODE/releases/a02ee0f-live`, commit and marker `b42cc5d028f37ec2ead6b10296235d19bc9a5fd6`.
 - Its existing dirty files are generated import summaries, human vault edits and untracked QA/research artifacts. They remain in place; no tracked application source change was overwritten.
 - Fresh backup regenerated with the deployed release's format-v2 tool. The older source-checkout backup command produced an obsolete manifest; rehearsal refused it before any production migration.
-- Migration rehearsal: in progress against a disposable restore; migrations 256–264 run twice in one rolled-back transaction before inventory comparison.
-- Production deployment, real browser/API/MCP acceptance and observation-soak start: pending at report creation.
+- Migration rehearsal passed: `restore-drill-20260907T123034Z-65119`, migrations 256–264 twice in a rolled-back transaction, vault byte-identical, 936 tables, 3 clients and 72 positions preserved.
+- Release `7ba12e925ce81df494665217e8ce63b7dccc69a5` deployed at `/Users/devarshthakkar/AI_OS_NODE/releases/phase2-7ba12e9`; Git HEAD, deployment marker and API runtime root agree. Live build and `IMAC_BACKEND_VERIFIED` passed, execution remains locked.
+- Live runtime lists 101 agents. Doctor/Routines/Model Fabric endpoints are available. Five routines are disabled and Model Fabric contains no activated bindings; this is not autonomous-work acceptance.
+- Live canary exposed a legacy migration-100 provider-gate collision with fenced task insertion. Both failed attempts rolled back their synthetic tasks; cleanup confirmed disabled claims and zero active canary leases. Migration 265 is being verified against the actual legacy trigger.
+- Live Office exposed excessive combined legacy-view query latency. A bounded partial-read correction is under verification; an HTTP health pass alone does not accept the UI.
+- Unrun Doctor checks exposed missing registry labels; migration 266 is under verification. Observation soak has not started while these live corrections are pending.
 
 ## Remaining acceptance gates
 
