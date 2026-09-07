@@ -51,6 +51,8 @@ class RestoreRequiredRolesIntegrationTests(unittest.TestCase):
                 _binary("pg_ctl"),
                 "-D",
                 str(data),
+                "-l",
+                str(root / "postgres.log"),
                 "-o",
                 f"-F -k {socket_dir} -h '' -p {port}",
                 "-w",
