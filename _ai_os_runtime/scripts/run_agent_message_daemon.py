@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -285,13 +286,32 @@ def _canonical_due_at(value: object) -> str:
     return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _routine_json_statement(sql: str) -> list[dict[str, Any]]:
+    """Generated routine/Doctor statements always return JSON receipt rows.
+
+    The graph adapter expects pre-encoded JSON; routine UPDATE RETURNING
+    emits plain text unless wrapped. Keep the adapters separate.
+    """
+    clean = sql.strip().rstrip(';')
+    leading = re.sub(r'^(?:\s|/\*.*?\*/)*', '', clean, flags=re.DOTALL).upper()
+    if leading.startswith(('INSERT', 'UPDATE', 'DELETE')) and not re.search(r'\bRETURNING\b', clean, re.IGNORECASE):
+        wrapped = f"WITH routine_write AS ({clean}) SELECT '[]'::text"
+    else:
+        wrapped = (f"WITH routine_result AS ({clean}) "
+                   "SELECT coalesce(json_agg(row_to_json(routine_result)), '[]'::json)::text FROM routine_result")
+    rows = json.loads(psql_text(wrapped) or '[]')
+    if not isinstance(rows, list):
+        raise RuntimeError('routine statement did not return receipt rows')
+    return rows
+
+
 def _scheduled_routine_runtime() -> RoutineRuntime:
     actor = "Jarvis Agent Daemon"
     return RoutineRuntime(
         psql_json,
-        psql_json_statement,
+        _routine_json_statement,
         doctor_factory=lambda: DoctorRuntime(
-            psql_json, psql_json_statement, probes=doctor_probes(), actor=actor
+            psql_json, _routine_json_statement, probes=doctor_probes(), actor=actor
         ),
         command_runner=run_allowlisted_command,
         artifact_writer=write_artifact,
