@@ -161,6 +161,19 @@ test("Charlie opens by keyboard and returns a tracked durable-job entry without 
   await expect(page).toHaveURL(/\/firm\/office/);
 });
 
+test("Charlie preserves durable-control errors without claiming a model outage", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.route("**/api/chat", route => route.fulfill({ status: 503, contentType: "application/json",
+    body: JSON.stringify({ error: "agent_os_unavailable", message: "Durable Charlie evidence is unavailable; no action was confirmed." }) }));
+  await page.goto("/firm/office");
+  const assistant = page.getByRole("complementary", { name: "Charlie assistant" });
+  await assistant.getByPlaceholder("Message Charlie…").fill("Charlie, show every live agent and what each is doing.");
+  await assistant.getByPlaceholder("Message Charlie…").press("Enter");
+  await expect(assistant.getByText(/The request could not be completed:/)).toBeVisible();
+  await expect(assistant.getByText(/Durable Charlie evidence is unavailable/)).toBeVisible();
+  await expect(assistant.getByText(/couldn't reach the model layer/)).toHaveCount(0);
+});
+
 test("mobile reduced-motion Office stays keyboard-operable without horizontal overflow", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 390, height: 844 });

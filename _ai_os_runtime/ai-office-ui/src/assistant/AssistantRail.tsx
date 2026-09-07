@@ -396,7 +396,7 @@ export function AssistantRail() {
           const errorMsg: ChatMessage = {
             id: `e-${Date.now()}`,
             role: "system",
-            content: `I couldn't reach the model layer: ${err.message}`,
+            content: `The request could not be completed: ${err.message}`,
             ts: Date.now(),
           };
           setMessages((prev) => [...prev, errorMsg]);
