@@ -30,7 +30,8 @@ class OfficeSnapshotContractTest(unittest.TestCase):
             self.assertIsNotNone(error_collector)
             return {key: [] for key in queries}
 
-        with mock.patch.object(ai_os_api_server, "run_psql_json_object", fake_batch):
+        with mock.patch.object(ai_os_api_server, "run_psql_json_object", fake_batch), \
+             mock.patch.object(ai_os_api_server.CollaborationAPI, "handoffs", return_value=[]):
             snapshot = ai_os_api_server.build_office_snapshot()
 
         self.assertEqual(snapshot["issues"], [])
@@ -128,7 +129,8 @@ class OfficeSnapshotContractTest(unittest.TestCase):
         self.assertNotIn("{workingAgents} active", live_office)
         self.assertIn("targetX * progress", live_office)
         self.assertIn("leftLegRef", live_office)
-        self.assertIn('activity={data?.agent_messages ?? []}', live_office)
+        self.assertIn('activity={data?.agent_handoffs ?? []}', live_office)
+        self.assertNotIn('activity={data?.agent_messages ?? []}', live_office)
         self.assertIn("Latest inter-agent handoffs", live_office)
         for source in (office_view, live_office):
             self.assertIn("LivingAgentPanel", source)
