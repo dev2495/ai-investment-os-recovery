@@ -1,5 +1,9 @@
 # Operator runbook — first Phase 2 increment
 
+Current release gates and verification: [7 September report](CONTINUATION_REPORT_2026-09-07.md). Migrations now run through 264. Use the deployed release's format-v2 backup tool, then set `AI_OS_RESTORE_PHASE2_REPLAY=1` for the disposable restore rehearsal. This applies migrations twice and rolls them back before comparing the backup inventory. Never use the obsolete source-checkout backup format.
+
+See also [Doctor runbook](DOCTOR_RUNBOOK.md), [routine standard](ROUTINE_STANDARD.md), and [live canary runbook](PHASE2_LIVE_CANARY_RUNBOOK.md). `run_phase2_soak.py --run-key phase2-YYYYMMDD` collects 24 hours of bounded loopback API observations under the canonical data artifacts folder. It does not enable workers, models or routines and explicitly does not certify active-workload endurance.
+
 This is an opt-in feature branch, not the production release. Do not enable it across all workers before the pending contract and live compatibility gates pass.
 
 ## Isolated tests on another Mac

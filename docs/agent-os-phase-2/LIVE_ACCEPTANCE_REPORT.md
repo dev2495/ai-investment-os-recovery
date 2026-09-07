@@ -1,5 +1,7 @@
 # Phase 2 verification report — 2026-09-04
 
+> Historical report. The current authority is [7 September continuation and release evidence](CONTINUATION_REPORT_2026-09-07.md). The iMac is now reachable; the offline statements below describe 4 September only.
+
 **Verdict: first increment locally verified, not live-accepted. Full Phase 2 remains incomplete.**
 
 The filename is reserved by the build prompt; it does not mean production acceptance has occurred. The iMac is offline, so this report records a tested implementation checkpoint and the explicit remaining gates.

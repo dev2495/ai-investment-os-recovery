@@ -1,5 +1,7 @@
 # Agent OS Phase 2 — implementation ledger
 
+Current acceptance authority: [7 September continuation and release evidence](CONTINUATION_REPORT_2026-09-07.md). Earlier milestone tables are retained as history, not current feature status.
+
 ## Continuation checkpoint — 2026-09-07
 
 Resumed at `3fa02bd` with preserved Office UI edits after the interruption. Remote `2dcbbce` is an ancestor, with no divergent commits. The iMac is reachable, SSD mounted, Postgres/Redis healthy, and API reports `ok=true` from `a02ee0f-live`. A fresh compact backup is running before release work.

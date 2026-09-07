@@ -1,5 +1,9 @@
 # Phase 2 acceptance checklist
 
+> Historical first-increment checklist. Current implementation, verified behavior and remaining release gates are recorded in [7 September continuation report](CONTINUATION_REPORT_2026-09-07.md). An unchecked historical implementation item below is not a current claim that the feature is absent. Full live acceptance is still pending.
+
+Current checks: backend 766 passed plus 178 subtests; UI 16/16; target-scale synthetic stress passed; protected Zerodha unchanged. Restore, live demonstrations, qualified model routing, Safari, market-hours freshness and 24-hour endurance remain acceptance gates.
+
 Checked items mean the stated local check passed, not live acceptance. Unchecked items are required work, not waived requirements. Date: 2026-09-04.
 
 ## M0 — baseline and compatibility (partial)

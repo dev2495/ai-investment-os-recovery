@@ -1,5 +1,9 @@
 # Security review — first increment
 
+Current review update, 7 September: protected Zerodha files unchanged; production UI dependency audit zero vulnerabilities after scoped fflate update; client-scope handoff propagation and primary-only redirect tested; company-event publication rejects path escape/symlinks and preserves human text. Rollout mutation functions revoke PUBLIC execution, default claims and all five routines remain disabled, and no paid route is auto-promoted. Historical open items below must be read with the [current report](CONTINUATION_REPORT_2026-09-07.md).
+
+The database fence protects against accidental stale-worker writes; it does not restrict a trusted database owner. Existing legacy database grants were not blindly revoked. Live least-privilege, model/provider and hardware acceptance remain explicit gates.
+
 Date: 2026-09-04. Local code/test review only; production authorization and client-scope acceptance remain pending.
 
 ## Preserved
