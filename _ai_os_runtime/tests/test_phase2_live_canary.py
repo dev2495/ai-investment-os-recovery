@@ -321,6 +321,8 @@ def test_live_canary_on_disposable_postgres() -> None:
             )
 
         def execute(statement: str) -> str:
+            # The production INSERT trigger is part of the acceptance substrate.
+            # Installation below is deliberately separate from the canary executor.
             values: list[object] = []
             with psycopg.connect(test_dsn, autocommit=True) as connection:
                 cursor = connection.execute(statement)
@@ -332,6 +334,12 @@ def test_live_canary_on_disposable_postgres() -> None:
                     if not cursor.nextset():
                         break
             return str(values[-1]) if values else ""
+
+        with psycopg.connect(test_dsn, autocommit=True) as connection:
+            legacy = next(SQL_ROOT.glob('100_*.sql')).read_text()
+            _run_script(connection, legacy.split('CREATE OR REPLACE VIEW agent.v_task_provider_gate_status')[0])
+            _run_script(connection, (SQL_ROOT / '265_managed_task_provider_insert_gate_v1.sql').read_text())
+            _run_script(connection, (SQL_ROOT / '265_managed_task_provider_insert_gate_v1.sql').read_text())
 
         report = canary.run_live_canary(
             operator_confirmed=True,
