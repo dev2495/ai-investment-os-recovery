@@ -9,6 +9,9 @@ import os
 import re
 import secrets
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import sys
 import time
 import urllib.error
@@ -416,10 +419,14 @@ def psql_command_candidates() -> list[list[str]]:
 
 def run_psql_text(sql: str, *, timeout_seconds: float | None = None) -> str:
     errors: list[tuple[str, str]] = []
+    started = time.monotonic()
     env = os.environ.copy()
     env.setdefault("PGPASSWORD", POSTGRES_PASSWORD)
     for command in psql_command_candidates():
-        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env, timeout=timeout_seconds)
+        remaining = None if timeout_seconds is None else timeout_seconds - (time.monotonic() - started)
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError("Database command deadline exceeded")
+        completed = subprocess.run(command, input=sql, text=True, capture_output=True, check=False, env=env, timeout=remaining)
         if completed.returncode == 0:
             return completed.stdout.strip()
         errors.append((command[0], (completed.stderr or completed.stdout).strip()))
@@ -449,6 +456,9 @@ def run_psql_json_object(
     row_limit: int | None = 500,
     batch_size: int | None = None,
     error_collector: list[dict] | None = None,
+    statement_timeout_ms: int | None = None,
+    process_timeout_seconds: float | None = None,
+    parallel_batches: int = 1,
 ) -> dict[str, list[dict]]:
     """Execute snapshot sections in bounded SQL batches to cap PostgreSQL memory."""
     query_items = list(queries.items())
@@ -456,6 +466,21 @@ def run_psql_json_object(
         return {}
 
     effective_batch_size = max(1, int(batch_size or SNAPSHOT_SQL_BATCH_SIZE))
+    if parallel_batches > 1:
+        def read_batch(items):
+            batch_issues: list[dict] = []
+            result = run_psql_json_object(dict(items), row_limit=row_limit, batch_size=effective_batch_size,
+                error_collector=batch_issues if error_collector is not None else None,
+                statement_timeout_ms=statement_timeout_ms, process_timeout_seconds=process_timeout_seconds)
+            return result, batch_issues
+        batches = [query_items[offset:offset + effective_batch_size] for offset in range(0, len(query_items), effective_batch_size)]
+        merged: dict[str, list[dict]] = {}
+        with ThreadPoolExecutor(max_workers=min(4, parallel_batches)) as pool:
+            for result, batch_issues in pool.map(read_batch, batches):
+                merged.update(result)
+                if error_collector is not None:
+                    error_collector.extend(batch_issues)
+        return merged
     data: dict[str, list[dict]] = {}
     for offset in range(0, len(query_items), effective_batch_size):
         batch_items = query_items[offset:offset + effective_batch_size]
@@ -480,7 +505,7 @@ def run_psql_json_object(
                 f"(SELECT payload::jsonb FROM {alias}) AS value"
             )
         sql = f"""
-        SET statement_timeout = '{SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS}ms';
+        SET statement_timeout = '{statement_timeout_ms or SNAPSHOT_SQL_STATEMENT_TIMEOUT_MS}ms';
         SET work_mem = '4MB';
         SET hash_mem_multiplier = 1.0;
         WITH {','.join(ctes)},
@@ -492,7 +517,7 @@ def run_psql_json_object(
         """
         batch_names = [name for name, _query in batch_items]
         try:
-            output = run_psql_text(sql)
+            output = run_psql_text(sql, timeout_seconds=process_timeout_seconds) if process_timeout_seconds is not None else run_psql_text(sql)
             payload = json.loads(output or "{}")
             data.update({
                 key: (value if isinstance(value, list) else [])
@@ -904,6 +929,24 @@ def _office_projection(data: dict[str, list[dict]], issues: list[dict]) -> tuple
     }
 
 
+_OFFICE_SNAPSHOT_LOCK = threading.Lock()
+_OFFICE_SNAPSHOT_CACHE: tuple[float, dict] | None = None
+
+def cached_office_snapshot() -> dict:
+    """Coalesce concurrent UI reads; cached presence retains its original expiry."""
+    global _OFFICE_SNAPSHOT_CACHE
+    cached = _OFFICE_SNAPSHOT_CACHE
+    if cached is not None and time.monotonic() - cached[0] < 3:
+        return deepcopy(cached[1])
+    with _OFFICE_SNAPSHOT_LOCK:
+        cached = _OFFICE_SNAPSHOT_CACHE
+        if cached is not None and time.monotonic() - cached[0] < 3:
+            return deepcopy(cached[1])
+        result = build_office_snapshot()
+        _OFFICE_SNAPSHOT_CACHE = (time.monotonic(), deepcopy(result))
+        return result
+
+
 def build_office_snapshot() -> dict:
     """Return the small, live read model used by the animated AI Office."""
     issues: list[dict] = []
@@ -1077,7 +1120,21 @@ def build_office_snapshot() -> dict:
         row_limit=160,
         batch_size=4,
         error_collector=issues,
+        statement_timeout_ms=1500, process_timeout_seconds=4,
+        parallel_batches=4,
     )
+
+    if not data.get("agents") and any("agents" in issue.get("query_keys", []) for issue in issues):
+        fallback = run_psql_json_object({"agents": """
+            SELECT p.id AS agent_id,p.agent_name,p.department,p.display_title,p.role_scope,
+                   p.default_model_route,p.permission_level,d.department_name,
+                   'unavailable'::text AS operating_mode,'unverified'::text AS live_state
+            FROM agent.profiles p LEFT JOIN agent.department_registry d ON d.department_key=p.department
+            WHERE p.status='active' ORDER BY p.agent_name
+        """}, row_limit=500, batch_size=1, error_collector=issues,
+            statement_timeout_ms=1000, process_timeout_seconds=2)
+        data["agents"] = fallback.get("agents", [])
+        issues.append({"section": "agents", "reason": "Detailed employee readiness unavailable; showing canonical profile registry."})
 
     projected, projection_meta = _office_projection(data, issues)
     snapshot = {
@@ -23929,7 +23986,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                     after = cursor_id((query.get("after_event_id") or [self.headers.get("Last-Event-ID", "0")])[0])
                     stream_events(self, RUNTIME_API, after)
                 elif path == "/api/v1/office/snapshot":
-                    self._send_json(build_office_snapshot())
+                    self._send_json(cached_office_snapshot())
                 elif re.fullmatch(r"/api/v1/tasks/\d+", path):
                     self._send_json(RUNTIME_API.task(int(path.rsplit("/", 1)[1])))
                 else:
@@ -24186,7 +24243,7 @@ class AiOsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(build_snapshot())
                 return
             if self.path.startswith("/api/office/snapshot"):
-                self._send_json(build_office_snapshot())
+                self._send_json(cached_office_snapshot())
                 return
             if self.path.startswith("/api/evidence/agent-message/"):
                 message_id = int(self.path.rsplit("/", 1)[-1].split("?", 1)[0])

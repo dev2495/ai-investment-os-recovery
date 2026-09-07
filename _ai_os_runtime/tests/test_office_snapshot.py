@@ -23,6 +23,7 @@ class OfficeSnapshotContractTest(unittest.TestCase):
             row_limit: int | None = None,
             batch_size: int | None = None,
             error_collector: list[dict] | None = None,
+            **bounds,
         ) -> dict[str, list[dict]]:
             captured.update(queries)
             self.assertEqual(row_limit, 160)
