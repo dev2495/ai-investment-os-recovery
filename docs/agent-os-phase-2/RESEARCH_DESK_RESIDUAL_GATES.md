@@ -1,6 +1,6 @@
 # Research Desk residual gates carried into Phase 2
 
-These are retained from the supplied Phase 2 prompt and accepted Research Desk records. They have **not** been refreshed live on 2026-09-04 because the iMac is offline.
+Refreshed on the reachable canonical iMac on 7 September 2026: Research Desk loads; Wipro case 12 is blocked with report 6 and corrected-iteration review debt; Shivalik case 15 is in review with report 9. Neither is accepted as decision-ready. See [the final Phase 2 ledger](FINAL_ACCEPTANCE_2026-09-07.md) for live receipts and scope limits.
 
 | Gate | Status / boundary |
 |---|---|

@@ -1,5 +1,7 @@
 # Phase 2 continuation and release evidence — 7 September 2026
 
+> Superseded checkpoint: use [the final deployed implementation and acceptance ledger](FINAL_ACCEPTANCE_2026-09-07.md) for current test counts, live receipts and remaining gates.
+
 Verdict at this checkpoint: **PHASE_2_INCOMPLETE**. Implementation is ready for the remaining live acceptance gates; deployment and time-based acceptance are recorded below only after verification. Phase 3 has not started.
 
 ## Delivered behavior
