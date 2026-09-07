@@ -31,6 +31,7 @@ export const AppShellCss = `
   --text-secondary: var(--shell-text-secondary);
   --text-muted: var(--shell-text-muted);
   --text-faint: var(--shell-text-faint);
+  --text-on-accent: var(--shell-text-on-accent);
   --border: var(--shell-border);
   --border-strong: color-mix(in srgb, var(--shell-border) 72%, #ffffff);
   --border-subtle: color-mix(in srgb, var(--shell-border) 70%, transparent);
@@ -162,7 +163,7 @@ export const AppShellCss = `
 }
 .aios-sidebar__item--active .aios-sidebar__item-code {
   background: var(--accent-soft-strong);
-  color: var(--accent);
+  color: var(--text);
 }
 .aios-sidebar__item-status {
   width: 5px;

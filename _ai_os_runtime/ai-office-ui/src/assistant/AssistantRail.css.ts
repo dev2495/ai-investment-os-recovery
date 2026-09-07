@@ -45,9 +45,12 @@ export const AssistantRailCss = `
   width: 11px;
   height: 11px;
   border-radius: var(--radius-circle);
-  background: var(--status-ok);
+  background: var(--text-faint);
   border: 2px solid var(--surface);
 }
+.aios-assistant__avatar-status.is-live { background: var(--status-ok); }
+.aios-assistant__avatar-status.is-risk { background: var(--status-risk); }
+.aios-assistant__avatar-status.is-unverified { background: var(--text-faint); }
 .aios-assistant__name {
   font-family: var(--font-display);
   font-size: var(--text-lg);

@@ -24,8 +24,8 @@
   /* Text */
   --text: #253044;
   --text-secondary: #4c5667;
-  --text-muted: #6f756f;
-  --text-faint: #858780;
+  --text-muted: #606760;
+  --text-faint: #676d67;
   --text-on-accent: #fffaf0;
   --text-on-status: #ffffff;
 
@@ -58,10 +58,11 @@
   --shell-elevated: #3b4c65;
   --shell-text: #fffaf0;
   --shell-text-secondary: #dde3eb;
-  --shell-text-muted: #bac5d2;
-  --shell-text-faint: #9facba;
+  --shell-text-muted: #cbd3dc;
+  --shell-text-faint: #c5cfda;
+  --shell-text-on-accent: #253044;
   --shell-border: rgba(231, 219, 199, 0.18);
-  --shell-accent: #d2a76d;
+  --shell-accent: #dab579;
   --shell-accent-soft: rgba(210, 167, 109, 0.17);
   --shell-accent-strong: rgba(210, 167, 109, 0.3);
 
@@ -121,10 +122,11 @@
   --shell-elevated: #34465f;
   --shell-text: #fffaf0;
   --shell-text-secondary: #dde3eb;
-  --shell-text-muted: #bac5d2;
-  --shell-text-faint: #9facba;
+  --shell-text-muted: #cbd3dc;
+  --shell-text-faint: #c5cfda;
+  --shell-text-on-accent: #253044;
   --shell-border: rgba(231, 219, 199, 0.18);
-  --shell-accent: #d2a76d;
+  --shell-accent: #dab579;
   --shell-accent-soft: rgba(210, 167, 109, 0.17);
   --shell-accent-strong: rgba(210, 167, 109, 0.3);
 

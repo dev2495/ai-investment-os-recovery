@@ -464,12 +464,17 @@ type FlowConnection = {
   from: string;
   to: string;
   count: number;
-  kind: "message" | "graph";
+  kind: "handoff" | "graph";
 };
 
 function buildConnections(data: ReturnType<typeof useOfficeSnapshot>["data"], agents: LiveRow[]): FlowConnection[] {
   if (!data) return [];
   const agentRooms = new Map(agents.map((agent) => [text(agent, "agent_name"), agentRoomKey(agent)]));
+  const agentRoomsById = new Map<number, string>();
+  for (const agent of agents) {
+    const id = num(agent, "agent_id", num(agent, "id"));
+    if (id > 0) agentRoomsById.set(id, agentRoomKey(agent));
+  }
   const grouped = new Map<string, FlowConnection>();
   const add = (from: string, to: string, kind: FlowConnection["kind"]) => {
     if (!from || !to || from === to || !roomByKey(from) || !roomByKey(to)) return;
@@ -478,8 +483,13 @@ function buildConnections(data: ReturnType<typeof useOfficeSnapshot>["data"], ag
     grouped.set(key, current ? { ...current, count: current.count + 1 } : { from, to, count: 1, kind });
   };
 
-  for (const message of data.agent_messages ?? []) {
-    add(agentRooms.get(text(message, "from_agent")) ?? "", agentRooms.get(text(message, "to_agent")) ?? "", "message");
+  const handoffRoom = (handoff: LiveRow, side: "from" | "to") => {
+    const name = text(handoff, `${side}_agent`) || text(handoff, `${side}_agent_name`);
+    if (name) return agentRooms.get(name) ?? "";
+    return agentRoomsById.get(num(handoff, `${side}_agent_id`)) ?? "";
+  };
+  for (const handoff of data.agent_handoffs ?? []) {
+    add(handoffRoom(handoff, "from"), handoffRoom(handoff, "to"), "handoff");
   }
   for (const node of data.graph_node_runs ?? []) {
     const ownerRoom = agentRooms.get(text(node, "owner_agent")) ?? "";
@@ -678,15 +688,15 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
     });
   }
 
-  function inspectMessage(message: LiveRow) {
-    if (isOfficeRedacted(message)) return;
-    const messageId = num(message, "id");
-    if (!messageId) return;
+  function inspectHandoff(handoff: LiveRow) {
+    if (isOfficeRedacted(handoff)) return;
+    const handoffId = num(handoff, "id", num(handoff, "handoff_id"));
+    if (!handoffId) return;
     openEvidence({
-      kind: "agent-message",
-      key: String(messageId),
-      title: text(message, "subject", "Agent handoff"),
-      subtitle: `${text(message, "from_agent", "Agent")} → ${text(message, "to_agent", "Agent")}`,
+      kind: "agent-handoff",
+      key: String(handoffId),
+      title: text(handoff, "title", text(handoff, "question", "Agent handoff")),
+      subtitle: `${text(handoff, "from_agent", text(handoff, "from_agent_name", "Agent"))} → ${text(handoff, "to_agent", text(handoff, "to_agent_name", "Agent"))}`,
     });
   }
 
@@ -762,6 +772,26 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
             <span className="office-safety-lock">Broker writes locked</span>
           </div>
           <div className="office-spatial-toolbar__controls" aria-label="Office view controls">
+            {!showStatic && (
+              <label className="office-spatial-toolbar__agent-picker">
+                <span>Employee</span>
+                <select
+                  aria-label="Inspect employee in animated office"
+                  value={selectedAgentName ?? ""}
+                  onChange={(event) => {
+                    const nextAgent = agents.find((agent) => text(agent, "agent_name") === event.target.value);
+                    if (nextAgent) selectAgent(nextAgent);
+                    else {
+                      setSelectedAgentName(null);
+                      focusRoom(null);
+                    }
+                  }}
+                >
+                  <option value="">Choose employee</option>
+                  {agents.map((agent) => <option key={text(agent, "agent_name")} value={text(agent, "agent_name")}>{text(agent, "agent_name")}</option>)}
+                </select>
+              </label>
+            )}
             <button type="button" onClick={() => { setSelectedAgentName(null); focusRoom(null); }}>Overview</button>
             <button type="button" onClick={() => focusFloor(-1)}>Infrastructure</button>
             <button type="button" onClick={() => focusFloor(0)}>Dealing floor</button>
@@ -769,12 +799,11 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
             <button
               type="button"
               aria-label={showStatic ? "Use animated office" : "Use static office"}
-              aria-pressed={showStatic}
               disabled={forceStatic}
               title={reducedMotion ? "Static view is required by your reduced-motion preference." : webglOk === false ? "Static view is required because WebGL is unavailable." : undefined}
               onClick={() => setRenderMode(showStatic ? "animated" : "static")}
             >
-              {showStatic ? "Animated view" : "Static view"}
+              {showStatic ? "Switch to 3D" : "Switch to 2D"}
             </button>
           </div>
         </header>
@@ -798,7 +827,11 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
         ) : showStatic ? (
           <OfficeFallback {...common} />
         ) : (
-          <div className="office-canvas-wrap">
+          <div
+            className="office-canvas-wrap"
+            data-handoff-links={connections.filter((connection) => connection.kind === "handoff").length}
+            data-graph-links={connections.filter((connection) => connection.kind === "graph").length}
+          >
             <Canvas
               shadows
               dpr={[1, 1.65]}
@@ -880,7 +913,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
               totalAgents={agents.length}
               activeGraphRuns={activeGraphRuns}
               generatedAt={data?.generated_at ?? ""}
-              activity={data?.agent_messages ?? []}
+              activity={data?.agent_handoffs ?? []}
               onBack={() => {
                 setSelectedAgentName(null);
                 focusRoom(null);
@@ -888,7 +921,7 @@ export function LiveOffice({ height = "100%" }: LiveOfficeProps) {
               onClearAgent={() => setSelectedAgentName(null)}
               onTalk={talkToAgent}
               onInspectTask={inspectAgentTask}
-              onInspectMessage={inspectMessage}
+              onInspectHandoff={inspectHandoff}
               onNavigate={(path) => navigate(path)}
             />
           </div>
@@ -926,7 +959,7 @@ function OfficeHud({
   onClearAgent,
   onTalk,
   onInspectTask,
-  onInspectMessage,
+  onInspectHandoff,
   onNavigate,
 }: {
   focusedRoom: string | null;
@@ -942,7 +975,7 @@ function OfficeHud({
   onClearAgent: () => void;
   onTalk: (agent: LiveRow) => void;
   onInspectTask: (agent: LiveRow) => void;
-  onInspectMessage: (message: LiveRow) => void;
+  onInspectHandoff: (handoff: LiveRow) => void;
   onNavigate: (path: string) => void;
 }) {
   const room = focusedRoom ? roomByKey(focusedRoom) : null;
@@ -961,11 +994,11 @@ function OfficeHud({
                     type="button"
                     key={String(num(item, "id", index))}
                     disabled={redacted}
-                    onClick={() => onInspectMessage(item)}
-                    aria-label={redacted ? "Private handoff details hidden" : `Inspect handoff: ${text(item, "subject", "Work handoff")}`}
+                    onClick={() => onInspectHandoff(item)}
+                    aria-label={redacted ? "Private handoff details hidden" : `Inspect handoff: ${text(item, "title", text(item, "question", "Work handoff"))}`}
                   >
-                    <span>{text(item, "from_agent", "Agent")} → {text(item, "to_agent", "Agent")}</span>
-                    <b>{text(item, "subject", "Work handoff")}</b>
+                    <span>{text(item, "from_agent", text(item, "from_agent_name", "Agent"))} → {text(item, "to_agent", text(item, "to_agent_name", "Agent"))}</span>
+                    <b>{text(item, "title", text(item, "question", "Work handoff"))}</b>
                     <time>{formatRelative(text(item, "created_at"))}</time>
                   </button>
                 );

@@ -4,7 +4,7 @@ import type { OfficeSnapshot } from "../../data/schemas";
 import type { LiveRow } from "../../data/liveRow";
 import { formatCurrency, formatRelative, num, raw, text } from "../../data/liveRow";
 import { hasLiveLease, runtimePresence, useLeaseClock } from "../../data/runtimePresence";
-import { useDelegateAgentTask } from "../../data/actions";
+import { useControlAgentTask, useDelegateAgentTask } from "../../data/actions";
 import { useUIStore } from "../../store";
 import { Button, StatusPill } from "../../system/primitives";
 import { LivingAgentPanelCss } from "./LivingAgentPanel.css";
@@ -140,6 +140,9 @@ export function LivingAgentPanel({
 }: LivingAgentPanelProps) {
   useLeaseClock();
   const delegateTask = useDelegateAgentTask();
+  const controlTask = useControlAgentTask();
+  const [control, setControl] = React.useState<"pause" | "resume" | "cancel" | "redirect" | null>(null);
+  const [redirectObjective, setRedirectObjective] = React.useState("");
   const pushToast = useUIStore((state) => state.pushToast);
   const panelRef = React.useRef<HTMLElement>(null);
   const [showDelegate, setShowDelegate] = React.useState(false);
@@ -205,7 +208,21 @@ export function LivingAgentPanel({
   React.useEffect(() => {
     setShowDelegate(false);
     setObjective("");
+    setControl(null);
+    setRedirectObjective("");
   }, [agentName]);
+
+  function submitControl() {
+    if (!control || !taskId) return;
+    controlTask.mutate({ taskId, action: control, objective: redirectObjective.trim() }, {
+      onSuccess: (receipt) => {
+        pushToast({ title: `Task #${taskId}: ${control} recorded`, message: raw(receipt, "waiting_for_safe_boundary") === true ? "The worker will apply this change at its next safe boundary." : "The server returned the task control receipt.", tone: "ok", duration: 5000 });
+        setControl(null);
+        setRedirectObjective("");
+      },
+      onError: (error) => pushToast({ title: "Task control could not be applied", message: error.message, tone: "risk", duration: 6000 }),
+    });
+  }
 
   function submitDelegation() {
     const trimmed = objective.trim();
@@ -319,6 +336,19 @@ export function LivingAgentPanel({
             : taskId > 0 && onInspectTask && <Button icon={ExternalLink} onClick={() => onInspectTask(agent)}>Inspect task</Button>}
           {!isRedacted(agent) && onOpenWorkspace && <Button variant="ghost" onClick={() => onOpenWorkspace(agent)}>Open department</Button>}
         </div>
+
+        {!isRedacted(agent) && taskId > 0 && !["completed", "cancelled", "canceled", "superseded"].includes(text(task, "status").toLowerCase()) && (
+          <div className="living-agent-panel__delegate" aria-label="Task controls">
+            <div className="living-agent-panel__actions">
+              {(["pause", "resume", "cancel", "redirect"] as const).map((action) => <Button key={action} size="sm" disabled={controlTask.isPending} onClick={() => setControl(action)}>{action[0].toUpperCase() + action.slice(1)} task</Button>)}
+            </div>
+            {control && <div>
+              <p>{control === "redirect" ? "Update the objective using primary sources only. An active worker applies the change at its next safe boundary." : `Apply ${control} to task #${taskId}? The server checks its current state before changing it.`}</p>
+              {control === "redirect" && <label>Updated objective<textarea aria-label="Updated objective" value={redirectObjective} onChange={(event) => setRedirectObjective(event.target.value)} rows={3} /></label>}
+              <div className="living-agent-panel__actions"><Button variant="primary" disabled={controlTask.isPending || (control === "redirect" && !redirectObjective.trim())} onClick={submitControl}>Confirm {control}</Button><Button variant="ghost" onClick={() => setControl(null)}>Keep current task</Button></div>
+            </div>}
+          </div>
+        )}
 
         {showDelegate && (
           <div className="living-agent-panel__delegate">

@@ -1,3 +1,15 @@
+export function useControlAgentTask() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, action, objective }: { taskId: number; action: "pause" | "resume" | "cancel" | "redirect"; objective?: string }) =>
+      post<LiveRow>(`/api/v1/tasks/${taskId}/${action}`, action === "redirect" ? { objective, source_policy: "primary_only" } : {}),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: Q.office });
+      void client.invalidateQueries({ queryKey: Q.missionControl });
+    },
+  });
+}
+
 /**
  * AI Investment OS — Action Mutations
  *

@@ -141,10 +141,10 @@ export function OfficeView() {
     <div className="aios-destination">
       <div className="aios-destination__head">
         <div className="aios-destination__title-row">
-          <div className="aios-destination__title">
+          <h1 className="aios-destination__title">
             <Boxes size={26} style={{ verticalAlign: "middle", marginRight: 10, color: "var(--accent)" }} />
             Live AI Office
-          </div>
+          </h1>
           {data && <StatusPill status={sourceStatus} dot>{sourceStatus.replace(/_/g, " ")} · snapshot {formatRelative(data.generated_at)}</StatusPill>}
         </div>
         <div className="aios-destination__subtitle">

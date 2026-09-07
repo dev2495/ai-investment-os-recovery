@@ -22,6 +22,7 @@ export const OperatorControlConsoleCss = `
 .operator-console__notice.is-risk { border-left-color: var(--status-risk); }
 .operator-console__notice strong { display: block; margin-bottom: 2px; color: var(--text); }
 .operator-console__notice code { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-2xs); }
+.operator-console__history-note { padding: var(--space-3); color: var(--text-muted); background: var(--surface-soft); border-bottom: 1px solid var(--border-subtle); font-size: var(--text-xs); line-height: 1.5; }
 .operator-console__bindings { display: grid; gap: 1px; background: var(--border-subtle); }
 .operator-console__binding {
   display: grid;

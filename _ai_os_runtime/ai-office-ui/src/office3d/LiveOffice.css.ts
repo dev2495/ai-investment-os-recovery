@@ -64,6 +64,27 @@ export const LiveOfficeCss = `
 .office-spatial-toolbar__status .office-signal--error { color: #f08c84; border-color: rgba(217, 86, 76, 0.46); }
 .office-spatial-toolbar__status .office-safety-lock { color: #f2cf86; border-color: rgba(242, 207, 134, 0.35); }
 .office-spatial-toolbar__controls { justify-content: flex-end; }
+.office-spatial-toolbar__agent-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(242, 237, 229, 0.82);
+  font: 550 11px var(--font-sans);
+}
+.office-spatial-toolbar__agent-picker select {
+  max-width: 150px;
+  min-height: 28px;
+  padding: 4px 24px 4px 7px;
+  color: #f2ede5;
+  background: #2c261f;
+  border: 1px solid rgba(242, 237, 229, 0.24);
+  border-radius: 4px;
+  font: 550 11px var(--font-sans);
+}
+.office-spatial-toolbar__agent-picker select:focus-visible {
+  outline: 2px solid #64d1ba;
+  outline-offset: 2px;
+}
 .office-spatial-toolbar__controls button,
 .office-projection-state button {
   padding: 5px 8px;
@@ -211,6 +232,7 @@ export const LiveOfficeCss = `
 
 .office-hud {
   position: absolute;
+  z-index: 35;
   inset: 0;
   display: flex;
   flex-direction: column;

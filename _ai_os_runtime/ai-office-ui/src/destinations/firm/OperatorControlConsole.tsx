@@ -106,7 +106,7 @@ export function ModelFabricConsole({ legacyRoutes }: { legacyRoutes: LiveRow[] }
   const pushToast = useUIStore((state) => state.pushToast);
   const fabric = useQuery<ModelFabricSnapshot>({
     queryKey: CONTROL_KEYS.modelFabric,
-    queryFn: () => get<ModelFabricSnapshot>("/api/v1/model-fabric"),
+    queryFn: () => get<ModelFabricSnapshot>("/api/v1/model-bindings"),
     retry: false,
     refetchInterval: 30_000,
   });
@@ -128,10 +128,12 @@ export function ModelFabricConsole({ legacyRoutes }: { legacyRoutes: LiveRow[] }
   const bindings = rows(snapshot?.bindings);
   const history = rows(snapshot?.history);
   const qualifications = rows(snapshot?.qualifications);
+  const audit = rows(snapshot?.audit);
   const calls = rows(snapshot?.recent_calls);
   const routeOptions = Array.from(new Set([
     ...legacyRoutes.map((row) => text(row, "route_name", text(row, "name"))),
     ...bindings.map((row) => text(row, "primary_route")),
+    ...history.map((row) => text(row, "primary_route")),
     ...qualifications.map((row) => text(row, "route_name")),
   ].filter(Boolean))).sort();
   const degradedCalls = calls.filter((row) => raw(row, "degraded") === true || ["failed", "blocked", "error"].includes(text(row, "status").toLowerCase())).length;
@@ -176,8 +178,36 @@ export function ModelFabricConsole({ legacyRoutes }: { legacyRoutes: LiveRow[] }
       ?? {};
   }
 
+  function headFor(version: LiveRow): LiveRow {
+    return bindings.find((row) => text(row, "binding_key") === text(version, "binding_key")
+      && num(row, "version_id") === num(version, "version_id")) ?? {};
+  }
+
+  function bindingHead(version: LiveRow): LiveRow {
+    return bindings.find((row) => text(row, "binding_key") === text(version, "binding_key")) ?? {};
+  }
+
+  function latestAudit(version: LiveRow): LiveRow {
+    return audit.find((row) => text(row, "binding_key") === text(version, "binding_key")
+      && num(row, "version_id") === num(version, "version_id")) ?? {};
+  }
+
+  function wasHead(version: LiveRow): boolean {
+    return audit.some((row) => text(row, "binding_key") === text(version, "binding_key")
+      && num(row, "version_id") === num(version, "version_id")
+      && ["promoted", "rolled_back"].includes(text(row, "action")));
+  }
+
+  function versionRelationship(version: LiveRow): "Current head" | "Disabled head" | "Disabled proposal" | "Historical head" | "Stored version" {
+    const head = headFor(version);
+    if (Object.keys(head).length > 0) return raw(head, "enabled") === false ? "Disabled head" : "Current head";
+    if (wasHead(version)) return "Historical head";
+    return text(latestAudit(version), "action") === "proposed" ? "Disabled proposal" : "Stored version";
+  }
+
   function historicalVersion(binding: LiveRow): LiveRow {
-    return history.find((row) => text(row, "binding_key") === text(binding, "binding_key") && num(row, "version_id") !== num(binding, "version_id")) ?? {};
+    return history.find((row) => text(row, "binding_key") === text(binding, "binding_key")
+      && num(row, "version_id") !== num(binding, "version_id") && wasHead(row)) ?? {};
   }
 
   function openReview(nextAction: ModelReviewAction, binding: LiveRow, version: LiveRow = binding) {
@@ -197,7 +227,8 @@ export function ModelFabricConsole({ legacyRoutes }: { legacyRoutes: LiveRow[] }
       : review.action === "rollback"
         ? { binding_key: text(binding, "binding_key"), version_id: num(version, "version_id", num(version, "id")), approval_id: Number(approvalId), confirmed: true }
         : { version_id: num(version, "version_id", num(version, "id")), approval_id: Number(approvalId), confirmed: true };
-    const ok = await run({ path: `/api/v1/model-fabric/${review.action}`, body, label: `${review.action} binding` });
+    const family = review.action === "disable" ? "model-fabric" : "model-bindings";
+    const ok = await run({ path: `/api/v1/${family}/${review.action}`, body, label: `${review.action} binding` });
     if (ok) setReview(null);
   }
 
@@ -207,40 +238,76 @@ export function ModelFabricConsole({ legacyRoutes }: { legacyRoutes: LiveRow[] }
       <div className={`operator-console__notice ${available ? "is-ready" : "is-risk"}`}>
         {available ? <CheckCircle2 size={18} aria-hidden="true" /> : <TriangleAlert size={18} aria-hidden="true" />}
         <div><strong>{available ? "Governed binding registry is available" : "Model Fabric unavailable"}</strong><span>{available ? "Every row below is an exact stored binding version and qualification state." : "No model route health, qualification, or promotion state can be inferred from the legacy route list."}</span></div>
-        <code>GET /api/v1/model-fabric</code>
+        <code>GET /api/v1/model-bindings</code>
       </div>
       <div className="operator-console__summary">
-        <MetricTile><Metric label="Bound versions" value={available ? bindings.length : "—"} /></MetricTile>
+        <MetricTile><Metric label="Current heads" value={available ? bindings.length : "—"} /></MetricTile>
+        <MetricTile><Metric label="Stored versions" value={available ? history.length : "—"} /></MetricTile>
+        <MetricTile tone={available && history.some((version) => versionRelationship(version) === "Disabled proposal") ? "warn" : undefined}><Metric label="Disabled proposals" value={available ? history.filter((version) => versionRelationship(version) === "Disabled proposal").length : "—"} /></MetricTile>
         <MetricTile tone={available && passedQualifications ? "ok" : "warn"}><Metric label="Qualified routes" value={available ? passedQualifications : "—"} /></MetricTile>
         <MetricTile tone={degradedCalls ? "risk" : undefined}><Metric label="Degraded / blocked calls" value={available ? degradedCalls : "—"} /></MetricTile>
         <MetricTile><Metric label="Provider calls by this view" value="0" /></MetricTile>
       </div>
-      <Panel icon={Cpu} title="Exact model bindings" actions={<Button size="sm" icon={Cpu} onClick={() => setProposeOpen(true)} disabled={!available}>Propose binding</Button>}>
-        {!available ? <Empty icon={Cpu} title="Binding registry not available" /> : bindings.length === 0 ? <Empty icon={Cpu} title="No governed bindings recorded" /> : (
+      <Panel icon={Cpu} title="Current binding heads" actions={<Button size="sm" icon={Cpu} onClick={() => setProposeOpen(true)} disabled={!available}>Propose binding</Button>}>
+        {!available ? <Empty icon={Cpu} title="Binding registry not available" /> : bindings.length === 0 ? <Empty icon={Cpu} title="No current binding heads recorded" /> : (
           <div className="operator-console__bindings">
             {bindings.map((binding, index) => {
               const qualification = currentQualification(binding);
               const previous = historicalVersion(binding);
-              const state = raw(binding, "enabled") === false ? "disabled" : text(qualification, "state", text(binding, "qualification_state", "not_qualified"));
+              const qualificationState = text(qualification, "state", text(binding, "qualification_state", "not_qualified")).toLowerCase();
+              const headState = raw(binding, "enabled") === false ? "disabled" : "enabled";
+              const previousQualificationState = text(currentQualification(previous), "state", "not_qualified").toLowerCase();
               const route = text(binding, "primary_route");
               const legacy = legacyRoutes.find((row) => text(row, "route_name", text(row, "name")) === route) ?? {};
               const model = text(qualification, "model_name", text(legacy, "default_model", text(legacy, "model_name")));
               return (
-                <div className="operator-console__binding" key={text(binding, "binding_key", `binding-${index}`)}>
+                <article className="operator-console__binding" aria-label={text(binding, "binding_key", "Unnamed binding") + " current head"} key={text(binding, "binding_key", "binding-" + index)}>
                   <div><strong>{text(binding, "binding_key", "Unnamed binding")}</strong><small>Version {display(raw(binding, "version"))} · {text(binding, "selector_kind", "selector not recorded")} {text(binding, "selector_value")}</small></div>
                   <div><strong className="operator-console__route">{display(route)}</strong><small>{display(model)} · reasoning {display(raw(binding, "reasoning_profile"))}</small></div>
-                  <div><StatusPill status={state} /><small>Qualification #{display(raw(binding, "qualification_id"))}</small></div>
+                  <div><StatusPill status={headState} /><small>Qualification {qualificationState.replace(/_/g, " ")} · #{display(raw(qualification, "id") ?? raw(binding, "qualification_id"))}</small></div>
                   <div className="operator-console__actions">
                     <Button size="sm" variant="ghost" icon={Beaker} disabled={action.isPending || !route} onClick={() => run({ path: "/api/v1/model-fabric/qualify", label: "Route qualification", body: { route_name: route, task_class: text(binding, "task_class"), confirmed: true } })}>Qualify</Button>
-                    <Button size="sm" variant="ghost" icon={Play} disabled={action.isPending || !num(binding, "version_id")} onClick={() => run({ path: "/api/v1/model-fabric/test", label: "Binding test", body: { version_id: num(binding, "version_id"), confirmed: true } })}>Test</Button>
-                    <Button size="sm" variant="ghost" icon={ShieldCheck} disabled={action.isPending || state !== "passed"} onClick={() => openReview("promote", binding)}>Review promote</Button>
-                    {Object.keys(previous).length > 0 && <Button size="sm" variant="ghost" icon={RotateCcw} disabled={action.isPending} onClick={() => openReview("rollback", binding, previous)}>Review rollback</Button>}
+                    <Button size="sm" variant="ghost" icon={Play} disabled={action.isPending || !num(binding, "version_id")} onClick={() => run({ path: "/api/v1/model-bindings/test", label: "Binding test", body: { version_id: num(binding, "version_id"), confirmed: true } })}>Test</Button>
+                    {raw(binding, "enabled") === false && <Button size="sm" variant="ghost" icon={ShieldCheck} disabled={action.isPending || qualificationState !== "passed"} onClick={() => openReview("promote", binding)}>Review promote</Button>}
+                    {Object.keys(previous).length > 0 && <Button size="sm" variant="ghost" icon={RotateCcw} disabled={action.isPending || previousQualificationState !== "passed"} onClick={() => openReview("rollback", binding, previous)}>Review rollback</Button>}
                     <Button size="sm" variant="ghost" icon={Pause} disabled={action.isPending || raw(binding, "enabled") === false} onClick={() => openReview("disable", binding)}>Review disable</Button>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
+        )}
+      </Panel>
+      <Panel icon={Clock3} title="Proposals & version history">
+        {!available ? <Empty icon={Clock3} title="Version history not available" /> : history.length === 0 ? <Empty icon={Clock3} title="No stored binding versions recorded" /> : (
+          <>
+            <div className="operator-console__history-note">Immutable stored versions are shown separately from current heads. A disabled proposal is never promoted automatically.</div>
+            <div className="operator-console__bindings">
+              {history.map((version, index) => {
+                const relationship = versionRelationship(version);
+                const qualification = currentQualification(version);
+                const qualificationState = text(qualification, "state", "not_qualified").toLowerCase();
+                const route = text(version, "primary_route");
+                const legacy = legacyRoutes.find((row) => text(row, "route_name", text(row, "name")) === route) ?? {};
+                const model = text(qualification, "model_name", text(legacy, "default_model", text(legacy, "model_name")));
+                const head = bindingHead(version);
+                const versionId = num(version, "version_id", num(version, "id"));
+                return (
+                  <article className="operator-console__binding" aria-label={text(version, "binding_key", "Unnamed binding") + " version " + display(raw(version, "version"))} key={versionId || text(version, "binding_key", "version-" + index)}>
+                    <div><strong>{text(version, "binding_key", "Unnamed binding")}</strong><small>Version {display(raw(version, "version"))} · {text(version, "selector_kind", "selector not recorded")} {text(version, "selector_value")}</small></div>
+                    <div><strong className="operator-console__route">{display(route)}</strong><small>{display(model)} · reasoning {display(raw(version, "reasoning_profile"))}</small></div>
+                    <div><StatusPill status={relationship} tone={relationship === "Disabled proposal" ? "warn" : undefined} /><small>Qualification {qualificationState.replace(/_/g, " ")} · #{display(raw(qualification, "id"))}</small></div>
+                    <div className="operator-console__actions">
+                      <Button size="sm" variant="ghost" icon={Beaker} disabled={action.isPending || !route} onClick={() => run({ path: "/api/v1/model-fabric/qualify", label: "Route qualification", body: { route_name: route, task_class: text(version, "task_class"), confirmed: true } })}>Qualify</Button>
+                      <Button size="sm" variant="ghost" icon={Play} disabled={action.isPending || !versionId} onClick={() => run({ path: "/api/v1/model-bindings/test", label: "Binding test", body: { version_id: versionId, confirmed: true } })}>Test</Button>
+                      {relationship === "Disabled proposal" && <Button size="sm" variant="ghost" icon={ShieldCheck} disabled={action.isPending || qualificationState !== "passed"} onClick={() => openReview("promote", version, version)}>Review promote</Button>}
+                      {relationship === "Historical head" && Object.keys(head).length > 0 && <Button size="sm" variant="ghost" icon={RotateCcw} disabled={action.isPending || qualificationState !== "passed"} onClick={() => openReview("rollback", head, version)}>Review rollback</Button>}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </>
         )}
       </Panel>
       {receipt && <div className="operator-console__receipt" role="status"><strong>Latest control receipt.</strong> {outcome(receipt)} This view does not interpret HTTP success as model health.</div>}
@@ -272,7 +339,7 @@ export function ModelFabricConsole({ legacyRoutes }: { legacyRoutes: LiveRow[] }
 
 export function SystemOperationsConsole() {
   const pushToast = useUIStore((state) => state.pushToast);
-  const doctor = useQuery<DoctorSnapshot>({ queryKey: CONTROL_KEYS.doctor, queryFn: () => get<DoctorSnapshot>("/api/v1/doctor"), retry: false, refetchInterval: 30_000 });
+  const doctor = useQuery<DoctorSnapshot>({ queryKey: CONTROL_KEYS.doctor, queryFn: () => get<DoctorSnapshot>("/api/v1/system/doctor"), retry: false, refetchInterval: 30_000 });
   const routines = useQuery<RoutineSnapshot>({ queryKey: CONTROL_KEYS.routines, queryFn: () => get<RoutineSnapshot>("/api/v1/routines"), retry: false, refetchInterval: 30_000 });
   const doctorAction = useOperatorMutation([CONTROL_KEYS.doctor]);
   const routineAction = useOperatorMutation([CONTROL_KEYS.routines]);
@@ -356,7 +423,7 @@ export function SystemOperationsConsole() {
         <div className={`operator-console__notice ${doctorAvailable ? doctorStatus === "passed" ? "is-ready" : "" : "is-risk"}`}>
           {doctorAvailable ? <Activity size={18} aria-hidden="true" /> : <TriangleAlert size={18} aria-hidden="true" />}
           <div><strong>{doctorAvailable ? `Last recorded state: ${doctorStatus.replace(/_/g, " ")}` : "Doctor unavailable"}</strong><span>{doctorAvailable ? "A completed request is not treated as healthy unless every recorded check passed." : "No system health, last-known-good state, or repair eligibility can be inferred."}</span></div>
-          <code>GET /api/v1/doctor</code>
+          <code>GET /api/v1/system/doctor</code>
         </div>
         <div className="operator-console__summary" style={{ padding: "var(--space-3)" }}>
           <MetricTile tone={doctorStatus === "passed" ? "ok" : "warn"}><Metric label="Recorded Doctor state" value={doctorAvailable ? doctorStatus.replace(/_/g, " ") : "—"} /></MetricTile>

@@ -524,7 +524,11 @@ export function AssistantRail() {
   const scopeName = scope === "charlie" ? "Charlie" : scope.agentName;
   const scopeInitials = scope === "charlie" ? "CM" : initials(scope.agentName);
   const scopeRole = text(scopeProfile ?? {}, "display_title", scope === "charlie" ? "Chief of Staff · Orchestrator" : "Investment office employee");
-  const scopeState = text(scopeProfile ?? {}, "live_state", "ready");
+  const recordedScopeState = text(scopeProfile ?? {}, "live_state");
+  const scopeState = recordedScopeState || "not verified";
+  const normalizedScopeState = recordedScopeState.toLowerCase();
+  const scopeStateTone = ["online", "ready", "working"].some((state) => normalizedScopeState.includes(state))
+    ? "is-live" : ["blocked", "failed", "error"].some((state) => normalizedScopeState.includes(state)) ? "is-risk" : "is-unverified";
   const scopeRoute = text(scopeProfile ?? {}, "primary_route", ROUTE_CONFIG[route].routeName);
 
   return (
@@ -536,7 +540,7 @@ export function AssistantRail() {
           <div className="aios-assistant__identity">
             <div className="aios-assistant__avatar">
               {scopeInitials}
-              <span className="aios-assistant__avatar-status" />
+              <span className={"aios-assistant__avatar-status " + scopeStateTone} aria-hidden="true" />
             </div>
             <div>
               <div className="aios-assistant__name">{scopeName}</div>

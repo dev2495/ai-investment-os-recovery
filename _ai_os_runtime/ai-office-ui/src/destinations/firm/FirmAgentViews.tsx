@@ -652,7 +652,7 @@ export function ModelsView() {
       </div>
       <ModelFabricConsole legacyRoutes={routes} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: "var(--space-4)", alignItems: "start" }}>
-        <Panel icon={Cpu} title="Model Routes">
+        <Panel icon={Cpu} title="Model Routes" bodyTabIndex={0}>
           {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading...</div> : (
             <DataTable
               columns={[
@@ -666,7 +666,7 @@ export function ModelsView() {
             />
           )}
         </Panel>
-        <Panel icon={Cpu} title="Model Endpoints">
+        <Panel icon={Cpu} title="Model Endpoints" bodyTabIndex={0}>
           {isLoading ? <div style={{ padding: "var(--space-4)" }}>Loading...</div> : (
             <DataTable
               columns={[
@@ -964,10 +964,10 @@ function Header({ icon: Icon, code, title, subtitle }: { icon: typeof Users; cod
   return (
     <div className="aios-destination__head">
       <div className="aios-destination__title-row">
-        <div className="aios-destination__title">
+        <h1 className="aios-destination__title">
           <Icon size={26} style={{ verticalAlign: "middle", marginRight: 10, color: "var(--accent)" }} />
           {title}
-        </div>
+        </h1>
         <Badge tone="accent">{code}</Badge>
       </div>
       <div className="aios-destination__subtitle">{subtitle}</div>

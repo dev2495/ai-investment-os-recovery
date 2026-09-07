@@ -38,5 +38,10 @@
     "@vitejs/plugin-react": "^6.0.3",
     "typescript": "^5.6.3",
     "vite": "^8.1.2"
+  },
+  "overrides": {
+    "three-stdlib": {
+      "fflate": "0.8.3"
+    }
   }
 }

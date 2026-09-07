@@ -26,45 +26,76 @@ async function routeSharedSnapshots(page: import("@playwright/test").Page) {
   await page.route("**/api/department-terminal/snapshot**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(departmentTerminal()) }));
 }
 
-test("Models & Routes shows exact governed bindings and review-gates promotion", async ({ page }) => {
+test("Models & Routes keeps disabled proposals visible and review-gates qualified promotion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 900 });
   await routeSharedSnapshots(page);
   const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
-  await page.route("**/api/v1/model-fabric**", async (route) => {
+  let promoted = false;
+  await page.route("**/api/v1/model-bindings**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "GET") {
+      const current = promoted
+        ? { binding_key: "company-analyst", version_id: 12, version: 3, enabled: true, selector_kind: "agent", selector_value: "company_analyst", task_class: "filing_analysis", primary_route: "local_analysis", reasoning_profile: "none", qualification_id: 55, qualification_state: "passed" }
+        : { binding_key: "company-analyst", version_id: 7, version: 2, enabled: false, selector_kind: "agent", selector_value: "company_analyst", task_class: "filing_analysis", primary_route: "local_analysis", reasoning_profile: "none", qualification_id: 55, qualification_state: "passed" };
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
         available: true,
-        bindings: [{ binding_key: "company-analyst", version_id: 12, version: 3, enabled: true, selector_kind: "agent", selector_value: "company_analyst", task_class: "filing_analysis", primary_route: "local_analysis", reasoning_profile: "none", qualification_id: 55, qualification_state: "passed" }],
-        history: [{ binding_key: "company-analyst", version_id: 7, version: 2, primary_route: "local_analysis", task_class: "filing_analysis" }],
-        qualifications: [{ id: 55, route_name: "local_analysis", task_class: "filing_analysis", model_name: "qwen-local", state: "passed" }],
-        recent_calls: [{ id: 1, status: "failed", degraded: true }], audit: [], broker_write_allowed: false,
+        bindings: [current],
+        history: [
+          { binding_key: "company-analyst", version_id: 12, version: 3, selector_kind: "agent", selector_value: "company_analyst", primary_route: "local_analysis", task_class: "filing_analysis", reasoning_profile: "none" },
+          { binding_key: "risk-sentinel", version_id: 21, version: 1, selector_kind: "agent", selector_value: "risk_sentinel", primary_route: "unqualified_local", task_class: "risk_review", reasoning_profile: "none" },
+          { binding_key: "company-analyst", version_id: 7, version: 2, selector_kind: "agent", selector_value: "company_analyst", primary_route: "local_analysis", task_class: "filing_analysis", reasoning_profile: "none" },
+          { binding_key: "company-analyst", version_id: 3, version: 1, selector_kind: "agent", selector_value: "company_analyst", primary_route: "local_analysis", task_class: "filing_analysis", reasoning_profile: "none" },
+        ],
+        qualifications: [
+          { id: 55, route_name: "local_analysis", task_class: "filing_analysis", model_name: "qwen-local", state: "passed" },
+          { id: 56, route_name: "unqualified_local", task_class: "risk_review", model_name: "qwen-risk", state: "failed" },
+        ],
+        recent_calls: [{ id: 1, status: "failed", degraded: true }],
+        audit: [
+          { binding_key: "company-analyst", version_id: 12, action: promoted ? "promoted" : "proposed" },
+          { binding_key: "risk-sentinel", version_id: 21, action: "proposed" },
+          { binding_key: "company-analyst", version_id: 7, action: "disabled" },
+          { binding_key: "company-analyst", version_id: 7, action: "promoted" },
+          { binding_key: "company-analyst", version_id: 3, action: "promoted" },
+        ],
+        broker_write_allowed: false,
       }) });
       return;
     }
     posts.push({ path, body: request.postDataJSON() });
+    if (path.endsWith("/promote")) promoted = true;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: path.endsWith("/promote") ? "promoted" : "completed", broker_write_allowed: false }) });
   });
 
   await page.goto("/firm/models");
   const console = page.getByRole("region", { name: "Governed model fabric" });
   await expect(console.getByText("Governed binding registry is available")).toBeVisible();
-  await expect(console.getByText("company-analyst")).toBeVisible();
-  await expect(console.getByText("Version 3")).toBeVisible();
-  await expect(console.getByText("local_analysis")).toBeVisible();
-  await expect(console.getByText("qwen-local")).toBeVisible();
-  await expect(console.getByText("1", { exact: true }).first()).toBeVisible();
 
-  await console.getByRole("button", { name: "Review promote" }).click();
+  const disabledHead = console.getByRole("article", { name: "company-analyst current head" });
+  await expect(disabledHead.getByText("disabled", { exact: true })).toBeVisible();
+  await expect(disabledHead.getByText(/Qualification passed/)).toBeVisible();
+  await expect(disabledHead.getByRole("button", { name: "Review promote" })).toBeEnabled();
+
+  const proposal = console.getByRole("article", { name: "company-analyst version 3" });
+  await expect(proposal.getByText("Disabled proposal", { exact: true })).toBeVisible();
+  await expect(proposal.getByText(/Qualification passed/)).toBeVisible();
+  await expect(proposal.getByRole("button", { name: "Review promote" })).toBeEnabled();
+  const unqualified = console.getByRole("article", { name: "risk-sentinel version 1" });
+  await expect(unqualified.getByText(/Qualification failed/)).toBeVisible();
+  await expect(unqualified.getByRole("button", { name: "Review promote" })).toBeDisabled();
+  expect(posts).toEqual([]);
+
+  await proposal.getByRole("button", { name: "Review promote" }).click();
   const drawer = page.getByRole("dialog", { name: "Review promote" });
   await drawer.getByLabel("Approved change receipt ID").fill("42");
   await drawer.getByLabel("Type PROMOTE to confirm").fill("PROMOTE");
   await drawer.getByRole("button", { name: "Submit reviewed action" }).click();
   await expect.poll(() => posts.length).toBe(1);
-  expect(posts[0]).toEqual({ path: "/api/v1/model-fabric/promote", body: { version_id: 12, approval_id: 42, confirmed: true } });
+  expect(posts[0]).toEqual({ path: "/api/v1/model-bindings/promote", body: { version_id: 12, approval_id: 42, confirmed: true } });
   await expect(console.getByText("Recorded outcome: promoted.")).toBeVisible();
+  await expect(proposal.getByText("Current head", { exact: true })).toBeVisible();
 });
 
 test("System Health exposes Doctor evidence, one allowlisted fix, and five reviewed routine cards", async ({ page }) => {
@@ -72,7 +103,7 @@ test("System Health exposes Doctor evidence, one allowlisted fix, and five revie
   await page.setViewportSize({ width: 1280, height: 1100 });
   await routeSharedSnapshots(page);
   const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
-  await page.route("**/api/v1/doctor**", async (route) => {
+  await page.route("**/api/v1/**doctor**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "GET") {
@@ -129,10 +160,10 @@ test("System Health exposes Doctor evidence, one allowlisted fix, and five revie
 
 test("unavailable control endpoints never turn legacy HTTP success into health", async ({ page }) => {
   await routeSharedSnapshots(page);
-  await page.route("**/api/v1/model-fabric", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ available: false, reason: "not_live", bindings: [] }) }));
+  await page.route("**/api/v1/model-bindings", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ available: false, reason: "not_live", bindings: [] }) }));
   await page.goto("/firm/models");
   const console = page.getByRole("region", { name: "Governed model fabric" });
   await expect(console.getByText("Model Fabric unavailable")).toBeVisible();
   await expect(console.getByRole("button", { name: "Propose binding" })).toBeDisabled();
-  await expect(console.getByText("Bound versions").locator("..")).toContainText("—");
+  await expect(console.getByText("Current heads").locator("..")).toContainText("—");
 });
